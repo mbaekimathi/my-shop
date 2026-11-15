@@ -67,6 +67,26 @@
       </div>
     </div>
   </div>
+  {% if shelf_tabs_enabled %}
+  <nav class="ax-tabs item-panel-tabs" role="tablist" aria-label="Stock lists">
+    <a
+      class="ax-tab{% if item_tab == "items" %} is-active{% endif %}"
+      href="?tab=items"
+      role="tab"
+      aria-selected="{% if item_tab == "items" %}true{% else %}false{% endif %}"
+      {% if item_tab == "items" %}aria-current="page"{% endif %}
+    ><i data-lucide="package" aria-hidden="true"></i><span>Item stock</span></a>
+    <a
+      class="ax-tab{% if item_tab == "shelf" %} is-active{% endif %}"
+      href="?tab=shelf"
+      role="tab"
+      aria-selected="{% if item_tab == "shelf" %}true{% else %}false{% endif %}"
+      {% if item_tab == "shelf" %}aria-current="page"{% endif %}
+    ><i data-lucide="layers" aria-hidden="true"></i><span>Shelf stock</span></a>
+  </nav>
+  {% endif %}
+
+  {% if item_tab == "items" %}
   <div class="item-search">
     <label class="item-search-field">
       <i data-lucide="search" aria-hidden="true"></i>
@@ -121,6 +141,64 @@
     <i data-lucide="package" aria-hidden="true"></i>
     <p>No items registered yet. Open <strong>Register item</strong> from the sidebar to add your first item.</p>
   </div>
+  {% endif %}
+  {% else %}
+  {% for section in shelf_sections %}
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-list-{{ section.shop.pk }}">
+    <div class="store-stock-panel-head store-stock-panel-head--list">
+      <div>
+        <h3 id="shelf-list-{{ section.shop.pk }}">{{ section.shop.name }}</h3>
+        <p>{{ section.rows|length }} shelf item{{ section.rows|length|pluralize }} on the shelf.</p>
+      </div>
+    </div>
+    {% if section.rows %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Category</th>
+            <th scope="col">Unit</th>
+            <th scope="col" class="store-stock-col-qty">On shelf</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in section.rows %}
+          <tr class="store-stock-row">
+            <td data-label="Item">
+              <div class="store-stock-item-cell">
+                <span class="store-stock-item-head">
+                  {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
+                  <span class="store-stock-item-name">{{ row.name }}</span>
+                </span>
+              </div>
+            </td>
+            <td data-label="Category">{{ row.category|default:"—" }}</td>
+            <td data-label="Unit">{{ row.unit|default:"—" }}</td>
+            <td class="store-stock-col-qty" data-label="On shelf">
+              <span
+                class="store-stock-balance-pill"
+                {% if row.is_low %}data-shelf-low title="At or below the low stock alert ({{ row.low_stock_threshold_display }})"{% endif %}
+              >{{ row.quantity_display }}{% if row.is_low %} · low{% endif %}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="layers" aria-hidden="true"></i>
+      <p><strong>No shelf stock yet.</strong> Shelf items are registered from the shop's shelf stock page.</p>
+    </div>
+    {% endif %}
+  </section>
+  {% empty %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="layers" aria-hidden="true"></i>
+    <p>No shops in Shelf mode.</p>
+  </div>
+  {% endfor %}
   {% endif %}
 </section>
 
@@ -237,7 +315,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/item-catalog.js' %}?v=22"></script>
+<script defer src="{% static 'js/item-catalog.js' %}?v=23"></script>
 <script defer src="{% static 'js/item-management.js' %}?v=19"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=2"></script>
 {% endblock %}

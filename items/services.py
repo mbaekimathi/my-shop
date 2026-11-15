@@ -700,6 +700,31 @@ def _item_management_row(
     shop_prices = {str(row["shop_id"]): row["price"] for row in shop_price_rows}
     sold_shops = {str(row["shop_id"]): row["is_sold"] for row in shop_price_rows}
     image_url = item.public_image_url()
+
+    from shops.services import (
+        HIDDEN_STOCK_LABEL,
+        item_stock_is_hidden,
+        stock_hide_state,
+    )
+
+    hide_state = stock_hide_state()
+    stock_total = _ZERO_QTY
+    stock_hidden = False
+    for row in stock_rows:
+        stock_total += _quantize_qty(row["quantity"])
+        if item_stock_is_hidden(
+            item.pk, item.category, hide_state, shop_id=row["shop_id"]
+        ):
+            row["hidden"] = True
+            row["display"] = HIDDEN_STOCK_LABEL
+            stock_hidden = True
+        else:
+            row["hidden"] = False
+            row["display"] = row["quantity"]
+    stock_display = (
+        HIDDEN_STOCK_LABEL if stock_hidden else _format_qty(stock_total)
+    )
+
     return {
         "id": item.pk,
         "name": item.name,
@@ -718,6 +743,8 @@ def _item_management_row(
         "is_suspended": bool(item.is_suspended),
         "image_url": image_url,
         "stock_rows": stock_rows,
+        "stock_display": stock_display,
+        "stock_hidden": stock_hidden,
     }
 
 
@@ -1134,11 +1161,13 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
     tax_percent = Decimal(receipt.tax_percent or 0)
     prior_cash = Decimal(receipt.cash_amount or 0)
     prior_mpesa = Decimal(receipt.mpesa_amount or 0)
+    prior_card = Decimal(getattr(receipt, "card_amount", None) or 0)
     if remaining_subtotal <= 0:
         tax_amount = Decimal("0.00")
         total = Decimal("0.00")
         cash_amount = Decimal("0.00")
         mpesa_amount = Decimal("0.00")
+        card_amount = Decimal("0.00")
         status = ShopReceiptStatus.CANCELLED
     else:
         tax_amount = (remaining_subtotal * tax_percent / Decimal("100")).quantize(
@@ -1159,36 +1188,24 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
         )
         cash_amount = receipt.cash_amount
         mpesa_amount = receipt.mpesa_amount
+        card_amount = getattr(receipt, "card_amount", 0) or Decimal("0.00")
         if receipt.kind == ShopReceiptKind.SALE:
-            if receipt.payment_method == ShopPaymentMethod.CASH:
-                cash_amount = total
-                mpesa_amount = Decimal("0.00")
-            elif receipt.payment_method == ShopPaymentMethod.MPESA:
-                mpesa_amount = total
-                cash_amount = Decimal("0.00")
-            elif receipt.payment_method == ShopPaymentMethod.BOTH:
-                old_total = Decimal(receipt.total or 0)
-                if old_total > 0:
-                    ratio = total / old_total
-                    cash_amount = (Decimal(receipt.cash_amount or 0) * ratio).quantize(
-                        Decimal("0.01")
-                    )
-                    mpesa_amount = (total - cash_amount).quantize(Decimal("0.01"))
-                else:
-                    cash_amount = Decimal("0.00")
-                    mpesa_amount = total
-            else:
-                cash_amount = Decimal("0.00")
-                mpesa_amount = Decimal("0.00")
+            from shops.services import _sale_tender_for_total
+
+            cash_amount, mpesa_amount, card_amount = _sale_tender_for_total(
+                receipt, total
+            )
         elif receipt.kind != ShopReceiptKind.CREDIT:
             cash_amount = Decimal("0.00")
             mpesa_amount = Decimal("0.00")
+            card_amount = Decimal("0.00")
 
     receipt.subtotal = remaining_subtotal
     receipt.tax_amount = tax_amount
     receipt.total = total
     receipt.cash_amount = cash_amount
     receipt.mpesa_amount = mpesa_amount
+    receipt.card_amount = card_amount
     receipt.status = status
     receipt.last_returned_at = now
     receipt.last_returned_by = profile
@@ -1198,6 +1215,7 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
         "total",
         "cash_amount",
         "mpesa_amount",
+        "card_amount",
         "status",
         "last_returned_at",
         "last_returned_by",
@@ -1207,6 +1225,7 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
         at=now,
         cash=prior_cash - Decimal(cash_amount or 0),
         mpesa=prior_mpesa - Decimal(mpesa_amount or 0),
+        card=prior_card - Decimal(card_amount or 0),
         by_id=profile.pk if profile else None,
     ):
         return_update_fields.append("return_payment_events")
@@ -1238,6 +1257,7 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
                 "payment_method",
                 "cash_amount",
                 "mpesa_amount",
+                "card_amount",
                 "credit_due_date",
                 "settled_from_credit",
             ]

@@ -3353,9 +3353,7 @@ class StoreManagerRoleTests(TestCase):
             EmployeeRole.STORE_MANAGER, profile=self.manager
         )
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(
-            labels, ["Store Stock In", "Store Stock Out", "Store Report"]
-        )
+        self.assertEqual(labels, ["Item stock"])
         self.assertNotIn("Item Management", labels)
         self.assertNotIn("Stock Management", labels)
         self.assertNotIn("Analytics", labels)
@@ -3440,6 +3438,9 @@ class StoreManagerRoleTests(TestCase):
             {
                 f"qty_{item.pk}": "1",
                 "received_by_id": receiver.pk,
+                "supplier_name": "Brookside",
+                "supplier_phone": "0722000000",
+                "payment_status": "paid",
                 "note": "delivery",
             },
         )
@@ -3466,6 +3467,108 @@ class StoreManagerRoleTests(TestCase):
         self.assertEqual(filtered.status_code, 200)
         self.assertContains(filtered, "STORE BOLT")
         self.assertContains(filtered, "Stock in")
+
+    def test_store_stock_trade_give_and_receive(self):
+        from decimal import Decimal
+
+        from items.models import Item, StoreStock, StoreStockMovement
+
+        item = Item.objects.create(
+            category="PARTS",
+            name="TRADE WIDGET",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("12.00"),
+            stock=Decimal("5.000"),
+        )
+        other = Item.objects.create(
+            category="PARTS",
+            name="TRADE GADGET",
+            minimum_selling_price=Decimal("8.00"),
+            shop_price=Decimal("9.00"),
+            stock=Decimal("2.000"),
+        )
+        StoreStock.objects.create(item=item, quantity=Decimal("4.000"))
+
+        self.client.login(username="830031", password=self.password)
+
+        page = self.client.get("/store-manager/item-stock/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Item stock trade")
+        self.assertContains(page, 'data-modal="store-stock-trade"')
+
+        trade_page = self.client.get("/store-manager/store-stock-trade/")
+        self.assertEqual(trade_page.status_code, 200)
+        self.assertContains(trade_page, "Item stock trade")
+        self.assertContains(trade_page, 'name="trade_kind"')
+        self.assertContains(trade_page, f'name="qty_{item.pk}"')
+
+        posted = self.client.post(
+            "/store-manager/store-stock-trade/",
+            {
+                "trade_kind": "trade_out",
+                f"qty_{item.pk}": "2",
+                "person_name": "Jane Trader",
+                "person_phone": "0722000000",
+                "note": "swap deal",
+            },
+        )
+        self.assertEqual(posted.status_code, 302)
+        self.assertEqual(
+            StoreStock.objects.get(item=item).quantity, Decimal("2.000")
+        )
+
+        out_move = StoreStockMovement.objects.get(item=item)
+        self.assertEqual(out_move.movement_type, "out")
+        self.assertEqual(out_move.reason, "trade_out")
+        self.assertEqual(out_move.supplier_name, "JANE TRADER")
+        self.assertEqual(out_move.supplier_phone, "0722000000")
+
+        posted = self.client.post(
+            "/store-manager/store-stock-trade/",
+            {
+                "trade_kind": "trade_in",
+                f"qty_{other.pk}": "3",
+                f"price_{other.pk}": "7.50",
+                "person_name": "Jane Trader",
+                "person_phone": "0722000000",
+            },
+        )
+        self.assertEqual(posted.status_code, 302)
+        self.assertEqual(
+            StoreStock.objects.get(item=other).quantity, Decimal("3.000")
+        )
+
+        in_move = StoreStockMovement.objects.get(item=other)
+        self.assertEqual(in_move.movement_type, "in")
+        self.assertEqual(in_move.reason, "trade_in")
+        self.assertEqual(in_move.buying_price, Decimal("7.50"))
+
+        # A trade without a direction is rejected.
+        no_kind = self.client.post(
+            "/store-manager/store-stock-trade/",
+            {f"qty_{item.pk}": "1"},
+        )
+        self.assertEqual(no_kind.status_code, 200)
+        self.assertEqual(
+            StoreStock.objects.get(item=item).quantity, Decimal("2.000")
+        )
+
+        # An empty trade is rejected.
+        empty = self.client.post(
+            "/store-manager/store-stock-trade/",
+            {"trade_kind": "trade_out"},
+        )
+        self.assertEqual(empty.status_code, 200)
+
+        # Giving more than the store holds is rejected.
+        too_much = self.client.post(
+            "/store-manager/store-stock-trade/",
+            {"trade_kind": "trade_out", f"qty_{item.pk}": "999"},
+        )
+        self.assertEqual(too_much.status_code, 200)
+        self.assertEqual(
+            StoreStock.objects.get(item=item).quantity, Decimal("2.000")
+        )
 
     def test_analytics_sections_limited_to_items_stock_trading(self):
         may = self.employee_may

@@ -39,6 +39,11 @@ from .models import (
     ShopReceiptKind,
     ShopReceiptStatus,
     SmsProvider,
+    CHANNEL_LABELS,
+    PAYMENT_METHOD_TOGGLES,
+    SALE_PAYMENT_METHODS,
+    payment_method_channels,
+    payment_method_for_channels,
 )
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -70,7 +75,11 @@ POS_SETTING_FIELDS = {
     "enable_trade_in",
     "enable_cash",
     "enable_mpesa",
+    "enable_card",
     "enable_cash_mpesa",
+    "enable_cash_card",
+    "enable_mpesa_card",
+    "enable_cash_mpesa_card",
     "enable_discount",
     "enable_stock_tracking",
     "enable_shelf_mode",
@@ -81,6 +90,7 @@ POS_SETTING_FIELDS = {
     "require_client_name",
     "enable_cart_confirm_receipt",
     "enable_cart_delivery",
+    "enable_cart_payment_options",
     "enable_tax",
     "enable_sidebar_open_close",
     "enable_sidebar_trade",
@@ -116,7 +126,11 @@ SHOP_POS_FIELD_NAMES = frozenset(
     "enable_trade_in",
         "enable_cash",
         "enable_mpesa",
+        "enable_card",
         "enable_cash_mpesa",
+        "enable_cash_card",
+        "enable_mpesa_card",
+        "enable_cash_mpesa_card",
         "enable_discount",
         "enable_open_close",
         "enable_client_data",
@@ -124,6 +138,7 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "require_client_name",
         "enable_cart_confirm_receipt",
         "enable_cart_delivery",
+        "enable_cart_payment_options",
         "enable_tax",
         "tax_percent",
         "delivery_amount",
@@ -1259,6 +1274,7 @@ def build_shop_day_prompt(
     form_data = {
         "cash_amount": "",
         "mpesa_amount": "",
+        "card_amount": "",
         "credit_amount": "",
         "stock_confirmed": False,
         "login_code": "",
@@ -1276,12 +1292,14 @@ def build_shop_day_prompt(
         summary = day_session_balance_summary(open_session)
         form_data["cash_amount"] = _amount_str(summary.get("expected_cash"))
         form_data["mpesa_amount"] = _amount_str(summary.get("expected_mpesa"))
+        form_data["card_amount"] = _amount_str(summary.get("expected_card"))
         form_data["credit_amount"] = "0"
     elif mode == "open":
         last_closed = get_last_closed_shop_day(shop)
         if last_closed is not None:
             form_data["cash_amount"] = _amount_str(last_closed.closing_cash)
             form_data["mpesa_amount"] = _amount_str(last_closed.closing_mpesa)
+            form_data["card_amount"] = _amount_str(last_closed.closing_card)
         form_data["credit_amount"] = "0"
 
     return {
@@ -1847,7 +1865,19 @@ def pos_mpesa_checkout_enabled(
     pos: CompanyPosSettings | None = None,
 ) -> bool:
     row = pos or get_company_pos_settings()
-    return bool(row.enable_mpesa or row.enable_cash_mpesa)
+    return pos_channel_enabled(row, "mpesa")
+
+
+def pos_channel_enabled(row, channel: str) -> bool:
+    """True when any enabled payment method draws on this till channel."""
+    if row is None:
+        return False
+    for method, toggle in PAYMENT_METHOD_TOGGLES.items():
+        if channel in payment_method_channels(method) and getattr(
+            row, toggle, False
+        ):
+            return True
+    return False
 
 
 def stk_shop_activation_status(
@@ -3259,15 +3289,19 @@ def receipt_qr_for_receipt(receipt, settings_row: CompanyPosSettings | None = No
     else:
         payment = ""
         if receipt.kind == ShopReceiptKind.SALE:
-            if receipt.payment_method == ShopPaymentMethod.BOTH:
-                payment = (
-                    f"Cash {_receipt_money(receipt.cash_amount)}"
-                    f" + M-Pesa {_receipt_money(receipt.mpesa_amount)}"
-                )
-            elif receipt.payment_method == ShopPaymentMethod.MPESA:
-                payment = f"M-Pesa {_receipt_money(receipt.mpesa_amount)}"
-            elif receipt.payment_method == ShopPaymentMethod.CASH:
-                payment = f"Cash {_receipt_money(receipt.cash_amount)}"
+            parts = []
+            channel_amounts = {
+                "cash": receipt.cash_amount,
+                "mpesa": receipt.mpesa_amount,
+                "card": getattr(receipt, "card_amount", 0) or 0,
+            }
+            for channel in payment_method_channels(receipt.payment_method):
+                amount = channel_amounts.get(channel) or 0
+                if Decimal(str(amount or 0)) > 0:
+                    parts.append(
+                        f"{CHANNEL_LABELS[channel]} {_receipt_money(amount)}"
+                    )
+            payment = " + ".join(parts)
         payload = receipt_details_qr_payload(
             receipt_number=receipt.receipt_number,
             kind_label=receipt.get_kind_display(),
@@ -3799,7 +3833,13 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_trade_in": getattr(row, "enable_trade_in", True),
         "enable_cash": row.enable_cash,
         "enable_mpesa": row.enable_mpesa,
+        "enable_card": bool(getattr(row, "enable_card", False)),
         "enable_cash_mpesa": row.enable_cash_mpesa,
+        "enable_cash_card": bool(getattr(row, "enable_cash_card", False)),
+        "enable_mpesa_card": bool(getattr(row, "enable_mpesa_card", False)),
+        "enable_cash_mpesa_card": bool(
+            getattr(row, "enable_cash_mpesa_card", False)
+        ),
         "enable_discount": row.enable_discount,
         "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
         "enable_shelf_mode": bool(getattr(row, "enable_shelf_mode", False)),
@@ -3811,6 +3851,9 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
             getattr(row, "enable_cart_confirm_receipt", True)
         ),
         "enable_cart_delivery": bool(getattr(row, "enable_cart_delivery", True)),
+        "enable_cart_payment_options": bool(
+            getattr(row, "enable_cart_payment_options", True)
+        ),
         "enable_tax": row.enable_tax,
         "tax_percent": str(Decimal(row.tax_percent or 0).quantize(Decimal("0.01"))),
         "effective_tax_percent": str(tax_percent.quantize(Decimal("0.01"))),
@@ -4580,10 +4623,9 @@ def receipt_accepted_payment_methods_label(
     if not getattr(row, "enable_receipt_payment_methods", True):
         return ""
     names: list[str] = []
-    if getattr(row, "enable_cash", False) or getattr(row, "enable_cash_mpesa", False):
-        names.append("Cash")
-    if getattr(row, "enable_mpesa", False) or getattr(row, "enable_cash_mpesa", False):
-        names.append("M-Pesa")
+    for channel in ("cash", "mpesa", "card"):
+        if pos_channel_enabled(row, channel):
+            names.append(CHANNEL_LABELS[channel])
     return " · ".join(names)
 
 
@@ -6445,42 +6487,51 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             total = (total + delivery_fee).quantize(Decimal("0.01"))
 
         payment_method = ShopPaymentMethod.NONE
-        cash_amount = Decimal("0.00")
-        mpesa_amount = Decimal("0.00")
+        tender = {"cash": Decimal("0.00"), "mpesa": Decimal("0.00"), "card": Decimal("0.00")}
 
         if kind == ShopReceiptKind.SALE:
             if not pos_settings.cash_sale_checkout_enabled():
                 raise ValidationError("No payment methods are enabled in POS settings.")
             payment_method = (payload.get("payment_method") or "").strip().lower()
-            if payment_method not in {
-                ShopPaymentMethod.CASH,
-                ShopPaymentMethod.MPESA,
-                ShopPaymentMethod.BOTH,
-            }:
-                raise ValidationError("Choose cash, M-Pesa, or both.")
+            if payment_method not in SALE_PAYMENT_METHODS:
+                raise ValidationError("Choose an enabled payment method.")
             if not pos_settings.payment_method_enabled(payment_method):
                 raise ValidationError("That payment method is disabled in POS settings.")
 
-            if payment_method == ShopPaymentMethod.CASH:
-                cash_amount = total
-            elif payment_method == ShopPaymentMethod.MPESA:
-                mpesa_amount = total
+            channels = payment_method_channels(payment_method)
+            if len(channels) == 1:
+                tender[channels[0]] = total
             else:
-                cash_amount = _money(payload.get("cash_amount") or 0)
-                mpesa_amount = _money(payload.get("mpesa_amount") or 0)
-                paid = (cash_amount + mpesa_amount).quantize(Decimal("0.01"))
+                for channel in channels:
+                    tender[channel] = _money(payload.get(f"{channel}_amount") or 0)
+                paid = sum(tender.values()).quantize(Decimal("0.01"))
                 if paid != total:
                     # Tolerate 1-cent drift from client rounding.
                     if abs(paid - total) <= Decimal("0.01"):
-                        mpesa_amount = (total - cash_amount).quantize(Decimal("0.01"))
-                    else:
-                        raise ValidationError(
-                            "Cash and M-Pesa amounts must add up to the cart total."
+                        last = channels[-1]
+                        tender[last] = (tender[last] + (total - paid)).quantize(
+                            Decimal("0.01")
                         )
-                if cash_amount <= 0 or mpesa_amount <= 0:
-                    raise ValidationError(
-                        "For split payment, both cash and M-Pesa amounts must be greater than zero."
+                    else:
+                        labels = ", ".join(
+                            CHANNEL_LABELS[channel] for channel in channels
+                        )
+                        raise ValidationError(
+                            f"{labels} amounts must add up to the cart total."
+                        )
+                if any(tender[channel] <= 0 for channel in channels):
+                    labels = ", ".join(
+                        CHANNEL_LABELS[channel] for channel in channels
                     )
+                    raise ValidationError(
+                        f"For split payment, {labels} amounts must each be greater than zero."
+                    )
+
+        cash_amount = tender["cash"]
+        mpesa_amount = tender["mpesa"]
+        card_amount = tender["card"]
+
+        if kind == ShopReceiptKind.SALE:
 
             mpesa_receipt_number = ""
             from .daraja_stk import require_successful_stk, stk_ready
@@ -6554,6 +6605,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             total=total,
             cash_amount=cash_amount,
             mpesa_amount=mpesa_amount,
+            card_amount=card_amount,
             mpesa_receipt_number=mpesa_receipt_number,
             share_whatsapp=share_whatsapp,
             credit_due_date=credit_due_date,
@@ -6832,16 +6884,20 @@ def _money_or_zero(value) -> Decimal:
         return Decimal("0.00")
 
 
-def _receipt_original_tender(cash_amount, mpesa_amount, return_payment_events):
-    """Rebuild cash/M-Pesa taken at sale time (current remaining + refunded)."""
+def _receipt_original_tender(
+    cash_amount, mpesa_amount, return_payment_events, card_amount=0
+):
+    """Rebuild cash/M-Pesa/card taken at sale time (current remaining + refunded)."""
     cash = _money_or_zero(cash_amount)
     mpesa = _money_or_zero(mpesa_amount)
+    card = _money_or_zero(card_amount)
     for event in return_payment_events or []:
         if not isinstance(event, dict):
             continue
         cash += _money_or_zero(event.get("cash"))
         mpesa += _money_or_zero(event.get("mpesa"))
-    return cash, mpesa
+        card += _money_or_zero(event.get("card"))
+    return cash, mpesa, card
 
 
 def _parse_return_payment_at(raw):
@@ -6866,21 +6922,26 @@ def _iter_return_payment_events(return_payment_events):
             continue
         cash = _money_or_zero(event.get("cash"))
         mpesa = _money_or_zero(event.get("mpesa"))
-        if cash <= 0 and mpesa <= 0:
+        card = _money_or_zero(event.get("card"))
+        if cash <= 0 and mpesa <= 0 and card <= 0:
             continue
         yield {
             "at": happened_at,
             "cash": cash,
             "mpesa": mpesa,
+            "card": card,
             "by_id": event.get("by_id"),
         }
 
 
-def _append_return_payment_event(receipt, *, at, cash, mpesa, by_id) -> bool:
+def _append_return_payment_event(
+    receipt, *, at, cash, mpesa, by_id, card=0
+) -> bool:
     """Record a till refund for a customer return. Returns True if anything stored."""
     cash = _money_or_zero(cash)
     mpesa = _money_or_zero(mpesa)
-    if cash <= 0 and mpesa <= 0:
+    card = _money_or_zero(card)
+    if cash <= 0 and mpesa <= 0 and card <= 0:
         return False
     events = [
         event
@@ -6892,6 +6953,7 @@ def _append_return_payment_event(receipt, *, at, cash, mpesa, by_id) -> bool:
             "at": at.isoformat(),
             "cash": str(cash),
             "mpesa": str(mpesa),
+            "card": str(card),
             "by_id": by_id,
         }
     )
@@ -6942,24 +7004,29 @@ def _session_activity_totals(
     closed = session.closed_at or timezone.now()
     cash_sales = Decimal("0.00")
     mpesa_sales = Decimal("0.00")
+    card_sales = Decimal("0.00")
     cash_refunds = Decimal("0.00")
     mpesa_refunds = Decimal("0.00")
+    card_refunds = Decimal("0.00")
     expenses_paid = Decimal("0.00")
     drawings_paid = Decimal("0.00")
     drawings_cash = Decimal("0.00")
     drawings_mpesa = Decimal("0.00")
+    drawings_card = Decimal("0.00")
     suppliers_paid = Decimal("0.00")
 
     for sale in sales or []:
         when = sale["created_at"]
         if opened <= when < closed:
-            cash, mpesa = _receipt_original_tender(
+            cash, mpesa, card = _receipt_original_tender(
                 sale.get("cash_amount"),
                 sale.get("mpesa_amount"),
                 sale.get("return_payment_events"),
+                card_amount=sale.get("card_amount"),
             )
             cash_sales += cash
             mpesa_sales += mpesa
+            card_sales += card
 
     for event in refunds or []:
         when = event.get("at")
@@ -6968,6 +7035,7 @@ def _session_activity_totals(
         if opened <= when < closed:
             cash_refunds += _money_or_zero(event.get("cash"))
             mpesa_refunds += _money_or_zero(event.get("mpesa"))
+            card_refunds += _money_or_zero(event.get("card"))
 
     for expense in expenses or []:
         when = expense["created_at"]
@@ -6984,11 +7052,13 @@ def _session_activity_totals(
             ):
                 cash_part = Decimal(expense.get("cash_amount") or 0)
                 mpesa_part = Decimal(expense.get("mpesa_amount") or 0)
-                if cash_part == 0 and mpesa_part == 0:
+                card_part = Decimal(expense.get("card_amount") or 0)
+                if cash_part == 0 and mpesa_part == 0 and card_part == 0:
                     cash_part = paid
                 drawings_cash += cash_part
                 drawings_mpesa += mpesa_part
-                drawings_paid += cash_part + mpesa_part
+                drawings_card += card_part
+                drawings_paid += cash_part + mpesa_part + card_part
             else:
                 expenses_paid += paid
 
@@ -6999,6 +7069,7 @@ def _session_activity_totals(
 
     opening_cash = Decimal(session.opening_cash or 0)
     opening_mpesa = Decimal(session.opening_mpesa or 0)
+    opening_card = Decimal(getattr(session, "opening_card", None) or 0)
     opening_credit = Decimal(session.opening_credit or 0)
     expected_cash = (
         opening_cash
@@ -7011,9 +7082,12 @@ def _session_activity_totals(
     expected_mpesa = (
         opening_mpesa + mpesa_sales - mpesa_refunds - drawings_mpesa
     )
-    # Till tracks physical channels only (cash + M-Pesa). Credit sales are
-    # receivables, not money in the drawer.
-    expected_total = expected_cash + expected_mpesa
+    expected_card = (
+        opening_card + card_sales - card_refunds - drawings_card
+    )
+    # Till tracks physical channels only (cash + M-Pesa + card). Credit sales
+    # are receivables, not money in the drawer.
+    expected_total = expected_cash + expected_mpesa + expected_card
 
     closing_cash = (
         Decimal(session.closing_cash)
@@ -7025,6 +7099,11 @@ def _session_activity_totals(
         if session.closing_mpesa is not None
         else None
     )
+    closing_card = (
+        Decimal(session.closing_card)
+        if getattr(session, "closing_card", None) is not None
+        else None
+    )
     closing_credit = (
         Decimal(session.closing_credit)
         if session.closing_credit is not None
@@ -7032,32 +7111,38 @@ def _session_activity_totals(
     )
     closing_total = (
         None
-        if closing_cash is None and closing_mpesa is None
-        else (closing_cash or 0) + (closing_mpesa or 0)
+        if closing_cash is None and closing_mpesa is None and closing_card is None
+        else (closing_cash or 0) + (closing_mpesa or 0) + (closing_card or 0)
     )
 
     return {
         "opening_cash": opening_cash,
         "opening_mpesa": opening_mpesa,
+        "opening_card": opening_card,
         "opening_credit": opening_credit,
-        "opening_total": opening_cash + opening_mpesa,
+        "opening_total": opening_cash + opening_mpesa + opening_card,
         "closing_cash": closing_cash,
         "closing_mpesa": closing_mpesa,
+        "closing_card": closing_card,
         "closing_credit": closing_credit,
         "closing_total": closing_total,
         "cash_sales": cash_sales,
         "mpesa_sales": mpesa_sales,
+        "card_sales": card_sales,
         "cash_refunds": cash_refunds,
         "mpesa_refunds": mpesa_refunds,
-        "sales_total": cash_sales + mpesa_sales,
+        "card_refunds": card_refunds,
+        "sales_total": cash_sales + mpesa_sales + card_sales,
         "expenses": expenses_paid,
         "expenses_paid": expenses_paid,
         "drawings_paid": drawings_paid,
         "drawings_cash": drawings_cash,
         "drawings_mpesa": drawings_mpesa,
+        "drawings_card": drawings_card,
         "suppliers_paid": suppliers_paid,
         "expected_cash": expected_cash,
         "expected_mpesa": expected_mpesa,
+        "expected_card": expected_card,
         "expected_credit": opening_credit,
         "expected_total": expected_total,
         "cash_variance": (
@@ -7065,6 +7150,9 @@ def _session_activity_totals(
         ),
         "mpesa_variance": (
             None if closing_mpesa is None else closing_mpesa - expected_mpesa
+        ),
+        "card_variance": (
+            None if closing_card is None else closing_card - expected_card
         ),
         "credit_variance": (
             None if closing_credit is None else closing_credit - opening_credit
@@ -7110,6 +7198,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
             "created_at",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "return_payment_events",
         )
     )
@@ -7121,7 +7210,14 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
             shop=shop,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
-        ).values("created_at", "amount_paid", "cash_amount", "mpesa_amount", "category")
+        ).values(
+            "created_at",
+            "amount_paid",
+            "cash_amount",
+            "mpesa_amount",
+            "card_amount",
+            "category",
+        )
     )
     supplier_payments = list(
         StockMovement.objects.filter(
@@ -7176,6 +7272,7 @@ def day_session_balance_summary(session) -> dict:
             "created_at",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "return_payment_events",
         )
     )
@@ -7192,6 +7289,7 @@ def day_session_balance_summary(session) -> dict:
             "amount_paid",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "category",
         )
     )
@@ -7220,26 +7318,29 @@ def shop_day_balance_channels(*, shop: Shop | None = None, pos=None) -> dict:
     Credit is never a till channel — it is not money in the drawer.
     """
     row = pos if pos is not None else get_effective_pos_settings(shop)
-    show_cash = bool(getattr(row, "enable_cash", True) or getattr(row, "enable_cash_mpesa", True))
-    show_mpesa = bool(
-        getattr(row, "enable_mpesa", True) or getattr(row, "enable_cash_mpesa", True)
-    )
+    show_cash = pos_channel_enabled(row, "cash") if row is not None else True
+    show_mpesa = pos_channel_enabled(row, "mpesa")
+    show_card = pos_channel_enabled(row, "card")
     # Keep open/close usable if every till toggle is off.
-    if not (show_cash or show_mpesa):
+    if not (show_cash or show_mpesa or show_card):
         show_cash = True
     labels = []
     if show_cash:
         labels.append("cash")
     if show_mpesa:
         labels.append("M-Pesa")
+    if show_card:
+        labels.append("card")
     if len(labels) == 1:
         count_copy = labels[0]
     else:
-        count_copy = f"{labels[0]} and {labels[1]}"
+        count_copy = f"{', '.join(labels[:-1])} and {labels[-1]}"
     return {
         "cash": show_cash,
         "mpesa": show_mpesa,
+        "card": show_card,
         "credit": False,
+        "multi": len(labels) > 1,
         "count_copy": count_copy,
         "labels": labels,
     }
@@ -7260,21 +7361,26 @@ def till_summary_payload(summary: dict, *, channels: dict | None = None) -> dict
         "expected_total": _int_money(summary.get("expected_total")),
         "expected_cash": _int_money(summary.get("expected_cash")),
         "expected_mpesa": _int_money(summary.get("expected_mpesa")),
+        "expected_card": _int_money(summary.get("expected_card")),
         "opening_total": _int_money(summary.get("opening_total")),
         "cash_sales": _int_money(summary.get("cash_sales")),
         "mpesa_sales": _int_money(summary.get("mpesa_sales")),
+        "card_sales": _int_money(summary.get("card_sales")),
         "cash_refunds": _int_money(summary.get("cash_refunds")),
         "mpesa_refunds": _int_money(summary.get("mpesa_refunds")),
+        "card_refunds": _int_money(summary.get("card_refunds")),
         "expenses_paid": _int_money(summary.get("expenses_paid")),
         "drawings_paid": _int_money(summary.get("drawings_paid")),
         "drawings_cash": _int_money(summary.get("drawings_cash")),
         "drawings_mpesa": _int_money(summary.get("drawings_mpesa")),
+        "drawings_card": _int_money(summary.get("drawings_card")),
         "suppliers_paid": _int_money(summary.get("suppliers_paid")),
     }
     if channels is not None:
         payload["channels"] = {
             "cash": bool(channels.get("cash")),
             "mpesa": bool(channels.get("mpesa")),
+            "card": bool(channels.get("card")),
         }
     return payload
 
@@ -7318,6 +7424,13 @@ def _parse_balance_fields(
             )
             if channels["mpesa"]
             else _default("mpesa")
+        ),
+        "card": (
+            _required_balance_amount(
+                payload, keys=("card_amount", "card"), label="card"
+            )
+            if channels["card"]
+            else _default("card")
         ),
         # Credit is not a till channel; keep the column at zero.
         "credit": zero,
@@ -7368,6 +7481,7 @@ def open_shop_day(*, shop: Shop, payload: dict):
         defaults = {
             "cash": last_closed.closing_cash,
             "mpesa": last_closed.closing_mpesa,
+            "card": last_closed.closing_card,
             "credit": last_closed.closing_credit,
         }
     balances = _parse_balance_fields(payload, shop=shop, defaults=defaults)
@@ -7375,6 +7489,7 @@ def open_shop_day(*, shop: Shop, payload: dict):
         shop=shop,
         opening_cash=balances["cash"],
         opening_mpesa=balances["mpesa"],
+        opening_card=balances["card"],
         opening_credit=balances["credit"],
         stock_confirmed_open=True,
         opened_by=authorising,
@@ -7427,11 +7542,13 @@ def close_shop_day(*, shop: Shop, payload: dict):
         defaults={
             "cash": summary.get("expected_cash"),
             "mpesa": summary.get("expected_mpesa"),
+            "card": summary.get("expected_card"),
             "credit": summary.get("expected_credit"),
         },
     )
     session.closing_cash = balances["cash"]
     session.closing_mpesa = balances["mpesa"]
+    session.closing_card = balances["card"]
     session.closing_credit = balances["credit"]
     session.stock_confirmed_close = True
     session.closed_by = authorising
@@ -7440,6 +7557,7 @@ def close_shop_day(*, shop: Shop, payload: dict):
         update_fields=[
             "closing_cash",
             "closing_mpesa",
+            "closing_card",
             "closing_credit",
             "stock_confirmed_close",
             "closed_by",
@@ -7809,12 +7927,18 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         if channels["mpesa"]
         else zero
     )
+    card_amount = (
+        _optional_amount(payload.get("card_amount"), label="card")
+        if channels.get("card")
+        else zero
+    )
 
-    # Backward-compatible single "amount" field → cash when cash is enabled.
+    # Backward-compatible single "amount" field → first enabled till channel.
     legacy_raw = payload.get("amount")
     if (
         cash_amount == zero
         and mpesa_amount == zero
+        and card_amount == zero
         and legacy_raw is not None
         and str(legacy_raw).strip() != ""
     ):
@@ -7826,18 +7950,25 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
             cash_amount = legacy_amount
         elif channels["mpesa"]:
             mpesa_amount = legacy_amount
+        elif channels.get("card"):
+            card_amount = legacy_amount
         else:
             cash_amount = legacy_amount
 
-    if cash_amount < 0 or mpesa_amount < 0:
+    if cash_amount < 0 or mpesa_amount < 0 or card_amount < 0:
         raise ValidationError("Drawing amounts cannot be negative.")
-    amount = cash_amount + mpesa_amount
+    amount = cash_amount + mpesa_amount + card_amount
     if amount <= 0:
-        if channels["cash"] and channels["mpesa"]:
-            raise ValidationError("Enter a cash and/or M-Pesa amount to draw.")
-        if channels["mpesa"]:
-            raise ValidationError("Enter an M-Pesa amount to draw.")
-        raise ValidationError("Enter a cash amount to draw.")
+        enabled_labels = [
+            label
+            for key, label in (("cash", "cash"), ("mpesa", "M-Pesa"), ("card", "card"))
+            if channels.get(key)
+        ]
+        raise ValidationError(
+            f"Enter a {' and/or '.join(enabled_labels)} amount to draw."
+            if enabled_labels
+            else "Enter a drawing amount."
+        )
 
     name = (payload.get("name") or payload.get("note") or "").strip().upper()
     parts = [f"OWNER DRAWING · {drawer_name}"]
@@ -7845,6 +7976,8 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         parts.append(f"CASH {cash_amount.quantize(Decimal('1'))}")
     if mpesa_amount > 0:
         parts.append(f"MPESA {mpesa_amount.quantize(Decimal('1'))}")
+    if card_amount > 0:
+        parts.append(f"CARD {card_amount.quantize(Decimal('1'))}")
     if not name or name == "OWNER DRAWING":
         name = " · ".join(parts).upper()
     if len(name) > 200:
@@ -7858,6 +7991,7 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         amount_paid=amount,
         cash_amount=cash_amount,
         mpesa_amount=mpesa_amount,
+        card_amount=card_amount,
         payment_status=ExpensePaymentStatus.PAID,
         supplier=None,
         supplier_name="",
@@ -7871,6 +8005,8 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         breakdown.append(f"cash KSh {cash_amount.quantize(Decimal('1'))}")
     if mpesa_amount > 0:
         breakdown.append(f"M-Pesa KSh {mpesa_amount.quantize(Decimal('1'))}")
+    if card_amount > 0:
+        breakdown.append(f"card KSh {card_amount.quantize(Decimal('1'))}")
     breakdown_label = " + ".join(breakdown) if breakdown else f"KSh {amount_label}"
     return {
         "expense": expense,
@@ -7879,6 +8015,7 @@ def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
         "drawn_by": drawer_name,
         "cash_amount": cash_amount,
         "mpesa_amount": mpesa_amount,
+        "card_amount": card_amount,
         "message": (
             f"Owner drawing of {breakdown_label} recorded for {shop.name} "
             f"(released by {staff_name}, taken by {drawer_name})."
@@ -8459,6 +8596,7 @@ def _supplier_detail_from_print(
             "tax_amount": "0",
             "cash_amount": "0",
             "mpesa_amount": "0",
+            "card_amount": "0",
             "lines": lines,
             "returnable_lines": [],
         },
@@ -8525,6 +8663,7 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
                 "tax_amount": str(receipt.tax_amount),
                 "cash_amount": str(receipt.cash_amount),
                 "mpesa_amount": str(receipt.mpesa_amount),
+                "card_amount": str(getattr(receipt, "card_amount", 0) or 0),
                 "payment_methods": [
                     str(method) for method in pos_settings.enabled_payment_methods()
                 ],
@@ -9617,11 +9756,13 @@ def return_shop_receipt_items(
     tax_percent = Decimal(receipt.tax_percent or 0)
     prior_cash = Decimal(receipt.cash_amount or 0)
     prior_mpesa = Decimal(receipt.mpesa_amount or 0)
+    prior_card = Decimal(getattr(receipt, "card_amount", None) or 0)
     if remaining_subtotal <= 0:
         tax_amount = Decimal("0.00")
         total = Decimal("0.00")
         cash_amount = Decimal("0.00")
         mpesa_amount = Decimal("0.00")
+        card_amount = Decimal("0.00")
         status = ShopReceiptStatus.CANCELLED
     else:
         tax_amount = (remaining_subtotal * tax_percent / Decimal("100")).quantize(
@@ -9639,27 +9780,11 @@ def return_shop_receipt_items(
             status = ShopReceiptStatus.ACTIVE
         cash_amount = receipt.cash_amount
         mpesa_amount = receipt.mpesa_amount
+        card_amount = getattr(receipt, "card_amount", 0) or Decimal("0.00")
         if receipt.kind == ShopReceiptKind.SALE:
-            if receipt.payment_method == ShopPaymentMethod.CASH:
-                cash_amount = total
-                mpesa_amount = Decimal("0.00")
-            elif receipt.payment_method == ShopPaymentMethod.MPESA:
-                mpesa_amount = total
-                cash_amount = Decimal("0.00")
-            elif receipt.payment_method == ShopPaymentMethod.BOTH:
-                old_total = Decimal(receipt.total or 0)
-                if old_total > 0:
-                    ratio = total / old_total
-                    cash_amount = (Decimal(receipt.cash_amount or 0) * ratio).quantize(
-                        Decimal("0.01")
-                    )
-                    mpesa_amount = (total - cash_amount).quantize(Decimal("0.01"))
-                else:
-                    cash_amount = Decimal("0.00")
-                    mpesa_amount = total
-            else:
-                cash_amount = Decimal("0.00")
-                mpesa_amount = Decimal("0.00")
+            cash_amount, mpesa_amount, card_amount = _sale_tender_for_total(
+                receipt, total
+            )
         elif receipt.kind not in {
             ShopReceiptKind.CREDIT,
             ShopReceiptKind.TRADE_OUT,
@@ -9673,6 +9798,7 @@ def return_shop_receipt_items(
     receipt.total = total
     receipt.cash_amount = cash_amount
     receipt.mpesa_amount = mpesa_amount
+    receipt.card_amount = card_amount
     receipt.status = status
     receipt.last_returned_at = now
     receipt.last_returned_by = authorising
@@ -9682,6 +9808,7 @@ def return_shop_receipt_items(
         "total",
         "cash_amount",
         "mpesa_amount",
+        "card_amount",
         "status",
         "last_returned_at",
         "last_returned_by",
@@ -9691,6 +9818,7 @@ def return_shop_receipt_items(
         at=now,
         cash=prior_cash - Decimal(cash_amount or 0),
         mpesa=prior_mpesa - Decimal(mpesa_amount or 0),
+        card=prior_card - Decimal(card_amount or 0),
         by_id=authorising.pk if authorising else None,
     ):
         return_update_fields.append("return_payment_events")
@@ -9733,6 +9861,7 @@ def return_shop_receipt_items(
                 "payment_method",
                 "cash_amount",
                 "mpesa_amount",
+                "card_amount",
                 "credit_due_date",
                 "settled_from_credit",
             ]
@@ -9753,31 +9882,42 @@ def return_shop_receipt_items(
     }
 
 
-def _parse_confirm_payment_split(cash_raw, mpesa_raw, *, total: Decimal):
-    """Cash/M-Pesa split when confirming a sale paid by 'both'.
+def _parse_confirm_payment_split(channels, raws: dict, *, total: Decimal) -> dict:
+    """Split amounts across a combo method's channels.
 
-    A missing side is filled with the remainder of the receipt total.
+    One missing channel is filled with the remainder of the receipt total.
     """
-    cash_txt = str(cash_raw or "").strip()
-    mpesa_txt = str(mpesa_raw or "").strip()
-    try:
-        cash = Decimal(cash_txt).quantize(Decimal("0.01")) if cash_txt else None
-        mpesa = Decimal(mpesa_txt).quantize(Decimal("0.01")) if mpesa_txt else None
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValidationError("Enter valid cash and M-Pesa amounts.") from exc
-    if cash is None and mpesa is None:
-        raise ValidationError("Enter how much was paid by cash and by M-Pesa.")
-    if cash is None:
-        cash = (total - mpesa).quantize(Decimal("0.01"))
-    if mpesa is None:
-        mpesa = (total - cash).quantize(Decimal("0.01"))
-    if cash < 0 or mpesa < 0:
-        raise ValidationError("Cash and M-Pesa amounts cannot be negative.")
-    if (cash + mpesa).quantize(Decimal("0.01")) != total:
+    labels = " + ".join(CHANNEL_LABELS[ch] for ch in channels)
+    values: dict[str, Decimal | None] = {}
+    missing: list[str] = []
+    for channel in channels:
+        text = str(raws.get(channel) or "").strip()
+        if not text:
+            values[channel] = None
+            missing.append(channel)
+            continue
+        try:
+            values[channel] = Decimal(text).quantize(Decimal("0.01"))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValidationError(f"Enter valid {labels} amounts.") from exc
+    if len(missing) == len(channels):
+        raise ValidationError(f"Enter how much was paid by {labels}.")
+    if len(missing) > 1:
         raise ValidationError(
-            f"Cash + M-Pesa must add up to the receipt total (KSh {total:,.2f})."
+            f"Enter at least {len(channels) - 1} of the {labels} amounts."
         )
-    return cash, mpesa
+    if missing:
+        ch = missing[0]
+        values[ch] = (
+            total - sum(v for v in values.values() if v is not None)
+        ).quantize(Decimal("0.01"))
+    if any(values[ch] < 0 for ch in channels):
+        raise ValidationError(f"{labels} amounts cannot be negative.")
+    if sum(values[ch] for ch in channels).quantize(Decimal("0.01")) != total:
+        raise ValidationError(
+            f"{labels} must add up to the receipt total (KSh {total:,.2f})."
+        )
+    return values
 
 
 def _resolve_confirm_receipt_status(raw: str | None) -> str:
@@ -9794,31 +9934,57 @@ def _resolve_confirm_receipt_status(raw: str | None) -> str:
     return mapping[key]
 
 
-def _sale_payment_split_for_total(receipt, total: Decimal) -> tuple[Decimal, Decimal]:
-    """Rebuild cash/M-Pesa split for a restored sale total."""
+def _sale_tender_for_total(
+    receipt, total: Decimal
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Rebuild (cash, M-Pesa, card) split for a receipt's (new) sale total."""
     total = Decimal(total or 0).quantize(Decimal("0.01"))
-    orig_cash, orig_mpesa = _receipt_original_tender(
+    zero = Decimal("0.00")
+    channels = payment_method_channels(receipt.payment_method)
+    orig_cash, orig_mpesa, orig_card = _receipt_original_tender(
         receipt.cash_amount,
         receipt.mpesa_amount,
         getattr(receipt, "return_payment_events", None),
+        card_amount=getattr(receipt, "card_amount", 0),
     )
-    orig_total = (orig_cash + orig_mpesa).quantize(Decimal("0.01"))
+    original = {"cash": orig_cash, "mpesa": orig_mpesa, "card": orig_card}
+    orig_total = (orig_cash + orig_mpesa + orig_card).quantize(Decimal("0.01"))
+
+    def _blank() -> tuple[Decimal, Decimal, Decimal]:
+        return zero, zero, zero
+
+    if not channels:
+        return _blank()
     if orig_total > 0 and total > 0:
         if orig_total == total:
-            return orig_cash, orig_mpesa
+            return orig_cash, orig_mpesa, orig_card
         ratio = total / orig_total
-        cash = (orig_cash * ratio).quantize(Decimal("0.01"))
-        mpesa = (total - cash).quantize(Decimal("0.01"))
-        return cash, mpesa
+        scaled = {}
+        # Last channel absorbs rounding drift so the split sums to total.
+        for channel in channels[:-1]:
+            scaled[channel] = (original[channel] * ratio).quantize(
+                Decimal("0.01")
+            )
+        last = channels[-1]
+        scaled[last] = (total - sum(scaled.values())).quantize(Decimal("0.01"))
+        return scaled.get("cash", zero), scaled.get("mpesa", zero), scaled.get(
+            "card", zero
+        )
 
-    if receipt.payment_method == ShopPaymentMethod.CASH:
-        return total, Decimal("0.00")
-    if receipt.payment_method == ShopPaymentMethod.MPESA:
-        return Decimal("0.00"), total
-    if receipt.payment_method == ShopPaymentMethod.BOTH:
-        cash = (total / Decimal("2")).quantize(Decimal("0.01"))
-        return cash, (total - cash).quantize(Decimal("0.01"))
-    return Decimal("0.00"), Decimal("0.00")
+    if len(channels) == 1:
+        result = {"cash": zero, "mpesa": zero, "card": zero}
+        result[channels[0]] = total
+        return result["cash"], result["mpesa"], result["card"]
+
+    # No original split to scale (legacy rows): spread evenly across channels.
+    share = (total / Decimal(len(channels))).quantize(Decimal("0.01"))
+    result = {"cash": zero, "mpesa": zero, "card": zero}
+    for channel in channels[:-1]:
+        result[channel] = share
+    result[channels[-1]] = (total - share * (len(channels) - 1)).quantize(
+        Decimal("0.01")
+    )
+    return result["cash"], result["mpesa"], result["card"]
 
 
 @transaction.atomic
@@ -9988,13 +10154,16 @@ def reopen_cancelled_shop_receipt(
     tax_percent = Decimal(receipt.tax_percent or 0)
     tax_amount = (subtotal * tax_percent / Decimal("100")).quantize(Decimal("0.01"))
     total = (subtotal + tax_amount).quantize(Decimal("0.01"))
-    cash_amount, mpesa_amount = _sale_payment_split_for_total(receipt, total)
+    cash_amount, mpesa_amount, card_amount = _sale_tender_for_total(
+        receipt, total
+    )
 
     receipt.subtotal = subtotal
     receipt.tax_amount = tax_amount
     receipt.total = total
     receipt.cash_amount = cash_amount
     receipt.mpesa_amount = mpesa_amount
+    receipt.card_amount = card_amount
     receipt.amount_paid = total
     receipt.status = target_status
     receipt.return_payment_events = []
@@ -10007,6 +10176,7 @@ def reopen_cancelled_shop_receipt(
             "total",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "amount_paid",
             "status",
             "return_payment_events",
@@ -10157,6 +10327,7 @@ def confirm_shop_receipt(
     payment_method: str = "",
     cash_amount=None,
     mpesa_amount=None,
+    card_amount=None,
 ) -> dict:
     """Mark a pending sale as confirmed, or apply a credit confirm amount."""
     from .models import ShopReceipt
@@ -10240,16 +10411,20 @@ def confirm_shop_receipt(
         else:
             apply_amount = _parse_confirm_credit_amount(amount, due=due)
         method = (payment_method or "").strip().lower()
-        if method not in {"cash", "mpesa"}:
+        if method not in {"cash", "mpesa", "card"}:
             method = "mpesa" if ref or existing_ref else "cash"
         if apply_amount > 0:
-            if method == "mpesa" and not getattr(pos, "enable_mpesa", True):
+            if method == "mpesa" and not pos_channel_enabled(pos, "mpesa"):
                 raise ValidationError(
                     "M-Pesa payments are disabled for this company."
                 )
-            if method == "cash" and not getattr(pos, "enable_cash", True):
+            if method == "cash" and not pos_channel_enabled(pos, "cash"):
                 raise ValidationError(
                     "Cash payments are disabled for this company."
+                )
+            if method == "card" and not pos_channel_enabled(pos, "card"):
+                raise ValidationError(
+                    "Card payments are disabled for this company."
                 )
             from shops.credit_settlement import record_credit_collection
 
@@ -10296,6 +10471,7 @@ def confirm_shop_receipt(
                         "credit_due_date",
                         "cash_amount",
                         "mpesa_amount",
+                        "card_amount",
                         "settled_from_credit",
                     ]
                 )
@@ -10331,34 +10507,41 @@ def confirm_shop_receipt(
     receipt.status = ShopReceiptStatus.CONFIRMED
     update_fields = ["status"]
     if not is_credit:
-        # The confirmer may correct how the sale was paid (cash / M-Pesa / both).
+        # The confirmer may correct how the sale was paid (incl. card combos).
         method_key = (payment_method or "").strip().lower()
         if method_key:
-            if method_key not in {
-                ShopPaymentMethod.CASH,
-                ShopPaymentMethod.MPESA,
-                ShopPaymentMethod.BOTH,
-            }:
-                raise ValidationError("Choose cash, M-Pesa, or cash + M-Pesa.")
+            if method_key not in SALE_PAYMENT_METHODS:
+                raise ValidationError("Choose an enabled payment method.")
             if not pos.payment_method_enabled(method_key):
                 raise ValidationError(
                     "That payment method is not enabled for this shop."
                 )
             total = Decimal(receipt.total or 0).quantize(Decimal("0.01"))
-            if method_key == ShopPaymentMethod.CASH:
-                receipt.cash_amount = total
-                receipt.mpesa_amount = Decimal("0.00")
-            elif method_key == ShopPaymentMethod.MPESA:
-                receipt.cash_amount = Decimal("0.00")
-                receipt.mpesa_amount = total
+            channels = payment_method_channels(method_key)
+            receipt.cash_amount = Decimal("0.00")
+            receipt.mpesa_amount = Decimal("0.00")
+            receipt.card_amount = Decimal("0.00")
+            if len(channels) == 1:
+                setattr(receipt, f"{channels[0]}_amount", total)
             else:
-                receipt.cash_amount, receipt.mpesa_amount = (
-                    _parse_confirm_payment_split(
-                        cash_amount, mpesa_amount, total=total
-                    )
+                split = _parse_confirm_payment_split(
+                    channels,
+                    {
+                        "cash": cash_amount,
+                        "mpesa": mpesa_amount,
+                        "card": card_amount,
+                    },
+                    total=total,
                 )
+                for channel in channels:
+                    setattr(receipt, f"{channel}_amount", split[channel])
             receipt.payment_method = method_key
-            update_fields += ["payment_method", "cash_amount", "mpesa_amount"]
+            update_fields += [
+                "payment_method",
+                "cash_amount",
+                "mpesa_amount",
+                "card_amount",
+            ]
     if cleared_credit:
         for field in (
             "kind",
@@ -10366,6 +10549,7 @@ def confirm_shop_receipt(
             "credit_due_date",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "settled_from_credit",
         ):
             if field not in update_fields:
@@ -10411,6 +10595,7 @@ def set_confirm_receipt_status(
     payment_method: str = "",
     cash_amount=None,
     mpesa_amount=None,
+    card_amount=None,
 ) -> dict:
     """Set a sales/credit receipt status from confirm-receipts."""
     from .models import ShopReceipt
@@ -10469,6 +10654,7 @@ def set_confirm_receipt_status(
             payment_method=payment_method,
             cash_amount=cash_amount,
             mpesa_amount=mpesa_amount,
+            card_amount=card_amount,
         )
 
     if target == ShopReceiptStatus.CANCELLED:

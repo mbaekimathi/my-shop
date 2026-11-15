@@ -1041,3 +1041,254 @@
   background: rgba(15, 118, 110, 0.08);
   color: var(--stock-brand, #0f766e);
 }
+
+.store-stock-field[hidden] {
+  display: none;
+}
+
+/* Item stock trade popup — two pick lists (give / receive) in one modal. */
+.stock-trade-side {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+  min-width: 0;
+}
+
+.stock-trade-side + .stock-trade-side {
+  border-top: 1px dashed var(--stock-line, #e2e8f0);
+  padding-top: 0.65rem;
+}
+
+.stock-trade-side-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--stock-muted, #64748b);
+}
+
+.stock-trade-side-title svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.stock-trade-side-summary {
+  margin: 0;
+}
+
+/* Category divider row inside the store/shelf stock list tables. */
+.store-stock-cat-row td {
+  padding: 0.65rem 1rem 0.35rem;
+  border-bottom: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.store-stock-cat-row:hover td {
+  background: none;
+}
+
+@media (max-width: 720px) {
+  .store-stock-table tbody tr.store-stock-cat-row {
+    padding: 0.4rem 0.85rem 0;
+    border: 0;
+    background: none;
+  }
+
+  .store-stock-table tbody tr.store-stock-cat-row td {
+    grid-column: 1 / -1;
+    padding: 0;
+  }
+}
+
+/* Stock in/out pick rows — search a name, "Add" moves the row into the
+   "Your items" list and enables its qty/price inputs. */
+.stock-flow-row[hidden],
+.stock-flow-inputs[hidden],
+.stock-flow-add[hidden],
+.stock-flow-selected[hidden] {
+  display: none;
+}
+
+.stock-flow-list {
+  gap: 0.45rem;
+}
+
+.stock-flow-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stock-flow-row:hover {
+  border-color: color-mix(in srgb, var(--ss-accent) 35%, var(--border));
+}
+
+.stock-flow-row.is-added {
+  border-color: color-mix(in srgb, var(--ss-accent) 40%, var(--border));
+}
+
+.stock-flow-row.is-filled {
+  border-color: var(--ss-accent);
+  box-shadow: 0 0 0 3px var(--ss-accent-soft);
+}
+
+.stock-flow-row .item-thumb {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.45rem;
+  object-fit: cover;
+}
+
+.stock-flow-row-copy {
+  display: grid;
+  gap: 0.05rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.stock-flow-row-copy strong {
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stock-flow-row-copy small {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stock-flow-inputs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.stock-flow-qty {
+  max-width: 5rem;
+}
+
+.stock-flow-price {
+  max-width: 6.25rem;
+}
+
+.stock-flow-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--danger-text, #b42318);
+  cursor: pointer;
+}
+
+.stock-flow-remove:hover {
+  background: color-mix(in srgb, var(--danger-text, #b42318) 10%, transparent);
+}
+
+.stock-flow-remove i,
+.stock-flow-remove svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.stock-flow-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 2.1rem;
+  margin: 0;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--ss-accent) 45%, var(--border));
+  border-radius: 999px;
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.stock-flow-add:hover {
+  background: color-mix(in srgb, var(--ss-accent) 20%, var(--surface));
+  border-color: var(--ss-accent);
+  transform: translateY(-1px);
+}
+
+.stock-flow-add i,
+.stock-flow-add svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+/* "Your items" — added rows grouped above the search results. */
+.stock-flow-selected {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--ss-accent) 35%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ss-accent-soft) 55%, var(--surface));
+}
+
+.stock-flow-selected-label {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ss-accent-ink, var(--text-muted));
+}
+
+.stock-flow-selected-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.stock-flow-selected .stock-flow-row {
+  background: var(--surface);
+}
+
+@media (max-width: 560px) {
+  .stock-flow-row {
+    flex-wrap: wrap;
+  }
+
+  .stock-flow-inputs {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+
+  .stock-flow-qty,
+  .stock-flow-price {
+    flex: 1 1 0;
+    max-width: none;
+  }
+}

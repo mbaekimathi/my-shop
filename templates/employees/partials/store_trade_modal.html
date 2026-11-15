@@ -1,0 +1,194 @@
+{# Store stock trade popup — one-way trade with a person (out or in). #}
+<div
+  class="workspace-modal buy-stock-modal stock-flow-modal stock-trade-modal"
+  data-modal="store-stock-trade"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="store-stock-trade"></div>
+  <div
+    class="workspace-modal-dialog buy-stock-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-trade-title"
+  >
+    <div class="workspace-modal-head buy-stock-modal-head">
+      <div class="buy-stock-modal-head-copy">
+        <p class="buy-stock-modal-kicker">Central store</p>
+        <h2 id="stock-trade-title">Item stock trade</h2>
+        <p class="buy-stock-modal-lead" data-trade-lead>
+          The person takes items out of the store.
+        </p>
+      </div>
+      <button
+        class="workspace-icon-btn"
+        type="button"
+        aria-label="Close"
+        data-modal-close="store-stock-trade"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form
+      class="buy-stock-simple"
+      method="post"
+      action="{{ post_url }}"
+      data-store-stock
+      data-store-stock-form
+    >
+      {% csrf_token %}
+      <div class="buy-stock-simple-main">
+        <div class="shop-cart-field">
+          <span class="shop-cart-field-label">Trade type</span>
+          <div class="shop-cart-seg stock-trade-seg" role="group" aria-label="Trade type">
+            <label class="shop-cart-seg-option">
+              <input type="radio" name="trade_kind" value="trade_out" data-trade-kind checked>
+              <span>Trade out</span>
+            </label>
+            <label class="shop-cart-seg-option">
+              <input type="radio" name="trade_kind" value="trade_in" data-trade-kind>
+              <span>Trade in</span>
+            </label>
+          </div>
+          <p class="shop-cart-client-note stock-trade-note">
+            Trade out: the person takes items. Trade in: the person brings items.
+          </p>
+        </div>
+
+        <div class="buy-stock-simple-search">
+          <label class="buy-stock-simple-search-field">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input
+              type="search"
+              placeholder="Search to add items…"
+              autocomplete="off"
+              data-store-item-filter
+              data-stock-flow-filter
+              aria-label="Search items to trade"
+            >
+          </label>
+        </div>
+
+        <div class="stock-flow-selected" data-store-selected-wrap hidden>
+          <p class="stock-flow-selected-label">Your items</p>
+          <div class="stock-flow-selected-list" data-store-selected-list></div>
+        </div>
+
+        <div class="buy-stock-simple-list stock-flow-list" data-store-list>
+          {% if items %}
+          <div class="buy-stock-simple-empty buy-stock-simple-empty-card" data-store-idle>
+            <span class="buy-stock-simple-empty-icon" aria-hidden="true">
+              <i data-lucide="package-search"></i>
+            </span>
+            <p>Type a name to add items</p>
+          </div>
+          {% for item in items %}
+          <div class="stock-flow-row" data-store-item-row data-search="{{ item.search_text }}">
+            <div class="stock-flow-row-copy">
+              <strong>{{ item.name }}</strong>
+              <small>{{ item.category }} · in store {{ item.store_qty_display }}</small>
+            </div>
+            <div class="stock-flow-inputs" data-store-row-inputs>
+              <input
+                class="store-stock-qty-input stock-flow-qty"
+                type="number"
+                name="qty_{{ item.id }}"
+                min="0"
+                step="any"
+                inputmode="decimal"
+                placeholder="Qty"
+                title="Quantity"
+                aria-label="Quantity for {{ item.name }}"
+                data-store-qty-input
+              >
+              <input
+                class="store-stock-qty-input stock-flow-price"
+                type="number"
+                name="price_{{ item.id }}"
+                min="0"
+                step="any"
+                inputmode="decimal"
+                placeholder="Value"
+                title="Unit value"
+                aria-label="Unit value for {{ item.name }}"
+                data-trade-price
+              >
+              <button
+                type="button"
+                class="stock-flow-remove"
+                data-store-row-remove
+                aria-label="Remove {{ item.name }}"
+              >
+                <i data-lucide="x" aria-hidden="true"></i>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="stock-flow-add"
+              data-store-row-add
+              aria-label="Add {{ item.name }}"
+            >
+              <i data-lucide="plus" aria-hidden="true"></i>
+              <span>Add</span>
+            </button>
+          </div>
+          {% endfor %}
+          {% else %}
+          <div class="buy-stock-simple-empty buy-stock-simple-empty-card">
+            <span class="buy-stock-simple-empty-icon" aria-hidden="true">
+              <i data-lucide="package-search"></i>
+            </span>
+            <p>No items yet — register items in Item Management first</p>
+          </div>
+          {% endif %}
+          <div class="item-search-empty buy-stock-simple-no-results" data-store-no-filter-results hidden>
+            <i data-lucide="search-x" aria-hidden="true"></i>
+            <p>No matching items.</p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="buy-stock-simple-confirm">
+        <div class="buy-stock-simple-confirm-card">
+          <div class="buy-stock-simple-supplier stock-flow-meta">
+            <label class="stock-float-field">
+              <span>Other person's name{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+              <input
+                type="text"
+                name="person_name"
+                maxlength="160"
+                placeholder="Full name"
+                data-uppercase
+              >
+            </label>
+            <label class="stock-float-field">
+              <span>Other person's phone{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+              <input
+                type="tel"
+                name="person_phone"
+                maxlength="40"
+                placeholder="e.g. 0722 000 000"
+              >
+            </label>
+            <label class="stock-float-field">
+              <span>Note <em>optional</em></span>
+              <input type="text" name="note" maxlength="255" placeholder="Trade note, reference…">
+            </label>
+
+            <p class="stock-float-apply-status stock-flow-summary" data-store-filled-summary>
+              No quantities entered yet
+            </p>
+          </div>
+
+          <div class="buy-stock-simple-footer">
+            <button class="stock-float-submit buy-stock-simple-submit" type="submit">
+              <i data-lucide="repeat" aria-hidden="true"></i>
+              <span data-trade-submit-label>Record trade out</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+    </form>
+  </div>
+</div>

@@ -383,13 +383,18 @@
           <select data-stock-paymethod aria-label="Payment method">
             <option value="cash">Cash</option>
             <option value="mpesa">M-Pesa</option>
+            <option value="card">Card</option>
             <option value="both">Cash + M-Pesa</option>
+            <option value="cash_card">Cash + Card</option>
+            <option value="mpesa_card">M-Pesa + Card</option>
+            <option value="cash_mpesa_card">Cash + M-Pesa + Card</option>
           </select>
         </div>
         <input type="date" data-stock-duedate hidden title="Credit due date">
         <div class="wa-stock__paysplit" data-stock-paysplit hidden>
           <input type="number" placeholder="Cash amount" min="0" step="any" data-stock-cashamt>
           <input type="number" placeholder="M-Pesa amount" min="0" step="any" data-stock-mpesaamt>
+          <input type="number" placeholder="Card amount" min="0" step="any" data-stock-cardamt hidden>
         </div>
       </div>
       <div class="wa-stock__fields" data-stock-client hidden>

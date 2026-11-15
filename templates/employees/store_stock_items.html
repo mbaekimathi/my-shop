@@ -1,0 +1,143 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
+{% endblock %}
+
+{% block workspace_content %}
+<section class="store-stock" data-animate="rise">
+  <header class="store-stock-hero">
+    <div class="store-stock-hero-copy">
+      <p class="store-stock-kicker">
+        <span class="store-stock-mode-pill" aria-hidden="true">
+          <i data-lucide="{{ meta.icon }}"></i>
+        </span>
+        Item stock
+      </p>
+      <h2>{{ meta.headline }}</h2>
+      <p class="store-stock-lead">{{ meta.summary }}</p>
+    </div>
+    <dl class="store-stock-stats">
+      <div class="store-stock-stat">
+        <dt>Items</dt>
+        <dd data-store-visible-count>{{ item_count }}</dd>
+      </div>
+      <div class="store-stock-stat">
+        <dt>In store</dt>
+        <dd>{{ store_total_display }}</dd>
+      </div>
+    </dl>
+  </header>
+
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="store-items-title">
+    <div class="store-stock-panel-head store-stock-panel-head--list">
+      <div>
+        <h3 id="store-items-title">Items</h3>
+        <p>Current quantity in the central store. Shop floor stock is separate.</p>
+      </div>
+      <label class="store-stock-filter">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          placeholder="Filter by name or category"
+          autocomplete="off"
+          data-store-items-filter
+          aria-label="Filter items"
+        >
+      </label>
+    </div>
+
+    {% if items %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">Item</th>
+            <th scope="col" class="store-stock-col-qty">Last buy price</th>
+            <th scope="col" class="store-stock-col-qty">In store</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          {% ifchanged item.category %}
+          <tr class="store-stock-cat-row" data-store-cat-row>
+            <td colspan="3">{{ item.category|default:"Uncategorised" }}</td>
+          </tr>
+          {% endifchanged %}
+          <tr class="store-stock-row" data-store-items-row data-search="{{ item.search_text }}">
+            <td data-label="Item">
+              <div class="store-stock-item-cell">
+                <span class="store-stock-item-name">{{ item.name }}</span>
+                <span class="store-stock-item-cat-mobile">{{ item.category }}</span>
+              </div>
+            </td>
+            <td class="store-stock-col-qty" data-label="Last buy price">
+              <span class="store-stock-balance-pill">{{ item.last_buying_price_display|default:"—" }}</span>
+            </td>
+            <td class="store-stock-col-qty" data-label="In store">
+              <span class="store-stock-balance-pill">{{ item.store_qty_display }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="store-stock-empty-filter" data-store-items-no-results hidden>
+      No items match that filter.
+    </p>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="package" aria-hidden="true"></i>
+      <p><strong>No items yet.</strong> Register items in Item Management first.</p>
+    </div>
+    {% endif %}
+  </section>
+
+</section>
+<script>
+(function () {
+  var input = document.querySelector("[data-store-items-filter]");
+  if (!input) return;
+  var rows = Array.prototype.slice.call(document.querySelectorAll("[data-store-items-row]"));
+  var catRows = Array.prototype.slice.call(document.querySelectorAll("[data-store-cat-row]"));
+  var empty = document.querySelector("[data-store-items-no-results]");
+  var count = document.querySelector("[data-store-visible-count]");
+  input.addEventListener("input", function () {
+    var needle = input.value.trim().toLowerCase();
+    var visible = 0;
+    rows.forEach(function (row) {
+      var show = !needle || (row.getAttribute("data-search") || "").indexOf(needle) !== -1;
+      row.hidden = !show;
+      if (show) visible += 1;
+    });
+    catRows.forEach(function (head) {
+      var el = head.nextElementSibling;
+      var show = false;
+      while (el && !el.hasAttribute("data-store-cat-row")) {
+        if (!el.hidden) show = true;
+        el = el.nextElementSibling;
+      }
+      head.hidden = !show;
+    });
+    if (empty) empty.hidden = visible > 0;
+    if (count) count.textContent = String(visible);
+  });
+})();
+</script>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+{% include "employees/partials/store_flow_modal.html" with flow="in" post_url=stock_in_url %}
+{% include "employees/partials/store_flow_modal.html" with flow="out" post_url=stock_out_url %}
+{% include "employees/partials/store_trade_modal.html" with post_url=stock_trade_url %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
+{% endblock %}

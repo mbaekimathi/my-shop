@@ -2,7 +2,12 @@
 
 from decimal import Decimal
 
-from shops.models import ShopPaymentMethod, ShopReceiptKind, ShopReceiptStatus
+from shops.models import (
+    ShopPaymentMethod,
+    ShopReceiptKind,
+    ShopReceiptStatus,
+    payment_method_for_channels,
+)
 
 
 def _money(value) -> Decimal:
@@ -17,18 +22,15 @@ def _due(total, paid) -> Decimal:
 
 
 def _sync_sale_payment_fields(receipt) -> None:
-    cash = _money(receipt.cash_amount)
-    mpesa = _money(receipt.mpesa_amount)
+    used = [
+        channel
+        for channel in ("cash", "mpesa", "card")
+        if _money(getattr(receipt, f"{channel}_amount", 0)) > 0
+    ]
+    if used:
+        receipt.payment_method = payment_method_for_channels(used)
+        return
     paid = _money(receipt.amount_paid)
-    if cash > 0 and mpesa > 0:
-        receipt.payment_method = ShopPaymentMethod.BOTH
-        return
-    if mpesa > 0:
-        receipt.payment_method = ShopPaymentMethod.MPESA
-        return
-    if cash > 0:
-        receipt.payment_method = ShopPaymentMethod.CASH
-        return
     if (receipt.mpesa_receipt_number or "").strip():
         receipt.payment_method = ShopPaymentMethod.MPESA
         receipt.mpesa_amount = paid
@@ -74,6 +76,11 @@ def record_credit_collection(
         if ref and not (receipt.mpesa_receipt_number or "").strip():
             receipt.mpesa_receipt_number = ref
             update_fields.append("mpesa_receipt_number")
+    elif method == "card":
+        receipt.card_amount = _money(
+            Decimal(getattr(receipt, "card_amount", 0) or 0) + apply
+        )
+        update_fields.append("card_amount")
     else:
         receipt.cash_amount = _money(Decimal(receipt.cash_amount or 0) + apply)
         update_fields.append("cash_amount")
@@ -86,6 +93,7 @@ def record_credit_collection(
             "credit_due_date",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "settled_from_credit",
         ):
             if field not in update_fields:

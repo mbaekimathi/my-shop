@@ -352,6 +352,15 @@ def _pos_feature_flags() -> dict:
     credit = bool(getattr(row, "enable_credit", True))
     trade_out = bool(getattr(row, "enable_trade_out", True))
     trade_in = bool(getattr(row, "enable_trade_in", True))
+    card = any(
+        getattr(row, toggle, False)
+        for toggle in (
+            "enable_card",
+            "enable_cash_card",
+            "enable_mpesa_card",
+            "enable_cash_mpesa_card",
+        )
+    )
     return {
         "sale": bool(getattr(row, "enable_sale", True)),
         "credit": credit,
@@ -359,11 +368,19 @@ def _pos_feature_flags() -> dict:
         "trade_out": trade_out,
         "trade_in": trade_in,
         "tradings": trade_out or trade_in,
-        "cash": cash or combo,
-        "mpesa": mpesa or combo,
+        "cash": cash
+        or combo
+        or getattr(row, "enable_cash_card", False)
+        or getattr(row, "enable_cash_mpesa_card", False),
+        "mpesa": mpesa
+        or combo
+        or getattr(row, "enable_mpesa_card", False)
+        or getattr(row, "enable_cash_mpesa_card", False),
+        "card": card,
         "pay_cash": cash,
         "pay_mpesa": mpesa,
-        "credit_collections": credit and (cash or mpesa),
+        "pay_card": bool(getattr(row, "enable_card", False)),
+        "credit_collections": credit and (cash or mpesa or card),
         "delivery": bool(getattr(row, "enable_cart_delivery", True)),
     }
 
@@ -377,6 +394,8 @@ def _check_account_pay_method(method: str) -> None:
         raise ValidationError("M-Pesa payments are disabled for this company.")
     if method == "cash" and not flags.get("pay_cash", True):
         raise ValidationError("Cash payments are disabled for this company.")
+    if method == "card" and not flags.get("pay_card", False):
+        raise ValidationError("Card payments are disabled for this company.")
 
 
 # Column / metric / tile labels that only make sense while the matching
@@ -419,8 +438,25 @@ _POS_GATED_LABELS = {
     "Expected closing M-Pesa": ("mpesa",),
     "Actual closing M-Pesa": ("mpesa",),
     "Closing M-Pesa variance": ("mpesa",),
+    "Card": ("card",),
+    "Card sales": ("card",),
+    "Live Card": ("card",),
+    "Open Card": ("card",),
+    "Exp. open Card": ("card",),
+    "Open Card var": ("card",),
+    "Exp. close Card": ("card",),
+    "Close Card": ("card",),
+    "Close Card var": ("card",),
+    "Expected opening Card": ("card",),
+    "Actual opening Card": ("card",),
+    "Opening Card variance": ("card",),
+    "Expected closing Card": ("card",),
+    "Actual closing Card": ("card",),
+    "Closing Card variance": ("card",),
+    "Card till (period)": ("card",),
     "Paid cash": ("credit", "pay_cash"),
     "Paid M-Pesa": ("credit", "pay_mpesa"),
+    "Paid card": ("credit", "pay_card"),
     "Paid total": ("credit_collections",),
     "Unpaid": ("credit",),
 }
@@ -747,8 +783,8 @@ def apply_account_payment(
         raise ValidationError("Unknown payment type.")
 
     method = (payment_method or "cash").strip().lower()
-    if kind == "credit" and method not in ("cash", "mpesa"):
-        raise ValidationError("Choose cash or M-Pesa.")
+    if kind == "credit" and method not in ("cash", "mpesa", "card"):
+        raise ValidationError("Choose cash, M-Pesa, or card.")
     if kind != "credit":
         method = "cash"
     _check_account_pay_method(method)
@@ -890,7 +926,7 @@ def apply_account_payment(
                 (_due_amount(row.total, row.amount_paid) for row in all_open),
                 _zero(),
             )
-            pay_label = "M-Pesa" if method == "mpesa" else "Cash"
+            pay_label = {"mpesa": "M-Pesa", "card": "Card"}.get(method, "Cash")
             ref_bit = (
                 f" · Ref {mpesa_receipt_number}" if mpesa_receipt_number else ""
             )
@@ -1239,8 +1275,8 @@ def apply_credit_receipt_payment(
     from django.db import transaction
 
     method = (payment_method or "cash").strip().lower()
-    if method not in ("cash", "mpesa"):
-        raise ValidationError("Choose cash or M-Pesa.")
+    if method not in ("cash", "mpesa", "card"):
+        raise ValidationError("Choose cash, M-Pesa, or card.")
     _check_account_pay_method(method)
 
     pay_amount = _parse_pay_amount(amount)
@@ -1330,7 +1366,7 @@ def apply_credit_receipt_payment(
                 _zero(),
             )
 
-        pay_label = "M-Pesa" if method == "mpesa" else "Cash"
+        pay_label = {"mpesa": "M-Pesa", "card": "Card"}.get(method, "Cash")
         ref_bit = f" · Ref {mpesa_receipt_number}" if mpesa_receipt_number else ""
         status = _payment_status_for_due(due_after, receipt.amount_paid)
         converted_note = (
@@ -2116,21 +2152,25 @@ def _sales_summary_board(
     total_docs: int,
     cash_amount,
     mpesa_amount,
-    paid_cash_amount,
-    paid_mpesa_amount,
-    unpaid_credit_amount,
-    stock_amount,
-    expected_profit_amount,
-    actual_profit_amount,
-    active_shops: int,
-    shop_count: int,
+    card_amount=_zero(),
+    paid_cash_amount=_zero(),
+    paid_mpesa_amount=_zero(),
+    paid_card_amount=_zero(),
+    unpaid_credit_amount=_zero(),
+    stock_amount=_zero(),
+    expected_profit_amount=_zero(),
+    actual_profit_amount=_zero(),
+    active_shops: int = 0,
+    shop_count: int = 0,
 ) -> dict:
     total = Decimal(total_amount or 0)
     cash = Decimal(cash_amount or 0)
     mpesa = Decimal(mpesa_amount or 0)
+    card = Decimal(card_amount or 0)
     paid_cash = Decimal(paid_cash_amount or 0)
     paid_mpesa = Decimal(paid_mpesa_amount or 0)
-    paid_credit = paid_cash + paid_mpesa
+    paid_card = Decimal(paid_card_amount or 0)
+    paid_credit = paid_cash + paid_mpesa + paid_card
     unpaid_credit = Decimal(unpaid_credit_amount or 0)
     stock = Decimal(stock_amount or 0)
     expected_profit = Decimal(expected_profit_amount or 0)
@@ -2145,6 +2185,11 @@ def _sales_summary_board(
         if total > 0
         else "No sales yet"
     )
+    card_share = (
+        f"{((card / total) * Decimal('100')).quantize(Decimal('0.1'))}% of general"
+        if total > 0
+        else "No sales yet"
+    )
     paid_share = (
         f"{((paid_credit / total) * Decimal('100')).quantize(Decimal('0.1'))}% of general"
         if total > 0
@@ -2155,7 +2200,7 @@ def _sales_summary_board(
         if total > 0
         else "—"
     )
-    collected = cash + mpesa + paid_credit
+    collected = cash + mpesa + card + paid_credit
     actual_margin = (
         f"{((actual_profit / collected) * Decimal('100')).quantize(Decimal('0.1'))}%"
         if collected > 0
@@ -2184,6 +2229,13 @@ def _sales_summary_board(
                 "tone": "mpesa",
             },
             {
+                "label": "Card",
+                "value": _money_ksh(card),
+                "hint": card_share,
+                "icon": "credit-card",
+                "tone": "card",
+            },
+            {
                 "label": "Paid cash",
                 "value": _money_ksh(paid_cash),
                 "hint": "Credit collections in cash",
@@ -2195,6 +2247,13 @@ def _sales_summary_board(
                 "value": _money_ksh(paid_mpesa),
                 "hint": "Credit collections via M-Pesa",
                 "icon": "smartphone",
+                "tone": "credits",
+            },
+            {
+                "label": "Paid card",
+                "value": _money_ksh(paid_card),
+                "hint": "Credit collections via card",
+                "icon": "credit-card",
                 "tone": "credits",
             },
             {
@@ -4432,6 +4491,7 @@ def _pay_method_context() -> dict:
     return {
         "pos_pay_cash": flags["pay_cash"],
         "pos_pay_mpesa": flags["pay_mpesa"],
+        "pos_pay_card": flags["pay_card"],
     }
 
 
@@ -6996,32 +7056,42 @@ def _day_balance_data(filters) -> dict:
         "close_sessions": 0,
         "opening_cash": _zero(),
         "opening_mpesa": _zero(),
+        "opening_card": _zero(),
         "opening_credit": _zero(),
         "expected_opening_cash": _zero(),
         "expected_opening_mpesa": _zero(),
+        "expected_opening_card": _zero(),
         "expected_opening_credit": _zero(),
         "opening_cash_variance": _zero(),
         "opening_mpesa_variance": _zero(),
+        "opening_card_variance": _zero(),
         "opening_credit_variance": _zero(),
         "closing_cash": _zero(),
         "closing_mpesa": _zero(),
+        "closing_card": _zero(),
         "closing_credit": _zero(),
         "session_open_cash": _zero(),
         "session_open_mpesa": _zero(),
+        "session_open_card": _zero(),
         "cash_sales": _zero(),
         "mpesa_sales": _zero(),
+        "card_sales": _zero(),
         "cash_refunds": _zero(),
         "mpesa_refunds": _zero(),
+        "card_refunds": _zero(),
         "expenses": _zero(),
         "expenses_paid": _zero(),
         "drawings_paid": _zero(),
         "suppliers_paid": _zero(),
         "expected_cash": _zero(),
         "expected_mpesa": _zero(),
+        "expected_card": _zero(),
         "cash_variance": _zero(),
         "mpesa_variance": _zero(),
+        "card_variance": _zero(),
         "live_cash": _zero(),
         "live_mpesa": _zero(),
+        "live_card": _zero(),
         "live_total": _zero(),
         "is_open": False,
     }
@@ -7038,6 +7108,7 @@ def _day_balance_data(filters) -> dict:
             "closed_at",
             "closing_cash",
             "closing_mpesa",
+            "closing_card",
             "closing_credit",
         )
     )
@@ -7058,20 +7129,25 @@ def _day_balance_data(filters) -> dict:
         if prior is None:
             expected_cash = _zero()
             expected_mpesa = _zero()
+            expected_card = _zero()
             expected_credit = _zero()
         else:
             expected_cash = Decimal(prior.closing_cash or 0)
             expected_mpesa = Decimal(prior.closing_mpesa or 0)
+            expected_card = Decimal(getattr(prior, "closing_card", None) or 0)
             expected_credit = Decimal(prior.closing_credit or 0)
         actual_cash = Decimal(session.opening_cash or 0)
         actual_mpesa = Decimal(session.opening_mpesa or 0)
+        actual_card = Decimal(getattr(session, "opening_card", None) or 0)
         actual_credit = Decimal(session.opening_credit or 0)
         return {
             "expected_opening_cash": expected_cash,
             "expected_opening_mpesa": expected_mpesa,
+            "expected_opening_card": expected_card,
             "expected_opening_credit": expected_credit,
             "opening_cash_variance": actual_cash - expected_cash,
             "opening_mpesa_variance": actual_mpesa - expected_mpesa,
+            "opening_card_variance": actual_card - expected_card,
             "opening_credit_variance": actual_credit - expected_credit,
         }
 
@@ -7086,6 +7162,7 @@ def _day_balance_data(filters) -> dict:
             "opened_at",
             "opening_cash",
             "opening_mpesa",
+            "opening_card",
             "opening_credit",
         )
     )
@@ -7096,9 +7173,11 @@ def _day_balance_data(filters) -> dict:
         entry = by_shop[session.shop_id]
         entry["expected_opening_cash"] += opening["expected_opening_cash"]
         entry["expected_opening_mpesa"] += opening["expected_opening_mpesa"]
+        entry["expected_opening_card"] += opening["expected_opening_card"]
         entry["expected_opening_credit"] += opening["expected_opening_credit"]
         entry["opening_cash_variance"] += opening["opening_cash_variance"]
         entry["opening_mpesa_variance"] += opening["opening_mpesa_variance"]
+        entry["opening_card_variance"] += opening["opening_card_variance"]
         entry["opening_credit_variance"] += opening["opening_credit_variance"]
 
     for row in (
@@ -7112,6 +7191,7 @@ def _day_balance_data(filters) -> dict:
             sessions=Count("id"),
             cash=Coalesce(Sum("opening_cash"), _zero()),
             mpesa=Coalesce(Sum("opening_mpesa"), _zero()),
+            card=Coalesce(Sum("opening_card"), _zero()),
             credit=Coalesce(Sum("opening_credit"), _zero()),
         )
     ):
@@ -7119,6 +7199,7 @@ def _day_balance_data(filters) -> dict:
         entry["open_sessions"] = int(row["sessions"] or 0)
         entry["opening_cash"] = Decimal(row["cash"] or 0)
         entry["opening_mpesa"] = Decimal(row["mpesa"] or 0)
+        entry["opening_card"] = Decimal(row["card"] or 0)
         entry["opening_credit"] = Decimal(row["credit"] or 0)
 
     closed_sessions = list(
@@ -7134,9 +7215,11 @@ def _day_balance_data(filters) -> dict:
             "closed_at",
             "opening_cash",
             "opening_mpesa",
+            "opening_card",
             "opening_credit",
             "closing_cash",
             "closing_mpesa",
+            "closing_card",
             "closing_credit",
         )
     )
@@ -7151,9 +7234,11 @@ def _day_balance_data(filters) -> dict:
             "closed_at",
             "opening_cash",
             "opening_mpesa",
+            "opening_card",
             "opening_credit",
             "closing_cash",
             "closing_mpesa",
+            "closing_card",
             "closing_credit",
         )
     )
@@ -7189,6 +7274,7 @@ def _day_balance_data(filters) -> dict:
             "created_at",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "return_payment_events",
         ):
             sales_by_shop[row["shop_id"]].append(row)
@@ -7207,6 +7293,7 @@ def _day_balance_data(filters) -> dict:
             "amount_paid",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "category",
         ):
             expenses_by_shop[row["shop_id"]].append(row)
@@ -7224,29 +7311,35 @@ def _day_balance_data(filters) -> dict:
 
         cash_sales = _zero()
         mpesa_sales = _zero()
+        card_sales = _zero()
         for sale in sales_by_shop.get(session.shop_id, []):
             when = sale["created_at"]
             if session.opened_at <= when < window_end:
-                cash, mpesa = _receipt_original_tender(
+                cash, mpesa, card = _receipt_original_tender(
                     sale.get("cash_amount"),
                     sale.get("mpesa_amount"),
                     sale.get("return_payment_events"),
+                    card_amount=sale.get("card_amount"),
                 )
                 cash_sales += cash
                 mpesa_sales += mpesa
+                card_sales += card
 
         cash_refunds = _zero()
         mpesa_refunds = _zero()
+        card_refunds = _zero()
         for event in refunds_by_shop.get(session.shop_id, []):
             when = event.get("at")
             if when is not None and session.opened_at <= when < window_end:
                 cash_refunds += Decimal(event.get("cash") or 0)
                 mpesa_refunds += Decimal(event.get("mpesa") or 0)
+                card_refunds += Decimal(event.get("card") or 0)
 
         expenses_paid = _zero()
         drawings_paid = _zero()
         drawings_cash = _zero()
         drawings_mpesa = _zero()
+        drawings_card = _zero()
         for expense in expenses_by_shop.get(session.shop_id, []):
             when = expense["created_at"]
             if session.opened_at <= when < window_end:
@@ -7257,11 +7350,13 @@ def _day_balance_data(filters) -> dict:
                 ):
                     cash_part = Decimal(expense.get("cash_amount") or 0)
                     mpesa_part = Decimal(expense.get("mpesa_amount") or 0)
-                    if cash_part == 0 and mpesa_part == 0:
+                    card_part = Decimal(expense.get("card_amount") or 0)
+                    if cash_part == 0 and mpesa_part == 0 and card_part == 0:
                         cash_part = paid
                     drawings_cash += cash_part
                     drawings_mpesa += mpesa_part
-                    drawings_paid += cash_part + mpesa_part
+                    drawings_card += card_part
+                    drawings_paid += cash_part + mpesa_part + card_part
                 else:
                     expenses_paid += paid
 
@@ -7273,6 +7368,7 @@ def _day_balance_data(filters) -> dict:
 
         opening_cash = Decimal(session.opening_cash or 0)
         opening_mpesa = Decimal(session.opening_mpesa or 0)
+        opening_card = Decimal(getattr(session, "opening_card", None) or 0)
         expected_cash = (
             opening_cash
             + cash_sales
@@ -7284,18 +7380,25 @@ def _day_balance_data(filters) -> dict:
         expected_mpesa = (
             opening_mpesa + mpesa_sales - mpesa_refunds - drawings_mpesa
         )
+        expected_card = (
+            opening_card + card_sales - card_refunds - drawings_card
+        )
         return {
             "cash_sales": cash_sales,
             "mpesa_sales": mpesa_sales,
+            "card_sales": card_sales,
             "cash_refunds": cash_refunds,
             "mpesa_refunds": mpesa_refunds,
+            "card_refunds": card_refunds,
             "expenses_paid": expenses_paid,
             "drawings_paid": drawings_paid,
             "drawings_cash": drawings_cash,
             "drawings_mpesa": drawings_mpesa,
+            "drawings_card": drawings_card,
             "suppliers_paid": suppliers_paid,
             "expected_cash": expected_cash,
             "expected_mpesa": expected_mpesa,
+            "expected_card": expected_card,
         }
 
     session_rows = []
@@ -7304,35 +7407,47 @@ def _day_balance_data(filters) -> dict:
         entry["close_sessions"] += 1
         entry["closing_cash"] += Decimal(session.closing_cash or 0)
         entry["closing_mpesa"] += Decimal(session.closing_mpesa or 0)
+        entry["closing_card"] += Decimal(getattr(session, "closing_card", None) or 0)
         entry["closing_credit"] += Decimal(session.closing_credit or 0)
         entry["session_open_cash"] += Decimal(session.opening_cash or 0)
         entry["session_open_mpesa"] += Decimal(session.opening_mpesa or 0)
+        entry["session_open_card"] += Decimal(
+            getattr(session, "opening_card", None) or 0
+        )
 
         activity = _activity_for(session, window_end=session.closed_at)
         cash_sales = activity["cash_sales"]
         mpesa_sales = activity["mpesa_sales"]
+        card_sales = activity["card_sales"]
         expenses_paid = activity["expenses_paid"]
         drawings_paid = activity["drawings_paid"]
         suppliers_paid = activity["suppliers_paid"]
         expected_cash = activity["expected_cash"]
         expected_mpesa = activity["expected_mpesa"]
+        expected_card = activity["expected_card"]
         closing_cash = Decimal(session.closing_cash or 0)
         closing_mpesa = Decimal(session.closing_mpesa or 0)
+        closing_card = Decimal(getattr(session, "closing_card", None) or 0)
         cash_variance = closing_cash - expected_cash
         mpesa_variance = closing_mpesa - expected_mpesa
+        card_variance = closing_card - expected_card
 
         entry["cash_sales"] += cash_sales
         entry["mpesa_sales"] += mpesa_sales
+        entry["card_sales"] += card_sales
         entry["cash_refunds"] += activity["cash_refunds"]
         entry["mpesa_refunds"] += activity["mpesa_refunds"]
+        entry["card_refunds"] += activity["card_refunds"]
         entry["expenses"] += expenses_paid
         entry["expenses_paid"] += expenses_paid
         entry["drawings_paid"] += drawings_paid
         entry["suppliers_paid"] += suppliers_paid
         entry["expected_cash"] += expected_cash
         entry["expected_mpesa"] += expected_mpesa
+        entry["expected_card"] += expected_card
         entry["cash_variance"] += cash_variance
         entry["mpesa_variance"] += mpesa_variance
+        entry["card_variance"] += card_variance
 
         opening = opening_by_session_id.get(session.pk, {})
         session_rows.append(
@@ -7343,12 +7458,16 @@ def _day_balance_data(filters) -> dict:
                 "closed_at": session.closed_at,
                 "opening_cash": Decimal(session.opening_cash or 0),
                 "opening_mpesa": Decimal(session.opening_mpesa or 0),
+                "opening_card": Decimal(getattr(session, "opening_card", None) or 0),
                 "opening_credit": Decimal(session.opening_credit or 0),
                 "expected_opening_cash": opening.get(
                     "expected_opening_cash", _zero()
                 ),
                 "expected_opening_mpesa": opening.get(
                     "expected_opening_mpesa", _zero()
+                ),
+                "expected_opening_card": opening.get(
+                    "expected_opening_card", _zero()
                 ),
                 "expected_opening_credit": opening.get(
                     "expected_opening_credit", _zero()
@@ -7359,24 +7478,32 @@ def _day_balance_data(filters) -> dict:
                 "opening_mpesa_variance": opening.get(
                     "opening_mpesa_variance", _zero()
                 ),
+                "opening_card_variance": opening.get(
+                    "opening_card_variance", _zero()
+                ),
                 "opening_credit_variance": opening.get(
                     "opening_credit_variance", _zero()
                 ),
                 "closing_cash": closing_cash,
                 "closing_mpesa": closing_mpesa,
+                "closing_card": closing_card,
                 "closing_credit": Decimal(session.closing_credit or 0),
                 "cash_sales": cash_sales,
                 "mpesa_sales": mpesa_sales,
+                "card_sales": card_sales,
                 "cash_refunds": activity["cash_refunds"],
                 "mpesa_refunds": activity["mpesa_refunds"],
+                "card_refunds": activity["card_refunds"],
                 "expenses": expenses_paid,
                 "expenses_paid": expenses_paid,
                 "drawings_paid": drawings_paid,
                 "suppliers_paid": suppliers_paid,
                 "expected_cash": expected_cash,
                 "expected_mpesa": expected_mpesa,
+                "expected_card": expected_card,
                 "cash_variance": cash_variance,
                 "mpesa_variance": mpesa_variance,
+                "card_variance": card_variance,
             }
         )
 
@@ -7386,38 +7513,48 @@ def _day_balance_data(filters) -> dict:
         activity = _activity_for(session, window_end=now)
         cash_sales = activity["cash_sales"]
         mpesa_sales = activity["mpesa_sales"]
+        card_sales = activity["card_sales"]
         expenses_paid = activity["expenses_paid"]
         drawings_paid = activity["drawings_paid"]
         suppliers_paid = activity["suppliers_paid"]
         expected_cash = activity["expected_cash"]
         expected_mpesa = activity["expected_mpesa"]
+        expected_card = activity["expected_card"]
         opening_cash = Decimal(session.opening_cash or 0)
         opening_mpesa = Decimal(session.opening_mpesa or 0)
+        opening_card = Decimal(getattr(session, "opening_card", None) or 0)
         opening_credit = Decimal(session.opening_credit or 0)
+        live_total = expected_cash + expected_mpesa + expected_card
 
         entry["is_open"] = True
         entry["live_cash"] = expected_cash
         entry["live_mpesa"] = expected_mpesa
-        entry["live_total"] = expected_cash + expected_mpesa
+        entry["live_card"] = expected_card
+        entry["live_total"] = live_total
 
         live_by_shop[session.shop_id] = {
             "is_open": True,
             "opened_at": session.opened_at,
             "opening_cash": opening_cash,
             "opening_mpesa": opening_mpesa,
+            "opening_card": opening_card,
             "opening_credit": opening_credit,
             "cash_sales": cash_sales,
             "mpesa_sales": mpesa_sales,
+            "card_sales": card_sales,
             "cash_refunds": activity["cash_refunds"],
             "mpesa_refunds": activity["mpesa_refunds"],
+            "card_refunds": activity["card_refunds"],
             "expenses_paid": expenses_paid,
             "drawings_paid": drawings_paid,
             "suppliers_paid": suppliers_paid,
             "live_cash": expected_cash,
             "live_mpesa": expected_mpesa,
-            "live_total": expected_cash + expected_mpesa,
+            "live_card": expected_card,
+            "live_total": live_total,
             "closing_cash": None,
             "closing_mpesa": None,
+            "closing_card": None,
         }
 
         opening = opening_by_session_id.get(session.pk, {})
@@ -7429,12 +7566,16 @@ def _day_balance_data(filters) -> dict:
                 "closed_at": None,
                 "opening_cash": opening_cash,
                 "opening_mpesa": opening_mpesa,
+                "opening_card": opening_card,
                 "opening_credit": opening_credit,
                 "expected_opening_cash": opening.get(
                     "expected_opening_cash", _zero()
                 ),
                 "expected_opening_mpesa": opening.get(
                     "expected_opening_mpesa", _zero()
+                ),
+                "expected_opening_card": opening.get(
+                    "expected_opening_card", _zero()
                 ),
                 "expected_opening_credit": opening.get(
                     "expected_opening_credit", _zero()
@@ -7445,24 +7586,32 @@ def _day_balance_data(filters) -> dict:
                 "opening_mpesa_variance": opening.get(
                     "opening_mpesa_variance", _zero()
                 ),
+                "opening_card_variance": opening.get(
+                    "opening_card_variance", _zero()
+                ),
                 "opening_credit_variance": opening.get(
                     "opening_credit_variance", _zero()
                 ),
                 "closing_cash": _zero(),
                 "closing_mpesa": _zero(),
+                "closing_card": _zero(),
                 "closing_credit": _zero(),
                 "cash_sales": cash_sales,
                 "mpesa_sales": mpesa_sales,
+                "card_sales": card_sales,
                 "cash_refunds": activity["cash_refunds"],
                 "mpesa_refunds": activity["mpesa_refunds"],
+                "card_refunds": activity["card_refunds"],
                 "expenses": expenses_paid,
                 "expenses_paid": expenses_paid,
                 "drawings_paid": drawings_paid,
                 "suppliers_paid": suppliers_paid,
                 "expected_cash": expected_cash,
                 "expected_mpesa": expected_mpesa,
+                "expected_card": expected_card,
                 "cash_variance": _zero(),
                 "mpesa_variance": _zero(),
+                "card_variance": _zero(),
             }
         )
 
@@ -7477,26 +7626,33 @@ def _day_balance_data(filters) -> dict:
             continue
         closing_cash = Decimal(prior.closing_cash or 0)
         closing_mpesa = Decimal(prior.closing_mpesa or 0)
+        closing_card = Decimal(getattr(prior, "closing_card", None) or 0)
+        last_total = closing_cash + closing_mpesa + closing_card
         entry = by_shop[shop_id]
         entry["live_cash"] = closing_cash
         entry["live_mpesa"] = closing_mpesa
-        entry["live_total"] = closing_cash + closing_mpesa
+        entry["live_card"] = closing_card
+        entry["live_total"] = last_total
         live_by_shop[shop_id] = {
             "is_open": False,
             "opened_at": None,
             "opening_cash": _zero(),
             "opening_mpesa": _zero(),
+            "opening_card": _zero(),
             "opening_credit": _zero(),
             "cash_sales": _zero(),
             "mpesa_sales": _zero(),
+            "card_sales": _zero(),
             "expenses_paid": _zero(),
             "drawings_paid": _zero(),
             "suppliers_paid": _zero(),
             "live_cash": closing_cash,
             "live_mpesa": closing_mpesa,
-            "live_total": closing_cash + closing_mpesa,
+            "live_card": closing_card,
+            "live_total": last_total,
             "closing_cash": closing_cash,
             "closing_mpesa": closing_mpesa,
+            "closing_card": closing_card,
             "closed_at": prior.closed_at,
         }
 
@@ -7526,18 +7682,23 @@ def _amount_map_from_balances(
         if key.startswith("closing") or key.startswith("opening_") or key.startswith("expected_opening") or key in {
             "cash_variance",
             "mpesa_variance",
+            "card_variance",
             "expected_cash",
             "expected_mpesa",
+            "expected_card",
             "session_open_cash",
             "session_open_mpesa",
+            "session_open_card",
             "cash_sales",
             "mpesa_sales",
+            "card_sales",
             "expenses",
             "expenses_paid",
             "drawings_paid",
             "suppliers_paid",
             "live_cash",
             "live_mpesa",
+            "live_card",
             "live_total",
         }:
             sessions = int(entry.get("close_sessions") or 0)
@@ -8738,12 +8899,24 @@ _BALANCE_CHANNEL_KEYS = {
         "mpesa_variance",
         "live_mpesa",
     ),
+    "card": (
+        "opening_card",
+        "expected_opening_card",
+        "opening_card_variance",
+        "closing_card",
+        "session_open_card",
+        "card_sales",
+        "card_refunds",
+        "expected_card",
+        "card_variance",
+        "live_card",
+    ),
 }
 
 
 def _strip_disabled_balance_channels(by_shop, totals, live_by_shop, flags) -> None:
     """Zero till channels the company disabled so combined totals stay right."""
-    if flags.get("cash", True) and flags.get("mpesa", True):
+    if all(flags.get(key, True) for key in _BALANCE_CHANNEL_KEYS):
         return
     for flag_key, keys in _BALANCE_CHANNEL_KEYS.items():
         if flags.get(flag_key, True):
@@ -8754,9 +8927,11 @@ def _strip_disabled_balance_channels(by_shop, totals, live_by_shop, flags) -> No
                     entry[key] = _zero()
     for entry in list(by_shop.values()) + list(live_by_shop.values()) + [totals]:
         if "live_total" in entry:
-            entry["live_total"] = Decimal(
-                entry.get("live_cash") or 0
-            ) + Decimal(entry.get("live_mpesa") or 0)
+            entry["live_total"] = (
+                Decimal(entry.get("live_cash") or 0)
+                + Decimal(entry.get("live_mpesa") or 0)
+                + Decimal(entry.get("live_card") or 0)
+            )
 
 
 def _build_balances(filters):
@@ -8778,6 +8953,10 @@ def _build_balances(filters):
     )
     live_mpesa_total = sum(
         (Decimal(row.get("live_mpesa") or 0) for row in live_by_shop.values()),
+        _zero(),
+    )
+    live_card_total = sum(
+        (Decimal(row.get("live_card") or 0) for row in live_by_shop.values()),
         _zero(),
     )
     live_total = sum(
@@ -8830,6 +9009,12 @@ def _build_balances(filters):
             tone="bad" if live_mpesa_total < 0 else "neutral",
         ),
         _metric(
+            "Card",
+            _money_ksh(live_card_total),
+            hint="Open + card sales",
+            tone="bad" if live_card_total < 0 else "neutral",
+        ),
+        _metric(
             "Expenses paid (open)",
             _money_ksh(expenses_paid_live),
             hint="Operating costs from till",
@@ -8859,15 +9044,16 @@ def _build_balances(filters):
                 "metrics": [
                     live_metrics[1],  # Cash first for cash|M-Pesa compare
                     live_metrics[2],
+                    live_metrics[3],
                     live_metrics[0],
                 ],
             },
             {
                 "label": "Paid out",
                 "metrics": [
-                    live_metrics[3],
                     live_metrics[4],
                     live_metrics[5],
+                    live_metrics[6],
                 ],
             },
         ],
@@ -8938,7 +9124,39 @@ def _build_balances(filters):
             tone=_variance_tone(totals["mpesa_variance"]),
         ),
     ]
-    metrics = live_metrics + cash_metrics + mpesa_metrics
+    card_metrics = [
+        _metric(
+            "Expected opening Card",
+            _money_ksh(totals["expected_opening_card"]),
+            hint="Yesterday's closing Card",
+        ),
+        _metric(
+            "Actual opening Card",
+            _money_ksh(totals["opening_card"]),
+        ),
+        _metric(
+            "Opening Card variance",
+            _money_ksh(totals["opening_card_variance"]),
+            hint="Actual − expected",
+            tone=_variance_tone(totals["opening_card_variance"]),
+        ),
+        _metric(
+            "Expected closing Card",
+            _money_ksh(totals["expected_card"]),
+            hint="Open + card sales",
+        ),
+        _metric(
+            "Actual closing Card",
+            _money_ksh(totals["closing_card"]),
+        ),
+        _metric(
+            "Closing Card variance",
+            _money_ksh(totals["card_variance"]),
+            hint="Actual − expected",
+            tone=_variance_tone(totals["card_variance"]),
+        ),
+    ]
+    metrics = live_metrics + cash_metrics + mpesa_metrics + card_metrics
 
     shops_sorted = sorted(
         shops,
@@ -8949,7 +9167,7 @@ def _build_balances(filters):
         ),
     )
 
-    # Columns interleaved Cash | M-Pesa at each stage for side-by-side compare.
+    # Columns interleaved Cash | M-Pesa | Card at each stage for side-by-side compare.
     live_columns = [
         "Shop",
         "Status",
@@ -8959,8 +9177,10 @@ def _build_balances(filters):
             "band_start": True,
         },
         {"label": "Open M-Pesa", "band": "mpesa-open"},
+        {"label": "Open Card", "band": "card-open"},
         {"label": "Cash sales", "band": "cash-open", "band_start": True},
         {"label": "M-Pesa sales", "band": "mpesa-open"},
+        {"label": "Card sales", "band": "card-open"},
         {"label": "Expenses paid", "band": "cash-open", "band_start": True},
         {"label": "Drawings paid", "band": "cash-open"},
         {"label": "Suppliers paid", "band": "cash-open"},
@@ -8970,8 +9190,10 @@ def _build_balances(filters):
             "band_start": True,
         },
         {"label": "Live M-Pesa", "band": "mpesa-close"},
+        {"label": "Live Card", "band": "card-close"},
         {"label": "Close cash", "band": "cash-close", "band_start": True},
         {"label": "Close M-Pesa", "band": "mpesa-close"},
+        {"label": "Close Card", "band": "card-close"},
         {
             "label": "Live total",
             "band": "cash-close",
@@ -8988,6 +9210,7 @@ def _build_balances(filters):
         status_label = "Open" if is_open else "Closed"
         close_cash = live.get("closing_cash")
         close_mpesa = live.get("closing_mpesa")
+        close_card = live.get("closing_card")
         live_rows.append(
             [
                 shop.name,
@@ -9001,8 +9224,12 @@ def _build_balances(filters):
                 _money_ksh(live.get("opening_mpesa") or 0)
                 if is_open
                 else "—",
+                _money_ksh(live.get("opening_card") or 0)
+                if is_open
+                else "—",
                 _money_ksh(live.get("cash_sales") or 0) if is_open else "—",
                 _money_ksh(live.get("mpesa_sales") or 0) if is_open else "—",
+                _money_ksh(live.get("card_sales") or 0) if is_open else "—",
                 _money_ksh(live.get("expenses_paid") or 0) if is_open else "—",
                 _money_ksh(live.get("drawings_paid") or 0) if is_open else "—",
                 _money_ksh(live.get("suppliers_paid") or 0) if is_open else "—",
@@ -9018,11 +9245,20 @@ def _build_balances(filters):
                     if Decimal(live.get("live_mpesa") or 0) < 0
                     else "good",
                 },
+                {
+                    "label": _money_ksh(live.get("live_card") or 0),
+                    "tone": "bad"
+                    if Decimal(live.get("live_card") or 0) < 0
+                    else "good",
+                },
                 _money_ksh(close_cash)
                 if close_cash is not None and not is_open
                 else ("—" if is_open else _money_ksh(0)),
                 _money_ksh(close_mpesa)
                 if close_mpesa is not None and not is_open
+                else ("—" if is_open else _money_ksh(0)),
+                _money_ksh(close_card)
+                if close_card is not None and not is_open
                 else ("—" if is_open else _money_ksh(0)),
                 {
                     "label": _money_ksh(live.get("live_total") or 0),
@@ -9042,11 +9278,15 @@ def _build_balances(filters):
                 "—",
                 "—",
                 "—",
+                "—",
+                "—",
                 _money_ksh(expenses_paid_live),
                 _money_ksh(drawings_paid_live),
                 _money_ksh(suppliers_paid_live),
                 _money_ksh(live_cash_total),
                 _money_ksh(live_mpesa_total),
+                _money_ksh(live_card_total),
+                "—",
                 "—",
                 "—",
                 {
@@ -9074,6 +9314,13 @@ def _build_balances(filters):
             "band": "mpesa-open",
         },
         {
+            "label": "Exp. open Card",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "card-open",
+        },
+        {
             "label": "Open cash",
             "pair": True,
             "pair_qty": "Days",
@@ -9087,6 +9334,13 @@ def _build_balances(filters):
             "pair_qty": "Days",
             "pair_amt": "Amt",
             "band": "mpesa-open",
+        },
+        {
+            "label": "Open Card",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "card-open",
         },
         {
             "label": "Open cash var",
@@ -9104,6 +9358,13 @@ def _build_balances(filters):
             "band": "mpesa-open",
         },
         {
+            "label": "Open Card var",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "card-open",
+        },
+        {
             "label": "Exp. close cash",
             "pair": True,
             "pair_qty": "Days",
@@ -9117,6 +9378,13 @@ def _build_balances(filters):
             "pair_qty": "Days",
             "pair_amt": "Amt",
             "band": "mpesa-close",
+        },
+        {
+            "label": "Exp. close Card",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "card-close",
         },
         {
             "label": "Close cash",
@@ -9134,6 +9402,13 @@ def _build_balances(filters):
             "band": "mpesa-close",
         },
         {
+            "label": "Close Card",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "card-close",
+        },
+        {
             "label": "Close cash var",
             "pair": True,
             "pair_qty": "Days",
@@ -9147,6 +9422,13 @@ def _build_balances(filters):
             "pair_qty": "Days",
             "pair_amt": "Amt",
             "band": "mpesa-close",
+        },
+        {
+            "label": "Close Card var",
+            "pair": True,
+            "pair_qty": "Days",
+            "pair_amt": "Amt",
+            "band": "card-close",
         },
     ]
 
@@ -9187,6 +9469,8 @@ def _build_balances(filters):
             or entry["closing_cash"]
             or entry["opening_mpesa"]
             or entry["closing_mpesa"]
+            or entry["opening_card"]
+            or entry["closing_card"]
         ):
             continue
         summary_rows.append(
@@ -9194,8 +9478,10 @@ def _build_balances(filters):
                 shop.name,
                 _pair(shop.pk, "open_sessions", "expected_opening_cash"),
                 _pair(shop.pk, "open_sessions", "expected_opening_mpesa"),
+                _pair(shop.pk, "open_sessions", "expected_opening_card"),
                 _pair(shop.pk, "open_sessions", "opening_cash"),
                 _pair(shop.pk, "open_sessions", "opening_mpesa"),
+                _pair(shop.pk, "open_sessions", "opening_card"),
                 _pair(
                     shop.pk,
                     "open_sessions",
@@ -9208,10 +9494,18 @@ def _build_balances(filters):
                     "opening_mpesa_variance",
                     variance=True,
                 ),
+                _pair(
+                    shop.pk,
+                    "open_sessions",
+                    "opening_card_variance",
+                    variance=True,
+                ),
                 _pair(shop.pk, "close_sessions", "expected_cash"),
                 _pair(shop.pk, "close_sessions", "expected_mpesa"),
+                _pair(shop.pk, "close_sessions", "expected_card"),
                 _pair(shop.pk, "close_sessions", "closing_cash"),
                 _pair(shop.pk, "close_sessions", "closing_mpesa"),
+                _pair(shop.pk, "close_sessions", "closing_card"),
                 _pair(
                     shop.pk,
                     "close_sessions",
@@ -9222,6 +9516,12 @@ def _build_balances(filters):
                     shop.pk,
                     "close_sessions",
                     "mpesa_variance",
+                    variance=True,
+                ),
+                _pair(
+                    shop.pk,
+                    "close_sessions",
+                    "card_variance",
                     variance=True,
                 ),
             ]
@@ -9238,10 +9538,16 @@ def _build_balances(filters):
                     totals["open_sessions"], totals["expected_opening_mpesa"]
                 ),
                 _qty_amount_cell(
+                    totals["open_sessions"], totals["expected_opening_card"]
+                ),
+                _qty_amount_cell(
                     totals["open_sessions"], totals["opening_cash"]
                 ),
                 _qty_amount_cell(
                     totals["open_sessions"], totals["opening_mpesa"]
+                ),
+                _qty_amount_cell(
+                    totals["open_sessions"], totals["opening_card"]
                 ),
                 _qty_amount_cell(
                     totals["open_sessions"],
@@ -9254,16 +9560,27 @@ def _build_balances(filters):
                     tone=_variance_tone(totals["opening_mpesa_variance"]),
                 ),
                 _qty_amount_cell(
+                    totals["open_sessions"],
+                    totals["opening_card_variance"],
+                    tone=_variance_tone(totals["opening_card_variance"]),
+                ),
+                _qty_amount_cell(
                     totals["close_sessions"], totals["expected_cash"]
                 ),
                 _qty_amount_cell(
                     totals["close_sessions"], totals["expected_mpesa"]
                 ),
                 _qty_amount_cell(
+                    totals["close_sessions"], totals["expected_card"]
+                ),
+                _qty_amount_cell(
                     totals["close_sessions"], totals["closing_cash"]
                 ),
                 _qty_amount_cell(
                     totals["close_sessions"], totals["closing_mpesa"]
+                ),
+                _qty_amount_cell(
+                    totals["close_sessions"], totals["closing_card"]
                 ),
                 _qty_amount_cell(
                     totals["close_sessions"],
@@ -9275,6 +9592,11 @@ def _build_balances(filters):
                     totals["mpesa_variance"],
                     tone=_variance_tone(totals["mpesa_variance"]),
                 ),
+                _qty_amount_cell(
+                    totals["close_sessions"],
+                    totals["card_variance"],
+                    tone=_variance_tone(totals["card_variance"]),
+                ),
             ]
         )
 
@@ -9285,21 +9607,28 @@ def _build_balances(filters):
         "Closed",
         "Exp. open cash",
         "Exp. open M-Pesa",
+        "Exp. open Card",
         "Open cash",
         "Open M-Pesa",
+        "Open Card",
         "Open cash var",
         "Open M-Pesa var",
+        "Open Card var",
         "Cash sales",
         "M-Pesa sales",
+        "Card sales",
         "Expenses paid",
         "Drawings paid",
         "Suppliers paid",
         "Exp. close cash",
         "Exp. close M-Pesa",
+        "Exp. close Card",
         "Close cash",
         "Close M-Pesa",
+        "Close Card",
         "Close cash var",
         "Close M-Pesa var",
+        "Close Card var",
     ]
     session_rows = []
     for row in sorted(
@@ -9316,8 +9645,10 @@ def _build_balances(filters):
             closed = timezone.localtime(row["closed_at"]).strftime("%d %b %H:%M")
         cash_var = row["cash_variance"]
         mpesa_var = row["mpesa_variance"]
+        card_var = row["card_variance"]
         open_cash_var = row["opening_cash_variance"]
         open_mpesa_var = row["opening_mpesa_variance"]
+        open_card_var = row["opening_card_variance"]
         is_open_row = bool(row.get("is_open"))
         session_rows.append(
             [
@@ -9326,8 +9657,10 @@ def _build_balances(filters):
                 closed,
                 _money_ksh(row["expected_opening_cash"]),
                 _money_ksh(row["expected_opening_mpesa"]),
+                _money_ksh(row["expected_opening_card"]),
                 _money_ksh(row["opening_cash"]),
                 _money_ksh(row["opening_mpesa"]),
+                _money_ksh(row["opening_card"]),
                 {
                     "label": _money_ksh(open_cash_var),
                     "tone": _variance_tone(open_cash_var),
@@ -9336,15 +9669,22 @@ def _build_balances(filters):
                     "label": _money_ksh(open_mpesa_var),
                     "tone": _variance_tone(open_mpesa_var),
                 },
+                {
+                    "label": _money_ksh(open_card_var),
+                    "tone": _variance_tone(open_card_var),
+                },
                 _money_ksh(row["cash_sales"]),
                 _money_ksh(row["mpesa_sales"]),
+                _money_ksh(row["card_sales"]),
                 _money_ksh(row.get("expenses_paid", row.get("expenses"))),
                 _money_ksh(row.get("drawings_paid") or 0),
                 _money_ksh(row.get("suppliers_paid") or 0),
                 _money_ksh(row["expected_cash"]),
                 _money_ksh(row["expected_mpesa"]),
+                _money_ksh(row["expected_card"]),
                 "—" if is_open_row else _money_ksh(row["closing_cash"]),
                 "—" if is_open_row else _money_ksh(row["closing_mpesa"]),
+                "—" if is_open_row else _money_ksh(row["closing_card"]),
                 {
                     "label": "—" if is_open_row else _money_ksh(cash_var),
                     "tone": "neutral" if is_open_row else _variance_tone(cash_var),
@@ -9354,6 +9694,12 @@ def _build_balances(filters):
                     "tone": "neutral"
                     if is_open_row
                     else _variance_tone(mpesa_var),
+                },
+                {
+                    "label": "—" if is_open_row else _money_ksh(card_var),
+                    "tone": "neutral"
+                    if is_open_row
+                    else _variance_tone(card_var),
                 },
             ]
         )
@@ -9380,6 +9726,12 @@ def _build_balances(filters):
                 icon="smartphone",
                 tone="mpesa",
                 metrics=mpesa_metrics,
+            ),
+            _till_metric_group(
+                label="Card till (period)",
+                icon="credit-card",
+                tone="card",
+                metrics=card_metrics,
             ),
         ],
         "insights": [],
@@ -9424,16 +9776,22 @@ def _build_balances(filters):
 
 def _credit_payment_totals_by_shop(
     *, shop_ids, start, end
-) -> tuple[dict[int, tuple[int, Decimal]], dict[int, tuple[int, Decimal]]]:
-    """Credit account collections in period, split by cash / M-Pesa per shop."""
+) -> tuple[
+    dict[int, tuple[int, Decimal]],
+    dict[int, tuple[int, Decimal]],
+    dict[int, tuple[int, Decimal]],
+]:
+    """Credit account collections in period, split by cash / M-Pesa / card per shop."""
     paid_cash_by_shop: dict[int, tuple[int, Decimal]] = {}
     paid_mpesa_by_shop: dict[int, tuple[int, Decimal]] = {}
+    paid_card_by_shop: dict[int, tuple[int, Decimal]] = {}
     events = _within_created_range(
         ClientCreditAccountEvent.objects.filter(
             shop_id__in=shop_ids,
             kind__in=(
                 ClientCreditAccountEventKind.PAYMENT_CASH,
                 ClientCreditAccountEventKind.PAYMENT_MPESA,
+                ClientCreditAccountEventKind.PAYMENT_CARD,
             ),
         ),
         start,
@@ -9450,17 +9808,24 @@ def _credit_payment_totals_by_shop(
         entry = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
         if row["kind"] == ClientCreditAccountEventKind.PAYMENT_MPESA:
             paid_mpesa_by_shop[shop_id] = entry
+        elif row["kind"] == ClientCreditAccountEventKind.PAYMENT_CARD:
+            paid_card_by_shop[shop_id] = entry
         else:
             paid_cash_by_shop[shop_id] = entry
-    return paid_cash_by_shop, paid_mpesa_by_shop
+    return paid_cash_by_shop, paid_mpesa_by_shop, paid_card_by_shop
 
 
 def _credit_payment_totals_by_bucket(
     *, shop_ids, start, end, bucket_kind: str
-) -> tuple[dict[str, tuple[int, Decimal]], dict[str, tuple[int, Decimal]]]:
-    """Credit account collections in period, split by cash / M-Pesa per time bucket."""
+) -> tuple[
+    dict[str, tuple[int, Decimal]],
+    dict[str, tuple[int, Decimal]],
+    dict[str, tuple[int, Decimal]],
+]:
+    """Credit account collections in period, split by cash / M-Pesa / card per bucket."""
     paid_cash_by_bucket: dict[str, tuple[int, Decimal]] = {}
     paid_mpesa_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    paid_card_by_bucket: dict[str, tuple[int, Decimal]] = {}
     trunc = _created_at_trunc("occurred_at", bucket_kind)
     events = _within_created_range(
         ClientCreditAccountEvent.objects.filter(
@@ -9468,6 +9833,7 @@ def _credit_payment_totals_by_bucket(
             kind__in=(
                 ClientCreditAccountEventKind.PAYMENT_CASH,
                 ClientCreditAccountEventKind.PAYMENT_MPESA,
+                ClientCreditAccountEventKind.PAYMENT_CARD,
             ),
         ),
         start,
@@ -9484,9 +9850,11 @@ def _credit_payment_totals_by_bucket(
         entry = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
         if row["kind"] == ClientCreditAccountEventKind.PAYMENT_MPESA:
             paid_mpesa_by_bucket[label] = entry
+        elif row["kind"] == ClientCreditAccountEventKind.PAYMENT_CARD:
+            paid_card_by_bucket[label] = entry
         else:
             paid_cash_by_bucket[label] = entry
-    return paid_cash_by_bucket, paid_mpesa_by_bucket
+    return paid_cash_by_bucket, paid_mpesa_by_bucket, paid_card_by_bucket
 
 
 def _sales_breakdown_table(
@@ -9519,6 +9887,11 @@ def _sales_breakdown_table(
         default=zero_money,
         output_field=money_field,
     )
+    card_expr = Case(
+        When(settled_from_credit=False, then=F("card_amount")),
+        default=zero_money,
+        output_field=money_field,
+    )
     unpaid_due_expr = Greatest(
         ExpressionWrapper(
             F("total") - F("amount_paid"),
@@ -9531,8 +9904,13 @@ def _sales_breakdown_table(
     total_by_bucket: dict[str, tuple[int, Decimal]] = {}
     cash_by_bucket: dict[str, tuple[int, Decimal]] = {}
     mpesa_by_bucket: dict[str, tuple[int, Decimal]] = {}
+    card_by_bucket: dict[str, tuple[int, Decimal]] = {}
     unpaid_credit_by_bucket: dict[str, tuple[int, Decimal]] = {}
-    paid_cash_by_bucket, paid_mpesa_by_bucket = _credit_payment_totals_by_bucket(
+    (
+        paid_cash_by_bucket,
+        paid_mpesa_by_bucket,
+        paid_card_by_bucket,
+    ) = _credit_payment_totals_by_bucket(
         shop_ids=shop_ids,
         start=start,
         end=end,
@@ -9544,6 +9922,7 @@ def _sales_breakdown_table(
         amount=Coalesce(Sum("total"), _zero()),
         cash=Coalesce(Sum(cash_expr), _zero()),
         mpesa=Coalesce(Sum(mpesa_expr), _zero()),
+        card=Coalesce(Sum(card_expr), _zero()),
     ):
         label = _bucket_label(row["bucket"], bucket_kind)
         if not label:
@@ -9551,6 +9930,7 @@ def _sales_breakdown_table(
         total_by_bucket[label] = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
         cash_by_bucket[label] = (0, Decimal(row["cash"] or 0))
         mpesa_by_bucket[label] = (0, Decimal(row["mpesa"] or 0))
+        card_by_bucket[label] = (0, Decimal(row["card"] or 0))
 
     for row in credits.annotate(bucket=trunc).values("bucket").annotate(
         unpaid_docs=Count("id", filter=Q(total__gt=F("amount_paid"))),
@@ -9580,17 +9960,26 @@ def _sales_breakdown_table(
         unpaid_docs, unpaid_amt = unpaid_credit_by_bucket.get(label, (0, _zero()))
         cash_amt = cash_by_bucket.get(label, (0, _zero()))[1]
         mpesa_amt = mpesa_by_bucket.get(label, (0, _zero()))[1]
+        card_amt = card_by_bucket.get(label, (0, _zero()))[1]
         paid_cash_docs, paid_cash_amt = paid_cash_by_bucket.get(label, (0, _zero()))
         paid_mpesa_docs, paid_mpesa_amt = paid_mpesa_by_bucket.get(label, (0, _zero()))
-        paid_amt = Decimal(paid_cash_amt or 0) + Decimal(paid_mpesa_amt or 0)
+        paid_card_docs, paid_card_amt = paid_card_by_bucket.get(label, (0, _zero()))
+        paid_amt = (
+            Decimal(paid_cash_amt or 0)
+            + Decimal(paid_mpesa_amt or 0)
+            + Decimal(paid_card_amt or 0)
+        )
         paid_total_by_bucket[label] = (
-            int(paid_cash_docs or 0) + int(paid_mpesa_docs or 0),
+            int(paid_cash_docs or 0)
+            + int(paid_mpesa_docs or 0)
+            + int(paid_card_docs or 0),
             paid_amt,
         )
         general_by_bucket[label] = (
             int(sale_docs or 0) + int(unpaid_docs or 0),
             Decimal(cash_amt or 0)
             + Decimal(mpesa_amt or 0)
+            + Decimal(card_amt or 0)
             + paid_amt
             + Decimal(unpaid_amt or 0),
         )
@@ -9598,8 +9987,10 @@ def _sales_breakdown_table(
     metric_maps = [
         ("Cash", cash_by_bucket, "cash", "money"),
         ("M-Pesa", mpesa_by_bucket, "mpesa", "money"),
+        ("Card", card_by_bucket, "card", "money"),
         ("Paid cash", paid_cash_by_bucket, "credits", "money"),
         ("Paid M-Pesa", paid_mpesa_by_bucket, "credits", "money"),
+        ("Paid card", paid_card_by_bucket, "credits", "money"),
         ("Paid total", paid_total_by_bucket, "credits", "pair"),
         ("Unpaid", unpaid_credit_by_bucket, "unpaid", "pair"),
         ("General total", general_by_bucket, "total", "pair"),
@@ -9607,11 +9998,13 @@ def _sales_breakdown_table(
     column_titles = {
         "Cash": "POS cash payments on sale receipts",
         "M-Pesa": "POS M-Pesa payments on sale receipts",
+        "Card": "POS card payments on sale receipts",
         "Paid cash": "Credit account collections paid in cash this bucket",
         "Paid M-Pesa": "Credit account collections paid via M-Pesa this bucket",
-        "Paid total": "Paid cash + Paid M-Pesa",
+        "Paid card": "Credit account collections paid via card this bucket",
+        "Paid total": "Paid cash + Paid M-Pesa + Paid card",
         "Unpaid": "Outstanding balance on open credit receipts this bucket",
-        "General total": "Cash + M-Pesa + Paid total + Unpaid",
+        "General total": "Cash + M-Pesa + Card + Paid total + Unpaid",
     }
 
     columns = [config["column_label"]]
@@ -9619,6 +10012,7 @@ def _sales_breakdown_table(
         band_start = label in {
             "Cash",
             "M-Pesa",
+            "Card",
             "Paid cash",
             "Unpaid",
             "General total",
@@ -9661,7 +10055,7 @@ def _sales_breakdown_table(
             },
             {
                 "label": "Actual profit",
-                "title": "Cash + M-Pesa + Paid total − stock (this bucket)",
+                "title": "Cash + M-Pesa + Card + Paid total − stock (this bucket)",
                 "band": "result",
             },
         ]
@@ -9697,6 +10091,7 @@ def _sales_breakdown_table(
         collected = (
             cash_by_bucket.get(label, (0, _zero()))[1]
             + mpesa_by_bucket.get(label, (0, _zero()))[1]
+            + card_by_bucket.get(label, (0, _zero()))[1]
             + paid_amt
         )
         expected_profit = selling - stock
@@ -9746,13 +10141,13 @@ def _sales_breakdown_table(
         shop_grid=True,
         footnote=(
             f"{config['title']} for the selected range. "
-            "Cash and M-Pesa are POS sale payments; "
-            "Paid cash / Paid M-Pesa are credit account collections in this bucket; "
-            "Paid total = Paid cash + Paid M-Pesa; "
+            "Cash, M-Pesa and Card are POS sale payments; "
+            "Paid cash / Paid M-Pesa / Paid card are credit account collections in this bucket; "
+            "Paid total = Paid cash + Paid M-Pesa + Paid card; "
             "Unpaid = open credit balances; "
-            "General total = Cash + M-Pesa + Paid total + Unpaid; "
+            "General total = Cash + M-Pesa + Card + Paid total + Unpaid; "
             "Expected profit = selling value − stock; "
-            "Actual profit = Cash + M-Pesa + Paid total − stock."
+            "Actual profit = Cash + M-Pesa + Card + Paid total − stock."
         ),
     )
 
@@ -9776,6 +10171,11 @@ def _build_sales(filters):
         default=zero_money,
         output_field=money_field,
     )
+    card_expr = Case(
+        When(settled_from_credit=False, then=F("card_amount")),
+        default=zero_money,
+        output_field=money_field,
+    )
     unpaid_due_expr = Greatest(
         ExpressionWrapper(
             F("total") - F("amount_paid"),
@@ -9787,25 +10187,32 @@ def _build_sales(filters):
     total_by_shop: dict[int, tuple[int, Decimal]] = {}
     cash_by_shop: dict[int, tuple[int, Decimal]] = {}
     mpesa_by_shop: dict[int, tuple[int, Decimal]] = {}
+    card_by_shop: dict[int, tuple[int, Decimal]] = {}
     unpaid_credit_by_shop: dict[int, tuple[int, Decimal]] = {}
     if flags["credit_collections"]:
-        paid_cash_by_shop, paid_mpesa_by_shop = _credit_payment_totals_by_shop(
+        (
+            paid_cash_by_shop,
+            paid_mpesa_by_shop,
+            paid_card_by_shop,
+        ) = _credit_payment_totals_by_shop(
             shop_ids=shop_ids,
             start=start,
             end=end,
         )
     else:
-        paid_cash_by_shop, paid_mpesa_by_shop = {}, {}
+        paid_cash_by_shop, paid_mpesa_by_shop, paid_card_by_shop = {}, {}, {}
     for row in sales.values("shop_id").annotate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), _zero()),
         cash=Coalesce(Sum(cash_expr), _zero()),
         mpesa=Coalesce(Sum(mpesa_expr), _zero()),
+        card=Coalesce(Sum(card_expr), _zero()),
     ):
         shop_id = row["shop_id"]
         total_by_shop[shop_id] = (int(row["docs"] or 0), Decimal(row["amount"] or 0))
         cash_by_shop[shop_id] = (0, Decimal(row["cash"] or 0))
         mpesa_by_shop[shop_id] = (0, Decimal(row["mpesa"] or 0))
+        card_by_shop[shop_id] = (0, Decimal(row["card"] or 0))
 
     if flags["credit"]:
         for row in credits.values("shop_id").annotate(
@@ -9840,19 +10247,34 @@ def _build_sales(filters):
         mpesa_amt = (
             mpesa_by_shop.get(shop.pk, (0, _zero()))[1] if flags["mpesa"] else _zero()
         )
+        card_amt = (
+            card_by_shop.get(shop.pk, (0, _zero()))[1] if flags["card"] else _zero()
+        )
         paid_cash_docs, paid_cash_amt = paid_cash_by_shop.get(shop.pk, (0, _zero()))
         paid_mpesa_docs, paid_mpesa_amt = paid_mpesa_by_shop.get(shop.pk, (0, _zero()))
+        paid_card_docs, paid_card_amt = paid_card_by_shop.get(shop.pk, (0, _zero()))
         unpaid_docs, unpaid_amt = unpaid_credit_by_shop.get(shop.pk, (0, _zero()))
         sale_docs = total_by_shop.get(shop.pk, (0, _zero()))[0]
-        paid_amt = Decimal(paid_cash_amt or 0) + Decimal(paid_mpesa_amt or 0)
-        collected = Decimal(cash_amt or 0) + Decimal(mpesa_amt or 0) + paid_amt
+        paid_amt = (
+            Decimal(paid_cash_amt or 0)
+            + Decimal(paid_mpesa_amt or 0)
+            + Decimal(paid_card_amt or 0)
+        )
+        collected = (
+            Decimal(cash_amt or 0)
+            + Decimal(mpesa_amt or 0)
+            + Decimal(card_amt or 0)
+            + paid_amt
+        )
         general_amt = collected + Decimal(unpaid_amt or 0)
         selling_by_shop[shop.pk] = selling
         stock_by_shop[shop.pk] = stock
         expected_profit_by_shop[shop.pk] = selling - stock
         actual_profit_by_shop[shop.pk] = collected - stock
         paid_total_by_shop[shop.pk] = (
-            int(paid_cash_docs or 0) + int(paid_mpesa_docs or 0),
+            int(paid_cash_docs or 0)
+            + int(paid_mpesa_docs or 0)
+            + int(paid_card_docs or 0),
             paid_amt,
         )
         general_by_shop[shop.pk] = (
@@ -9863,8 +10285,10 @@ def _build_sales(filters):
     metric_maps = [
         ("Cash", cash_by_shop, "cash", "money"),
         ("M-Pesa", mpesa_by_shop, "mpesa", "money"),
+        ("Card", card_by_shop, "card", "money"),
         ("Paid cash", paid_cash_by_shop, "credits", "money"),
         ("Paid M-Pesa", paid_mpesa_by_shop, "credits", "money"),
+        ("Paid card", paid_card_by_shop, "credits", "money"),
         ("Paid total", paid_total_by_shop, "credits", "pair"),
         ("Unpaid", unpaid_credit_by_shop, "unpaid", "pair"),
         ("General total", general_by_shop, "total", "pair"),
@@ -9872,11 +10296,13 @@ def _build_sales(filters):
     column_titles = {
         "Cash": "POS cash payments on sale receipts",
         "M-Pesa": "POS M-Pesa payments on sale receipts",
+        "Card": "POS card payments on sale receipts",
         "Paid cash": "Credit account collections paid in cash this period",
         "Paid M-Pesa": "Credit account collections paid via M-Pesa this period",
-        "Paid total": "Paid cash + Paid M-Pesa",
+        "Paid card": "Credit account collections paid via card this period",
+        "Paid total": "Paid cash + Paid M-Pesa + Paid card",
         "Unpaid": "Outstanding balance on open credit receipts this period",
-        "General total": "Cash + M-Pesa + Paid total + Unpaid",
+        "General total": "Cash + M-Pesa + Card + Paid total + Unpaid",
     }
 
     shops_sorted = sorted(
@@ -9892,6 +10318,7 @@ def _build_sales(filters):
         band_start = label in {
             "Cash",
             "M-Pesa",
+            "Card",
             "Paid cash",
             "Unpaid",
             "General total",
@@ -9934,7 +10361,7 @@ def _build_sales(filters):
             },
             {
                 "label": "Actual profit",
-                "title": "Cash + M-Pesa + Paid total − stock (this period)",
+                "title": "Cash + M-Pesa + Card + Paid total − stock (this period)",
                 "band": "result",
             },
         ]
@@ -9962,6 +10389,7 @@ def _build_sales(filters):
         collected = (
             cash_by_shop.get(shop.pk, (0, _zero()))[1]
             + mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+            + card_by_shop.get(shop.pk, (0, _zero()))[1]
             + paid_total_by_shop.get(shop.pk, (0, _zero()))[1]
         )
         expected_margin = (
@@ -10001,8 +10429,10 @@ def _build_sales(filters):
     total_amount = _zero()
     cash_amount = _zero()
     mpesa_amount = _zero()
+    card_amount = _zero()
     paid_cash_amount = _zero()
     paid_mpesa_amount = _zero()
+    paid_card_amount = _zero()
     unpaid_credit_amount = _zero()
     for shop in shops_sorted:
         qty, amount = general_by_shop.get(shop.pk, (0, _zero()))
@@ -10010,15 +10440,17 @@ def _build_sales(filters):
         total_amount += Decimal(amount or 0)
         cash_amount += cash_by_shop.get(shop.pk, (0, _zero()))[1]
         mpesa_amount += mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+        card_amount += card_by_shop.get(shop.pk, (0, _zero()))[1]
         paid_cash_amount += paid_cash_by_shop.get(shop.pk, (0, _zero()))[1]
         paid_mpesa_amount += paid_mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+        paid_card_amount += paid_card_by_shop.get(shop.pk, (0, _zero()))[1]
         unpaid_credit_amount += unpaid_credit_by_shop.get(shop.pk, (0, _zero()))[1]
     total_stock = sum((stock_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero())
     total_selling = sum(
         (selling_by_shop.get(shop.pk, _zero()) for shop in shops_sorted), _zero()
     )
-    paid_credit_amount = paid_cash_amount + paid_mpesa_amount
-    total_collected = cash_amount + mpesa_amount + paid_credit_amount
+    paid_credit_amount = paid_cash_amount + paid_mpesa_amount + paid_card_amount
+    total_collected = cash_amount + mpesa_amount + card_amount + paid_credit_amount
     total_expected_profit = total_selling - total_stock
     total_actual_profit = total_collected - total_stock
     expected_margin_pct = (
@@ -10078,7 +10510,7 @@ def _build_sales(filters):
     page = {
         "headline": "Sales",
         "lead": (
-            "Sale receipts by shop — cash, M-Pesa, paid cash / M-Pesa, unpaid, "
+            "Sale receipts by shop — cash, M-Pesa, card, paid cash / M-Pesa / card, unpaid, "
             "general total, stock, expected profit, and actual profit. "
             "Day shows hourly, month shows daily, year shows monthly."
         ),
@@ -10088,8 +10520,10 @@ def _build_sales(filters):
             total_docs=total_docs,
             cash_amount=cash_amount,
             mpesa_amount=mpesa_amount,
+            card_amount=card_amount,
             paid_cash_amount=paid_cash_amount,
             paid_mpesa_amount=paid_mpesa_amount,
+            paid_card_amount=paid_card_amount,
             unpaid_credit_amount=unpaid_credit_amount,
             stock_amount=total_stock,
             expected_profit_amount=total_expected_profit,
@@ -10106,13 +10540,13 @@ def _build_sales(filters):
                 empty="No sales for selected shops and period.",
                 shop_grid=True,
                 footnote=(
-                    "Cash and M-Pesa are POS sale payments. "
-                    "Paid cash / Paid M-Pesa are credit account collections this period. "
-                    "Paid total = Paid cash + Paid M-Pesa. "
+                    "Cash, M-Pesa and Card are POS sale payments. "
+                    "Paid cash / Paid M-Pesa / Paid card are credit account collections this period. "
+                    "Paid total = Paid cash + Paid M-Pesa + Paid card. "
                     "Unpaid = open credit balances this period. "
-                    "General total = Cash + M-Pesa + Paid total + Unpaid. "
+                    "General total = Cash + M-Pesa + Card + Paid total + Unpaid. "
                     "Expected profit = selling value − stock. "
-                    "Actual profit = Cash + M-Pesa + Paid total − stock."
+                    "Actual profit = Cash + M-Pesa + Card + Paid total − stock."
                 ),
             )
         ],
@@ -12565,6 +12999,7 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
         "kind_label": receipt.get_kind_display(),
         "pos_pay_cash": filters["pos_flags"]["pay_cash"],
         "pos_pay_mpesa": filters["pos_flags"]["pay_mpesa"],
+        "pos_pay_card": filters["pos_flags"]["pay_card"],
     }
 
 

@@ -190,6 +190,7 @@
         <th scope="col" class="item-col--range">Min price</th>
         ${shopPriceHeadHtml()}
         ${shopHeaderCells()}
+        <th scope="col" class="item-col--stock">Stock</th>
         <th scope="col" class="item-col--status">Status</th>
         <th scope="col" class="item-col--actions">Actions</th>
       </tr>
@@ -318,6 +319,12 @@
       }
       return JSON.stringify(item.shop_prices || {});
     })();
+    const stockRows = Array.isArray(item.stock_rows) ? item.stock_rows : [];
+    const stockTitle = stockRows
+      .map((row) => `${row.shop_name}: ${row.display || row.quantity}`)
+      .join("\n");
+    const stockDisplay = String(item.stock_display || "0");
+
     const tr = document.createElement("tr");
     if (item.is_suspended) tr.className = "item-row--suspended";
     tr.setAttribute("data-item-row", "");
@@ -360,6 +367,11 @@
         </span>
       </td>
       ${buildShopPriceCells(item)}
+      <td class="item-cell--stock" data-label="Stock">
+        <strong${item.stock_hidden ? ' class="is-hidden"' : ""}${
+          stockTitle ? ` title="${escapeHtml(stockTitle)}"` : ""
+        }>${escapeHtml(stockDisplay)}</strong>
+      </td>
       <td class="item-cell--status" data-label="Status">
         <div class="item-status-icons" role="list">
           <span

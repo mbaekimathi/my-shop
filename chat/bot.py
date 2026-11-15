@@ -325,6 +325,7 @@ def _sales_reply(shop: Shop, text: str) -> str:
         count=Count("id"),
         cash=Sum("cash_amount"),
         mpesa=Sum("mpesa_amount"),
+        card=Sum("card_amount"),
         paid=Sum("amount_paid"),
     )
     count = agg["count"] or 0
@@ -333,7 +334,7 @@ def _sales_reply(shop: Shop, text: str) -> str:
     lines = [
         f"*Sales — {shop.name} ({scope})*",
         f"Total: *{money(agg['total'])}* across {count} receipt{'s' if count != 1 else ''}",
-        f"Cash {money(agg['cash'])}  |  M-Pesa {money(agg['mpesa'])}",
+        f"Cash {money(agg['cash'])}  |  M-Pesa {money(agg['mpesa'])}  |  Card {money(agg['card'])}",
     ]
     credit_qs = _receipts(
         shop, start, end, kinds=(CREDIT_KIND,), receipt_status=status
@@ -789,6 +790,7 @@ def card_meta(shop: Shop, text: str):
         agg = qs.aggregate(
             total=Sum("total"), count=Count("id"),
             cash=Sum("cash_amount"), mpesa=Sum("mpesa_amount"),
+            card=Sum("card_amount"),
         )
         if not (agg["count"] or 0):
             return None
@@ -805,6 +807,7 @@ def card_meta(shop: Shop, text: str):
                 "receipts": agg["count"],
                 "cash": money(agg["cash"]),
                 "mpesa": money(agg["mpesa"]),
+                "card": money(agg["card"]),
                 "credit": money(credit),
                 "start": start.isoformat(),
                 "end": end.isoformat(),
@@ -1065,6 +1068,7 @@ def reply_for_all(text: str) -> str:
         agg = _all_receipts(start, end, receipt_status=status).aggregate(
             total=Sum("total"), count=Count("id"),
             cash=Sum("cash_amount"), mpesa=Sum("mpesa_amount"),
+            card=Sum("card_amount"),
         )
         count = agg["count"] or 0
         if not count:
@@ -1078,7 +1082,7 @@ def reply_for_all(text: str) -> str:
         lines = [
             f"*Sales — ALL SHOPS ({scope})*",
             f"Total: *{money(agg['total'])}* across {count} receipts",
-            f"Cash {money(agg['cash'])}  |  M-Pesa {money(agg['mpesa'])}",
+            f"Cash {money(agg['cash'])}  |  M-Pesa {money(agg['mpesa'])}  |  Card {money(agg['card'])}",
             "",
         ]
         for r in per_shop:
@@ -1283,6 +1287,7 @@ def card_for_all(text: str):
         agg = _all_receipts(start, end, receipt_status=status).aggregate(
             total=Sum("total"), count=Count("id"),
             cash=Sum("cash_amount"), mpesa=Sum("mpesa_amount"),
+            card=Sum("card_amount"),
         )
         if not (agg["count"] or 0):
             return None
@@ -1299,6 +1304,7 @@ def card_for_all(text: str):
                 "receipts": agg["count"],
                 "cash": money(agg["cash"]),
                 "mpesa": money(agg["mpesa"]),
+                "card": money(agg["card"]),
                 "credit": money(credit),
                 "start": start.isoformat(),
                 "end": end.isoformat(),

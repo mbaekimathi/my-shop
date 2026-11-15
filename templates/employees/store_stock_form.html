@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=11">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
 {% endblock %}
 
 {% block workspace_content %}
@@ -48,9 +48,9 @@
           <h3 id="store-stock-meta-title">Movement details</h3>
           <p>
             {% if mode == "in" %}
-            Who delivered the stock and optional context for this record.
+            Supplier and optional context for this record.
             {% else %}
-            Who received the stock and optional context for this record.
+            Reason and refund details applied to every item in this record.
             {% endif %}
           </p>
         </div>
@@ -61,30 +61,9 @@
       </div>
 
       <div class="store-stock-meta-grid">
-        <label class="store-stock-field store-stock-search" data-store-employee-root>
-          <span>{% if mode == "in" %}Who delivered{% else %}Employee who received{% endif %}</span>
-          <div class="store-stock-input-wrap">
-            <i data-lucide="user-round-search" aria-hidden="true"></i>
-            <input
-              type="search"
-              autocomplete="off"
-              placeholder="Search by name"
-              data-store-employee-query
-              aria-autocomplete="list"
-              aria-controls="store-employee-results"
-            >
-          </div>
-          <input type="hidden" name="received_by_id" value="" data-store-employee-id required>
-          <p class="store-stock-selected" data-store-employee-selected hidden></p>
-          <ul
-            class="store-stock-results"
-            id="store-employee-results"
-            role="listbox"
-            data-store-employee-results
-            hidden
-          ></ul>
-        </label>
-
+        {% if mode == "out" %}
+        {% include "employees/partials/stock_out_details.html" %}
+        {% else %}
         <label class="store-stock-field">
           <span>Note <em>optional</em></span>
           <div class="store-stock-input-wrap">
@@ -92,6 +71,49 @@
             <input type="text" name="note" maxlength="255" placeholder="Delivery note, reference…">
           </div>
         </label>
+        {% endif %}
+
+        {% if mode == "in" %}
+        <label class="store-stock-field">
+          <span>Supplier name{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="truck" aria-hidden="true"></i>
+            <input
+              type="text"
+              name="supplier_name"
+              maxlength="160"
+              placeholder="e.g. Brookside Distributors"
+              data-uppercase
+              {% if stock_req.require_supplier_on_in %}required{% endif %}
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Supplier phone{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="phone" aria-hidden="true"></i>
+            <input
+              type="tel"
+              name="supplier_phone"
+              maxlength="40"
+              placeholder="e.g. 0722 000 000"
+              {% if stock_req.require_supplier_on_in %}required{% endif %}
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Payment{% if not stock_req.require_payment_status_on_in %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="banknote" aria-hidden="true"></i>
+            <select name="payment_status"{% if stock_req.require_payment_status_on_in %} required{% endif %}>
+              <option value="">Select</option>
+              <option value="unpaid">Not paid</option>
+              <option value="paid">Paid</option>
+              <option value="partial">Partially paid</option>
+            </select>
+          </div>
+        </label>
+        {% endif %}
       </div>
     </section>
 
@@ -122,6 +144,9 @@
               <th scope="col">Category</th>
               <th scope="col" class="store-stock-col-qty">In store</th>
               <th scope="col" class="store-stock-col-input">{{ mode|upper }} qty</th>
+              {% if mode == "in" %}
+              <th scope="col" class="store-stock-col-input">Buying price</th>
+              {% endif %}
             </tr>
           </thead>
           <tbody>
@@ -154,6 +179,20 @@
                   data-store-qty-input
                 >
               </td>
+              {% if mode == "in" %}
+              <td class="store-stock-col-input" data-label="Buying price">
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="price_{{ item.id }}"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="0.00"
+                  aria-label="Buying price for {{ item.name }}"
+                >
+              </td>
+              {% endif %}
             </tr>
             {% endfor %}
           </tbody>
@@ -185,5 +224,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/store-stock.js' %}?v=5"></script>
+<script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
 {% endblock %}

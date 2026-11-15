@@ -1030,10 +1030,22 @@ def _next_receipt_number(shop, prefix="S", kind=None):
 
 KIND_PREFIX = {"sale": "S", "credit": "C", "quotation": "Q"}
 
+# Payment method -> tender channels (mirrors shops PAYMENT_METHOD_CHANNELS).
+_PAYMENT_CHANNELS = {
+    "cash": ("cash",),
+    "mpesa": ("mpesa",),
+    "card": ("card",),
+    "both": ("cash", "mpesa"),
+    "cash_card": ("cash", "card"),
+    "mpesa_card": ("mpesa", "card"),
+    "cash_mpesa_card": ("cash", "mpesa", "card"),
+}
+
 
 @transaction.atomic
 def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
-                mpesa_amount=None, client_name="", client_phone="",
+                mpesa_amount=None, card_amount=None,
+                client_name="", client_phone="",
                 kind="sale", credit_due_date=None, staff_code="",
                 share_whatsapp: bool = False,
                 require_member: bool = False, employee_id=None):
@@ -1060,8 +1072,8 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
     method = "none"
     if kind == "sale":
         method = (payment_method or "").strip().lower()
-        if method not in ("cash", "mpesa", "both"):
-            raise StockError("Choose cash, M-Pesa, or both.")
+        if method not in _PAYMENT_CHANNELS:
+            raise StockError("Choose a valid payment method.")
 
     # Sale needs stock like a transfer — same line parsing.
     lines = _parse_lines(raw_lines, me, need_stock=True)
@@ -1107,23 +1119,34 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
     total = sum((l["line_total"] for l in lines), Decimal("0.00")).quantize(
         Decimal("0.01")
     )
-    if method == "none":
-        cash, mpesa = Decimal("0.00"), Decimal("0.00")
-    elif method == "cash":
-        cash, mpesa = total, Decimal("0.00")
-    elif method == "mpesa":
-        cash, mpesa = Decimal("0.00"), total
-    else:
-        cash, mpesa = _money(cash_amount), _money(mpesa_amount)
-        paid = cash + mpesa
-        if abs(paid - total) <= Decimal("0.01"):
-            mpesa = (total - cash).quantize(Decimal("0.01"))
-        elif paid != total:
-            raise StockError(
-                "Cash and M-Pesa amounts must add up to the sale total."
+    split = {"cash": Decimal("0.00"), "mpesa": Decimal("0.00"),
+             "card": Decimal("0.00")}
+    channels = _PAYMENT_CHANNELS.get(method, ())
+    if len(channels) == 1:
+        split[channels[0]] = total
+    elif channels:
+        entered = {
+            "cash": _money(cash_amount),
+            "mpesa": _money(mpesa_amount),
+            "card": _money(card_amount),
+        }
+        paid = sum(entered[ch] for ch in channels)
+        if paid != total:
+            if abs(paid - total) > Decimal("0.01"):
+                raise StockError(
+                    "Payment amounts must add up to the sale total."
+                )
+            last = channels[-1]
+            entered[last] = (entered[last] + (total - paid)).quantize(
+                Decimal("0.01")
             )
-        if cash <= 0 or mpesa <= 0:
-            raise StockError("For split payment both amounts must be > 0.")
+        for ch in channels:
+            if entered[ch] <= 0:
+                raise StockError(
+                    "For split payment all amounts must be > 0."
+                )
+            split[ch] = entered[ch]
+    cash, mpesa, card = split["cash"], split["mpesa"], split["card"]
 
     receipt = ShopReceipt.objects.create(
         shop_id=me.pk,
@@ -1140,6 +1163,7 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
         amount_paid=total if kind == "sale" else Decimal("0.00"),
         cash_amount=cash,
         mpesa_amount=mpesa,
+        card_amount=card,
         credit_due_date=credit_due_date if kind == "credit" else None,
         share_whatsapp=share_whatsapp,
         # Cash sales stay pending until confirmed on the Receipts page;
@@ -1202,7 +1226,9 @@ def sale_card(receipt, lines, total) -> dict:
             "label": label,
             "icon": "repeat" if receipt.kind in TRADE_KINDS else "shopping-cart",
             "total": str(total),
-            "payment": receipt.payment_method,
+            "payment": PAYMENT_LABELS.get(
+                receipt.payment_method, receipt.payment_method
+            ),
             "client": receipt.client_name or "",
             "due": (
                 receipt.credit_due_date.strftime("%d %b %Y")
@@ -1286,7 +1312,11 @@ KIND_LABELS = {
 PAYMENT_LABELS = {
     "cash": "Cash",
     "mpesa": "M-Pesa",
+    "card": "Card",
     "both": "Cash + M-Pesa",
+    "cash_card": "Cash + Card",
+    "mpesa_card": "M-Pesa + Card",
+    "cash_mpesa_card": "Cash + M-Pesa + Card",
     "credit": "Credit",
 }
 
@@ -1515,6 +1545,7 @@ def receipt_detail(shop, receipt_id: int) -> dict:
         "tax_amount": str(receipt.tax_amount),
         "cash_amount": str(receipt.cash_amount),
         "mpesa_amount": str(receipt.mpesa_amount),
+        "card_amount": str(receipt.card_amount),
         "lines": line_rows,
         "returnable_lines": returnable,
     }
@@ -1563,10 +1594,13 @@ def _append_return_batch(line, *, qty, serials, at, by_id, reason="") -> None:
     line.return_batches = batches
 
 
-def _append_return_payment_event(receipt, *, at, cash, mpesa, by_id) -> bool:
+def _append_return_payment_event(
+    receipt, *, at, cash, mpesa, by_id, card=0
+) -> bool:
     cash = _money(cash)
     mpesa = _money(mpesa)
-    if cash <= 0 and mpesa <= 0:
+    card = _money(card)
+    if cash <= 0 and mpesa <= 0 and card <= 0:
         return False
     events = [
         e for e in (receipt.return_payment_events or []) if isinstance(e, dict)
@@ -1576,6 +1610,7 @@ def _append_return_payment_event(receipt, *, at, cash, mpesa, by_id) -> bool:
             "at": at.isoformat(),
             "cash": str(cash),
             "mpesa": str(mpesa),
+            "card": str(card),
             "by_id": by_id,
         }
     )
@@ -1867,12 +1902,14 @@ def return_receipt_items(
     tax_percent = _money(receipt.tax_percent)
     prior_cash = _money(receipt.cash_amount)
     prior_mpesa = _money(receipt.mpesa_amount)
+    prior_card = _money(getattr(receipt, "card_amount", 0) or 0)
 
     if remaining_subtotal <= 0:
         tax_amount = Decimal("0.00")
         total = Decimal("0.00")
         cash_amount = Decimal("0.00")
         mpesa_amount = Decimal("0.00")
+        card_amount = Decimal("0.00")
         status = STATUS_CANCELLED
     else:
         tax_amount = (remaining_subtotal * tax_percent / Decimal("100")).quantize(
@@ -1890,37 +1927,50 @@ def return_receipt_items(
             status = STATUS_ACTIVE
         cash_amount = receipt.cash_amount
         mpesa_amount = receipt.mpesa_amount
+        card_amount = getattr(receipt, "card_amount", 0) or Decimal("0.00")
         if receipt.kind == "sale":
-            method = receipt.payment_method or "cash"
-            if method == "cash":
-                cash_amount = total
-                mpesa_amount = Decimal("0.00")
-            elif method == "mpesa":
-                mpesa_amount = total
-                cash_amount = Decimal("0.00")
-            elif method == "both":
+            channels = _PAYMENT_CHANNELS.get(
+                receipt.payment_method or "cash", ()
+            )
+            tender = {
+                "cash": _money(cash_amount),
+                "mpesa": _money(mpesa_amount),
+                "card": _money(card_amount),
+            }
+            if len(channels) == 1:
+                tender = {ch: Decimal("0.00") for ch in tender}
+                tender[channels[0]] = total
+            elif channels:
                 old_total = _money(receipt.total)
+                scaled = {ch: Decimal("0.00") for ch in tender}
                 if old_total > 0:
                     ratio = total / old_total
-                    cash_amount = (_money(receipt.cash_amount) * ratio).quantize(
-                        Decimal("0.01")
-                    )
-                    mpesa_amount = (total - cash_amount).quantize(Decimal("0.01"))
+                    for ch in channels[:-1]:
+                        scaled[ch] = (tender[ch] * ratio).quantize(
+                            Decimal("0.01")
+                        )
+                    scaled[channels[-1]] = (
+                        total - sum(scaled.values())
+                    ).quantize(Decimal("0.01"))
                 else:
-                    cash_amount = Decimal("0.00")
-                    mpesa_amount = total
+                    scaled[channels[-1]] = total
+                tender = scaled
             else:
-                cash_amount = Decimal("0.00")
-                mpesa_amount = Decimal("0.00")
+                tender = {ch: Decimal("0.00") for ch in tender}
+            cash_amount = tender["cash"]
+            mpesa_amount = tender["mpesa"]
+            card_amount = tender["card"]
         elif receipt.kind not in ("credit", "trade_out"):
             cash_amount = Decimal("0.00")
             mpesa_amount = Decimal("0.00")
+            card_amount = Decimal("0.00")
 
     receipt.subtotal = remaining_subtotal
     receipt.tax_amount = tax_amount
     receipt.total = total
     receipt.cash_amount = cash_amount
     receipt.mpesa_amount = mpesa_amount
+    receipt.card_amount = card_amount
     receipt.status = status
     receipt.last_returned_at = now
     receipt.last_returned_by_id = employee_id
@@ -1930,6 +1980,7 @@ def return_receipt_items(
         "total",
         "cash_amount",
         "mpesa_amount",
+        "card_amount",
         "status",
         "last_returned_at",
         "last_returned_by_id",
@@ -1939,6 +1990,7 @@ def return_receipt_items(
         at=now,
         cash=prior_cash - _money(cash_amount),
         mpesa=prior_mpesa - _money(mpesa_amount),
+        card=prior_card - _money(card_amount),
         by_id=employee_id,
     ):
         update_fields.append("return_payment_events")
@@ -2333,6 +2385,7 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
         amount_paid=Decimal("0.00"),
         cash_amount=Decimal("0.00"),
         mpesa_amount=Decimal("0.00"),
+        card_amount=Decimal("0.00"),
         status="active",
     )
 
@@ -2552,6 +2605,7 @@ def create_expenses(me, *, lines=None, category="", name="", amount=None,
                 amount_paid=paid,
                 cash_amount=paid,
                 mpesa_amount=Decimal("0"),
+                card_amount=Decimal("0"),
                 payment_status=status,
                 supplier_id=supplier.pk if supplier else None,
                 supplier_name=sname.upper(),
@@ -2689,6 +2743,7 @@ def _run_action(action: str, me, payload: dict, employee_id):
             payment_method=payload.get("payment_method") or "",
             cash_amount=payload.get("cash_amount"),
             mpesa_amount=payload.get("mpesa_amount"),
+            card_amount=payload.get("card_amount"),
             client_name=payload.get("client_name") or "",
             client_phone=payload.get("client_phone") or "",
             credit_due_date=due,
@@ -2821,9 +2876,7 @@ def _pending_display(result: dict) -> dict:
     detail = []
     if receipt.kind == "sale":
         detail.append(
-            {"cash": "Cash", "mpesa": "M-Pesa", "both": "Cash + M-Pesa"}.get(
-                receipt.payment_method, ""
-            )
+            PAYMENT_LABELS.get(receipt.payment_method, "")
         )
     if receipt.client_name:
         detail.append(f"Client {receipt.client_name}")

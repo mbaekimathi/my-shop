@@ -13,15 +13,34 @@ from employees.access import get_profile_for_request, role_required
 from employees.models import EmployeeRole
 from employees.module_permissions import employee_may
 from employees.workspace import sidebar_for_store_stock
-from items.models import StoreStockMovementType
+from items.models import (
+    ShelfStockMovementType,
+    StockOutReason,
+    StoreStockMovementType,
+)
 from items.store_stock_services import (
     build_store_stock_report,
     list_store_stock_items,
+    parse_stock_out_details,
     parse_store_stock_qty_lines,
+    parse_store_trade_lines,
+    parse_supplier_payment_details,
     record_store_stock_lines,
+    record_store_trade,
     search_active_employees,
     search_store_items,
 )
+
+
+def _stock_requirements():
+    """Company-wide compulsory-field flags for stock in/out."""
+    from shops.services import get_company_stock_settings
+
+    return get_company_stock_settings()
+
+
+def _stock_out_reasons():
+    return StockOutReason.choices
 
 
 def _actor_label(profile):
@@ -31,20 +50,134 @@ def _actor_label(profile):
     return f"{profile.employee_id} — {name}"
 
 
+def item_stock_tracking_enabled():
+    """Company stock mode tracks catalog items — off only in Shelf-only mode."""
+    from shops.services import get_company_pos_settings
+
+    return bool(
+        getattr(get_company_pos_settings(), "enable_stock_tracking", True)
+    )
+
+
+def _shelf_only_redirect(request):
+    """Shelf-only stock mode: the central item store is not used."""
+    if item_stock_tracking_enabled():
+        return None
+    messages.info(request, "Shelf mode is on — item store stock is not tracked.")
+    if shelf_mode_shops():
+        return redirect("employees:store_shelf_stock")
+    return redirect("employees:role_store_manager")
+
+
+@role_required(EmployeeRole.STORE_MANAGER)
+@require_GET
+def store_stock_items(request):
+    """Item stock home: current central-store quantity per catalog item."""
+    denied = _shelf_only_redirect(request)
+    if denied is not None:
+        return denied
+    profile = get_profile_for_request(request)
+    items = list_store_stock_items()
+    return render(
+        request,
+        "employees/store_stock_items.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Item Stock",
+                "headline": "Item stock",
+                "summary": (
+                    "Current stock in the central store. Use Stock in / Stock "
+                    "out to move quantities; the shop floor is separate."
+                ),
+                "icon": "boxes",
+            },
+            "items": items,
+            "item_count": len(items),
+            "store_total_display": str(
+                sum((row["store_qty"] for row in items), start=0)
+            ),
+            "actor_label": _actor_label(profile),
+            "employee_search_url": reverse("employees:store_stock_employee_search"),
+            "stock_in_url": reverse("employees:store_stock_in"),
+            "stock_out_url": reverse("employees:store_stock_out"),
+            "stock_trade_url": reverse("employees:store_stock_trade"),
+            "stock_req": _stock_requirements(),
+            "stock_out_reasons": _stock_out_reasons(),
+            "page_sidebar": sidebar_for_store_stock(
+                EmployeeRole.STORE_MANAGER, profile=profile, active="items"
+            ),
+        },
+    )
+
+
+@role_required(EmployeeRole.STORE_MANAGER)
+@require_GET
+def store_stock_movement(request):
+    """Item stock movement log — the raw in/out ledger for the central store."""
+    denied = _shelf_only_redirect(request)
+    if denied is not None:
+        return denied
+    profile = get_profile_for_request(request)
+    page = build_store_stock_report(request=request)
+    return render(
+        request,
+        "employees/store_stock_movement.html",
+        {
+            "profile": profile,
+            "page": page,
+            "meta": {
+                "title": "Item Stock Movement",
+                "headline": "Item stock movement",
+                "summary": (
+                    "Every stock in / stock out line recorded for the central "
+                    "store, newest first."
+                ),
+                "icon": "arrow-down-up",
+            },
+            "report_url": reverse("employees:store_stock_report"),
+            "items": list_store_stock_items(),
+            "actor_label": _actor_label(profile),
+            "employee_search_url": reverse("employees:store_stock_employee_search"),
+            "stock_in_url": reverse("employees:store_stock_in"),
+            "stock_out_url": reverse("employees:store_stock_out"),
+            "stock_trade_url": reverse("employees:store_stock_trade"),
+            "stock_req": _stock_requirements(),
+            "stock_out_reasons": _stock_out_reasons(),
+            "page_sidebar": sidebar_for_store_stock(
+                EmployeeRole.STORE_MANAGER, profile=profile, active="movement"
+            ),
+        },
+    )
+
+
 def _render_store_stock_page(request, *, mode: str):
+    denied = _shelf_only_redirect(request)
+    if denied is not None:
+        return denied
     profile = get_profile_for_request(request)
     is_in = mode == StoreStockMovementType.IN
-    redirect_name = "employees:store_stock_in" if is_in else "employees:store_stock_out"
 
     if request.method == "POST":
         try:
             lines = parse_store_stock_qty_lines(request.POST)
+            if is_in:
+                details = parse_supplier_payment_details(
+                    request.POST, stock_req=_stock_requirements()
+                )
+                note = request.POST.get("note") or ""
+            else:
+                details = parse_stock_out_details(
+                    request.POST, stock_req=_stock_requirements()
+                )
+                note = details.pop("note", "")
             movements = record_store_stock_lines(
                 mode=mode,
                 actor=profile,
                 lines=lines,
                 received_by_id=request.POST.get("received_by_id"),
-                note=request.POST.get("note") or "",
+                note=note,
+                **details,
             )
         except ValidationError as exc:
             messages.error(request, "; ".join(exc.messages))
@@ -61,7 +194,7 @@ def _render_store_stock_page(request, *, mode: str):
                     f"({total_qty} units)."
                 ),
             )
-            return redirect(redirect_name)
+            return redirect("employees:store_stock_items")
 
     items = list_store_stock_items()
     return render(
@@ -84,6 +217,8 @@ def _render_store_stock_page(request, *, mode: str):
             },
             "actor_label": _actor_label(profile),
             "submit_label": "Record stock in" if is_in else "Record stock out",
+            "stock_req": _stock_requirements(),
+            "stock_out_reasons": _stock_out_reasons(),
             "items": items,
             "item_count": len(items),
             "employee_search_url": reverse("employees:store_stock_employee_search"),
@@ -108,6 +243,75 @@ def store_stock_out(request):
     return _render_store_stock_page(request, mode=StoreStockMovementType.OUT)
 
 
+@role_required(EmployeeRole.STORE_MANAGER)
+@require_http_methods(["GET", "POST"])
+def store_stock_trade(request):
+    """Item stock trade: give items to or receive items from one person."""
+    denied = _shelf_only_redirect(request)
+    if denied is not None:
+        return denied
+    profile = get_profile_for_request(request)
+
+    if request.method == "POST":
+        try:
+            kind, lines = parse_store_trade_lines(request.POST)
+            movements = record_store_trade(
+                actor=profile,
+                kind=kind,
+                person_name=request.POST.get("person_name"),
+                person_phone=request.POST.get("person_phone"),
+                lines=lines,
+                note=(request.POST.get("note") or "").strip(),
+                require_person=bool(
+                    getattr(_stock_requirements(), "require_supplier_on_in", False)
+                ),
+            )
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
+        else:
+            from decimal import Decimal
+
+            total_qty = sum(
+                (row.quantity for row in movements), start=Decimal("0")
+            )
+            messages.success(
+                request,
+                (
+                    f"Recorded {len(movements)} trade line"
+                    f"{'' if len(movements) == 1 else 's'} "
+                    f"({total_qty} units)."
+                ),
+            )
+            return redirect("employees:store_stock_items")
+
+    items = list_store_stock_items()
+    return render(
+        request,
+        "employees/store_stock_trade.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Item Stock Trade",
+                "headline": "Item stock trade",
+                "summary": (
+                    "Trade items with a person — either they take items out "
+                    "of the store or they bring items into it. Shop floor "
+                    "stock is separate."
+                ),
+                "icon": "repeat",
+            },
+            "items": items,
+            "item_count": len(items),
+            "actor_label": _actor_label(profile),
+            "submit_label": "Record trade",
+            "stock_req": _stock_requirements(),
+            "page_sidebar": sidebar_for_store_stock(
+                EmployeeRole.STORE_MANAGER, profile=profile, active="trade"
+            ),
+        },
+    )
+
+
 def shelf_mode_shops():
     """Active shops whose effective POS settings have Shelf mode on."""
     from shops.models import Shop
@@ -120,15 +324,21 @@ def shelf_mode_shops():
     ]
 
 
+SHELF_PAGE_MODES = ("stock", "in", "out", "trade", "movements", "report")
+
+
 @role_required(EmployeeRole.STORE_MANAGER)
 @require_http_methods(["GET", "POST"])
 def store_shelf_stock(request):
     """Store Manager: register and adjust shelf stock for any shop in Shelf mode."""
+    from decimal import Decimal
+
     from items.shelf_stock_services import (
         SHELF_UNIT_CHOICES,
         apply_shelf_action,
         list_shelf_items,
         recent_shelf_movements,
+        record_shelf_movement,
         shelf_categories,
     )
 
@@ -138,8 +348,20 @@ def store_shelf_stock(request):
         return redirect("employees:role_store_manager")
 
     shops = shelf_mode_shops()
+    mode = (request.POST.get("mode") or request.GET.get("mode") or "stock").strip().lower()
+    if mode not in SHELF_PAGE_MODES:
+        mode = "stock"
     wanted = str(request.POST.get("shop") or request.GET.get("shop") or "")
     shop = next((row for row in shops if str(row.pk) == wanted), None)
+
+    def _back(*, keep_mode=True):
+        params = []
+        if shop is not None:
+            params.append(f"shop={shop.pk}")
+        if keep_mode and mode != "stock":
+            params.append(f"mode={mode}")
+        query = f"?{'&'.join(params)}" if params else ""
+        return redirect(f"{reverse('employees:store_shelf_stock')}{query}")
 
     if request.method == "POST":
         if shop is None:
@@ -150,14 +372,117 @@ def store_shelf_stock(request):
                 else "Turn on Shelf or Both under Settings → POS → Stock first.",
             )
             return redirect("employees:store_shelf_stock")
+        if mode in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
+            try:
+                lines = parse_store_stock_qty_lines(request.POST)
+                if mode == ShelfStockMovementType.IN:
+                    details = parse_supplier_payment_details(
+                        request.POST, stock_req=_stock_requirements()
+                    )
+                    note = (request.POST.get("note") or "").strip()[:255]
+                else:
+                    details = parse_stock_out_details(
+                        request.POST, stock_req=_stock_requirements()
+                    )
+                    note = details.pop("note", "")
+            except ValidationError as exc:
+                for message in exc.messages:
+                    messages.error(request, message)
+                return _back(keep_mode=False)
+            done = 0
+            total = Decimal("0")
+            for shelf_item_id, qty, buying_price in lines:
+                try:
+                    movement = record_shelf_movement(
+                        shop=shop,
+                        shelf_item_id=shelf_item_id,
+                        mode=mode,
+                        qty=qty,
+                        actor=profile,
+                        note=note,
+                        buying_price=buying_price,
+                        **details,
+                    )
+                except ValidationError as exc:
+                    for message in exc.messages:
+                        messages.error(request, message)
+                else:
+                    done += 1
+                    total += movement.quantity
+            if done:
+                messages.success(
+                    request,
+                    f"Recorded {done} shelf stock {mode} line"
+                    f"{'' if done == 1 else 's'} ({total} units).",
+                )
+            return _back(keep_mode=False)
+        if mode == "trade":
+            try:
+                kind, lines = parse_store_trade_lines(request.POST)
+                person_name = (request.POST.get("person_name") or "").strip()
+                person_phone = (request.POST.get("person_phone") or "").strip()
+                note = (request.POST.get("note") or "").strip()[:255]
+                if kind == StockOutReason.TRADE_IN and getattr(
+                    _stock_requirements(), "require_supplier_on_in", False
+                ):
+                    if not person_name:
+                        raise ValidationError("Enter the other person's name.")
+                    if not person_phone:
+                        raise ValidationError(
+                            "Enter the other person's phone number."
+                        )
+            except ValidationError as exc:
+                for message in exc.messages:
+                    messages.error(request, message)
+                return _back(keep_mode=False)
+            move_mode = (
+                ShelfStockMovementType.OUT
+                if kind == StockOutReason.TRADE_OUT
+                else ShelfStockMovementType.IN
+            )
+            done = 0
+            total = Decimal("0")
+            for shelf_item_id, qty, value in lines:
+                try:
+                    movement = record_shelf_movement(
+                        shop=shop,
+                        shelf_item_id=shelf_item_id,
+                        mode=move_mode,
+                        qty=qty,
+                        actor=profile,
+                        note=note,
+                        supplier_name=person_name,
+                        supplier_phone=person_phone,
+                        buying_price=value,
+                        reason=kind,
+                    )
+                except ValidationError as exc:
+                    for message in exc.messages:
+                        messages.error(request, message)
+                else:
+                    done += 1
+                    total += movement.quantity
+            if done:
+                messages.success(
+                    request,
+                    f"Recorded {done} shelf trade line"
+                    f"{'' if done == 1 else 's'} ({total} units).",
+                )
+            return _back(keep_mode=False)
         try:
             messages.success(
-                request, apply_shelf_action(shop=shop, actor=profile, data=request.POST)
+                request,
+                apply_shelf_action(
+                    shop=shop,
+                    actor=profile,
+                    data=request.POST,
+                    files=request.FILES,
+                ),
             )
         except ValidationError as exc:
             for message in exc.messages:
                 messages.error(request, message)
-        return redirect(f"{reverse('employees:store_shelf_stock')}?shop={shop.pk}")
+        return _back()
 
     if shop is None and shops:
         shop = shops[0]
@@ -182,19 +507,33 @@ def store_shelf_stock(request):
                 ),
                 "icon": "layers",
             },
+            "shelf_mode": mode,
             "shops": shops,
             "shop": shop,
             "shelf_items": shelf_items,
             "shelf_item_count": len(shelf_items),
             "shelf_low_count": sum(1 for row in shelf_items if row["is_low"]),
-            "shelf_movements": recent_shelf_movements(shop=shop) if shop else [],
+            "shelf_total_display": str(
+                sum((row["quantity"] for row in shelf_items), start=Decimal("0"))
+            ),
+            "shelf_movements": (
+                recent_shelf_movements(
+                    shop=shop, limit=500 if mode == "movements" else 30
+                )
+                if shop
+                else []
+            ),
             "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", False)),
+            "stock_req": _stock_requirements(),
+            "stock_out_reasons": _stock_out_reasons(),
             "shelf_needs_staff_id": False,
             "shelf_shop_field": True,
             "shelf_unit_choices": SHELF_UNIT_CHOICES,
             "shelf_categories": shelf_categories(),
             "page_sidebar": sidebar_for_store_stock(
-                EmployeeRole.STORE_MANAGER, profile=profile, active="shelf"
+                EmployeeRole.STORE_MANAGER,
+                profile=profile,
+                active=f"shelf-{mode}",
             ),
         },
     )
@@ -203,6 +542,9 @@ def store_shelf_stock(request):
 @role_required(EmployeeRole.STORE_MANAGER)
 @require_GET
 def store_stock_report(request):
+    denied = _shelf_only_redirect(request)
+    if denied is not None:
+        return denied
     profile = get_profile_for_request(request)
     page = build_store_stock_report(request=request)
     return render(
@@ -221,6 +563,14 @@ def store_stock_report(request):
                 "icon": "clipboard-list",
             },
             "item_search_url": reverse("employees:store_stock_item_search"),
+            "items": list_store_stock_items(),
+            "actor_label": _actor_label(profile),
+            "employee_search_url": reverse("employees:store_stock_employee_search"),
+            "stock_in_url": reverse("employees:store_stock_in"),
+            "stock_out_url": reverse("employees:store_stock_out"),
+            "stock_trade_url": reverse("employees:store_stock_trade"),
+            "stock_req": _stock_requirements(),
+            "stock_out_reasons": _stock_out_reasons(),
             "page_sidebar": sidebar_for_store_stock(
                 EmployeeRole.STORE_MANAGER, profile=profile, active="report"
             ),
@@ -244,7 +594,11 @@ def store_stock_report(request):
 @role_required(EmployeeRole.STORE_MANAGER)
 @require_GET
 def store_stock_item_search(request):
-    results = search_store_items(query=request.GET.get("q") or "", limit=12)
+    results = (
+        search_store_items(query=request.GET.get("q") or "", limit=12)
+        if item_stock_tracking_enabled()
+        else []
+    )
     return JsonResponse({"ok": True, "results": results})
 
 

@@ -462,6 +462,23 @@
     );
   };
 
+  const CONFIRM_METHOD_CHANNELS = {
+    cash: ["cash"],
+    mpesa: ["mpesa"],
+    card: ["card"],
+    both: ["cash", "mpesa"],
+    cash_card: ["cash", "card"],
+    mpesa_card: ["mpesa", "card"],
+    cash_mpesa_card: ["cash", "mpesa", "card"],
+  };
+  const CONFIRM_CHANNEL_LABELS = {
+    cash: "Cash",
+    mpesa: "M-Pesa",
+    card: "Card",
+  };
+  const confirmMethodChannels = (method) =>
+    CONFIRM_METHOD_CHANNELS[String(method || "").toLowerCase()] || [];
+
   const confirmFieldValues = () => {
     const receipt = currentDetail?.receipt || {};
     const paymentDate = (
@@ -493,6 +510,9 @@
     const mpesaAmount = (
       modalBody?.querySelector("[data-confirm-mpesa-amount]")?.value || ""
     ).trim();
+    const cardAmount = (
+      modalBody?.querySelector("[data-confirm-card-amount]")?.value || ""
+    ).trim();
     return {
       paymentAt,
       paymentDate,
@@ -506,6 +526,7 @@
       method,
       cashAmount,
       mpesaAmount,
+      cardAmount,
     };
   };
 
@@ -522,19 +543,27 @@
       method,
       cashAmount,
       mpesaAmount,
+      cardAmount,
     } = confirmFieldValues();
     const detailsOk =
       !requireDetails ||
       ((Boolean(ref) || Boolean(existingRef)) && Boolean(paymentAt));
     const amountOk =
       !credit || due <= 0 || (Boolean(amount) && Number(amount) > 0);
+    const splitValues = {
+      cash: cashAmount,
+      mpesa: mpesaAmount,
+      card: cardAmount,
+    };
+    const splitChannels = confirmMethodChannels(method);
     const splitOk =
       credit ||
-      method !== "both" ||
-      (Boolean(cashAmount) &&
-        Boolean(mpesaAmount) &&
-        Number.isFinite(Number(cashAmount)) &&
-        Number.isFinite(Number(mpesaAmount)));
+      splitChannels.length < 2 ||
+      splitChannels.every(
+        (channel) =>
+          Boolean(splitValues[channel]) &&
+          Number.isFinite(Number(splitValues[channel]))
+      );
     submitConfirmBtn.disabled = !(
       confirmMode &&
       confirmVerified &&
@@ -768,7 +797,11 @@
     const methodLabels = {
       cash: "Cash",
       mpesa: "M-Pesa",
+      card: "Card",
       both: "Cash + M-Pesa",
+      cash_card: "Cash + Card",
+      mpesa_card: "M-Pesa + Card",
+      cash_mpesa_card: "Cash + M-Pesa + Card",
     };
     const currentMethod = String(receipt.payment_method || "")
       .trim()
@@ -808,63 +841,53 @@
           ${paidByOptions}
         </select>
       </div>`;
-      const splitCash =
-        saleMethod === "both"
-          ? String(receipt.cash_amount ?? "")
-          : saleMethod === "cash"
-            ? String(receipt.total ?? "")
-            : "0";
-      const splitMpesa =
-        saleMethod === "both"
-          ? String(receipt.mpesa_amount ?? "")
-          : saleMethod === "mpesa"
-            ? String(receipt.total ?? "")
-            : "0";
+      const saleChannels = confirmMethodChannels(saleMethod);
+      const splitFieldFor = (channel) => {
+        const on = saleChannels.includes(channel);
+        const value = on ? String(receipt[`${channel}_amount`] ?? "") : "";
+        return `<div class="shop-receipt-mpesa-ref" data-confirm-split-${channel}${
+          on ? "" : " hidden"
+        }>
+          <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-${channel}-amount">
+            ${CONFIRM_CHANNEL_LABELS[channel]} amount
+          </label>
+          <input
+            id="shop-confirm-${channel}-amount"
+            class="shop-receipt-mpesa-ref-input"
+            type="number"
+            name="${channel}_amount"
+            min="0"
+            step="0.01"
+            value="${escapeHtml(value)}"
+            inputmode="decimal"
+            data-confirm-${channel}-amount
+          >
+        </div>`;
+      };
       paymentSplitField = `<div class="shop-receipt-confirm-datetime" data-confirm-split-wrap${
-        saleMethod === "both" ? "" : " hidden"
+        saleChannels.length > 1 ? "" : " hidden"
       }>
-        <div class="shop-receipt-mpesa-ref">
-          <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-cash-amount">
-            Cash amount
-          </label>
-          <input
-            id="shop-confirm-cash-amount"
-            class="shop-receipt-mpesa-ref-input"
-            type="number"
-            name="cash_amount"
-            min="0"
-            step="0.01"
-            value="${escapeHtml(splitCash)}"
-            inputmode="decimal"
-            data-confirm-cash-amount
-          >
-        </div>
-        <div class="shop-receipt-mpesa-ref">
-          <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-mpesa-amount">
-            M-Pesa amount
-          </label>
-          <input
-            id="shop-confirm-mpesa-amount"
-            class="shop-receipt-mpesa-ref-input"
-            type="number"
-            name="mpesa_amount"
-            min="0"
-            step="0.01"
-            value="${escapeHtml(splitMpesa)}"
-            inputmode="decimal"
-            data-confirm-mpesa-amount
-          >
-        </div>
+        ${splitFieldFor("cash")}
+        ${splitFieldFor("mpesa")}
+        ${splitFieldFor("card")}
       </div>`;
     }
 
     const paidAtLabel = paymentTimeLabel(receipt);
-    const paymentSplitLabel =
-      receipt.payment_method === "both"
-        ? `Cash KSh ${money(receipt.cash_amount)} + M-Pesa KSh ${money(
-            receipt.mpesa_amount
+    const paymentSplitParts = confirmMethodChannels(receipt.payment_method)
+      .filter(
+        (channel) =>
+          confirmMethodChannels(receipt.payment_method).length > 1 &&
+          receipt[`${channel}_amount`] != null &&
+          receipt[`${channel}_amount`] !== ""
+      )
+      .map(
+        (channel) =>
+          `${CONFIRM_CHANNEL_LABELS[channel]} KSh ${money(
+            receipt[`${channel}_amount`]
           )}`
-        : "";
+      );
+    const paymentSplitLabel = paymentSplitParts.join(" + ");
     const creditBalanceRow =
       isCredit && Number(receipt.credit_due) > 0
         ? `<div><dt>Balance due</dt><dd>KSh ${escapeHtml(
@@ -1239,6 +1262,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
       method,
       cashAmount,
       mpesaAmount,
+      cardAmount,
     } = confirmFieldValues();
     if (requireDetails) {
       if (!ref && !existingRef) {
@@ -1287,24 +1311,44 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
         return;
       }
     }
-    if (!credit && method === "both") {
-      const cash = Number(cashAmount);
-      const mpesa = Number(mpesaAmount);
+    const methodChannels = confirmMethodChannels(method);
+    if (!credit && methodChannels.length > 1) {
+      const parts = {
+        cash: Number(cashAmount),
+        mpesa: Number(mpesaAmount),
+        card: Number(cardAmount),
+      };
       const total = Number(currentDetail?.receipt?.total || 0);
-      if (!Number.isFinite(cash) || !Number.isFinite(mpesa) || cash < 0 || mpesa < 0) {
-        setConfirmStatus("Enter how much was paid by cash and by M-Pesa.", {
+      const labels = methodChannels
+        .map((channel) => CONFIRM_CHANNEL_LABELS[channel])
+        .join(" + ");
+      const invalid = methodChannels.some(
+        (channel) => !Number.isFinite(parts[channel]) || parts[channel] < 0
+      );
+      if (invalid) {
+        setConfirmStatus(`Enter how much was paid by ${labels}.`, {
           error: true,
         });
-        modalBody?.querySelector("[data-confirm-cash-amount]")?.focus();
+        modalBody
+          ?.querySelector(`[data-confirm-${methodChannels[0]}-amount]`)
+          ?.focus();
         syncSubmitConfirm();
         return;
       }
-      if (Math.abs(Math.round((cash + mpesa) * 100) - Math.round(total * 100)) > 0) {
+      const paidSum = methodChannels.reduce(
+        (sum, channel) => sum + parts[channel],
+        0
+      );
+      if (
+        Math.abs(Math.round(paidSum * 100) - Math.round(total * 100)) > 0
+      ) {
         setConfirmStatus(
-          `Cash + M-Pesa must add up to the receipt total (KSh ${total.toFixed(2)}).`,
+          `${labels} must add up to the receipt total (KSh ${total.toFixed(2)}).`,
           { error: true }
         );
-        modalBody?.querySelector("[data-confirm-cash-amount]")?.focus();
+        modalBody
+          ?.querySelector(`[data-confirm-${methodChannels[0]}-amount]`)
+          ?.focus();
         syncSubmitConfirm();
         return;
       }
@@ -1338,10 +1382,9 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
         body.payment_method = ref || existingRef ? "mpesa" : "cash";
       } else if (method) {
         body.payment_method = method;
-        if (method === "both") {
-          body.cash_amount = cashAmount;
-          body.mpesa_amount = mpesaAmount;
-        }
+        if (methodChannels.includes("cash")) body.cash_amount = cashAmount;
+        if (methodChannels.includes("mpesa")) body.mpesa_amount = mpesaAmount;
+        if (methodChannels.includes("card")) body.card_amount = cardAmount;
       }
       const res = await fetch(
         urlFor(confirmUrlTemplate, currentDetail.receipt.id),
@@ -1480,41 +1523,55 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     const select = modalBody?.querySelector("[data-confirm-payment-method]");
     const wrap = modalBody?.querySelector("[data-confirm-split-wrap]");
     if (!select || !wrap) return;
-    const both = select.value === "both";
-    wrap.hidden = !both;
-    if (both) {
-      const receipt = currentDetail?.receipt || {};
-      const cashInput = wrap.querySelector("[data-confirm-cash-amount]");
-      const mpesaInput = wrap.querySelector("[data-confirm-mpesa-amount]");
-      if (cashInput && cashInput.value === "") {
-        cashInput.value = String(receipt.cash_amount ?? "");
-      }
-      if (mpesaInput && mpesaInput.value === "") {
-        mpesaInput.value = String(receipt.mpesa_amount ?? "");
+    const channels = confirmMethodChannels(select.value);
+    wrap.hidden = channels.length < 2;
+    if (channels.length < 2) return;
+    const receipt = currentDetail?.receipt || {};
+    for (const channel of ["cash", "mpesa", "card"]) {
+      const field = wrap.querySelector(`[data-confirm-split-${channel}]`);
+      const input = wrap.querySelector(`[data-confirm-${channel}-amount]`);
+      const on = channels.includes(channel);
+      if (field) field.hidden = !on;
+      if (input && on && input.value === "") {
+        input.value = String(receipt[`${channel}_amount`] ?? "");
       }
     }
   };
 
   const autoBalanceSplit = (edited) => {
+    const select = modalBody?.querySelector("[data-confirm-payment-method]");
     const wrap = modalBody?.querySelector("[data-confirm-split-wrap]");
-    if (!wrap) return;
-    const cashInput = wrap.querySelector("[data-confirm-cash-amount]");
-    const mpesaInput = wrap.querySelector("[data-confirm-mpesa-amount]");
-    const other = edited === cashInput ? mpesaInput : cashInput;
+    if (!select || !wrap) return;
+    const channels = confirmMethodChannels(select.value);
+    if (channels.length < 2) return;
+    const inputs = channels
+      .map((channel) => wrap.querySelector(`[data-confirm-${channel}-amount]`))
+      .filter(Boolean);
     const n = Number(edited.value);
-    if (!other || edited.value === "" || !Number.isFinite(n)) return;
+    if (edited.value === "" || !Number.isFinite(n)) return;
     const total = Number(currentDetail?.receipt?.total || 0);
-    other.value = String(
-      Math.round(Math.max(0, (Number.isFinite(total) ? total : 0) - n) * 100) /
-        100
-    );
+    let remaining = Math.round(
+      Math.max(0, (Number.isFinite(total) ? total : 0) - n) * 100
+    ) / 100;
+    const others = inputs.filter((el) => el !== edited);
+    others.forEach((el, index) => {
+      const value =
+        index === others.length - 1
+          ? Math.max(0, remaining)
+          : Math.max(
+              0,
+              Math.round((remaining / (others.length - index)) * 100) / 100
+            );
+      el.value = String(value);
+      remaining = Math.round((remaining - value) * 100) / 100;
+    });
   };
 
   modalBody?.addEventListener("input", (event) => {
     const target = event.target;
     if (
       target?.matches?.(
-        "[data-confirm-cash-amount], [data-confirm-mpesa-amount]"
+        "[data-confirm-cash-amount], [data-confirm-mpesa-amount], [data-confirm-card-amount]"
       )
     ) {
       autoBalanceSplit(target);

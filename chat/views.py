@@ -1889,6 +1889,7 @@ def api_sale(request):
             payment_method=data.get("payment_method") or "",
             cash_amount=data.get("cash_amount"),
             mpesa_amount=data.get("mpesa_amount"),
+            card_amount=data.get("card_amount"),
             client_name=data.get("client_name") or "",
             client_phone=data.get("client_phone") or "",
             credit_due_date=due,

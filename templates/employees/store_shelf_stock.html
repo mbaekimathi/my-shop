@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=11">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
 {% endblock %}
 
 {% block workspace_content %}
@@ -25,7 +25,7 @@
     <dl class="store-stock-stats">
       <div class="store-stock-stat">
         <dt>Shelf items</dt>
-        <dd>{{ shelf_item_count }}</dd>
+        <dd data-store-visible-count>{{ shelf_item_count }}</dd>
       </div>
       <div class="store-stock-stat">
         <dt>Low</dt>
@@ -44,6 +44,7 @@
       </div>
     </div>
     <form method="get" class="shelf-stock-staff-field">
+      {% if shelf_mode != "stock" %}<input type="hidden" name="mode" value="{{ shelf_mode }}">{% endif %}
       <label class="store-stock-field">
         <span>Shop</span>
         <div class="store-stock-input-wrap">
@@ -58,7 +59,423 @@
     </form>
   </section>
 
-  {% include "shops/partials/shelf_stock_body.html" %}
+  {% if shelf_mode == "in" or shelf_mode == "out" %}
+  <form class="store-stock-form" method="post">
+    {% csrf_token %}
+    <input type="hidden" name="shop" value="{{ shop.pk }}">
+    <input type="hidden" name="mode" value="{{ shelf_mode }}">
+
+    <section class="store-stock-panel" aria-labelledby="shelf-flow-meta-title">
+      <div class="store-stock-panel-head">
+        <div>
+          <h3 id="shelf-flow-meta-title">Movement details</h3>
+          <p>Shelf stock {{ shelf_mode }} for {{ shop.name }} — recorded by {{ profile.user.get_full_name|default:profile.user.username }}.</p>
+        </div>
+      </div>
+      <div class="store-stock-meta-grid">
+        {% if shelf_mode == "out" %}
+        {% include "employees/partials/stock_out_details.html" %}
+        {% else %}
+        <label class="store-stock-field">
+          <span>Note <em>optional</em></span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="notebook-pen" aria-hidden="true"></i>
+            <input type="text" name="note" maxlength="255" placeholder="Delivery note, reference…">
+          </div>
+        </label>
+        {% endif %}
+
+        {% if shelf_mode == "in" %}
+        <label class="store-stock-field">
+          <span>Supplier name{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="truck" aria-hidden="true"></i>
+            <input
+              type="text"
+              name="supplier_name"
+              maxlength="160"
+              placeholder="e.g. Brookside Distributors"
+              data-uppercase
+              {% if stock_req.require_supplier_on_in %}required{% endif %}
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Supplier phone{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="phone" aria-hidden="true"></i>
+            <input
+              type="tel"
+              name="supplier_phone"
+              maxlength="40"
+              placeholder="e.g. 0722 000 000"
+              {% if stock_req.require_supplier_on_in %}required{% endif %}
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Payment{% if not stock_req.require_payment_status_on_in %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="banknote" aria-hidden="true"></i>
+            <select name="payment_status"{% if stock_req.require_payment_status_on_in %} required{% endif %}>
+              <option value="">Select</option>
+              <option value="unpaid">Not paid</option>
+              <option value="paid">Paid</option>
+              <option value="partial">Partially paid</option>
+            </select>
+          </div>
+        </label>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-flow-list-title">
+      <div class="store-stock-panel-head store-stock-panel-head--list">
+        <div>
+          <h3 id="shelf-flow-list-title">Shelf items</h3>
+          <p>Enter qty only on the lines you need. Blank rows are ignored.</p>
+        </div>
+      </div>
+
+      {% if shelf_items %}
+      <div class="store-stock-table-wrap">
+        <table class="store-stock-table">
+          <thead>
+            <tr>
+              <th scope="col">Shelf item</th>
+              <th scope="col" class="store-stock-col-qty">On shelf</th>
+              <th scope="col" class="store-stock-col-input">{{ shelf_mode|upper }} qty</th>
+              {% if shelf_mode == "in" %}
+              <th scope="col" class="store-stock-col-input">Buying price</th>
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in shelf_items %}
+            <tr class="store-stock-row">
+              <td data-label="Item">
+                <div class="store-stock-item-cell">
+                  <span class="store-stock-item-head">
+                    {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
+                    <span class="store-stock-item-name">{{ row.name }}</span>
+                  </span>
+                  {% if row.category or row.unit %}<span class="store-stock-item-cat-mobile">{% if row.category %}{{ row.category }}{% endif %}{% if row.category and row.unit %} · {% endif %}{% if row.unit %}{{ row.unit }}{% endif %}</span>{% endif %}
+                </div>
+              </td>
+              <td class="store-stock-col-qty" data-label="On shelf">
+                <span class="store-stock-balance-pill"{% if row.is_low %} data-shelf-low{% endif %}>{{ row.quantity_display }}{% if row.unit %} {{ row.unit }}{% endif %}</span>
+              </td>
+              <td class="store-stock-col-input" data-label="Qty">
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="qty_{{ row.id }}"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="0"
+                  aria-label="Quantity for {{ row.name }}"
+                >
+              </td>
+              {% if shelf_mode == "in" %}
+              <td class="store-stock-col-input" data-label="Buying price">
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="price_{{ row.id }}"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="0.00"
+                  aria-label="Buying price for {{ row.name }}"
+                >
+              </td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="store-stock-empty">
+        <i data-lucide="layers" aria-hidden="true"></i>
+        <p><strong>No shelf stock yet.</strong> Register shelf stock on the Current stock tab first.</p>
+      </div>
+      {% endif %}
+    </section>
+
+    {% if shelf_items %}
+    <div class="store-stock-footer">
+      <p class="store-stock-footer-summary"><span>Blank rows are ignored.</span></p>
+      <div class="store-stock-actions">
+        <a class="store-stock-btn store-stock-btn--ghost" href="{% url 'employees:store_shelf_stock' %}?shop={{ shop.pk }}">Back</a>
+        <button type="submit" class="store-stock-btn store-stock-btn--primary">Record shelf stock {{ shelf_mode }}</button>
+      </div>
+    </div>
+    {% endif %}
+  </form>
+  {% elif shelf_mode == "trade" %}
+  <form class="store-stock-form" method="post" data-store-stock data-store-stock-form>
+    {% csrf_token %}
+    <input type="hidden" name="shop" value="{{ shop.pk }}">
+    <input type="hidden" name="mode" value="trade">
+
+    <section class="store-stock-panel" aria-labelledby="shelf-trade-meta-title">
+      <div class="store-stock-panel-head">
+        <div>
+          <h3 id="shelf-trade-meta-title">Trade details</h3>
+          <p>Pick the direction, then the person on the other side of this trade — {{ shop.name }}.</p>
+        </div>
+      </div>
+      <div class="store-stock-meta-grid">
+        <div class="store-stock-field">
+          <span>Trade type</span>
+          <div class="shop-cart-seg stock-trade-seg" role="group" aria-label="Trade type">
+            <label class="shop-cart-seg-option">
+              <input type="radio" name="trade_kind" value="trade_out" data-trade-kind checked>
+              <span>Trade out</span>
+            </label>
+            <label class="shop-cart-seg-option">
+              <input type="radio" name="trade_kind" value="trade_in" data-trade-kind>
+              <span>Trade in</span>
+            </label>
+          </div>
+          <p
+            class="shop-cart-client-note stock-trade-note"
+            data-trade-lead
+            data-trade-lead-in="The person brings items onto the shelf."
+            data-trade-lead-out="The person takes items off the shelf."
+          >
+            The person takes items off the shelf.
+          </p>
+        </div>
+        <label class="store-stock-field">
+          <span>Other person's name{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="user" aria-hidden="true"></i>
+            <input
+              type="text"
+              name="person_name"
+              maxlength="160"
+              placeholder="Full name"
+              data-uppercase
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Other person's phone{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="phone" aria-hidden="true"></i>
+            <input
+              type="tel"
+              name="person_phone"
+              maxlength="40"
+              placeholder="e.g. 0722 000 000"
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Note <em>optional</em></span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="notebook-pen" aria-hidden="true"></i>
+            <input type="text" name="note" maxlength="255" placeholder="Trade note, reference…">
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-trade-list-title">
+      <div class="store-stock-panel-head store-stock-panel-head--list">
+        <div>
+          <h3 id="shelf-trade-list-title">Shelf items</h3>
+          <p>Enter qty only on the lines you need. Blank rows are ignored.</p>
+        </div>
+        <label class="store-stock-filter">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Filter by name or unit"
+            autocomplete="off"
+            data-store-item-filter
+            aria-label="Filter shelf items"
+          >
+        </label>
+      </div>
+
+      {% if shelf_items %}
+      <div class="store-stock-table-wrap">
+        <table class="store-stock-table">
+          <thead>
+            <tr>
+              <th scope="col">Shelf item</th>
+              <th scope="col" class="store-stock-col-qty">On shelf</th>
+              <th scope="col" class="store-stock-col-input">Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in shelf_items %}
+            <tr class="store-stock-row" data-store-item-row data-search="{{ row.search_text }}">
+              <td data-label="Item">
+                <div class="store-stock-item-cell">
+                  <span class="store-stock-item-head">
+                    {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
+                    <span class="store-stock-item-name">{{ row.name }}</span>
+                  </span>
+                  {% if row.category or row.unit %}<span class="store-stock-item-cat-mobile">{% if row.category %}{{ row.category }}{% endif %}{% if row.category and row.unit %} · {% endif %}{% if row.unit %}{{ row.unit }}{% endif %}</span>{% endif %}
+                </div>
+              </td>
+              <td class="store-stock-col-qty" data-label="On shelf">
+                <span class="store-stock-balance-pill"{% if row.is_low %} data-shelf-low{% endif %}>{{ row.quantity_display }}{% if row.unit %} {{ row.unit }}{% endif %}</span>
+              </td>
+              <td class="store-stock-col-input" data-label="Qty">
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="qty_{{ row.id }}"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="0"
+                  aria-label="Quantity for {{ row.name }}"
+                  data-store-qty-input
+                >
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="store-stock-empty-filter" data-store-no-filter-results hidden>
+        No shelf items match that filter.
+      </p>
+      {% else %}
+      <div class="store-stock-empty">
+        <i data-lucide="layers" aria-hidden="true"></i>
+        <p><strong>No shelf stock yet.</strong> Register shelf stock on the Current stock tab first.</p>
+      </div>
+      {% endif %}
+    </section>
+
+    {% if shelf_items %}
+    <div class="store-stock-footer">
+      <p class="store-stock-footer-summary"><span data-store-filled-summary>No quantities entered yet</span></p>
+      <div class="store-stock-actions">
+        <a class="store-stock-btn store-stock-btn--ghost" href="{% url 'employees:store_shelf_stock' %}?shop={{ shop.pk }}">Back</a>
+        <button type="submit" class="store-stock-btn store-stock-btn--primary"><span data-trade-submit-label>Record trade out</span></button>
+      </div>
+    </div>
+    {% endif %}
+  </form>
+  {% elif shelf_mode == "movements" %}
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-history-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-history-title">Stock movement</h3>
+        <p>Shelf stock changes for {{ shop.name }}, newest first.</p>
+      </div>
+    </div>
+    {% if shelf_movements %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Change</th>
+            <th scope="col" class="store-stock-col-qty">Qty</th>
+            <th scope="col" class="store-stock-col-qty">Left</th>
+            <th scope="col">Supplier</th>
+            <th scope="col">By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for move in shelf_movements %}
+          <tr class="store-stock-row">
+            <td data-label="When">{{ move.created_at|date:"d M Y H:i" }}</td>
+            <td data-label="Shelf item">{{ move.shelf_item.name }}{% if move.note %} <span class="store-stock-item-cat-mobile">{{ move.note }}</span>{% endif %}</td>
+            <td data-label="Change">{{ move.get_movement_type_display }}{% if move.reason %} · {{ move.get_reason_display }}{% if move.note %} — {{ move.note }}{% endif %}{% endif %}{% if move.refund %} · refund {{ move.refund }}{% if move.refund_amount %} ({{ move.refund_amount }}){% endif %}{% endif %}</td>
+            <td class="store-stock-col-qty" data-label="Qty">{% if move.movement_type == "out" %}−{% elif move.movement_type == "in" %}+{% endif %}{{ move.quantity|floatformat:"-3" }}</td>
+            <td class="store-stock-col-qty" data-label="Left">{{ move.balance_after|floatformat:"-3" }}</td>
+            <td data-label="Supplier">
+              {% if move.supplier_name %}
+              <div class="store-stock-people">
+                <span>{{ move.supplier_name }}</span>
+                <span>
+                  {% if move.supplier_phone %}{{ move.supplier_phone }}{% endif %}
+                  {% if move.payment_status %}<em class="store-stock-type-pill store-stock-type-pill--{{ move.payment_status }}">{{ move.get_payment_status_display }}</em>{% endif %}
+                  {% if move.buying_price is not None %}<em>Buy {{ move.buying_price|floatformat:2 }}</em>{% endif %}
+                </span>
+              </div>
+              {% else %}—{% endif %}
+            </td>
+            <td data-label="By">{% if move.created_by %}{{ move.created_by.user.get_full_name|default:move.created_by.user.username }}{% else %}Shop portal{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="arrow-down-up" aria-hidden="true"></i>
+      <p><strong>No movements yet.</strong> Shelf stock changes for {{ shop.name }} will appear here.</p>
+    </div>
+    {% endif %}
+  </section>
+  {% elif shelf_mode == "report" %}
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-report-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-report-title">Stock report</h3>
+        <p>{{ shelf_item_count }} shelf item{{ shelf_item_count|pluralize }} · {{ shelf_total_display }} on shelf{% if shelf_low_count %} · {{ shelf_low_count }} low{% endif %} — {{ shop.name }}.</p>
+      </div>
+    </div>
+    {% if shelf_items %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Category</th>
+            <th scope="col">Unit</th>
+            <th scope="col" class="store-stock-col-qty">Last buy price</th>
+            <th scope="col" class="store-stock-col-qty">On shelf</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in shelf_items %}
+          <tr class="store-stock-row">
+            <td data-label="Shelf item">
+              <div class="store-stock-item-cell">
+                <span class="store-stock-item-head">
+                  {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
+                  <span class="store-stock-item-name">{{ row.name }}</span>
+                </span>
+              </div>
+            </td>
+            <td data-label="Category">{{ row.category|default:"—" }}</td>
+            <td data-label="Unit">{{ row.unit|default:"—" }}</td>
+            <td class="store-stock-col-qty" data-label="Last buy price">{{ row.last_buying_price_display|default:"—" }}</td>
+            <td class="store-stock-col-qty" data-label="On shelf">
+              <span class="store-stock-balance-pill"{% if row.is_low %} data-shelf-low{% endif %}>{{ row.quantity_display }}</span>
+            </td>
+            <td data-label="Status">{% if row.is_low %}<span class="store-stock-type-pill store-stock-type-pill--out">Low</span>{% else %}OK{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="bar-chart-3" aria-hidden="true"></i>
+      <p><strong>Nothing to report.</strong> Register shelf stock on the Current stock tab first.</p>
+    </div>
+    {% endif %}
+  </section>
+  {% else %}
+  {% include "shops/partials/shelf_stock_body.html" with shelf_readonly=True %}
+  {% endif %}
+
   {% else %}
   <section class="store-stock-panel">
     <div class="store-stock-panel-head">
@@ -70,4 +487,19 @@
   </section>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+{% if shop %}
+{% include "employees/partials/shelf_flow_modal.html" with flow="in" %}
+{% include "employees/partials/shelf_flow_modal.html" with flow="out" %}
+{% include "employees/partials/shelf_trade_modal.html" %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/stock-shelf.js' %}?v=2"></script>
+<script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
 {% endblock %}

@@ -2537,6 +2537,13 @@
     const splitWrap = checkoutForm?.querySelector("[data-cart-split]");
     const cashInput = checkoutForm?.querySelector("[data-cart-cash]");
     const mpesaInput = checkoutForm?.querySelector("[data-cart-mpesa]");
+    const cardInput = checkoutForm?.querySelector("[data-cart-card]");
+    const splitFields = {
+      cash: checkoutForm?.querySelector("[data-cart-split-cash]"),
+      mpesa: checkoutForm?.querySelector("[data-cart-split-mpesa]"),
+      card: checkoutForm?.querySelector("[data-cart-split-card]"),
+    };
+    const splitInputs = { cash: cashInput, mpesa: mpesaInput, card: cardInput };
     const cartStatus = checkoutForm?.querySelector("[data-cart-status]");
     const cartSubmit = checkoutForm?.querySelector("[data-cart-submit]");
     const cartLoginCode = checkoutForm?.querySelector("[data-cart-login-code]");
@@ -2683,6 +2690,23 @@
     let checkoutInFlight = false;
     let splitLastEdited = "cash";
     let splitSyncing = false;
+    const splitTouched = new Set();
+    let splitSeededMethod = "";
+
+    const PAYMENT_METHOD_CHANNELS = {
+      cash: ["cash"],
+      mpesa: ["mpesa"],
+      card: ["card"],
+      both: ["cash", "mpesa"],
+      cash_card: ["cash", "card"],
+      mpesa_card: ["mpesa", "card"],
+      cash_mpesa_card: ["cash", "mpesa", "card"],
+    };
+    const paymentChannels = (method) =>
+      PAYMENT_METHOD_CHANNELS[method] || [];
+    const isSplitMethod = (method) => paymentChannels(method).length > 1;
+    const methodUsesMpesa = (method) =>
+      paymentChannels(method).includes("mpesa");
     let serialSaleItem = null;
     let serialSaleSearchTimer = null;
     let serialSaleSearchSeq = 0;
@@ -2928,6 +2952,8 @@
     const defaultPayment = cartRoot.dataset.defaultPayment || "";
     const defaultPrintVia = cartRoot.dataset.defaultPrintVia || "";
     const paymentsEnabled = cartRoot.dataset.posCashSale === "1";
+    const paymentOptionsVisible =
+      cartRoot.dataset.posPaymentOptions !== "0";
     const discountEnabled = cartRoot.dataset.posDiscount === "1";
     const stockTrackingEnabled = cartRoot.dataset.posStockTracking !== "0";
     const clientDataEnabled = cartRoot.dataset.posClientData === "1";
@@ -3014,16 +3040,50 @@
     }
 
     const syncSplitAmounts = (source = splitLastEdited) => {
-      if (!cashInput || !mpesaInput || selectedPayment() !== "both") return;
+      const channels = paymentChannels(selectedPayment());
+      if (channels.length < 2 || !splitInputs[source]) return;
       const total = cartTotal();
       splitSyncing = true;
-      if (source === "cash") {
-        const cash = Math.max(0, roundMoney(cashInput.value || 0));
-        mpesaInput.value = Math.max(0, roundMoney(total - cash)).toFixed(2);
-      } else {
-        const mpesa = Math.max(0, roundMoney(mpesaInput.value || 0));
-        cashInput.value = Math.max(0, roundMoney(total - mpesa)).toFixed(2);
+      const fixed = new Set([source, ...splitTouched]);
+      let remaining = roundMoney(total);
+      for (const channel of channels) {
+        if (!fixed.has(channel)) continue;
+        remaining = roundMoney(
+          remaining - Math.max(0, roundMoney(splitInputs[channel]?.value || 0))
+        );
       }
+      const targets = channels.filter((channel) => !fixed.has(channel));
+      targets.forEach((channel, index) => {
+        const input = splitInputs[channel];
+        if (!input) return;
+        const value =
+          index === targets.length - 1
+            ? Math.max(0, remaining)
+            : Math.max(0, roundMoney(remaining / (targets.length - index)));
+        input.value = value.toFixed(2);
+        remaining = roundMoney(remaining - value);
+      });
+      splitSyncing = false;
+    };
+
+    const seedSplitAmounts = () => {
+      const channels = paymentChannels(selectedPayment());
+      if (channels.length < 2) return;
+      splitTouched.clear();
+      splitLastEdited = channels[0];
+      const total = cartTotal();
+      splitSyncing = true;
+      let remaining = roundMoney(total);
+      channels.forEach((channel, index) => {
+        const input = splitInputs[channel];
+        if (!input) return;
+        const value =
+          index === channels.length - 1
+            ? Math.max(0, remaining)
+            : Math.max(0, roundMoney(remaining / (channels.length - index)));
+        input.value = value.toFixed(2);
+        remaining = roundMoney(remaining - value);
+      });
       splitSyncing = false;
     };
 
@@ -3031,13 +3091,13 @@
       Boolean(
         selectedKind() === "sale" &&
           paymentsEnabled &&
-          (selectedPayment() === "mpesa" || selectedPayment() === "both")
+          methodUsesMpesa(selectedPayment())
       );
 
     const saleNeedsStk = () => Boolean(saleUsesMpesa() && stkEnabled && stkReady);
 
     const mpesaPromptAmount = () => {
-      if (selectedPayment() === "both") {
+      if (isSplitMethod(selectedPayment())) {
         syncSplitAmounts(splitLastEdited);
         return Math.max(0, Math.round(Number(mpesaInput?.value || 0) || 0));
       }
@@ -3230,7 +3290,7 @@
         focusCartClientFields();
         return;
       }
-      if (selectedPayment() === "both") {
+      if (isSplitMethod(selectedPayment())) {
         syncSplitAmounts(splitLastEdited);
       }
       const amount = mpesaPromptAmount();
@@ -4259,20 +4319,28 @@
         const wa = checkoutForm.querySelector("[data-cart-whatsapp]");
         if (wa) wa.checked = false;
       }
-      const canTakePayment = isSale && paymentsEnabled && hasEnabledPayments();
+      const canTakePayment =
+        isSale &&
+        paymentsEnabled &&
+        hasEnabledPayments() &&
+        paymentOptionsVisible;
       if (paymentWrap) {
         paymentWrap.hidden = !canTakePayment;
       }
-      const showSplit =
-        canTakePayment && selectedPayment() === "both";
+      const method = selectedPayment();
+      const splitChannels = paymentChannels(method);
+      const showSplit = canTakePayment && splitChannels.length > 1;
       if (splitWrap) splitWrap.hidden = !showSplit;
+      for (const [channel, field] of Object.entries(splitFields)) {
+        if (field) field.hidden = !splitChannels.includes(channel);
+      }
       if (showSplit) {
-        if (!cashInput?.value && !mpesaInput?.value) {
-          const half = roundMoney(cartTotal() / 2);
-          if (cashInput) cashInput.value = half.toFixed(2);
-          splitLastEdited = "cash";
+        if (splitSeededMethod !== method) {
+          seedSplitAmounts();
+          splitSeededMethod = method;
+        } else {
+          syncSplitAmounts(splitLastEdited);
         }
-        syncSplitAmounts(splitLastEdited);
       }
       refreshDeliveryUi();
       syncClientRequirements();
@@ -4628,10 +4696,18 @@
             setCartStatus("Choose an enabled payment method.", { error: true });
             return;
           }
-          if (payload.payment_method === "both") {
+          if (isSplitMethod(payload.payment_method)) {
             syncSplitAmounts(splitLastEdited);
-            payload.cash_amount = cashInput?.value || "0";
-            payload.mpesa_amount = mpesaInput?.value || "0";
+            const splitChannels = paymentChannels(payload.payment_method);
+            if (splitChannels.includes("cash")) {
+              payload.cash_amount = cashInput?.value || "0";
+            }
+            if (splitChannels.includes("mpesa")) {
+              payload.mpesa_amount = mpesaInput?.value || "0";
+            }
+            if (splitChannels.includes("card")) {
+              payload.card_amount = cardInput?.value || "0";
+            }
           }
         }
 
@@ -4693,8 +4769,7 @@
           kind === "sale" &&
           stkEnabled &&
           stkReady &&
-          (payload.payment_method === "mpesa" ||
-            payload.payment_method === "both");
+          methodUsesMpesa(payload.payment_method);
         if (needsStk && stkConfirmed?.id) {
           const phone = normalizeClientPhoneField({ force: true });
           if (!phone) {
@@ -4895,7 +4970,7 @@
           }
           if (
             kind === "sale" &&
-            (payload.payment_method === "mpesa" || payload.payment_method === "both") &&
+            methodUsesMpesa(payload.payment_method) &&
             !payload.stk_payment_id
           ) {
             setCartStatus(
@@ -6853,13 +6928,22 @@
     cashInput?.addEventListener("input", () => {
       if (splitSyncing) return;
       splitLastEdited = "cash";
+      splitTouched.add("cash");
       syncSplitAmounts("cash");
       syncStkPanel();
     });
     mpesaInput?.addEventListener("input", () => {
       if (splitSyncing) return;
       splitLastEdited = "mpesa";
+      splitTouched.add("mpesa");
       syncSplitAmounts("mpesa");
+      syncStkPanel();
+    });
+    cardInput?.addEventListener("input", () => {
+      if (splitSyncing) return;
+      splitLastEdited = "card";
+      splitTouched.add("card");
+      syncSplitAmounts("card");
       syncStkPanel();
     });
 

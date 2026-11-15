@@ -32,6 +32,7 @@
   data-pos-kinds="{{ cart_kinds|join:',' }}"
   data-pos-payments="{{ pos_flags.payment_methods|join:',' }}"
   data-pos-cash-sale="{% if pos_flags.cash_sale_checkout %}1{% else %}0{% endif %}"
+  data-pos-payment-options="{% if pos_flags.enable_cart_payment_options %}1{% else %}0{% endif %}"
   data-pos-discount="{% if pos_settings.enable_discount %}1{% else %}0{% endif %}"
   data-pos-stock-tracking="{% if pos_settings.enable_stock_tracking %}1{% else %}0{% endif %}"
   data-pos-client-data="{% if pos_flags.enable_client_data %}1{% else %}0{% endif %}"
@@ -376,18 +377,42 @@
             <span>M-Pesa</span>
           </label>
           {% endif %}
+          {% if "card" in pos_flags.payment_methods %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="payment_method" value="card" data-cart-pay{% if default_payment == "card" %} checked{% endif %}>
+            <span>Card</span>
+          </label>
+          {% endif %}
           {% if "both" in pos_flags.payment_methods %}
           <label class="shop-cart-seg-option">
             <input type="radio" name="payment_method" value="both" data-cart-pay{% if default_payment == "both" %} checked{% endif %}>
             <span>Cash + M-Pesa</span>
           </label>
           {% endif %}
+          {% if "cash_card" in pos_flags.payment_methods %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="payment_method" value="cash_card" data-cart-pay{% if default_payment == "cash_card" %} checked{% endif %}>
+            <span>Cash + Card</span>
+          </label>
+          {% endif %}
+          {% if "mpesa_card" in pos_flags.payment_methods %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="payment_method" value="mpesa_card" data-cart-pay{% if default_payment == "mpesa_card" %} checked{% endif %}>
+            <span>M-Pesa + Card</span>
+          </label>
+          {% endif %}
+          {% if "cash_mpesa_card" in pos_flags.payment_methods %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="payment_method" value="cash_mpesa_card" data-cart-pay{% if default_payment == "cash_mpesa_card" %} checked{% endif %}>
+            <span>Cash + M-Pesa + Card</span>
+          </label>
+          {% endif %}
         </div>
       </div>
 
-      {% if "both" in pos_flags.payment_methods %}
+      {% if "both" in pos_flags.payment_methods or "cash_card" in pos_flags.payment_methods or "mpesa_card" in pos_flags.payment_methods or "cash_mpesa_card" in pos_flags.payment_methods %}
       <div class="shop-cart-split" data-cart-split hidden>
-        <label class="shop-cart-input">
+        <label class="shop-cart-input" data-cart-split-cash>
           <span>Cash</span>
           <input
             type="text"
@@ -399,7 +424,7 @@
             placeholder="0.00"
           >
         </label>
-        <label class="shop-cart-input">
+        <label class="shop-cart-input" data-cart-split-mpesa>
           <span>M-Pesa</span>
           <input
             type="text"
@@ -408,6 +433,18 @@
             step="0.01"
             inputmode="decimal"
             data-cart-mpesa
+            placeholder="0.00"
+          >
+        </label>
+        <label class="shop-cart-input" data-cart-split-card>
+          <span>Card</span>
+          <input
+            type="text"
+            name="card_amount"
+            min="0"
+            step="0.01"
+            inputmode="decimal"
+            data-cart-card
             placeholder="0.00"
           >
         </label>

@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=11">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
 {% endblock %}
 
 {% block workspace_content %}
@@ -140,6 +140,7 @@
             <th scope="col">Item</th>
             <th scope="col" class="store-stock-col-qty">Qty</th>
             <th scope="col" class="store-stock-col-qty">Balance</th>
+            <th scope="col">Supplier</th>
             <th scope="col">People</th>
             <th scope="col">Note</th>
           </tr>
@@ -168,13 +169,34 @@
               <span class="store-stock-balance-pill">{{ row.quantity_display }}</span>
             </td>
             <td class="store-stock-col-qty" data-label="Balance">{{ row.balance_after_display }}</td>
+            <td data-label="Supplier">
+              {% if row.supplier_name or row.buying_price_display %}
+              <div class="store-stock-people">
+                {% if row.supplier_name %}<span>{{ row.supplier_name }}</span>{% endif %}
+                <span>
+                  {% if row.supplier_phone %}{{ row.supplier_phone }}{% endif %}
+                  {% if row.payment_label %}
+                  <em class="store-stock-type-pill store-stock-type-pill--{{ row.payment_status }}">{{ row.payment_label }}</em>
+                  {% endif %}
+                </span>
+                {% if row.buying_price_display %}<span><em>Buy</em> {{ row.buying_price_display }}</span>{% endif %}
+              </div>
+              {% else %}—{% endif %}
+            </td>
             <td data-label="People">
               <div class="store-stock-people">
                 <span><em>Recorded</em> {{ row.recorded_by }}</span>
                 <span><em>{{ row.counterpart_label }}</em> {{ row.counterpart }}</span>
               </div>
             </td>
-            <td data-label="Note">{{ row.note|default:"—" }}</td>
+            <td data-label="Note">
+              {% if row.reason_label or row.refund %}
+              <div class="store-stock-people">
+                {% if row.reason_label %}<span>{{ row.reason_label }}{% if row.note %} — {{ row.note }}{% endif %}</span>{% endif %}
+                {% if row.refund %}<span>Refund: {{ row.refund }}{% if row.refund_amount_display %} ({{ row.refund_amount_display }}){% endif %}</span>{% endif %}
+              </div>
+              {% else %}{{ row.note|default:"—" }}{% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -190,10 +212,19 @@
     </div>
     {% endif %}
   </section>
+
 </section>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+{% include "employees/partials/store_flow_modal.html" with flow="in" post_url=stock_in_url %}
+{% include "employees/partials/store_flow_modal.html" with flow="out" post_url=stock_out_url %}
+{% include "employees/partials/store_trade_modal.html" with post_url=stock_trade_url %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/store-stock-report.js' %}?v=1"></script>
+<script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
 {% endblock %}

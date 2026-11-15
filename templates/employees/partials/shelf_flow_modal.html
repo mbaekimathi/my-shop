@@ -1,0 +1,224 @@
+{# Shelf stock in/out popup — same two-pane format as the Buy stock modal. #}
+<div
+  class="workspace-modal buy-stock-modal stock-flow-modal"
+  data-modal="shelf-stock-{{ flow }}"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="shelf-stock-{{ flow }}"></div>
+  <div
+    class="workspace-modal-dialog buy-stock-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shelf-flow-{{ flow }}-title"
+  >
+    <div class="workspace-modal-head buy-stock-modal-head">
+      <div class="buy-stock-modal-head-copy">
+        <p class="buy-stock-modal-kicker">{{ shop.name }}</p>
+        <h2 id="shelf-flow-{{ flow }}-title">Shelf stock {{ flow }}</h2>
+        <p class="buy-stock-modal-lead">Search, enter quantities, then record the shelf stock {{ flow }} together.</p>
+      </div>
+      <button
+        class="workspace-icon-btn"
+        type="button"
+        aria-label="Close"
+        data-modal-close="shelf-stock-{{ flow }}"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form
+      class="buy-stock-simple"
+      method="post"
+      action="{{ post_url }}"
+      data-store-stock
+      data-mode="{{ flow }}"
+      data-store-stock-form
+    >
+      {% csrf_token %}
+      <input type="hidden" name="mode" value="{{ flow }}">
+      <input type="hidden" name="shop" value="{{ shop.pk }}">
+
+      <div class="buy-stock-simple-main">
+        <div class="buy-stock-simple-search">
+          <label class="buy-stock-simple-search-field">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input
+              type="search"
+              placeholder="Search to add shelf items…"
+              autocomplete="off"
+              data-store-item-filter
+              data-stock-flow-filter
+              aria-label="Search shelf items"
+            >
+          </label>
+        </div>
+
+        <div class="stock-flow-selected" data-store-selected-wrap hidden>
+          <p class="stock-flow-selected-label">Your items</p>
+          <div class="stock-flow-selected-list" data-store-selected-list></div>
+        </div>
+
+        <div class="buy-stock-simple-list stock-flow-list" data-store-list>
+          {% if shelf_items %}
+          <div class="buy-stock-simple-empty buy-stock-simple-empty-card" data-store-idle>
+            <span class="buy-stock-simple-empty-icon" aria-hidden="true">
+              <i data-lucide="package-search"></i>
+            </span>
+            <p>Type a name to add items</p>
+          </div>
+          {% for row in shelf_items %}
+          <div class="stock-flow-row" data-store-item-row data-search="{{ row.search_text }}">
+            {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
+            <div class="stock-flow-row-copy">
+              <strong>{{ row.name }}</strong>
+              <small>{{ row.unit }} · on shelf {{ row.quantity_display }}</small>
+            </div>
+            <div class="stock-flow-inputs" data-store-row-inputs>
+              <input
+                class="store-stock-qty-input stock-flow-qty"
+                type="number"
+                name="qty_{{ row.id }}"
+                min="0"
+                step="any"
+                inputmode="decimal"
+                placeholder="Qty"
+                title="Quantity"
+                aria-label="Quantity for {{ row.name }}"
+                data-store-qty-input
+              >
+              {% if flow == "in" %}
+              <input
+                class="store-stock-qty-input stock-flow-price"
+                type="number"
+                name="price_{{ row.id }}"
+                min="0"
+                step="any"
+                inputmode="decimal"
+                placeholder="Buy price"
+                title="Buying price"
+                aria-label="Buying price for {{ row.name }}"
+              >
+              {% endif %}
+              <button
+                type="button"
+                class="stock-flow-remove"
+                data-store-row-remove
+                aria-label="Remove {{ row.name }}"
+              >
+                <i data-lucide="x" aria-hidden="true"></i>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="stock-flow-add"
+              data-store-row-add
+              aria-label="Add {{ row.name }}"
+            >
+              <i data-lucide="plus" aria-hidden="true"></i>
+              <span>Add</span>
+            </button>
+          </div>
+          {% endfor %}
+          {% else %}
+          <div class="buy-stock-simple-empty buy-stock-simple-empty-card">
+            <span class="buy-stock-simple-empty-icon" aria-hidden="true">
+              <i data-lucide="package-search"></i>
+            </span>
+            <p>No shelf items yet — use Register shelf stock in the sidebar</p>
+          </div>
+          {% endif %}
+          <div class="item-search-empty buy-stock-simple-no-results" data-store-no-filter-results hidden>
+            <i data-lucide="search-x" aria-hidden="true"></i>
+            <p>No matching items.</p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="buy-stock-simple-confirm">
+        <div class="buy-stock-simple-confirm-card">
+          <div class="buy-stock-simple-supplier stock-flow-meta">
+            {% if flow == "in" %}
+            <label class="stock-float-field">
+              <span>Supplier phone{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+              <input
+                type="tel"
+                name="supplier_phone"
+                maxlength="40"
+                placeholder="e.g. 0722 000 000"
+                {% if stock_req.require_supplier_on_in %}required{% endif %}
+              >
+            </label>
+            <label class="stock-float-field">
+              <span>Supplier name{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+              <input
+                type="text"
+                name="supplier_name"
+                maxlength="160"
+                placeholder="e.g. Brookside Distributors"
+                autocomplete="organization"
+                data-uppercase
+                {% if stock_req.require_supplier_on_in %}required{% endif %}
+              >
+            </label>
+            <label class="stock-float-field">
+              <span>Payment{% if not stock_req.require_payment_status_on_in %} <em>optional</em>{% endif %}</span>
+              <select name="payment_status"{% if stock_req.require_payment_status_on_in %} required{% endif %}>
+                <option value="">Select</option>
+                <option value="unpaid">Not paid</option>
+                <option value="paid">Paid</option>
+                <option value="partial">Partially paid</option>
+              </select>
+            </label>
+            {% else %}
+            <label class="stock-float-field">
+              <span>Reason{% if not stock_req.require_reason_on_out %} <em>optional</em>{% endif %}</span>
+              <select name="reason" data-stock-reason{% if stock_req.require_reason_on_out %} required{% endif %}>
+                <option value="">Select</option>
+                {% for value, label in stock_out_reasons %}
+                <option value="{{ value }}"{% if value == "custom" %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="stock-float-field" data-stock-custom-reason-wrap>
+              <span>Custom reason</span>
+              <input type="text" name="note" maxlength="200" placeholder="Enter reason">
+            </label>
+            <label class="stock-float-field">
+              <span>Refund{% if not stock_req.require_refund_on_out %} <em>optional</em>{% endif %}</span>
+              <select name="refund" data-stock-refund{% if stock_req.require_refund_on_out %} required{% endif %}>
+                <option value="">Select</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+            <label class="stock-float-field" data-stock-refund-amount-wrap hidden>
+              <span>Refund amount</span>
+              <input type="number" name="refund_amount" min="0" step="any" inputmode="decimal" placeholder="0.00">
+            </label>
+            {% endif %}
+
+            {% if flow == "in" %}
+            <label class="stock-float-field">
+              <span>Note <em>optional</em></span>
+              <input type="text" name="note" maxlength="255" placeholder="Delivery note, reference…">
+            </label>
+            {% endif %}
+
+            <p class="stock-float-apply-status stock-flow-summary" data-store-filled-summary>
+              No quantities entered yet
+            </p>
+          </div>
+
+          <div class="buy-stock-simple-footer">
+            <button class="stock-float-submit buy-stock-simple-submit" type="submit">
+              <i data-lucide="{% if flow == "in" %}package-plus{% else %}package-minus{% endif %}" aria-hidden="true"></i>
+              <span>Record shelf stock {{ flow }}</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+    </form>
+  </div>
+</div>

@@ -502,6 +502,7 @@
       <div class="ax-band-legend ax-band-legend--balances" aria-label="Column groups">
         {% if pos_flags.cash %}<span class="is-cash-open">Cash</span>{% endif %}
         {% if pos_flags.mpesa %}<span class="is-mpesa-open">M-Pesa</span>{% endif %}
+        {% if pos_flags.card %}<span class="is-card-open">Card</span>{% endif %}
         {% if table.title == "Live cashbox by shop" %}
         <span class="is-cash-close">Live / close</span>
         {% else %}
@@ -512,11 +513,16 @@
       <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
         {% if pos_flags.cash %}<span class="is-cash">Cash</span>{% endif %}
         {% if pos_flags.mpesa %}<span class="is-mpesa">M-Pesa</span>{% endif %}
+        {% if pos_flags.card %}<span class="is-card">Card</span>{% endif %}
         {% if pos_flags.credit %}
         <span class="is-credits">
-          {% if pos_flags.pay_cash and pos_flags.pay_mpesa %}Paid cash · Paid M-Pesa · Paid total
+          {% if pos_flags.pay_cash and pos_flags.pay_mpesa and pos_flags.pay_card %}Paid cash · Paid M-Pesa · Paid card · Paid total
+          {% elif pos_flags.pay_cash and pos_flags.pay_mpesa %}Paid cash · Paid M-Pesa · Paid total
+          {% elif pos_flags.pay_cash and pos_flags.pay_card %}Paid cash · Paid card · Paid total
+          {% elif pos_flags.pay_mpesa and pos_flags.pay_card %}Paid M-Pesa · Paid card · Paid total
           {% elif pos_flags.pay_cash %}Paid cash · Paid total
           {% elif pos_flags.pay_mpesa %}Paid M-Pesa · Paid total
+          {% elif pos_flags.pay_card %}Paid card · Paid total
           {% else %}Paid total{% endif %}
         </span>
         <span class="is-unpaid">Unpaid</span>

@@ -12,6 +12,14 @@ def item_image_path(instance, filename):
     return f"items/images/{stem}_{uuid.uuid4().hex[:10]}.{ext}"
 
 
+def shelf_item_image_path(instance, filename):
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+    if ext not in {"jpg", "jpeg", "png", "webp", "gif"}:
+        ext = "jpg"
+    stem = instance.pk or uuid.uuid4().hex
+    return f"items/shelf/{stem}_{uuid.uuid4().hex[:10]}.{ext}"
+
+
 class Item(models.Model):
     category = models.CharField(max_length=120, db_index=True)
     name = models.CharField(max_length=200, db_index=True)
@@ -773,6 +781,39 @@ class StoreStockMovement(models.Model):
         on_delete=models.PROTECT,
         related_name="store_stock_movements_received",
     )
+    supplier_name = models.CharField(max_length=160, blank=True, default="")
+    supplier_phone = models.CharField(max_length=40, blank=True, default="")
+    payment_status = models.CharField(
+        max_length=16,
+        choices=StockPaymentStatus.choices,
+        blank=True,
+        default="",
+    )
+    buying_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Unit buying price recorded on stock in.",
+    )
+    reason = models.CharField(
+        max_length=16,
+        choices=StockOutReason.choices,
+        blank=True,
+        default="",
+    )
+    refund = models.CharField(
+        max_length=8,
+        blank=True,
+        default="",
+        help_text="yes or no for stock-out refund",
+    )
+    refund_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
     note = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
@@ -804,6 +845,9 @@ class ShelfItem(models.Model):
     low_stock_threshold = models.DecimalField(
         max_digits=12, decimal_places=3, default=0
     )
+    image = models.ImageField(
+        upload_to=shelf_item_image_path, blank=True, null=True
+    )
     is_archived = models.BooleanField(default=False, db_index=True)
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
@@ -827,6 +871,29 @@ class ShelfItem(models.Model):
     def __str__(self):
         return f"Shelf {self.name} @ {self.shop_id}: {self.quantity}"
 
+    def public_image_url(self) -> str:
+        """Catalog URL when the file exists; empty when the DB path is broken."""
+        field = self.image
+        if not field:
+            return ""
+        try:
+            name = (getattr(field, "name", None) or "").strip()
+            if not name:
+                return ""
+            storage = getattr(field, "storage", None)
+            if storage is not None and not storage.exists(name):
+                return ""
+            if not self.pk:
+                return field.url or ""
+            from django.urls import reverse
+            from urllib.parse import quote
+
+            url = reverse("core:shelf_photo", kwargs={"shelf_item_id": self.pk})
+            token = name.rsplit("/", 1)[-1]
+            return f"{url}?v={quote(token, safe='')}"
+        except (ValueError, OSError, AttributeError):
+            return ""
+
 
 class ShelfStockMovement(models.Model):
     """Ledger for shelf stock. Never touches Item / ShopStock quantities."""
@@ -843,6 +910,39 @@ class ShelfStockMovement(models.Model):
     )
     quantity = models.DecimalField(max_digits=12, decimal_places=3)
     balance_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    supplier_name = models.CharField(max_length=160, blank=True, default="")
+    supplier_phone = models.CharField(max_length=40, blank=True, default="")
+    payment_status = models.CharField(
+        max_length=16,
+        choices=StockPaymentStatus.choices,
+        blank=True,
+        default="",
+    )
+    buying_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Unit buying price recorded on stock in.",
+    )
+    reason = models.CharField(
+        max_length=16,
+        choices=StockOutReason.choices,
+        blank=True,
+        default="",
+    )
+    refund = models.CharField(
+        max_length=8,
+        blank=True,
+        default="",
+        help_text="yes or no for stock-out refund",
+    )
+    refund_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
     note = models.CharField(max_length=255, blank=True, default="")
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",

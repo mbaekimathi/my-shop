@@ -2309,6 +2309,12 @@
 .shop-floor-catalog {
   display: grid;
   gap: 1.75rem;
+  transition: opacity 0.16s ease;
+}
+
+/* Faded while a search reload swaps the catalog — kills the collapse jump. */
+.shop-floor-catalog.is-swapping {
+  opacity: 0;
 }
 
 .shop-floor-category {
@@ -5405,6 +5411,10 @@ html[data-theme="dark"] .shop-serial-modal-media img {
 .shop-floor-requests {
   position: relative;
   gap: 0.45rem;
+}
+
+.shop-floor-show-all {
+  gap: 0.4rem;
 }
 
 .shop-floor-request-badge {

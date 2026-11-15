@@ -16,7 +16,7 @@ from employees.access import active_employee_required, get_profile_for_request
 from employees.countries import COUNTRY_DIAL_CODES
 from employees.workspace import sidebar_for_stock_management
 
-from .models import Item, ShopItemPrice, ShopStock, StockEntrySource
+from .models import Item, ShelfItem, ShopItemPrice, ShopStock, StockEntrySource
 from .services import (
     actionable_shops_for_profile,
     apply_serial_status,
@@ -451,6 +451,35 @@ def item_management(request, profile, meta, module, page_sidebar):
         profile.role, profile=profile, active_mode="view"
     )
 
+    # Shelf mode (Shelf or Both): the page gains an Item stock / Shelf stock
+    # tab bar. Shelf-only mode lands on the shelf list; Both defaults to items.
+    from employees.module_permissions import employee_may
+    from shops.services import get_company_pos_settings
+
+    pos = get_company_pos_settings()
+    shelf_tabs_enabled = bool(
+        getattr(pos, "enable_shelf_mode", False)
+    ) and employee_may(profile, "my-shop", "shelf_stock")
+    item_tab = "items"
+    if shelf_tabs_enabled:
+        wanted_tab = (request.GET.get("tab") or "").strip().lower()
+        if wanted_tab in {"items", "shelf"}:
+            item_tab = wanted_tab
+        elif not getattr(pos, "enable_stock_tracking", True):
+            item_tab = "shelf"
+    shelf_sections = []
+    if item_tab == "shelf":
+        from employees.store_stock_views import shelf_mode_shops
+
+        from .shelf_stock_services import list_shelf_items
+
+        scoped_shop_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+        for shop in shelf_mode_shops():
+            if scoped_shop_ids and shop.pk not in scoped_shop_ids:
+                continue
+            rows = list_shelf_items(shop=shop)
+            shelf_sections.append({"shop": shop, "rows": rows})
+
     return render(
         request,
         "items/item_management.html",
@@ -461,6 +490,9 @@ def item_management(request, profile, meta, module, page_sidebar):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "page_sidebar": page_sidebar,
+            "shelf_tabs_enabled": shelf_tabs_enabled,
+            "item_tab": item_tab,
+            "shelf_sections": shelf_sections,
             "items_by_category": [],
             "item_count": item_count,
             "item_categories": item_categories,
@@ -1478,6 +1510,7 @@ def _stock_shelf_post(
             "unit": request.POST.get("unit"),
             "opening_qty": request.POST.get("opening_qty"),
             "low_stock_threshold": request.POST.get("low_stock_threshold"),
+            "image": request.FILES.get("image"),
         }
         registered = []
         for shop in targets:
@@ -1520,6 +1553,8 @@ def _stock_shelf_post(
         "low_stock_threshold": request.POST.get("low_stock_threshold"),
         "shelf_item_id": row_id or request.POST.get("shelf_item_id"),
         "qty": request.POST.get(f"shelf_qty_{row_id}") or request.POST.get("qty"),
+        "price": request.POST.get(f"shelf_price_{row_id}")
+        or request.POST.get("price"),
         "note": request.POST.get(f"shelf_note_{row_id}")
         or request.POST.get("note")
         or "",
@@ -10355,6 +10390,17 @@ def stock_management_print(request, role_segment):
 def item_photo(request, item_id):
     """Serve item photos through Django (works when /media/ is not web-exposed)."""
     item = get_object_or_404(Item, pk=item_id)
+    return _serve_item_photo(item)
+
+
+@require_GET
+def shelf_photo(request, shelf_item_id):
+    """Serve shelf-item photos through Django (works when /media/ is not web-exposed)."""
+    item = get_object_or_404(ShelfItem, pk=shelf_item_id)
+    return _serve_item_photo(item)
+
+
+def _serve_item_photo(item):
     field = item.image
     if not field:
         raise Http404("Photo not found.")
