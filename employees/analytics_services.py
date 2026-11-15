@@ -336,6 +336,186 @@ def _credit_account_receipts_q() -> Q:
     )
 
 
+def _pos_feature_flags() -> dict:
+    """Company POS toggles that decide which analytics columns are in use.
+
+    ``cash``/``mpesa`` describe receipt payment columns — a combined
+    cash+M-Pesa tender still feeds both columns. ``pay_cash``/``pay_mpesa``
+    describe the single-method account-payment choices (cash or M-Pesa).
+    """
+    from shops.services import get_company_pos_settings
+
+    row = get_company_pos_settings()
+    combo = bool(getattr(row, "enable_cash_mpesa", True))
+    cash = bool(getattr(row, "enable_cash", True))
+    mpesa = bool(getattr(row, "enable_mpesa", True))
+    credit = bool(getattr(row, "enable_credit", True))
+    trade_out = bool(getattr(row, "enable_trade_out", True))
+    trade_in = bool(getattr(row, "enable_trade_in", True))
+    return {
+        "sale": bool(getattr(row, "enable_sale", True)),
+        "credit": credit,
+        "quotation": bool(getattr(row, "enable_quotation", True)),
+        "trade_out": trade_out,
+        "trade_in": trade_in,
+        "tradings": trade_out or trade_in,
+        "cash": cash or combo,
+        "mpesa": mpesa or combo,
+        "pay_cash": cash,
+        "pay_mpesa": mpesa,
+        "credit_collections": credit and (cash or mpesa),
+        "delivery": bool(getattr(row, "enable_cart_delivery", True)),
+    }
+
+
+def _check_account_pay_method(method: str) -> None:
+    """Reject account payments through a payment method the company disabled."""
+    from django.core.exceptions import ValidationError
+
+    flags = _pos_feature_flags()
+    if method == "mpesa" and not flags.get("pay_mpesa", True):
+        raise ValidationError("M-Pesa payments are disabled for this company.")
+    if method == "cash" and not flags.get("pay_cash", True):
+        raise ValidationError("Cash payments are disabled for this company.")
+
+
+# Column / metric / tile labels that only make sense while the matching
+# company POS feature is enabled. A tuple of flags means "all must be on".
+_POS_GATED_LABELS = {
+    "Sales": ("sale",),
+    "All sales": ("sale",),
+    "Credits": ("credit",),
+    "All credits": ("credit",),
+    "Quotations": ("quotation",),
+    "Trade out": ("trade_out",),
+    "Trade in": ("trade_in",),
+    "Cash": ("cash",),
+    "Cash sales": ("cash",),
+    "Live cash": ("cash",),
+    "Open cash": ("cash",),
+    "Exp. open cash": ("cash",),
+    "Open cash var": ("cash",),
+    "Exp. close cash": ("cash",),
+    "Close cash": ("cash",),
+    "Close cash var": ("cash",),
+    "Expected opening cash": ("cash",),
+    "Actual opening cash": ("cash",),
+    "Opening cash variance": ("cash",),
+    "Expected closing cash": ("cash",),
+    "Actual closing cash": ("cash",),
+    "Closing cash variance": ("cash",),
+    "M-Pesa": ("mpesa",),
+    "M-Pesa sales": ("mpesa",),
+    "Live M-Pesa": ("mpesa",),
+    "Open M-Pesa": ("mpesa",),
+    "Exp. open M-Pesa": ("mpesa",),
+    "Open M-Pesa var": ("mpesa",),
+    "Exp. close M-Pesa": ("mpesa",),
+    "Close M-Pesa": ("mpesa",),
+    "Close M-Pesa var": ("mpesa",),
+    "Expected opening M-Pesa": ("mpesa",),
+    "Actual opening M-Pesa": ("mpesa",),
+    "Opening M-Pesa variance": ("mpesa",),
+    "Expected closing M-Pesa": ("mpesa",),
+    "Actual closing M-Pesa": ("mpesa",),
+    "Closing M-Pesa variance": ("mpesa",),
+    "Paid cash": ("credit", "pay_cash"),
+    "Paid M-Pesa": ("credit", "pay_mpesa"),
+    "Paid total": ("credit_collections",),
+    "Unpaid": ("credit",),
+}
+
+
+def _label_pos_hidden(label: str, flags: dict) -> bool:
+    needs = _POS_GATED_LABELS.get((label or "").strip())
+    return bool(needs) and not all(flags.get(key, True) for key in needs)
+
+
+def _pos_col_label(col) -> str:
+    if isinstance(col, dict):
+        return (col.get("label") or col.get("title") or "").strip()
+    return str(col or "").strip()
+
+
+def _apply_pos_visibility(page: dict, flags: dict) -> dict:
+    """Strip columns / metrics / rows tied to disabled company POS features.
+
+    Column removal also drops the matching cell in every row so column/cell
+    alignment is preserved. Rows are only dropped when the table's first
+    column is a "Type"/"Metric" key column (e.g. per-type by-shop rollups),
+    so a client or employee that happens to share a label is never removed.
+    """
+    if not isinstance(page, dict) or not flags or all(flags.values()):
+        return page
+    for table in page.get("tables") or []:
+        columns = list(table.get("columns") or [])
+        drop_idx = {
+            i
+            for i, col in enumerate(columns)
+            if _label_pos_hidden(_pos_col_label(col), flags)
+        }
+        if drop_idx:
+            table["columns"] = [
+                col for i, col in enumerate(columns) if i not in drop_idx
+            ]
+            new_rows = []
+            for row in table.get("rows") or []:
+                cells = row.get("cells") if isinstance(row, dict) else row
+                if cells is None:
+                    new_rows.append(row)
+                    continue
+                kept = [
+                    cell for i, cell in enumerate(cells) if i not in drop_idx
+                ]
+                new_rows.append({**row, "cells": kept} if isinstance(row, dict) else kept)
+            table["rows"] = new_rows
+        first_col = _pos_col_label(columns[0]) if columns else ""
+        if first_col in ("Type", "Metric"):
+            filtered = []
+            for row in table.get("rows") or []:
+                if isinstance(row, dict) and row.get("group_header"):
+                    filtered.append(row)
+                    continue
+                cells = row.get("cells") if isinstance(row, dict) else row
+                cells = cells or []
+                first = cells[0] if cells else ""
+                label = _pos_col_label(first)
+                if _label_pos_hidden(label, flags):
+                    continue
+                filtered.append(row)
+            table["rows"] = filtered
+    if page.get("metrics"):
+        page["metrics"] = [
+            m
+            for m in page["metrics"]
+            if not _label_pos_hidden((m or {}).get("label"), flags)
+        ]
+    board = page.get("summary_board")
+    if isinstance(board, dict) and board.get("tiles"):
+        board["tiles"] = [
+            t
+            for t in board["tiles"]
+            if not _label_pos_hidden((t or {}).get("label"), flags)
+        ]
+    if page.get("metric_groups"):
+        groups = []
+        for group in page["metric_groups"]:
+            if _label_pos_hidden((group or {}).get("label"), flags):
+                continue
+            rows = []
+            for row in group.get("rows") or []:
+                metrics = [
+                    m
+                    for m in row.get("metrics") or []
+                    if not _label_pos_hidden((m or {}).get("label"), flags)
+                ]
+                if metrics:
+                    rows.append({**row, "metrics": metrics})
+            groups.append({**group, "rows": rows})
+        page["metric_groups"] = groups
+    return page
+
+
 def _parse_client_receipt_kind(raw: str) -> str:
     kind = (raw or "").strip().lower()
     if kind in ("sale", "sales"):
@@ -353,27 +533,80 @@ def _parse_client_receipt_kind(raw: str) -> str:
     return "all"
 
 
-def _client_activity_receipts_q(kind: str) -> Q:
-    """Receipt kinds shown on the Clients analytics pages."""
+def _client_activity_receipts_q(kind: str, flags: dict | None = None) -> Q:
+    """Receipt kinds shown on the Clients analytics pages.
+
+    Only kinds backed by an enabled company POS feature are included.
+    """
+    flags = flags or _pos_feature_flags()
     if kind == "credits":
-        return _credit_account_receipts_q()
+        return _credit_account_receipts_q() if flags["credit"] else Q(pk__in=[])
     if kind == "sales":
-        return Q(kind=ShopReceiptKind.SALE)
+        return Q(kind=ShopReceiptKind.SALE) if flags["sale"] else Q(pk__in=[])
     if kind == "quotations":
-        return Q(kind=ShopReceiptKind.QUOTATION)
+        return Q(kind=ShopReceiptKind.QUOTATION) if flags["quotation"] else Q(pk__in=[])
     if kind == "trade_out":
-        return Q(kind=ShopReceiptKind.TRADE_OUT)
+        return Q(kind=ShopReceiptKind.TRADE_OUT) if flags["trade_out"] else Q(pk__in=[])
     if kind == "trade_in":
-        return Q(kind=ShopReceiptKind.TRADE_IN)
+        return Q(kind=ShopReceiptKind.TRADE_IN) if flags["trade_in"] else Q(pk__in=[])
     if kind == "tradings":
-        return Q(kind__in=(ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN))
-    return (
-        Q(kind=ShopReceiptKind.SALE)
-        | Q(kind=ShopReceiptKind.CREDIT)
-        | Q(kind=ShopReceiptKind.QUOTATION)
-        | Q(kind=ShopReceiptKind.TRADE_OUT)
-        | Q(kind=ShopReceiptKind.TRADE_IN)
-    )
+        q = Q(pk__in=[])
+        if flags["trade_out"]:
+            q |= Q(kind=ShopReceiptKind.TRADE_OUT)
+        if flags["trade_in"]:
+            q |= Q(kind=ShopReceiptKind.TRADE_IN)
+        return q
+    q = Q(pk__in=[])
+    if flags["sale"]:
+        q |= Q(kind=ShopReceiptKind.SALE)
+    else:
+        # Cleared credits/trades are stored as SALE receipts — keep them while
+        # the source feature is still enabled even if plain sales are off.
+        if flags["credit"]:
+            q |= Q(kind=ShopReceiptKind.SALE, settled_from_credit=True)
+        if flags["tradings"]:
+            q |= Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
+    if flags["credit"]:
+        q |= Q(kind=ShopReceiptKind.CREDIT)
+    if flags["quotation"]:
+        q |= Q(kind=ShopReceiptKind.QUOTATION)
+    if flags["trade_out"]:
+        q |= Q(kind=ShopReceiptKind.TRADE_OUT)
+    if flags["trade_in"]:
+        q |= Q(kind=ShopReceiptKind.TRADE_IN)
+    return q
+
+
+def _enabled_client_receipt_kind(kind: str, flags: dict) -> str:
+    """Fall back to "all" when the picked receipt kind is a disabled feature."""
+    if kind in ("all", "tradings"):
+        return kind if flags.get("tradings", True) or kind == "all" else "all"
+    key = {
+        "sales": "sale",
+        "credits": "credit",
+        "quotations": "quotation",
+        "trade_out": "trade_out",
+        "trade_in": "trade_in",
+    }.get(kind)
+    if key is not None and not flags.get(key, True):
+        return "all"
+    return kind
+
+
+def _client_receipt_kind_options(flags: dict) -> list:
+    """Filter options for the Clients transaction-type select."""
+    options = [("all", "All types")]
+    if flags["sale"]:
+        options.append(("sales", "Sales"))
+    if flags["credit"]:
+        options.append(("credits", "Credits"))
+    if flags["quotation"]:
+        options.append(("quotations", "Quotations"))
+    if flags["trade_out"]:
+        options.append(("trade_out", "Trade out"))
+    if flags["trade_in"]:
+        options.append(("trade_in", "Trade in"))
+    return options
 
 
 def _payment_status_for_due(due: Decimal, paid: Decimal) -> str:
@@ -518,6 +751,7 @@ def apply_account_payment(
         raise ValidationError("Choose cash or M-Pesa.")
     if kind != "credit":
         method = "cash"
+    _check_account_pay_method(method)
 
     pay_amount = _parse_pay_amount(amount)
     remaining = pay_amount
@@ -1007,6 +1241,7 @@ def apply_credit_receipt_payment(
     method = (payment_method or "cash").strip().lower()
     if method not in ("cash", "mpesa"):
         raise ValidationError("Choose cash or M-Pesa.")
+    _check_account_pay_method(method)
 
     pay_amount = _parse_pay_amount(amount)
     mpesa_receipt_number = (mpesa_receipt_number or "").strip()
@@ -1705,12 +1940,26 @@ def _parse_shop_ids(raw_values, shops_by_id):
     return ids
 
 
+ANALYTICS_RECEIPT_STATUS_ALL = "all"
 ANALYTICS_RECEIPT_STATUS_PENDING = "pending"
 ANALYTICS_RECEIPT_STATUS_CONFIRMED = "confirmed"
 ANALYTICS_RECEIPT_STATUS_OPTIONS = (
+    (ANALYTICS_RECEIPT_STATUS_ALL, "All receipts"),
     (ANALYTICS_RECEIPT_STATUS_PENDING, "Pending receipts"),
     (ANALYTICS_RECEIPT_STATUS_CONFIRMED, "Confirmed receipts"),
 )
+ANALYTICS_RECEIPT_STATUS_SESSION_KEY = "analytics_receipt_status"
+
+
+def _normalize_analytics_receipt_status(raw: str | None) -> str | None:
+    key = (raw or "").strip().lower()
+    if key in ("pending", "active"):
+        return ANALYTICS_RECEIPT_STATUS_PENDING
+    if key == "confirmed":
+        return ANALYTICS_RECEIPT_STATUS_CONFIRMED
+    if key in ("all", "any", "both"):
+        return ANALYTICS_RECEIPT_STATUS_ALL
+    return None
 
 
 def _analytics_receipt_statuses(status_key: str | None) -> tuple[str, ...] | None:
@@ -1719,16 +1968,42 @@ def _analytics_receipt_statuses(status_key: str | None) -> tuple[str, ...] | Non
         return (ShopReceiptStatus.ACTIVE,)
     if key == "confirmed":
         return (ShopReceiptStatus.CONFIRMED, ShopReceiptStatus.PARTIAL_RETURN)
+    if key in ("all", "any", "both"):
+        return (
+            ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.CONFIRMED,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        )
     return None
 
 
-def resolve_analytics_receipt_status(raw: str | None = None) -> str:
-    """Resolve pending/confirmed for analytics pages (GET override or company default)."""
-    key = (raw or "").strip().lower()
-    if key in ("pending", "active"):
-        return ANALYTICS_RECEIPT_STATUS_PENDING
-    if key == "confirmed":
-        return ANALYTICS_RECEIPT_STATUS_CONFIRMED
+def resolve_analytics_receipt_status(
+    raw: str | None = None, request=None, default: str | None = None
+) -> str:
+    """Resolve all/pending/confirmed for analytics pages.
+
+    An explicit GET value wins and is remembered on the session, so the same
+    receipt set follows the user across every analytics page; otherwise the
+    remembered choice (then the company default) applies. ``default`` only
+    changes the final fallback when nothing was chosen or remembered.
+    """
+    resolved = _normalize_analytics_receipt_status(raw)
+    session = getattr(request, "session", None)
+    if resolved is not None:
+        if session is not None and session.get(
+            ANALYTICS_RECEIPT_STATUS_SESSION_KEY
+        ) != resolved:
+            session[ANALYTICS_RECEIPT_STATUS_SESSION_KEY] = resolved
+        return resolved
+    if session is not None:
+        remembered = _normalize_analytics_receipt_status(
+            session.get(ANALYTICS_RECEIPT_STATUS_SESSION_KEY)
+        )
+        if remembered is not None:
+            return remembered
+    fallback = _normalize_analytics_receipt_status(default)
+    if fallback is not None:
+        return fallback
     from shops.services import get_analytics_receipt_data_source_default
 
     return get_analytics_receipt_data_source_default()
@@ -2499,6 +2774,7 @@ def _filters_context(
     allow_all_time=False,
     default_all_time=None,
     shop_scope: str = "default",
+    default_receipt_status: str | None = None,
 ):
     date_filter = _date_filter_context(
         request,
@@ -2510,12 +2786,17 @@ def _filters_context(
     selected_shop_ids = _parse_shop_ids(request.GET.getlist("shop_id"), shops_by_id)
     active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
     range_type = date_filter.get("range_type") or date_filter.get("report_range") or "day"
-    receipt_status = resolve_analytics_receipt_status(request.GET.get("receipt_status"))
+    receipt_status = resolve_analytics_receipt_status(
+        request.GET.get("receipt_status"),
+        request=request,
+        default=default_receipt_status,
+    )
     return {
         **date_filter,
         "filter_shops": filter_shops,
         "selected_shop_ids": selected_shop_ids,
         "active_shop_ids": active_shop_ids,
+        "pos_flags": _pos_feature_flags(),
         "credits_shop_scoped": shop_scope == "allocated",
         "credits_require_shop_pick": False,
         "receipt_status": receipt_status,
@@ -2558,6 +2839,11 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         request,
         allow_all_time=allow_all_time,
         default_all_time=default_all_time if allow_all_time else False,
+        default_receipt_status=(
+            ANALYTICS_RECEIPT_STATUS_ALL
+            if section["slug"] == "receipts"
+            else None
+        ),
     )
     filters["role"] = profile.role
     filters["query"] = request.GET.urlencode()
@@ -2584,7 +2870,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         "expenses": _build_expenses,
         "receipts": _build_receipts,
     }
-    page = builders[section["slug"]](filters)
+    page = _apply_pos_visibility(builders[section["slug"]](filters), filters["pos_flags"])
     if section["slug"] in ANALYTICS_LIST_TABLE_SECTIONS:
         page["list_table_layout"] = True
     return {
@@ -2608,7 +2894,7 @@ def build_item_report_page(*, profile, request) -> dict:
     filters["role"] = profile.role
     filters["query"] = request.GET.urlencode()
     filters["search_query"] = (request.GET.get("q") or "").strip()
-    page = _build_item_report(filters)
+    page = _apply_pos_visibility(_build_item_report(filters), filters["pos_flags"])
     page["list_table_layout"] = True
     page["search_query"] = filters["search_query"]
     page["download_href"] = _pdf_download_href(filters["query"])
@@ -2756,11 +3042,15 @@ def _analytics_receipt_kind_filter(kind: str):
     if key == "trade_out":
         return Q(kind=ShopReceiptKind.TRADE_OUT) & ~Q(status=ShopReceiptStatus.CANCELLED)
     if key in {"tradings", "trades", "trade"}:
-        return (
-            Q(kind=ShopReceiptKind.TRADE_OUT)
-            | Q(kind=ShopReceiptKind.TRADE_IN)
-            | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
-        ) & ~Q(status=ShopReceiptStatus.CANCELLED)
+        flags = _pos_feature_flags()
+        q = Q(pk__in=[])
+        if flags["trade_out"]:
+            q |= Q(kind=ShopReceiptKind.TRADE_OUT)
+        if flags["trade_in"]:
+            q |= Q(kind=ShopReceiptKind.TRADE_IN)
+        if flags["tradings"]:
+            q |= Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
+        return q & ~Q(status=ShopReceiptStatus.CANCELLED)
     if key == "cancelled":
         return Q(status=ShopReceiptStatus.CANCELLED)
     if key == "partial-returns":
@@ -2768,11 +3058,32 @@ def _analytics_receipt_kind_filter(kind: str):
     raise Http404("Receipt type not found.")
 
 
+_RECEIPT_KIND_FLAG = {
+    "sales": "sale",
+    "credits": "credit",
+    "quotations": "quotation",
+    "tradings": "tradings",
+}
+
+
 def get_analytics_receipt_kind(kind: str) -> dict:
     spec = ANALYTICS_RECEIPT_KINDS.get((kind or "").strip().lower())
     if spec is None:
         raise Http404("Receipt type not found.")
+    flag = _RECEIPT_KIND_FLAG.get(spec["slug"])
+    if flag is not None and not _pos_feature_flags().get(flag, True):
+        raise Http404("Receipt type not found.")
     return spec
+
+
+def analytics_receipt_kind_options() -> list:
+    """Receipt-type options limited to enabled company POS features."""
+    return [
+        spec
+        for spec in ANALYTICS_RECEIPT_KINDS.values()
+        if _RECEIPT_KIND_FLAG.get(spec["slug"]) is None
+        or _pos_feature_flags().get(_RECEIPT_KIND_FLAG[spec["slug"]], True)
+    ]
 
 
 def _cashier_label(profile) -> str:
@@ -2998,7 +3309,9 @@ def _list_expense_supplier_receipt_rows(*, shop_ids, start, end, search="", limi
 def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
     """Filterable receipt list for one analytics document type across shops."""
     spec = get_analytics_receipt_kind(kind)
-    filters = _filters_context(profile, request)
+    filters = _filters_context(
+        profile, request, default_receipt_status=ANALYTICS_RECEIPT_STATUS_ALL
+    )
     shop_ids = filters["active_shop_ids"]
     start, end = filters["start"], filters["end"]
     search = (request.GET.get("q") or "").strip()
@@ -3553,7 +3866,7 @@ def _confirm_receipts_effective_params(request) -> dict:
         params["month"] = today.strftime("%Y-%m")
     if not (params.get("kind") or "").strip():
         mapped = _confirm_receipts_map_receipt_kind(params.get("receipt_kind"))
-        params["kind"] = mapped or "sale"
+        params["kind"] = mapped or "all"
     return params
 
 
@@ -3564,27 +3877,43 @@ def _confirm_receipts_query_context(*, profile, request) -> dict:
         GET = params
         method = "GET"
         user = getattr(request, "user", None)
+        session = getattr(request, "session", None)
 
     filters = _filters_context(
         profile, _ParamsRequest(), allow_all_time=True, default_all_time=False
     )
     # Receipt lookup is client-side live search only — do not server-filter by q.
     status_key = _confirm_receipt_status_key(params.get("status"))
-    kind_key = (params.get("kind") or "sale").strip().lower()
-    if kind_key not in {value for value, _label in CONFIRM_RECEIPT_KIND_FILTERS}:
-        kind_key = "sale"
+    flags = filters.get("pos_flags") or _pos_feature_flags()
+    kind_options = tuple(
+        option
+        for option in CONFIRM_RECEIPT_KIND_FILTERS
+        if _confirm_kind_enabled(option[0], flags)
+    )
+    kind_key = (params.get("kind") or "all").strip().lower()
+    if kind_key not in {value for value, _label in kind_options}:
+        kind_key = kind_options[0][0] if kind_options else "sale"
     return {
         **filters,
         "search": "",
         "status_filter": status_key,
         "kind_filter": kind_key,
-        "kind_options": CONFIRM_RECEIPT_KIND_FILTERS,
+        "kind_options": kind_options,
         "count_label": _confirm_receipts_count_label(kind_key),
     }
 
 
+def _confirm_kind_enabled(kind_key: str, flags: dict) -> bool:
+    if kind_key == "sale":
+        return bool(flags.get("sale", True))
+    if kind_key == "credit":
+        return bool(flags.get("credit", True))
+    # Transfers ("delivery", "goods_received") and "all" are always listed.
+    return True
+
+
 def _confirm_receipts_collect_rows(
-    *, shop_ids, start, end, status_key, search, kind_key, limit=None
+    *, shop_ids, start, end, status_key, search, kind_key, limit=None, flags=None
 ):
     """Collect confirm-receipt rows for the filtered period.
 
@@ -3593,7 +3922,8 @@ def _confirm_receipts_collect_rows(
     """
     rows = []
     band_limit = None if limit is None else int(limit)
-    if kind_key in ("sale", "all"):
+    flags = flags or _pos_feature_flags()
+    if kind_key in ("sale", "all") and flags["sale"]:
         rows.extend(
             _confirm_receipt_sale_rows(
                 shop_ids=shop_ids,
@@ -3605,7 +3935,7 @@ def _confirm_receipts_collect_rows(
                 kinds=[ShopReceiptKind.SALE],
             )
         )
-    if kind_key in ("credit", "all"):
+    if kind_key in ("credit", "all") and flags["credit"]:
         rows.extend(
             _confirm_receipt_sale_rows(
                 shop_ids=shop_ids,
@@ -4087,6 +4417,16 @@ def build_client_credit_account(*, profile, client_id: int, request=None) -> dic
         "all_credits_href": all_credits_href,
         **shop_filter,
         **date_filter,
+        **_pay_method_context(),
+    }
+
+
+def _pay_method_context() -> dict:
+    """Payment-method radios for the credit account-pay modals."""
+    flags = _pos_feature_flags()
+    return {
+        "pos_pay_cash": flags["pay_cash"],
+        "pos_pay_mpesa": flags["pay_mpesa"],
     }
 
 
@@ -4164,14 +4504,17 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
         if getter is not None:
             query = getter.urlencode()
             raw_kind = (getter.get("receipt_kind") or "").strip()
-    receipt_kind = _parse_client_receipt_kind(raw_kind)
+    flags = _pos_feature_flags()
+    receipt_kind = _enabled_client_receipt_kind(
+        _parse_client_receipt_kind(raw_kind), flags
+    )
 
     client = Client.objects.filter(pk=client_id).first()
     if client is None or not shop_ids:
         raise Http404("Client not found.")
     if not (
         ShopReceipt.objects.filter(client_id=client.pk, shop_id__in=shop_ids)
-        .filter(_client_activity_receipts_q("all"))
+        .filter(_client_activity_receipts_q("all", flags))
         .exclude(status=ShopReceiptStatus.CANCELLED)
         .exists()
     ):
@@ -4179,7 +4522,7 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
 
     base_qs = (
         ShopReceipt.objects.filter(client_id=client.pk, shop_id__in=shop_ids)
-        .filter(_client_activity_receipts_q(receipt_kind))
+        .filter(_client_activity_receipts_q(receipt_kind, flags))
         .exclude(status=ShopReceiptStatus.CANCELLED)
     )
     all_count = base_qs.count()
@@ -4360,11 +4703,14 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
     flat["download"] = "pdf"
     download_href = f"?{urlencode(flat)}"
 
-    return {
+    return _apply_pos_visibility(
+        {
         "client": client,
         "receipt_count": len(rows),
         "item_count": len(item_rows),
         "receipt_kind": receipt_kind,
+        "receipt_kind_options": _client_receipt_kind_options(flags),
+        "pos_flags": flags,
         "rows": rows,
         "item_rows": item_rows,
         "ledger_title": kind_titles.get(receipt_kind, "Transactions"),
@@ -4459,7 +4805,9 @@ def build_client_transactions(*, profile, client_id: int, request=None) -> dict:
         ],
         **shop_filter,
         **date_filter,
-    }
+        },
+        flags,
+    )
 
 
 def build_client_transactions_pdf(*, account: dict, company_name: str = "") -> bytes:
@@ -7207,16 +7555,21 @@ def _build_overview(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
+    flags = filters.get("pos_flags") or _pos_feature_flags()
     sales, _prev_sales, credits, _quotes, expenses = _common_receipt_sets(filters)
 
     sale_docs_by_shop: dict[int, int] = {
         row["shop_id"]: int(row["docs"] or 0)
         for row in sales.values("shop_id").annotate(docs=Count("id"))
     }
-    credit_docs_by_shop: dict[int, int] = {
-        row["shop_id"]: int(row["docs"] or 0)
-        for row in credits.values("shop_id").annotate(docs=Count("id"))
-    }
+    credit_docs_by_shop: dict[int, int] = (
+        {
+            row["shop_id"]: int(row["docs"] or 0)
+            for row in credits.values("shop_id").annotate(docs=Count("id"))
+        }
+        if flags["credit"]
+        else {}
+    )
     trading = _trading_by_shop_for_period(
         shop_ids=shop_ids,
         start=start,
@@ -7242,7 +7595,9 @@ def _build_overview(filters):
     for shop in shops:
         row = trading.get(shop.pk) or {}
         sale_amt = Decimal(row.get("sale_value") or 0)
-        credit_amt = Decimal(row.get("credit_value") or 0)
+        credit_amt = (
+            Decimal(row.get("credit_value") or 0) if flags["credit"] else _zero()
+        )
         stock = Decimal(row.get("cogs") or 0)
         opex_docs, opex_amt = opex_by_shop.get(shop.pk, (0, _zero()))
         opex_docs = int(opex_docs or 0)
@@ -7936,7 +8291,10 @@ def _revenue_breakdown_table(
         period_expenses, bucket_kind=bucket_kind
     )
     sale_docs_by_bucket = _docs_by_bucket(sales, bucket_kind=bucket_kind)
-    credit_docs_by_bucket = _docs_by_bucket(credits, bucket_kind=bucket_kind)
+    flags = filters.get("pos_flags") or _pos_feature_flags()
+    credit_docs_by_bucket = (
+        _docs_by_bucket(credits, bucket_kind=bucket_kind) if flags["credit"] else {}
+    )
 
     metric_maps = [
         ("Sales", "sale"),
@@ -7986,7 +8344,9 @@ def _revenue_breakdown_table(
         sale_docs = sale_docs_by_bucket.get(label, 0)
         credit_docs = credit_docs_by_bucket.get(label, 0)
         sale_amt = Decimal(row.get("sale_value") or 0)
-        credit_amt = Decimal(row.get("credit_value") or 0)
+        credit_amt = (
+            Decimal(row.get("credit_value") or 0) if flags["credit"] else _zero()
+        )
         stock = Decimal(row.get("cogs") or 0)
         opex_docs, opex_amt = opex_by_bucket.get(label, (0, _zero()))
         opex_amt = Decimal(opex_amt or 0)
@@ -8055,16 +8415,21 @@ def _build_revenue(filters):
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(filters["active_shop_ids"])]
     shop_ids = [shop.pk for shop in shops]
     start, end = filters["start"], filters["end"]
+    flags = filters.get("pos_flags") or _pos_feature_flags()
     sales, _prev_sales, credits, _quotes, _expenses = _common_receipt_sets(filters)
 
     sale_docs_by_shop: dict[int, int] = {
         row["shop_id"]: int(row["docs"] or 0)
         for row in sales.values("shop_id").annotate(docs=Count("id"))
     }
-    credit_docs_by_shop: dict[int, int] = {
-        row["shop_id"]: int(row["docs"] or 0)
-        for row in credits.values("shop_id").annotate(docs=Count("id"))
-    }
+    credit_docs_by_shop: dict[int, int] = (
+        {
+            row["shop_id"]: int(row["docs"] or 0)
+            for row in credits.values("shop_id").annotate(docs=Count("id"))
+        }
+        if flags["credit"]
+        else {}
+    )
     trading = _trading_by_shop_for_period(
         shop_ids=shop_ids,
         start=start,
@@ -8091,7 +8456,9 @@ def _build_revenue(filters):
         sale_docs = sale_docs_by_shop.get(shop.pk, 0)
         credit_docs = credit_docs_by_shop.get(shop.pk, 0)
         sale_amt = Decimal(row.get("sale_value") or 0)
-        credit_amt = Decimal(row.get("credit_value") or 0)
+        credit_amt = (
+            Decimal(row.get("credit_value") or 0) if flags["credit"] else _zero()
+        )
         stock = Decimal(row.get("cogs") or 0)
         opex_docs, opex_amt = opex_by_shop.get(shop.pk, (0, _zero()))
         opex_amt = Decimal(opex_amt or 0)
@@ -8341,16 +8708,64 @@ def _build_revenue(filters):
     return page
 
 
+_BALANCE_CHANNEL_KEYS = {
+    "cash": (
+        "opening_cash",
+        "expected_opening_cash",
+        "opening_cash_variance",
+        "closing_cash",
+        "session_open_cash",
+        "cash_sales",
+        "cash_refunds",
+        "expected_cash",
+        "cash_variance",
+        "live_cash",
+    ),
+    "mpesa": (
+        "opening_mpesa",
+        "expected_opening_mpesa",
+        "opening_mpesa_variance",
+        "closing_mpesa",
+        "session_open_mpesa",
+        "mpesa_sales",
+        "mpesa_refunds",
+        "expected_mpesa",
+        "mpesa_variance",
+        "live_mpesa",
+    ),
+}
+
+
+def _strip_disabled_balance_channels(by_shop, totals, live_by_shop, flags) -> None:
+    """Zero till channels the company disabled so combined totals stay right."""
+    if flags.get("cash", True) and flags.get("mpesa", True):
+        return
+    for flag_key, keys in _BALANCE_CHANNEL_KEYS.items():
+        if flags.get(flag_key, True):
+            continue
+        for entry in list(by_shop.values()) + list(live_by_shop.values()) + [totals]:
+            for key in keys:
+                if key in entry:
+                    entry[key] = _zero()
+    for entry in list(by_shop.values()) + list(live_by_shop.values()) + [totals]:
+        if "live_total" in entry:
+            entry["live_total"] = Decimal(
+                entry.get("live_cash") or 0
+            ) + Decimal(entry.get("live_mpesa") or 0)
+
+
 def _build_balances(filters):
     """Live cashbox per shop from open/close balances, sales, and paid outflows."""
     from django.utils import timezone
 
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    flags = filters.get("pos_flags") or _pos_feature_flags()
     day_balances = _day_balance_data(filters)
     by_shop = day_balances["by_shop"]
     totals = day_balances["totals"]
     live_by_shop = day_balances.get("live_by_shop") or {}
+    _strip_disabled_balance_channels(by_shop, totals, live_by_shop, flags)
 
     live_cash_total = sum(
         (Decimal(row.get("live_cash") or 0) for row in live_by_shop.values()),
@@ -9341,6 +9756,7 @@ def _build_sales(filters):
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
+    flags = filters.get("pos_flags") or _pos_feature_flags()
     sales, _prev, credits, *_rest = _common_receipt_sets(filters)
 
     money_field = DecimalField(max_digits=14, decimal_places=2)
@@ -9367,11 +9783,14 @@ def _build_sales(filters):
     cash_by_shop: dict[int, tuple[int, Decimal]] = {}
     mpesa_by_shop: dict[int, tuple[int, Decimal]] = {}
     unpaid_credit_by_shop: dict[int, tuple[int, Decimal]] = {}
-    paid_cash_by_shop, paid_mpesa_by_shop = _credit_payment_totals_by_shop(
-        shop_ids=shop_ids,
-        start=start,
-        end=end,
-    )
+    if flags["credit_collections"]:
+        paid_cash_by_shop, paid_mpesa_by_shop = _credit_payment_totals_by_shop(
+            shop_ids=shop_ids,
+            start=start,
+            end=end,
+        )
+    else:
+        paid_cash_by_shop, paid_mpesa_by_shop = {}, {}
     for row in sales.values("shop_id").annotate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), _zero()),
@@ -9383,14 +9802,15 @@ def _build_sales(filters):
         cash_by_shop[shop_id] = (0, Decimal(row["cash"] or 0))
         mpesa_by_shop[shop_id] = (0, Decimal(row["mpesa"] or 0))
 
-    for row in credits.values("shop_id").annotate(
-        unpaid_docs=Count("id", filter=Q(total__gt=F("amount_paid"))),
-        unpaid=Coalesce(Sum(unpaid_due_expr), _zero()),
-    ):
-        unpaid_credit_by_shop[row["shop_id"]] = (
-            int(row["unpaid_docs"] or 0),
-            Decimal(row["unpaid"] or 0),
-        )
+    if flags["credit"]:
+        for row in credits.values("shop_id").annotate(
+            unpaid_docs=Count("id", filter=Q(total__gt=F("amount_paid"))),
+            unpaid=Coalesce(Sum(unpaid_due_expr), _zero()),
+        ):
+            unpaid_credit_by_shop[row["shop_id"]] = (
+                int(row["unpaid_docs"] or 0),
+                Decimal(row["unpaid"] or 0),
+            )
 
     trading = _trading_by_shop_for_period(
         shop_ids=shop_ids,
@@ -9409,8 +9829,12 @@ def _build_sales(filters):
         row = trading.get(shop.pk) or {}
         selling = Decimal(row.get("value") or 0)
         stock = Decimal(row.get("cogs") or 0)
-        cash_amt = cash_by_shop.get(shop.pk, (0, _zero()))[1]
-        mpesa_amt = mpesa_by_shop.get(shop.pk, (0, _zero()))[1]
+        cash_amt = (
+            cash_by_shop.get(shop.pk, (0, _zero()))[1] if flags["cash"] else _zero()
+        )
+        mpesa_amt = (
+            mpesa_by_shop.get(shop.pk, (0, _zero()))[1] if flags["mpesa"] else _zero()
+        )
         paid_cash_docs, paid_cash_amt = paid_cash_by_shop.get(shop.pk, (0, _zero()))
         paid_mpesa_docs, paid_mpesa_amt = paid_mpesa_by_shop.get(shop.pk, (0, _zero()))
         unpaid_docs, unpaid_amt = unpaid_credit_by_shop.get(shop.pk, (0, _zero()))
@@ -11233,7 +11657,15 @@ def _build_quotations(filters):
     }
 
 
-def _trade_receipts_qs(shop_ids, start, end, *, receipt_status=None):
+def _trade_receipts_qs(shop_ids, start, end, *, receipt_status=None, flags=None):
+    flags = flags or _pos_feature_flags()
+    kinds_q = Q(pk__in=[])
+    if flags["trade_out"]:
+        kinds_q |= Q(kind=ShopReceiptKind.TRADE_OUT)
+    if flags["trade_in"]:
+        kinds_q |= Q(kind=ShopReceiptKind.TRADE_IN)
+    if flags["tradings"]:
+        kinds_q |= Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
     qs = (
         _within_created_range(
             ShopReceipt.objects.filter(
@@ -11242,13 +11674,16 @@ def _trade_receipts_qs(shop_ids, start, end, *, receipt_status=None):
             start,
             end,
         )
-        .filter(
-            Q(kind=ShopReceiptKind.TRADE_OUT)
-            | Q(kind=ShopReceiptKind.TRADE_IN)
-            | Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
-        )
+        .filter(kinds_q)
     )
-    return _apply_analytics_receipt_status(qs, receipt_status)
+    statuses = _analytics_receipt_statuses(receipt_status)
+    if statuses is not None:
+        # Fully returned trades are stored as CANCELLED — keep them visible
+        # regardless of the pending/confirmed scope (they are cleared records).
+        qs = qs.filter(
+            Q(status__in=statuses) | Q(status=ShopReceiptStatus.CANCELLED)
+        )
+    return qs
 
 
 def _trade_receipt_columns():
@@ -11913,7 +12348,8 @@ def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
             )
         ]
         search_placeholder = "Search trade or item"
-    return {
+    return _apply_pos_visibility(
+        {
         "headline": client.full_name,
         "lead": (
             f"{phone + ' · ' if phone else ''}"
@@ -11953,7 +12389,9 @@ def build_client_tradings_page(*, profile, request, client_id: int) -> dict:
         ],
         "insights": [],
         "tables": tables,
-    }
+        },
+        filters["pos_flags"],
+    )
 
 
 def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
@@ -12120,6 +12558,8 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
         "cashier": _cashier_label(receipt.created_by) or "—",
         "status_label": receipt.get_status_display(),
         "kind_label": receipt.get_kind_display(),
+        "pos_pay_cash": filters["pos_flags"]["pay_cash"],
+        "pos_pay_mpesa": filters["pos_flags"]["pay_mpesa"],
     }
 
 
@@ -13349,8 +13789,13 @@ def _build_clients(filters):
     end = filters.get("end")
     period_label = filters.get("report_period_label") or "selected period"
     # Credits embed stays credit-only; standalone Clients supports sales/credits/quotations.
+    flags = filters.get("pos_flags") or _pos_feature_flags()
     receipt_kind = (
-        "credits" if from_credits else _parse_client_receipt_kind(filters.get("receipt_kind"))
+        "credits"
+        if from_credits
+        else _enabled_client_receipt_kind(
+            _parse_client_receipt_kind(filters.get("receipt_kind")), flags
+        )
     )
     credit_mode = receipt_kind == "credits"
     period_scoped = start is not None and end is not None
@@ -13363,7 +13808,7 @@ def _build_clients(filters):
     )
 
     all_receipts = ShopReceipt.objects.filter(shop_id__in=shop_ids).filter(
-        _client_activity_receipts_q(receipt_kind)
+        _client_activity_receipts_q(receipt_kind, flags)
     ).exclude(client_id=None)
     if filters.get("receipt_status"):
         all_receipts = _apply_analytics_receipt_status(
@@ -13696,6 +14141,7 @@ def _build_clients(filters):
         "search_placeholder": "Search clients by name or phone…",
         "search_empty": "No clients match that search.",
         "receipt_kind": receipt_kind,
+        "receipt_kind_options": _client_receipt_kind_options(flags),
         "tables": [
             _table(
                 table_title,
@@ -14701,12 +15147,29 @@ def _normalize_analytics_receipt_kind(raw: str) -> str:
     return receipt_kind
 
 
+_BROWSE_KIND_FLAG = {
+    "sales": "sale",
+    "credits": "credit",
+    "quotations": "quotation",
+    "trade_out": "trade_out",
+    "trade_in": "trade_in",
+}
+
+
+def _browse_kind_enabled(slug: str, flags: dict) -> bool:
+    key = _BROWSE_KIND_FLAG.get(slug)
+    return key is None or bool(flags.get(key, True))
+
+
 def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool = False):
     """Shared receipt browse payload for analytics receipts + return pages."""
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     start, end = filters["start"], filters["end"]
+    flags = filters.get("pos_flags") or _pos_feature_flags()
     receipt_kind = _normalize_analytics_receipt_kind(filters.get("receipt_kind"))
+    if receipt_kind and not _browse_kind_enabled(receipt_kind, flags):
+        receipt_kind = ""
     receipt_status = filters.get("receipt_status")
     apply_status = receipt_kind not in {"cancelled", "partial-returns"}
 
@@ -14722,17 +15185,22 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         shop_ids=shop_ids, start=start, end=end
     )
 
-    kind_specs = (
-        ("sales", "Sales"),
-        ("credits", "Credits"),
-        ("quotations", "Quotations"),
-        ("trade_out", "Trade out"),
-        ("trade_in", "Trade in"),
-        ("stock", "Stock suppliers"),
-        ("expense", "Expense suppliers"),
-        ("cancelled", "Cancelled"),
-        ("partial-returns", "Partial returns"),
+    kind_specs = tuple(
+        row
+        for row in (
+            ("sales", "Sales"),
+            ("credits", "Credits"),
+            ("quotations", "Quotations"),
+            ("trade_out", "Trade out"),
+            ("trade_in", "Trade in"),
+            ("stock", "Stock suppliers"),
+            ("expense", "Expense suppliers"),
+            ("cancelled", "Cancelled"),
+            ("partial-returns", "Partial returns"),
+        )
+        if _browse_kind_enabled(row[0], flags)
     )
+    all_kind_specs = kind_specs
     if receipt_kind:
         filtered_specs = tuple(row for row in kind_specs if row[0] == receipt_kind)
         if filtered_specs:
@@ -14875,6 +15343,25 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             "partial-returns",
         ):
             pos_qs = pos_qs.filter(_analytics_receipt_kind_filter(receipt_kind))
+        else:
+            # "All types" — only kinds backed by enabled POS features.
+            enabled_q = Q(pk__in=[])
+            if flags["sale"]:
+                enabled_q |= Q(kind=ShopReceiptKind.SALE)
+            else:
+                if flags["credit"]:
+                    enabled_q |= Q(kind=ShopReceiptKind.SALE, settled_from_credit=True)
+                if flags["tradings"]:
+                    enabled_q |= Q(kind=ShopReceiptKind.SALE, settled_from_trade=True)
+            if flags["credit"]:
+                enabled_q |= Q(kind=ShopReceiptKind.CREDIT)
+            if flags["quotation"]:
+                enabled_q |= Q(kind=ShopReceiptKind.QUOTATION)
+            if flags["trade_out"]:
+                enabled_q |= Q(kind=ShopReceiptKind.TRADE_OUT)
+            if flags["trade_in"]:
+                enabled_q |= Q(kind=ShopReceiptKind.TRADE_IN)
+            pos_qs = pos_qs.filter(enabled_q)
         if apply_status:
             pos_qs = _apply_analytics_receipt_status(pos_qs, receipt_status)
         for row in pos_qs:
@@ -14944,6 +15431,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
     period_label = filters.get("report_period_label") or "selected period"
     return {
         "receipt_kind": receipt_kind,
+        "receipt_kind_options": [("all", "All types"), *all_kind_specs],
         "kind_label": kind_label,
         "period_label": period_label,
         "shops": shops,
@@ -14965,7 +15453,6 @@ def _build_receipts(filters):
     from employees.access import role_url_segment
 
     role = filters["role"]
-    query = filters.get("query") or ""
     segment = role_url_segment(role)
     browse = _collect_analytics_receipts_browse(
         filters=filters, include_receipt_actions=False
@@ -14980,18 +15467,6 @@ def _build_receipts(filters):
         + f" for {period_label}."
     )
 
-    confirm_href = reverse(
-        "employees:analytics_confirm_receipts",
-        kwargs={"role_segment": segment},
-    )
-    return_href = reverse(
-        "employees:analytics_return_receipts",
-        kwargs={"role_segment": segment},
-    )
-    if query:
-        confirm_href = f"{confirm_href}?{query}"
-        return_href = f"{return_href}?{query}"
-
     return {
         "headline": "Receipts",
         "lead": "Filter by receipt type and period across selected shops.",
@@ -15005,6 +15480,7 @@ def _build_receipts(filters):
             kwargs={"role_segment": segment},
         ),
         "receipt_kind": receipt_kind or "all",
+        "receipt_kind_options": browse["receipt_kind_options"],
         "alerts": [],
         "metrics": [
             _metric(
@@ -15032,29 +15508,7 @@ def _build_receipts(filters):
         "trends": [],
         "charts": [],
         "insights": [],
-        "sections": [
-            _overview_section(
-                slug="confirm-receipts",
-                title="Confirm receipts",
-                icon="badge-check",
-                href=confirm_href,
-                value="Open",
-                hint="Confirm sales and fully paid credits",
-                body=(
-                    "Sales and credits — pending first; partial credits show "
-                    "Partial confirmation until fully paid."
-                ),
-            ),
-            _overview_section(
-                slug="return-receipts",
-                title="Return receipt",
-                icon="undo-2",
-                href=return_href,
-                value="Open",
-                hint="Return items or cancel sales and credits",
-                body="Open a receipt to return stock and update the sale.",
-            ),
-        ],
+        "sections": [],
         "tables": [
             _table(
                 f"All receipts · {period_label}",
@@ -15091,7 +15545,9 @@ def build_return_receipts_page(*, profile, request) -> dict:
 
     from employees.access import role_url_segment
 
-    filters = _filters_context(profile, request)
+    filters = _filters_context(
+        profile, request, default_receipt_status=ANALYTICS_RECEIPT_STATUS_ALL
+    )
     filters["role"] = profile.role
     filters["query"] = request.GET.urlencode()
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
@@ -15496,6 +15952,7 @@ def _build_return_receipts(filters):
         "receipt_return_url_template": return_template,
         "receipt_verify_login_url": verify_url,
         "receipt_kind": receipt_kind or "all",
+        "receipt_kind_options": browse["receipt_kind_options"],
         "alerts": [],
         "metrics": [
             _metric(

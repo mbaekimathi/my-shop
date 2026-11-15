@@ -167,14 +167,14 @@ class DeveloperPaymentIsolationTests(TestCase):
 
     def test_company_daraja_page_omits_developer_subscription_form(self):
         self._login()
-        response = self.client.get("/employees/settings/company-daraja/")
+        response = self.client.get("/it-support/settings/company-daraja/")
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "Developer subscription prompts")
         self.assertNotContains(response, 'data-developer-form')
 
     def test_developer_page_includes_subscription_form(self):
         self._login()
-        response = self.client.get("/employees/settings/developer-payments/")
+        response = self.client.get("/it-support/settings/developer-payments/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Developer subscription prompts")
         self.assertContains(response, 'data-developer-form')

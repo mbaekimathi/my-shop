@@ -28,6 +28,7 @@ from employees.workspace import (
 from items.services import actionable_shops_for_profile
 from shops.models import (
     Client,
+    CompanyPosSettings,
     Shop,
     ShopPaymentMethod,
     ShopReceipt,
@@ -644,8 +645,8 @@ class ConfirmSalesReceiptTests(TestCase):
         request.user = self.user
         context = build_confirm_receipts_page(profile=self.staff, request=request)
         kinds = {row["kind"] for row in context["rows"]}
-        self.assertEqual(kinds, {"sale"})
-        self.assertEqual(context["kind_filter"], "sale")
+        self.assertEqual(kinds, {"sale", "credit"})
+        self.assertEqual(context["kind_filter"], "all")
         self.assertEqual(context["status_filter"], "")
         # Bare page defaults to today (day range).
         self.assertEqual(context["report_range"], "day")
@@ -821,7 +822,16 @@ class AnalyticsReceiptsBrowseTests(TestCase):
         page = context["page"]
         self.assertFalse(page.get("hide_date_filters"))
         self.assertEqual(page.get("receipt_kind"), "all")
-        self.assertEqual(len(page.get("sections") or []), 2)
+        # Receipt tools moved out of the page body into the sidebar.
+        self.assertEqual(page.get("sections") or [], [])
+        from employees.workspace import sidebar_for_analytics_section
+
+        sidebar = sidebar_for_analytics_section(
+            self.staff.role, active_view="receipts", profile=self.staff
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertIn("Confirm receipts", labels)
+        self.assertIn("Return receipt", labels)
         list_table = page["tables"][0]
         numbers = {row["cells"][0] for row in list_table["rows"]}
         self.assertEqual(numbers, {"SL-R1", "CR-R1", "QT-R1"})
@@ -983,6 +993,310 @@ class AnalyticsReceiptsBrowseTests(TestCase):
         self.assertEqual(estimate_response.status_code, 200)
         self.assertEqual(estimate_response["Content-Type"], "application/json")
         self.assertEqual(estimate_response.json()["receipt_count"], 1)
+
+
+class AnalyticsPosFeatureVisibilityTests(TestCase):
+    """Analytics columns/metrics/options track the company POS toggles."""
+
+    def setUp(self):
+        from django.utils import timezone
+
+        from shops.services import _invalidate_pos_settings_cache
+
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_sale": True,
+                "enable_credit": True,
+                "enable_quotation": True,
+                "enable_trade_out": True,
+                "enable_trade_in": True,
+                "enable_cash": True,
+                "enable_mpesa": True,
+                "enable_cash_mpesa": False,
+                "enable_cart_delivery": True,
+            },
+        )
+        _invalidate_pos_settings_cache()
+        self.addCleanup(_invalidate_pos_settings_cache)
+        self.user = User.objects.create_user(
+            username="870055",
+            password="flags-pass",
+            email="flags@test.local",
+            is_active=True,
+        )
+        self.staff = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="870055",
+            phone_country_code="+254",
+            phone_number="700001155",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_MANAGER,
+        )
+        self.shop = Shop.objects.create(
+            name="FLAGS SHOP",
+            location="NAIROBI",
+            email="flags-shop@test.local",
+            phone_number="0700001155",
+            login_code="870155",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        self.staff.assigned_shops.add(self.shop)
+        self.today = timezone.localdate()
+
+    def _set_pos(self, **fields):
+        from shops.services import _invalidate_pos_settings_cache
+
+        pos = CompanyPosSettings.objects.get(pk=1)
+        for key, value in fields.items():
+            setattr(pos, key, value)
+        pos.save()
+        _invalidate_pos_settings_cache()
+
+    def _receipt(self, *, kind, number, total=100, paid=0, cash=0, mpesa=0):
+        return ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=kind,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number=number,
+            client_name="Walk-in",
+            subtotal=total,
+            tax_percent=0,
+            tax_amount=0,
+            total=total,
+            amount_paid=paid,
+            cash_amount=cash,
+            mpesa_amount=mpesa,
+            payment_method="cash",
+            created_by=self.staff,
+        )
+
+    def _page(self, section, params=None):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_analytics_page
+
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/{section}/",
+            {"range": "day", "date": self.today.isoformat(), **(params or {})},
+        )
+        request.user = self.user
+        return build_analytics_page(
+            profile=self.staff, request=request, section_slug=section
+        )["page"]
+
+    @staticmethod
+    def _labels(columns):
+        return [
+            (col.get("label") if isinstance(col, dict) else col)
+            for col in columns
+        ]
+
+    def _assert_rows_align(self, page):
+        for table in page.get("tables") or []:
+            for row in table.get("rows") or []:
+                if isinstance(row, dict) and row.get("group_header"):
+                    continue
+                cells = row.get("cells") if isinstance(row, dict) else row
+                if cells is None:
+                    continue
+                self.assertEqual(
+                    len(cells),
+                    len(table["columns"]),
+                    f"row/column mismatch in {table.get('title')}",
+                )
+
+    def test_revenue_drops_credits_column_when_disabled(self):
+        self._receipt(kind=ShopReceiptKind.SALE, number="SL-V", paid=100)
+        self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-V")
+        page = self._page("revenue")
+        grid = next(t for t in page["tables"] if t.get("shop_grid"))
+        self.assertIn("Credits", self._labels(grid["columns"]))
+
+        self._set_pos(enable_credit=False)
+        page = self._page("revenue")
+        grid = next(t for t in page["tables"] if t.get("shop_grid"))
+        labels = self._labels(grid["columns"])
+        self.assertNotIn("Credits", labels)
+        self.assertIn("Sales", labels)
+        self.assertIn("Total", labels)
+        self._assert_rows_align(page)
+
+    def test_sales_drops_mpesa_and_credit_columns(self):
+        self._receipt(
+            kind=ShopReceiptKind.SALE,
+            number="SL-M",
+            paid=100,
+            cash=100,
+            mpesa=0,
+        )
+        self._set_pos(enable_credit=False, enable_mpesa=False)
+        page = self._page("sales")
+        grid = next(t for t in page["tables"] if t.get("shop_grid"))
+        labels = self._labels(grid["columns"])
+        for dropped in (
+            "M-Pesa",
+            "Paid cash",
+            "Paid M-Pesa",
+            "Paid total",
+            "Unpaid",
+        ):
+            self.assertNotIn(dropped, labels)
+        self.assertIn("Cash", labels)
+        self.assertIn("General total", labels)
+        tiles = (page.get("summary_board") or {}).get("tiles") or []
+        tile_labels = [tile["label"] for tile in tiles]
+        self.assertNotIn("M-Pesa", tile_labels)
+        self.assertNotIn("Unpaid", tile_labels)
+        self._assert_rows_align(page)
+
+    def test_balances_drop_mpesa_channels(self):
+        self._set_pos(enable_mpesa=False)
+        page = self._page("balances")
+        for table in page.get("tables") or []:
+            labels = self._labels(table["columns"])
+            self.assertFalse(
+                any("m-pesa" in (label or "").lower() for label in labels),
+                f"M-Pesa column left in {table.get('title')}",
+            )
+        for group in page.get("metric_groups") or []:
+            for row in group.get("rows") or []:
+                for metric in row.get("metrics") or []:
+                    self.assertNotIn("M-Pesa", metric["label"])
+        self._assert_rows_align(page)
+
+    def test_receipts_options_and_rows_drop_disabled_kinds(self):
+        self._receipt(kind=ShopReceiptKind.SALE, number="SL-O", paid=100)
+        self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-O")
+        self._set_pos(enable_credit=False, enable_quotation=False)
+        page = self._page("receipts")
+        option_values = {value for value, _label in page["receipt_kind_options"]}
+        self.assertNotIn("credits", option_values)
+        self.assertNotIn("quotations", option_values)
+        self.assertIn("sales", option_values)
+        numbers = {row["cells"][0] for row in page["tables"][0]["rows"]}
+        self.assertIn("SL-O", numbers)
+        self.assertNotIn("CR-O", numbers)
+        # Forcing a disabled kind falls back to "all types".
+        page = self._page("receipts", {"receipt_kind": "credits"})
+        self.assertEqual(page["receipt_kind"], "all")
+
+    def test_receipts_list_kind_404s_when_disabled(self):
+        from django.http import Http404
+
+        from employees.analytics_services import get_analytics_receipt_kind
+
+        self._set_pos(enable_credit=False)
+        with self.assertRaises(Http404):
+            get_analytics_receipt_kind("credits")
+        self.assertEqual(
+            get_analytics_receipt_kind("sales")["slug"], "sales"
+        )
+
+    def test_client_account_options_and_tiles_drop_disabled_kinds(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_client_transactions
+
+        client = Client.objects.create(
+            full_name="Flag Client",
+            phone_number="0700999000",
+            phone_normalized="0700999000",
+        )
+        self._receipt(kind=ShopReceiptKind.SALE, number="SL-C1", paid=100)
+        self._receipt(kind=ShopReceiptKind.CREDIT, number="CR-C1")
+        ShopReceipt.objects.filter(receipt_number="SL-C1").update(
+            client_id=client.pk
+        )
+        ShopReceipt.objects.filter(receipt_number="CR-C1").update(
+            client_id=client.pk
+        )
+        self._set_pos(enable_credit=False, enable_trade_in=False)
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/clients/{client.pk}/",
+            {"range": "all"},
+        )
+        request.user = self.user
+        account = build_client_transactions(
+            profile=self.staff, client_id=client.pk, request=request
+        )
+        option_values = {value for value, _label in account["receipt_kind_options"]}
+        self.assertNotIn("credits", option_values)
+        self.assertNotIn("trade_in", option_values)
+        self.assertIn("sales", option_values)
+        tile_labels = [
+            tile["label"]
+            for tile in account["summary_board"]["tiles"]
+        ]
+        self.assertNotIn("Credits", tile_labels)
+        self.assertNotIn("Trade in", tile_labels)
+        numbers = {row["number"] for row in account["rows"]}
+        self.assertIn("SL-C1", numbers)
+        self.assertNotIn("CR-C1", numbers)
+
+    def test_confirm_receipts_options_follow_toggles(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import build_confirm_receipts_page
+
+        self._set_pos(enable_sale=False, enable_credit=True)
+        request = RequestFactory().get("/shop-manager/analytics/confirm/")
+        request.user = self.user
+        page = build_confirm_receipts_page(
+            profile=self.staff, request=request, include_rows=False
+        )
+        values = {value for value, _label in page["kind_options"]}
+        self.assertNotIn("sale", values)
+        self.assertIn("credit", values)
+        self.assertEqual(page["kind_filter"], "all")
+
+        self._set_pos(enable_sale=True, enable_credit=False)
+        page = build_confirm_receipts_page(
+            profile=self.staff, request=request, include_rows=False
+        )
+        values = {value for value, _label in page["kind_options"]}
+        self.assertIn("sale", values)
+        self.assertNotIn("credit", values)
+
+    def test_tradings_visible_with_trade_in_only(self):
+        from shops.services import (
+            company_pos_analytics_section_visible,
+            company_pos_permission_visible,
+        )
+
+        self._set_pos(enable_trade_out=False, enable_trade_in=True)
+        self.assertTrue(company_pos_analytics_section_visible("tradings"))
+        self.assertTrue(company_pos_permission_visible("analytics", "tradings"))
+        self._set_pos(enable_trade_in=False)
+        self.assertFalse(company_pos_analytics_section_visible("tradings"))
+        self.assertFalse(company_pos_permission_visible("analytics", "tradings"))
+
+    def test_deliveries_hidden_when_cart_delivery_off(self):
+        from shops.services import (
+            company_pos_analytics_section_visible,
+            company_pos_permission_visible,
+        )
+
+        self._set_pos(enable_cart_delivery=False)
+        self.assertFalse(company_pos_analytics_section_visible("deliveries"))
+        self.assertFalse(
+            company_pos_permission_visible("analytics", "deliveries")
+        )
+        self._set_pos(enable_cart_delivery=True)
+        self.assertTrue(company_pos_analytics_section_visible("deliveries"))
+
+    def test_cash_mpesa_combo_keeps_both_columns(self):
+        self._set_pos(
+            enable_cash=False, enable_mpesa=False, enable_cash_mpesa=True
+        )
+        page = self._page("sales")
+        grid = next(t for t in page["tables"] if t.get("shop_grid"))
+        labels = self._labels(grid["columns"])
+        # A combined cash+M-Pesa tender still feeds both columns.
+        self.assertIn("Cash", labels)
+        self.assertIn("M-Pesa", labels)
+        self._assert_rows_align(page)
 
 
 class DashboardSidebarLinkTests(TestCase):
@@ -1292,7 +1606,7 @@ class AllocatedShopDataScopeTests(TestCase):
 
 
 class StockRequestFromAnyShopTests(TestCase):
-    """Stock requests: destination allocated; supply shop may be any active shop."""
+    """Stock transfers: sending shop allocated; receiving shop may be any active shop."""
 
     def setUp(self):
         self.user = User.objects.create_user(
@@ -1341,10 +1655,10 @@ class StockRequestFromAnyShopTests(TestCase):
             shop_price=Decimal("150.00"),
             created_by=self.manager,
         )
-        ShopStock.objects.create(shop=self.shop_b, item=self.item, quantity=10)
+        ShopStock.objects.create(shop=self.shop_a, item=self.item, quantity=10)
         self.StockMovementType = StockMovementType
 
-    def test_request_from_unallocated_shop_succeeds(self):
+    def test_request_to_unallocated_shop_succeeds(self):
         from django.http import QueryDict
 
         from items.models import StockMovement
@@ -1372,7 +1686,7 @@ class StockRequestFromAnyShopTests(TestCase):
             1,
         )
 
-    def test_request_to_unallocated_shop_is_rejected(self):
+    def test_request_from_unallocated_shop_is_rejected(self):
         from django.core.exceptions import ValidationError
         from django.http import QueryDict
 
@@ -2749,9 +3063,15 @@ class MarketingLinksPageTests(TestCase):
                 "HR Management",
                 "Shop Management",
                 "Marketing links",
+                "Chatbot",
             ],
         )
-        self.assertIn("/it-support/marketing/", home.context["page_sidebar"]["primary"][-1]["href"])
+        marketing_item = next(
+            item
+            for item in home.context["page_sidebar"]["primary"]
+            if item["label"] == "Marketing links"
+        )
+        self.assertIn("/it-support/marketing/", marketing_item["href"])
 
         response = self.client.get("/it-support/marketing/")
         self.assertEqual(response.status_code, 200)

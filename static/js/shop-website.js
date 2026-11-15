@@ -35,6 +35,13 @@
   const pairCopy = document.querySelector("[data-storefront-pair-copy]");
   const suggestionTemplate = root.dataset.suggestionsUrlTemplate || "";
   const shopName = root.dataset.shopName || "the shop";
+  const deliveryEnabled = root.dataset.deliveryEnabled !== "0";
+  const deliveryFee = Math.max(
+    0,
+    Number(root.dataset.deliveryAmount || 0) || 0
+  );
+  const withDeliveryFee = (estimate) =>
+    estimate + (deliveryPlace.wanted ? deliveryFee : 0);
   const whatsappPhone = (root.dataset.whatsappPhone || "").replace(/\D+/g, "");
   const cartItems = new Map();
   let lastAddedId = "";
@@ -189,7 +196,11 @@
       blocks.push("");
     });
     if (deliveryPlace.wanted) {
-      blocks.push("Delivery: Yes");
+      blocks.push(
+        deliveryFee > 0
+          ? `Delivery: Yes (fee ${money(deliveryFee)})`
+          : "Delivery: Yes"
+      );
       blocks.push(
         `Location: ${deliveryPlace.address || "Not specified yet"}`
       );
@@ -205,7 +216,7 @@
   };
 
   const refreshDeliveryUi = () => {
-    const wanted = Boolean(deliveryWanted?.checked);
+    const wanted = deliveryEnabled && Boolean(deliveryWanted?.checked);
     deliveryPlace.wanted = wanted;
     if (deliveryFields) deliveryFields.hidden = !wanted;
     if (!wanted) {
@@ -228,7 +239,8 @@
       (sum, item) => sum + item.price * item.quantity,
       0
     );
-    updateWhatsappShare(items, estimate);
+    if (total) total.textContent = money(withDeliveryFee(estimate));
+    updateWhatsappShare(items, withDeliveryFee(estimate));
   };
 
   const setDeliveryAddress = (address, mapsUrl = "") => {
@@ -249,7 +261,7 @@
       (sum, item) => sum + item.price * item.quantity,
       0
     );
-    updateWhatsappShare(items, estimate);
+    updateWhatsappShare(items, withDeliveryFee(estimate));
   };
 
   const hideDeliverySuggestions = () => {
@@ -408,7 +420,9 @@
     const wasHidden = whatsappBtn.hidden;
     whatsappBtn.hidden = !hasItems;
     if (whatsappHint) whatsappHint.hidden = !hasItems;
-    if (deliverySection) deliverySection.hidden = !hasItems;
+    if (deliverySection) {
+      deliverySection.hidden = !hasItems || !deliveryEnabled;
+    }
     if (!hasItems) {
       whatsappBtn.removeAttribute("href");
       whatsappBtn.classList.remove("is-ready");
@@ -479,8 +493,8 @@
     );
 
     empty.hidden = itemCount > 0;
-    total.textContent = money(estimate);
-    updateWhatsappShare(items, estimate);
+    total.textContent = money(withDeliveryFee(estimate));
+    updateWhatsappShare(items, withDeliveryFee(estimate));
     if (countEls.length) {
       countEls.forEach((el) => {
         el.hidden = itemCount === 0;
@@ -754,7 +768,7 @@
       (sum, item) => sum + item.price * item.quantity,
       0
     );
-    updateWhatsappShare(items, estimate);
+    updateWhatsappShare(items, withDeliveryFee(estimate));
 
     window.clearTimeout(suggestionTimer);
     suggestionTimer = window.setTimeout(() => {
@@ -803,16 +817,6 @@
 
   whatsappBtn?.addEventListener("click", (event) => {
     event.preventDefault();
-    if (deliveryPlace.wanted && !deliveryPlace.address.trim()) {
-      if (deliverySelected) {
-        deliverySelected.hidden = false;
-        deliverySelected.classList.add("is-error");
-        deliverySelected.textContent = "Please enter a delivery location first.";
-      }
-      deliveryFields && (deliveryFields.hidden = false);
-      deliveryInput?.focus();
-      return;
-    }
     const items = [...cartItems.values()];
     if (!items.length) return;
     const estimate = items.reduce(

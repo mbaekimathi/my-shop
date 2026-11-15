@@ -2499,6 +2499,8 @@
     const taxLabelEl = document.querySelector("[data-cart-tax-label]");
     const subtotalRow = document.querySelector("[data-cart-subtotal-row]");
     const taxRow = document.querySelector("[data-cart-tax-row]");
+    const deliveryRow = document.querySelector("[data-cart-delivery-row]");
+    const deliveryFeeEl = document.querySelector("[data-cart-delivery-fee]");
     const productModal = document.querySelector("[data-product-modal]");
     const productMedia = productModal?.querySelector("[data-product-media]");
     const productCategory = productModal?.querySelector("[data-product-category]");
@@ -2729,9 +2731,22 @@
       return roundMoney((subtotal * taxPercent) / 100);
     };
 
+    const deliveryAmount = Math.max(
+      0,
+      Number(cartRoot.dataset.posDeliveryAmount || 0) || 0
+    );
+
+    const cartDeliveryFee = () => {
+      const kind = selectedKind();
+      if (!deliveryToggle?.checked || (kind !== "sale" && kind !== "credit")) {
+        return 0;
+      }
+      return roundMoney(deliveryAmount);
+    };
+
     const cartTotal = () => {
       const subtotal = cartSubtotal();
-      return roundMoney(subtotal + cartTaxAmount(subtotal));
+      return roundMoney(subtotal + cartTaxAmount(subtotal) + cartDeliveryFee());
     };
 
     const pagePrinterNotice = cartRoot.querySelector("[data-printer-required-notice]");
@@ -4536,33 +4551,6 @@
             focusCartClientFields();
             return;
           }
-          const location =
-            deliveryPlace.address ||
-            (deliveryInput?.value || "").trim();
-          if (!location) {
-            setCartStatus("Enter or select a delivery location.", {
-              error: true,
-            });
-            if (deliverySelected) {
-              deliverySelected.hidden = false;
-              deliverySelected.classList.add("is-error");
-              deliverySelected.textContent =
-                "Please enter a delivery location first.";
-            }
-            deliveryInput?.focus();
-            return;
-          }
-          if (
-            deliveryInput?.dataset.mapsEnabled === "1" &&
-            (deliveryPlace.lat == null || deliveryPlace.lng == null)
-          ) {
-            setCartStatus(
-              "Pick a Google Maps suggestion so latitude and longitude are saved.",
-              { error: true }
-            );
-            deliveryInput?.focus();
-            return;
-          }
         }
         const checkoutClientId = newCheckoutClientId();
         const payload = {
@@ -5767,7 +5755,8 @@
 
       const subtotal = lines.reduce((sum, line) => sum + line.price * line.qty, 0);
       const taxAmount = cartTaxAmount(subtotal);
-      const total = roundMoney(subtotal + taxAmount);
+      const deliveryFee = cartDeliveryFee();
+      const total = roundMoney(subtotal + taxAmount + deliveryFee);
       if (subtotalEl) subtotalEl.textContent = money(subtotal);
       if (taxEl) taxEl.textContent = money(taxAmount);
       if (taxLabelEl) {
@@ -5778,6 +5767,8 @@
       }
       if (subtotalRow) subtotalRow.hidden = !taxEnabled;
       if (taxRow) taxRow.hidden = !taxEnabled;
+      if (deliveryRow) deliveryRow.hidden = !(deliveryFee > 0);
+      if (deliveryFeeEl) deliveryFeeEl.textContent = money(deliveryFee);
       if (totalEl) totalEl.textContent = money(total);
 
       linesEl.innerHTML = "";
@@ -6783,9 +6774,12 @@
         }
         syncCheckoutMode();
         if (event.target.matches?.("[data-cart-kind]")) renderCart();
-        if (event.target.matches?.("[data-cart-delivery]") && deliveryToggle?.checked) {
-          initDeliveryPlaces();
-          window.setTimeout(() => deliveryInput?.focus(), 40);
+        if (event.target.matches?.("[data-cart-delivery]")) {
+          renderCart();
+          if (deliveryToggle?.checked) {
+            initDeliveryPlaces();
+            window.setTimeout(() => deliveryInput?.focus(), 40);
+          }
         }
       }
     });

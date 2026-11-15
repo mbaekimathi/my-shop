@@ -38,11 +38,18 @@
 
   const taxRow = root.querySelector("[data-tax-percent-row]");
   const taxInput = root.querySelector("[data-tax-percent-input]");
+  const deliveryRow = root.querySelector("[data-delivery-amount-row]");
+  const deliveryInput = root.querySelector("[data-delivery-amount-input]");
   const clientDataDependents = root.querySelectorAll("[data-client-data-dependent]");
 
   function syncTaxRow(enabled) {
     if (!taxRow) return;
     taxRow.hidden = !enabled;
+  }
+
+  function syncDeliveryRow(enabled) {
+    if (!deliveryRow) return;
+    deliveryRow.hidden = !enabled;
   }
 
   function syncClientDataDependents(enabled) {
@@ -138,6 +145,9 @@
     if (input.dataset.field === "enable_tax") {
       syncTaxRow(input.checked);
     }
+    if (input.dataset.field === "enable_cart_delivery") {
+      syncDeliveryRow(input.checked);
+    }
     if (input.dataset.field === "enable_client_data") {
       syncClientDataDependents(input.checked);
     }
@@ -169,6 +179,9 @@
       setStateLabel(input, enabled);
       if (input.dataset.field === "enable_tax") {
         syncTaxRow(enabled);
+      }
+      if (input.dataset.field === "enable_cart_delivery") {
+        syncDeliveryRow(enabled);
       }
       if (input.dataset.field === "enable_client_data") {
         syncClientDataDependents(enabled);
@@ -202,6 +215,9 @@
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(Boolean(data.enabled));
         }
+        if (input.dataset.field === "enable_cart_delivery") {
+          syncDeliveryRow(Boolean(data.enabled));
+        }
         if (input.dataset.field === "enable_client_data") {
           syncClientDataDependents(Boolean(data.enabled));
         }
@@ -222,6 +238,9 @@
         });
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(previous);
+        }
+        if (input.dataset.field === "enable_cart_delivery") {
+          syncDeliveryRow(previous);
         }
         if (input.dataset.field === "enable_client_data") {
           syncClientDataDependents(previous);
@@ -311,6 +330,41 @@
     taxInput.addEventListener("input", () => {
       window.clearTimeout(taxTimer);
       taxTimer = window.setTimeout(saveTaxPercent, 600);
+    });
+  }
+
+  if (deliveryInput) {
+    let deliveryTimer = 0;
+    let lastSaved = deliveryInput.value;
+
+    const saveDeliveryAmount = async () => {
+      const value = (deliveryInput.value || "").trim();
+      if (value === lastSaved) return;
+      deliveryInput.classList.add("is-saving");
+      try {
+        const data = await postSettings(
+          new URLSearchParams({
+            action: "set_delivery_amount",
+            delivery_amount: value,
+          })
+        );
+        lastSaved = String(Math.round(Number(data.delivery_amount)));
+        deliveryInput.value = lastSaved;
+        deliveryInput.classList.remove("is-error");
+      } catch (error) {
+        deliveryInput.classList.add("is-error");
+        window.alert(error.message || "Could not save delivery amount.");
+        deliveryInput.value = lastSaved;
+      } finally {
+        deliveryInput.classList.remove("is-saving");
+      }
+    };
+
+    deliveryInput.addEventListener("change", saveDeliveryAmount);
+    deliveryInput.addEventListener("blur", saveDeliveryAmount);
+    deliveryInput.addEventListener("input", () => {
+      window.clearTimeout(deliveryTimer);
+      deliveryTimer = window.setTimeout(saveDeliveryAmount, 600);
     });
   }
 })();

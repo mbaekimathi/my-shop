@@ -357,7 +357,7 @@ class ShopDelivery(models.Model):
         default=ShopDeliveryStatus.OPEN,
         db_index=True,
     )
-    location_text = models.CharField(max_length=500)
+    location_text = models.CharField(max_length=500, blank=True, default="")
     latitude = models.DecimalField(
         max_digits=10,
         decimal_places=7,
@@ -371,6 +371,12 @@ class ShopDelivery(models.Model):
         blank=True,
     )
     maps_url = models.URLField(max_length=500, blank=True, default="")
+    fee_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Delivery fee charged on this receipt (0 = free).",
+    )
     distance_km = models.DecimalField(
         max_digits=8,
         decimal_places=2,
@@ -678,7 +684,6 @@ class CompanyPosSettings(models.Model):
     enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
-    enable_cash_sale_checkout = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
     enable_cash_mpesa = models.BooleanField(default=True)
@@ -721,6 +726,42 @@ class CompanyPosSettings(models.Model):
     )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    delivery_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Flat delivery fee added to the sale total. 0 = free delivery.",
+    )
+    enable_sidebar_open_close = models.BooleanField(
+        default=True, help_text='Show "Open / Close shop" in the shop floor menu.'
+    )
+    enable_sidebar_trade = models.BooleanField(
+        default=True, help_text='Show "Trade" in the shop floor menu.'
+    )
+    enable_sidebar_buy_stock = models.BooleanField(
+        default=True, help_text='Show "Buy stock items" in the shop floor menu.'
+    )
+    enable_sidebar_stock_transfers = models.BooleanField(
+        default=True, help_text='Show "Stock transfers" in the shop floor menu.'
+    )
+    enable_sidebar_stock_count = models.BooleanField(
+        default=True, help_text='Show "Stock count" in the shop floor menu.'
+    )
+    enable_sidebar_shelf_stock = models.BooleanField(
+        default=True, help_text='Show "Shelf stock" in the shop floor menu.'
+    )
+    enable_sidebar_expense = models.BooleanField(
+        default=True, help_text='Show "Register expense" in the shop floor menu.'
+    )
+    enable_sidebar_printer = models.BooleanField(
+        default=True, help_text='Show "Connect to printer" in the shop floor menu.'
+    )
+    enable_sidebar_receipts = models.BooleanField(
+        default=True, help_text='Show "Receipts" in the shop floor menu.'
+    )
+    enable_sidebar_website = models.BooleanField(
+        default=True, help_text='Show "Shop website" in the shop floor menu.'
+    )
     compulsory_print_on_sale = models.BooleanField(default=False)
     enable_print_bluetooth = models.BooleanField(default=True)
     enable_print_usb = models.BooleanField(default=True)
@@ -1001,7 +1042,6 @@ class ShopPosSettings(models.Model):
     enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
-    enable_cash_sale_checkout = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
     enable_cash_mpesa = models.BooleanField(default=True)
@@ -1040,6 +1080,42 @@ class ShopPosSettings(models.Model):
     )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    delivery_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Flat delivery fee added to the sale total. 0 = free delivery.",
+    )
+    enable_sidebar_open_close = models.BooleanField(
+        default=True, help_text='Show "Open / Close shop" in the shop floor menu.'
+    )
+    enable_sidebar_trade = models.BooleanField(
+        default=True, help_text='Show "Trade" in the shop floor menu.'
+    )
+    enable_sidebar_buy_stock = models.BooleanField(
+        default=True, help_text='Show "Buy stock items" in the shop floor menu.'
+    )
+    enable_sidebar_stock_transfers = models.BooleanField(
+        default=True, help_text='Show "Stock transfers" in the shop floor menu.'
+    )
+    enable_sidebar_stock_count = models.BooleanField(
+        default=True, help_text='Show "Stock count" in the shop floor menu.'
+    )
+    enable_sidebar_shelf_stock = models.BooleanField(
+        default=True, help_text='Show "Shelf stock" in the shop floor menu.'
+    )
+    enable_sidebar_expense = models.BooleanField(
+        default=True, help_text='Show "Register expense" in the shop floor menu.'
+    )
+    enable_sidebar_printer = models.BooleanField(
+        default=True, help_text='Show "Connect to printer" in the shop floor menu.'
+    )
+    enable_sidebar_receipts = models.BooleanField(
+        default=True, help_text='Show "Receipts" in the shop floor menu.'
+    )
+    enable_sidebar_website = models.BooleanField(
+        default=True, help_text='Show "Shop website" in the shop floor menu.'
+    )
     compulsory_print_on_sale = models.BooleanField(default=False)
     enable_print_bluetooth = models.BooleanField(default=True)
     enable_print_usb = models.BooleanField(default=True)
@@ -1162,6 +1238,7 @@ class StockNumberVisibility(models.TextChoices):
 
 
 class AnalyticsReceiptDataSource(models.TextChoices):
+    ALL = "all", "All receipts"
     PENDING = "pending", "Pending receipts"
     CONFIRMED = "confirmed", "Confirmed receipts"
 

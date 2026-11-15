@@ -49,9 +49,24 @@
   var me = readJson("chat-init-me", { id: 0, name: "" });
   var suggestions = readJson("chat-init-suggestions", []);
   var receiptStatusDefault = readJson("chat-init-receipt-status", "pending");
-  if (receiptStatusDefault !== "confirmed" && receiptStatusDefault !== "pending") {
+  if (
+    receiptStatusDefault !== "all" &&
+    receiptStatusDefault !== "confirmed" &&
+    receiptStatusDefault !== "pending"
+  ) {
     receiptStatusDefault = "pending";
   }
+  var RECEIPT_STATUS_KEY = "myshop-receipt-status";
+  var storedReceiptStatus = "";
+  try {
+    storedReceiptStatus = window.localStorage.getItem(RECEIPT_STATUS_KEY) || "";
+  } catch (e) {}
+  var initialReceiptStatus =
+    storedReceiptStatus === "all" ||
+    storedReceiptStatus === "confirmed" ||
+    storedReceiptStatus === "pending"
+      ? storedReceiptStatus
+      : receiptStatusDefault;
 
   // ------------------------------------------------------------------
   // In-app history — Android / browser Back closes chat overlays
@@ -130,7 +145,7 @@
     lastTypingSent: 0,
     botTopic: "",
     periodMode: "day",
-    receiptStatus: receiptStatusDefault,
+    receiptStatus: initialReceiptStatus,
     stock: { mode: null, lines: [], picked: null, serials: [], submitting: false },
     rcvSerials: {},
     toastTimer: null,
@@ -297,7 +312,7 @@
   function formatBody(text) {
     var html = escapeHtml(text);
     html = html.replace(
-      /%%items\|([0-9-]+)\|([0-9-]+)(?:\|(pending|confirmed))?%%/g,
+      /%%items\|([0-9-]+)\|([0-9-]+)(?:\|(all|pending|confirmed))?%%/g,
       '<a class="wa-link" href="#" data-bitems="$1:$2:$3">View items sold →</a>'
     );
     html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
@@ -3399,9 +3414,12 @@
   }
 
   function setReceiptStatus(status) {
-    if (status !== "pending" && status !== "confirmed") return;
+    if (status !== "all" && status !== "pending" && status !== "confirmed") return;
     state.receiptStatus = status;
     if (els.receiptStatusSel) els.receiptStatusSel.value = status;
+    try {
+      window.localStorage.setItem(RECEIPT_STATUS_KEY, status);
+    } catch (e) {}
   }
 
   function setPeriodMode(mode) {
@@ -3428,7 +3446,7 @@
     setPeriodMode("day");
     var showScope = topicNeedsReceiptStatus(topic);
     if (els.receiptScope) els.receiptScope.hidden = !showScope;
-    setReceiptStatus(receiptStatusDefault);
+    setReceiptStatus(state.receiptStatus);
     els.period.hidden = false;
     els.dateDay.focus();
     refreshIcons();

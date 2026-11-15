@@ -24,6 +24,8 @@
   data-suggestions-url-template="{{ suggestions_url_template }}"
   data-shop-name="{{ company_name|default:'MY-SHOP' }}"
   data-whatsapp-phone="{{ whatsapp_phone }}"
+  data-delivery-enabled="{% if delivery_enabled %}1{% else %}0{% endif %}"
+  data-delivery-amount="{{ delivery_amount }}"
 >
   <header class="storefront__header" data-storefront-header>
     <a class="storefront__brand" href="{% url 'employees:login' %}" aria-label="{{ company_name|default:'MY-SHOP' }} login">

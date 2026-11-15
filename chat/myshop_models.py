@@ -239,7 +239,7 @@ class CompanyProfile(models.Model):
 class CompanyAnalyticsSettings(models.Model):
     """Company-wide analytics defaults (singleton row, pk=1).
 
-    `receipt_data_source` is `pending` or `confirmed` — mirrors MY-SHOP
+    `receipt_data_source` is `all`, `pending` or `confirmed` — mirrors MY-SHOP
     `shops.0083_company_analytics_settings`.
     """
 

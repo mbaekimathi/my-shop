@@ -43,15 +43,19 @@
           </p>
 
           <div class="ax-pay-methods" role="group" aria-label="Payment method">
+            {% if pos_pay_cash %}
             <label class="ax-pay-method is-active">
               <input type="radio" name="payment_method" value="cash" checked data-ax-receipt-manage-method>
               <span>Cash</span>
             </label>
-            <label class="ax-pay-method">
+            {% endif %}
+            {% if pos_pay_mpesa %}
+            <label class="ax-pay-method{% if not pos_pay_cash %} is-active{% endif %}">
               <input
                 type="radio"
                 name="payment_method"
                 value="mpesa"
+                {% if not pos_pay_cash %}checked{% endif %}
                 data-ax-receipt-manage-method
               >
               <span>M-Pesa</span>
@@ -66,6 +70,7 @@
               >
               <span>M-Pesa STK{% if not stk_ready %} ({{ stk_off_label|default:"STK off" }}){% endif %}</span>
             </label>
+            {% endif %}
           </div>
 
           <label class="ax-pay-label ax-pay-mpesa-row" data-ax-receipt-manage-mpesa-row hidden>

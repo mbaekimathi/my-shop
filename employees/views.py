@@ -47,6 +47,7 @@ from shops.services import (
     receipt_font_style,
     receipt_qr_for_settings,
     set_communications_setting,
+    set_company_delivery_amount,
     set_company_pos_setting,
     set_company_tax_percent,
     set_daraja_environment,
@@ -2542,6 +2543,23 @@ POS_SETTING_GROUPS = (
             ("enable_cart_confirm_receipt", "Show \"Confirm receipt now\""),
             ("enable_cart_delivery", "Show \"Delivery\""),
         ),
+        "show_delivery_amount": True,
+    },
+    {
+        "title": "Shop floor sidebar",
+        "summary": "Choose which menu links appear on the shop page.",
+        "toggles": (
+            ("enable_sidebar_open_close", 'Show "Open / Close shop"'),
+            ("enable_sidebar_trade", 'Show "Trade"'),
+            ("enable_sidebar_buy_stock", 'Show "Buy stock items"'),
+            ("enable_sidebar_stock_transfers", 'Show "Stock transfers"'),
+            ("enable_sidebar_stock_count", 'Show "Stock count"'),
+            ("enable_sidebar_shelf_stock", 'Show "Shelf stock"'),
+            ("enable_sidebar_expense", 'Show "Register expense"'),
+            ("enable_sidebar_printer", 'Show "Connect to printer"'),
+            ("enable_sidebar_receipts", 'Show "Receipts"'),
+            ("enable_sidebar_website", 'Show "Shop website"'),
+        ),
     },
     {
         "title": "Tax",
@@ -2556,7 +2574,7 @@ RECEIPT_SETTING_GROUPS = (
         "title": "Printing",
         "summary": "Require printing on sales and choose available print channels.",
         "toggles": (
-            ("compulsory_print_on_sale", "Compulsory printing on sale"),
+            ("compulsory_print_on_sale", "Compulsory printing on sale or credit"),
             ("enable_print_bluetooth", "Print via Bluetooth"),
             ("enable_print_usb", "Print via USB"),
             ("enable_print_wifi", "Print via Wi‑Fi"),
@@ -2678,6 +2696,27 @@ def _company_pos_settings(
                     }
                 )
             messages.success(request, "Tax percentage updated.")
+            return redirect(request.path)
+        if action == "set_delivery_amount":
+            try:
+                row = set_company_delivery_amount(
+                    amount=request.POST.get("delivery_amount") or ""
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "delivery_amount": str(row.delivery_amount),
+                        "enable_cart_delivery": row.enable_cart_delivery,
+                    }
+                )
+            messages.success(request, "Delivery amount updated.")
             return redirect(request.path)
         if action == "set_receipt_paper_width":
             try:
@@ -2912,6 +2951,7 @@ def _company_pos_settings(
                 "title": group["title"],
                 "summary": group["summary"],
                 "show_tax_percent": bool(group.get("show_tax_percent")),
+                "show_delivery_amount": bool(group.get("show_delivery_amount")),
                 "toggles": toggles,
             }
         )
@@ -2947,6 +2987,7 @@ def _company_pos_settings(
                 context["profile"].role, "company-daraja"
             ),
             "tax_percent_value": f"{pos.tax_percent:.0f}",
+            "delivery_amount_value": f"{pos.delivery_amount:.0f}",
             "receipt_paper_width": paper_width,
             "receipt_font_size": font["size"],
             "receipt_font_weight": font["weight"],

@@ -137,14 +137,18 @@
           {% csrf_token %}
           <input type="hidden" name="mode" value="payment">
           <div class="td-methods" role="group" aria-label="Payment method">
+            {% if pos_pay_cash %}
             <label class="td-method">
               <input type="radio" name="payment_method" value="cash" checked>
               <span>Cash</span>
             </label>
+            {% endif %}
+            {% if pos_pay_mpesa %}
             <label class="td-method">
-              <input type="radio" name="payment_method" value="mpesa">
+              <input type="radio" name="payment_method" value="mpesa"{% if not pos_pay_cash %} checked{% endif %}>
               <span>M-Pesa</span>
             </label>
+            {% endif %}
           </div>
           <label class="td-field">
             <span>Amount paid</span>

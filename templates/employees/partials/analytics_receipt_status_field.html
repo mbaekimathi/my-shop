@@ -8,8 +8,8 @@
       {% if receipt_status == value %}checked{% endif %}
     >
     <span class="ax-receipt-scope-ui">
-      <i data-lucide="{% if value == 'confirmed' %}badge-check{% else %}clock-3{% endif %}" aria-hidden="true"></i>
-      <span>{% if value == 'confirmed' %}Confirmed{% else %}Pending{% endif %}</span>
+      <i data-lucide="{% if value == 'confirmed' %}badge-check{% elif value == 'all' %}layers{% else %}clock-3{% endif %}" aria-hidden="true"></i>
+      <span>{% if value == 'confirmed' %}Confirmed{% elif value == 'all' %}All{% else %}Pending{% endif %}</span>
     </span>
   </label>
   {% endfor %}

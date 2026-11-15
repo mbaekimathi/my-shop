@@ -780,6 +780,158 @@ def sidebar_for_store_stock(role, *, profile=None, active="in"):
     )
 
 
+def expense_modal_context(request, profile):
+    """
+    Context for the register-expense popup on non-floor pages.
+
+    Only rendered when the employee has exactly one actionable shop —
+    multi-shop staff still follow the action's data-href to MY-SHOP.
+    """
+    from items.services import actionable_shops_for_profile
+    from shops.models import ExpenseCategory, ExpensePaymentStatus
+
+    from .countries import COUNTRY_DIAL_CODES
+    from .module_permissions import employee_may
+
+    if profile is None or not employee_may(profile, "my-shop", "register_expense"):
+        return {}
+    shops = actionable_shops_for_profile(profile)
+    if len(shops) != 1:
+        return {}
+    shop = shops[0]
+    return {
+        "register_expense_modal": True,
+        "shop": shop,
+        "expense_next": request.get_full_path(),
+        "verify_login_code_url": reverse(
+            "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
+        ),
+        "expense_supplier_search_url": reverse("employees:expense_supplier_search"),
+        "form_data": {
+            "category": "",
+            "name": "",
+            "amount": "",
+            "payment_status": "",
+            "supplier_id": "",
+            "supplier_name": "",
+            "supplier_phone_country_code": "+254",
+            "supplier_phone_country_iso": "KE",
+            "supplier_phone_number": "",
+            "login_code": "",
+        },
+        "form_errors": [],
+        "expense_categories": [
+            choice
+            for choice in ExpenseCategory.choices
+            if choice[0] != ExpenseCategory.OWNER_DRAWINGS
+        ],
+        "payment_statuses": ExpensePaymentStatus.choices,
+        "countries": COUNTRY_DIAL_CODES,
+    }
+
+
+def register_expense_action(profile):
+    """Register-expense sidebar action — popup when the modal exists, else href."""
+    from items.services import actionable_shops_for_profile
+
+    shops = actionable_shops_for_profile(profile) if profile is not None else []
+    href = (
+        reverse(
+            "employees:my_shop_register_expense",
+            kwargs={"shop_id": shops[0].pk},
+        )
+        if len(shops) == 1
+        else my_shop_url()
+    )
+    return _action(
+        "Register expense",
+        "wallet",
+        action="register-expense",
+        href=href,
+    )
+
+
+def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
+    """Shop cashier dashboard sidebar."""
+    from .module_permissions import employee_may, employee_may_any
+    from shops.services import company_pos_analytics_section_visible
+
+    links = []
+    if profile is not None and employee_may(profile, "my-shop", "open_close"):
+        from items.services import actionable_shops_for_profile
+        from shops.services import get_open_shop_day
+
+        day_shops = actionable_shops_for_profile(profile)
+        if len(day_shops) == 1:
+            day_shop = day_shops[0]
+            day_is_open = get_open_shop_day(day_shop) is not None
+            links.append(
+                _link(
+                    "Close shop" if day_is_open else "Open shop",
+                    "door-closed" if day_is_open else "door-open",
+                    href=reverse(
+                        "employees:my_shop_day_toggle",
+                        kwargs={"shop_id": day_shop.pk},
+                    ),
+                    active=active_slug == "day-toggle",
+                )
+            )
+        elif len(day_shops) > 1:
+            links.append(
+                _link(
+                    "Open / Close shop",
+                    "door-open",
+                    href=my_shop_url(),
+                    active=False,
+                )
+            )
+    if profile is None or (
+        employee_may_any(profile, "analytics")
+        and employee_may(profile, "analytics", "expenses")
+        and company_pos_analytics_section_visible("expenses")
+    ):
+        links.append(
+            _link(
+                "Expenses",
+                "wallet",
+                href=analytics_section_url(role, "expenses"),
+                active=active_slug == "expenses",
+            )
+        )
+    if profile is None or (
+        employee_may_any(profile, "analytics")
+        and employee_may(profile, "analytics", "receipts")
+        and company_pos_analytics_section_visible("receipts")
+    ):
+        links.append(
+            _link(
+                "Receipts",
+                "receipt",
+                href=analytics_section_url(role, "receipts"),
+                active=active_slug == "receipts",
+            )
+        )
+    if profile is None or employee_may_any(profile, "analytics"):
+        links.append(
+            _link(
+                "Analytics",
+                "bar-chart-3",
+                href=analytics_url(role),
+                active=active_slug == "analytics",
+            )
+        )
+    if profile is None or employee_may_any(profile, "stock-management"):
+        links.append(
+            _link(
+                "Stock Management",
+                "package",
+                href=stock_management_url(role, "in"),
+                active=active_slug == "stock-management",
+            )
+        )
+    return links
+
+
 def sidebar_for_role_dashboard(
     role, profile=None, *, active_slug=None, omit_dashboard_link=True
 ):
@@ -791,9 +943,14 @@ def sidebar_for_role_dashboard(
     dashboard_url = reverse(role_home_url_name(role))
     comms_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
     skip_slugs = ("whatsapp",) if role in comms_roles else ()
-    primary = _module_sidebar_links(
-        role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
-    )
+    if role == EmployeeRole.SHOP_CASHIER:
+        primary = _cashier_dashboard_links(
+            role, active_slug=active_slug, profile=profile
+        )
+    else:
+        primary = _module_sidebar_links(
+            role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
+        )
     if role == EmployeeRole.STORE_MANAGER:
         primary.extend(
             [
@@ -866,15 +1023,31 @@ def sidebar_for_my_shop(
     trade_in_enabled=False,
     trade_out_enabled=False,
     shelf_mode_enabled=False,
+    pos=None,
 ):
     """Sidebar for MY-SHOP entry picker and shop floor workspace."""
     from .module_permissions import employee_may
+    from shops.services import (
+        get_company_pos_settings,
+        get_effective_pos_settings,
+    )
+
+    if pos is None:
+        pos = (
+            get_effective_pos_settings(shop)
+            if shop is not None
+            else get_company_pos_settings()
+        )
 
     def _allowed(submodule):
         # Shop portal sessions are not employee-matrix gated.
         if portal or profile is None:
             return True
         return employee_may(profile, "my-shop", submodule)
+
+    def _flag(field):
+        # Company/shop POS "Shop floor sidebar" toggles.
+        return bool(getattr(pos, field, True))
 
     shops = shops or []
     print_channels = list(print_channels or [])
@@ -914,7 +1087,7 @@ def sidebar_for_my_shop(
             )
         # Floor tools only on the main shop page — not on buy-stock / receipts / etc.
         if active == "workspace":
-            if _allowed("open_close"):
+            if _allowed("open_close") and _flag("enable_sidebar_open_close"):
                 if shop_open:
                     primary.append(
                         _link(
@@ -937,8 +1110,9 @@ def sidebar_for_my_shop(
                             active=active == "day_toggle",
                         )
                     )
-            if (trade_out_enabled and _allowed("trade_out")) or (
-                trade_in_enabled and _allowed("trade_in")
+            if _flag("enable_sidebar_trade") and (
+                (trade_out_enabled and _allowed("trade_out"))
+                or (trade_in_enabled and _allowed("trade_in"))
             ):
                 primary.append(
                     _action(
@@ -947,7 +1121,7 @@ def sidebar_for_my_shop(
                         action="trade",
                     )
                 )
-            if _allowed("buy_stock"):
+            if _allowed("buy_stock") and _flag("enable_sidebar_buy_stock"):
                 primary.append(
                     _action(
                         "Buy stock items",
@@ -956,7 +1130,9 @@ def sidebar_for_my_shop(
                         href=reverse("employees:my_shop_buy_stock", kwargs={"shop_id": shop.pk}),
                     )
                 )
-            if _allowed("stock_requests"):
+            if _allowed("stock_requests") and _flag(
+                "enable_sidebar_stock_transfers"
+            ):
                 primary.append(
                     _link(
                         "Stock transfers",
@@ -970,7 +1146,7 @@ def sidebar_for_my_shop(
                         nav_key="stock-transfers",
                     )
                 )
-            if _allowed("stock_count"):
+            if _allowed("stock_count") and _flag("enable_sidebar_stock_count"):
                 primary.append(
                     _link(
                         "Stock count",
@@ -983,7 +1159,11 @@ def sidebar_for_my_shop(
                         badge=pending_stock_take_count,
                     )
                 )
-            if shelf_mode_enabled and _allowed("shelf_stock"):
+            if (
+                shelf_mode_enabled
+                and _allowed("shelf_stock")
+                and _flag("enable_sidebar_shelf_stock")
+            ):
                 primary.append(
                     _link(
                         "Shelf stock",
@@ -995,7 +1175,9 @@ def sidebar_for_my_shop(
                         active=active == "shelf_stock",
                     )
                 )
-            if _allowed("register_expense"):
+            if _allowed("register_expense") and _flag(
+                "enable_sidebar_expense"
+            ):
                 primary.append(
                     _action(
                         "Register expense",
@@ -1006,11 +1188,15 @@ def sidebar_for_my_shop(
                         ),
                     )
                 )
-            if print_channels and _allowed("print"):
+            if (
+                print_channels
+                and _allowed("print")
+                and _flag("enable_sidebar_printer")
+            ):
                 primary.append(
                     _action("Connect to printer", "bluetooth", action="connect-printer")
                 )
-            if _allowed("receipts"):
+            if _allowed("receipts") and _flag("enable_sidebar_receipts"):
                 primary.append(
                     _link(
                         "Receipts",
@@ -1019,7 +1205,7 @@ def sidebar_for_my_shop(
                         active=active == "receipts",
                     )
                 )
-            if _allowed("workspace"):
+            if _allowed("workspace") and _flag("enable_sidebar_website"):
                 primary.append(
                     _link(
                         "Shop website",
@@ -1081,7 +1267,11 @@ def sidebar_for_my_shop(
                     active=active == "settings_messages",
                 )
             )
-        elif active == "stock_requests" and _allowed("stock_requests"):
+        elif (
+            active == "stock_requests"
+            and _allowed("stock_requests")
+            and _flag("enable_sidebar_stock_transfers")
+        ):
             primary.append(
                 _link(
                     "Stock transfers",
@@ -1102,7 +1292,11 @@ def sidebar_for_my_shop(
                     action="request-stock",
                 )
             )
-        elif active == "shelf_stock" and _allowed("shelf_stock"):
+        elif (
+            active == "shelf_stock"
+            and _allowed("shelf_stock")
+            and _flag("enable_sidebar_shelf_stock")
+        ):
             primary.append(
                 _link(
                     "Shelf stock",
@@ -1114,7 +1308,11 @@ def sidebar_for_my_shop(
                     active=True,
                 )
             )
-        elif active == "stock_count" and _allowed("stock_count"):
+        elif (
+            active == "stock_count"
+            and _allowed("stock_count")
+            and _flag("enable_sidebar_stock_count")
+        ):
             primary.append(
                 _link(
                     "Stock count",
@@ -1574,6 +1772,33 @@ def sidebar_for_stock_management(
                     )
                 )
             primary.extend(_stock_management_shelf_links(role, profile))
+    elif role == EmployeeRole.SHOP_CASHIER:
+        # Cashier stock page is focused: Stock In + supplier accounts only.
+        from shops.services import company_pos_analytics_section_visible
+
+        primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
+        if _allowed("in"):
+            primary.append(
+                _link(
+                    "Stock In",
+                    "package-plus",
+                    href=stock_management_url(
+                        role, "in", shop_ids=resolved_shop_ids
+                    ),
+                    active=active_mode == "in",
+                )
+            )
+        if profile is None or (
+            employee_may(profile, "analytics", "suppliers")
+            and company_pos_analytics_section_visible("suppliers")
+        ):
+            primary.append(
+                _link(
+                    "Suppliers",
+                    "truck",
+                    href=analytics_section_url(role, "suppliers"),
+                )
+            )
     else:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
         if active_mode in (
@@ -1926,6 +2151,39 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
                             active=active_view == "supply",
                         )
                     )
+        if section["slug"] == "receipts" and active_view in (
+            "receipts",
+            "confirm-receipts",
+            "return-receipts",
+            "return-receipts-audits",
+        ):
+            if profile is None or employee_may(
+                profile, "analytics", "confirm-receipts"
+            ):
+                section_links.append(
+                    _link(
+                        "Confirm receipts",
+                        "badge-check",
+                        href=analytics_confirm_receipts_url(role),
+                        active=active_view == "confirm-receipts",
+                    )
+                )
+            if profile is None or employee_may(
+                profile, "analytics", "return-receipts"
+            ):
+                section_links.append(
+                    _link(
+                        "Return receipt",
+                        "undo-2",
+                        href=analytics_return_receipts_url(role),
+                        active=active_view == "return-receipts",
+                    )
+                )
+        if section["slug"] == "expenses" and active_view == "expenses":
+            if profile is None or employee_may(
+                profile, "my-shop", "register_expense"
+            ):
+                section_links.append(register_expense_action(profile))
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
     if show_overview and (profile is None or employee_may(profile, "analytics", "view")):
         primary.append(
@@ -2057,6 +2315,34 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                         active=active_view == "item-report",
                     )
                 )
+            if section_slug == "receipts":
+                if profile is None or employee_may(
+                    profile, "analytics", "confirm-receipts"
+                ):
+                    primary.append(
+                        _link(
+                            "Confirm receipts",
+                            "badge-check",
+                            href=analytics_confirm_receipts_url(role),
+                            active=active_view == "confirm-receipts",
+                        )
+                    )
+                if profile is None or employee_may(
+                    profile, "analytics", "return-receipts"
+                ):
+                    primary.append(
+                        _link(
+                            "Return receipt",
+                            "undo-2",
+                            href=analytics_return_receipts_url(role),
+                            active=active_view == "return-receipts",
+                        )
+                    )
+            if section_slug == "expenses" and (
+                profile is None
+                or employee_may(profile, "my-shop", "register_expense")
+            ):
+                primary.append(register_expense_action(profile))
         if profile is None or employee_may(profile, "analytics", "settings"):
             primary.append(
                 _link(

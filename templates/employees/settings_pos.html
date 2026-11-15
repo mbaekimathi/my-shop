@@ -101,6 +101,26 @@
           </label>
         </li>
         {% endfor %}
+        {% if group.show_delivery_amount %}
+        <li class="pos-settings-row pos-settings-row--tax" data-delivery-amount-row{% if not pos_settings.enable_cart_delivery %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Delivery amount</strong>
+            <p>Flat fee added to the sale total when delivery is chosen. 0 = free delivery.</p>
+          </div>
+          <label class="pos-tax-percent-field">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              value="{{ delivery_amount_value }}"
+              data-delivery-amount-input
+              aria-label="Delivery amount"
+            >
+            <span>KSh</span>
+          </label>
+        </li>
+        {% endif %}
         {% if group.show_tax_percent %}
         <li class="pos-settings-row pos-settings-row--tax" data-tax-percent-row{% if not pos_settings.enable_tax %} hidden{% endif %}>
           <div class="pos-settings-copy">
@@ -131,5 +151,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=11"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=12"></script>
 {% endblock %}

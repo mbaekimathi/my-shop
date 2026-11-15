@@ -16,6 +16,7 @@ from .analytics_services import (
     ANALYTICS_DASHBOARD_SECTION_SLUGS,
     ANALYTICS_RECEIPT_KINDS,
     _date_filter_context,
+    analytics_receipt_kind_options,
     apply_account_payment,
     apply_credit_receipt_payment,
     apply_supplier_receipt_payment,
@@ -223,6 +224,10 @@ def _render_analytics(
             stock_supply_href = analytics_section_url(profile.role, "supply")
             if context.get("query"):
                 stock_supply_href = f"{stock_supply_href}?{context['query']}"
+    if section["slug"] == "expenses":
+        from .workspace import expense_modal_context
+
+        context.update(expense_modal_context(request, profile))
     return render(
         request,
         (
@@ -350,6 +355,17 @@ def analytics_settings(request, role_segment):
 
     current = get_analytics_receipt_data_source_default()
     option_meta = {
+        AnalyticsReceiptDataSource.ALL: {
+            "value": AnalyticsReceiptDataSource.ALL,
+            "label": "All receipts",
+            "icon": "layers",
+            "eyebrow": "Everything",
+            "summary": "Include pending and confirmed receipts together.",
+            "points": (
+                "One view across open and finalized sales",
+                "Best when you want the full picture at a glance",
+            ),
+        },
         AnalyticsReceiptDataSource.PENDING: {
             "value": AnalyticsReceiptDataSource.PENDING,
             "label": "Pending receipts",
@@ -374,6 +390,7 @@ def analytics_settings(request, role_segment):
         },
     }
     receipt_options = [
+        option_meta[AnalyticsReceiptDataSource.ALL],
         option_meta[AnalyticsReceiptDataSource.PENDING],
         option_meta[AnalyticsReceiptDataSource.CONFIRMED],
     ]
@@ -814,7 +831,7 @@ def analytics_receipts_list(request, role_segment, kind):
             ),
             "back_href": back_href,
             "back_label": "Back to receipts",
-            "kind_options": list(ANALYTICS_RECEIPT_KINDS.values()),
+            "kind_options": analytics_receipt_kind_options(),
             **context,
         },
     )
@@ -1487,10 +1504,26 @@ def analytics_trade_settle(request, role_segment, receipt_id):
                     {"ok": False, "error": "This trade is already settled."},
                     status=400,
                 )
+            method = (
+                request.POST.get("payment_method") or "cash"
+            ).strip().lower()
+            from .analytics_services import _pos_feature_flags
+
+            _flags = _pos_feature_flags()
+            if method == "mpesa" and not _flags["pay_mpesa"]:
+                return JsonResponse(
+                    {"ok": False, "error": "M-Pesa payments are disabled."},
+                    status=400,
+                )
+            if method == "cash" and not _flags["pay_cash"]:
+                return JsonResponse(
+                    {"ok": False, "error": "Cash payments are disabled."},
+                    status=400,
+                )
             result = record_trade_payment(
                 receipt,
                 amount=request.POST.get("amount"),
-                payment_method=request.POST.get("payment_method") or "cash",
+                payment_method=method,
                 mpesa_receipt_number=request.POST.get("mpesa_receipt_number") or "",
                 actor=profile,
             )
@@ -2263,6 +2296,8 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
     payment_at = (request.POST.get("payment_at") or "").strip()
     amount = (request.POST.get("amount") or "").strip()
     payment_method = (request.POST.get("payment_method") or "").strip()
+    cash_amount = (request.POST.get("cash_amount") or "").strip()
+    mpesa_amount = (request.POST.get("mpesa_amount") or "").strip()
     try:
         result = confirm_shop_receipt(
             shop=shop,
@@ -2272,6 +2307,8 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
             payment_at=payment_at or None,
             amount=amount or None,
             payment_method=payment_method,
+            cash_amount=cash_amount or None,
+            mpesa_amount=mpesa_amount or None,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -2335,6 +2372,8 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
     payment_at = (request.POST.get("payment_at") or "").strip()
     amount = (request.POST.get("amount") or "").strip()
     payment_method = (request.POST.get("payment_method") or "").strip()
+    cash_amount = (request.POST.get("cash_amount") or "").strip()
+    mpesa_amount = (request.POST.get("mpesa_amount") or "").strip()
     status = request.POST.get("status") or ""
     try:
         result = set_confirm_receipt_status(
@@ -2346,6 +2385,8 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
             payment_at=payment_at or None,
             amount=amount or None,
             payment_method=payment_method,
+            cash_amount=cash_amount or None,
+            mpesa_amount=mpesa_amount or None,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
