@@ -249,6 +249,7 @@
     stockPaySplit: root.querySelector("[data-stock-paysplit]"),
     stockCashAmt: root.querySelector("[data-stock-cashamt]"),
     stockMpesaAmt: root.querySelector("[data-stock-mpesaamt]"),
+    stockCardAmt: root.querySelector("[data-stock-cardamt]"),
     stockClientName: root.querySelector("[data-stock-clientname]"),
     stockClientPhone: root.querySelector("[data-stock-clientphone]"),
     stockStaffCode: root.querySelector("[data-stock-staffcode]"),
@@ -1919,6 +1920,7 @@
       els.stockDueDate.hidden = true;
       els.stockCashAmt.value = "";
       els.stockMpesaAmt.value = "";
+      if (els.stockCardAmt) els.stockCardAmt.value = "";
       els.stockClientName.value = "";
       els.stockClientPhone.value = "";
       els.stockWhatsappWrap.hidden = true;
@@ -2653,8 +2655,15 @@
           };
         }),
         payment_method: method,
-        cash_amount: method === "both" ? els.stockCashAmt.value : null,
-        mpesa_amount: method === "both" ? els.stockMpesaAmt.value : null,
+        cash_amount: method !== "cash" && method !== "mpesa" && method !== "card"
+          ? els.stockCashAmt.value
+          : null,
+        mpesa_amount: method !== "cash" && method !== "mpesa" && method !== "card"
+          ? els.stockMpesaAmt.value
+          : null,
+        card_amount: method !== "cash" && method !== "mpesa" && method !== "card"
+          ? (els.stockCardAmt ? els.stockCardAmt.value : null)
+          : null,
         client_name: els.stockClientName.value,
         client_phone: els.stockClientPhone.value,
         share_whatsapp: kind === "quotation" && els.stockWhatsapp.checked,
@@ -3290,13 +3299,36 @@
       if (e.target.matches("[data-trade-kind]")) syncTradeKind();
     });
   }
-  els.stockPayMethod.addEventListener("change", function () {
-    els.stockPaySplit.hidden = els.stockPayMethod.value !== "both";
-  });
+  var STOCK_PAY_CHANNELS = {
+    cash: ["cash"],
+    mpesa: ["mpesa"],
+    card: ["card"],
+    both: ["cash", "mpesa"],
+    cash_card: ["cash", "card"],
+    mpesa_card: ["mpesa", "card"],
+    cash_mpesa_card: ["cash", "mpesa", "card"]
+  };
+  function stockPayChannels() {
+    return STOCK_PAY_CHANNELS[els.stockPayMethod.value] || ["cash"];
+  }
+  function stockPaySplitSync() {
+    var channels = stockPayChannels();
+    els.stockPaySplit.hidden = channels.length < 2;
+    els.stockCashAmt.hidden = channels.indexOf("cash") < 0;
+    els.stockMpesaAmt.hidden = channels.indexOf("mpesa") < 0;
+    if (els.stockCardAmt) {
+      els.stockCardAmt.hidden = channels.indexOf("card") < 0;
+    }
+  }
+  els.stockPayMethod.addEventListener("change", stockPaySplitSync);
   els.stockKind.addEventListener("change", function () {
     var k = els.stockKind.value;
     els.stockPayMethod.hidden = k !== "sale";
-    els.stockPaySplit.hidden = k !== "sale" || els.stockPayMethod.value !== "both";
+    if (k !== "sale") {
+      els.stockPaySplit.hidden = true;
+    } else {
+      stockPaySplitSync();
+    }
     els.stockDueDate.hidden = k !== "credit";
     els.stockWhatsappWrap.hidden = k !== "quotation";
     els.stockClientName.placeholder =

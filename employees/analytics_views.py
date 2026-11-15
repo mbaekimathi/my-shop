@@ -1520,6 +1520,11 @@ def analytics_trade_settle(request, role_segment, receipt_id):
                     {"ok": False, "error": "Cash payments are disabled."},
                     status=400,
                 )
+            if method == "card" and not _flags.get("pay_card"):
+                return JsonResponse(
+                    {"ok": False, "error": "Card payments are disabled."},
+                    status=400,
+                )
             result = record_trade_payment(
                 receipt,
                 amount=request.POST.get("amount"),
@@ -2337,6 +2342,7 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
             payment_method=(payload.get("payment_method") or "").strip(),
             cash_amount=payload.get("cash_amount") or None,
             mpesa_amount=payload.get("mpesa_amount") or None,
+            card_amount=payload.get("card_amount") or None,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -2402,6 +2408,7 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
     payment_method = (request.POST.get("payment_method") or "").strip()
     cash_amount = (request.POST.get("cash_amount") or "").strip()
     mpesa_amount = (request.POST.get("mpesa_amount") or "").strip()
+    card_amount = (request.POST.get("card_amount") or "").strip()
     status = request.POST.get("status") or ""
     try:
         result = set_confirm_receipt_status(
@@ -2415,6 +2422,7 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
             payment_method=payment_method,
             cash_amount=cash_amount or None,
             mpesa_amount=mpesa_amount or None,
+            card_amount=card_amount or None,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

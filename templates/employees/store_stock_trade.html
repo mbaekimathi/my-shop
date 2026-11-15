@@ -1,0 +1,204 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
+{% endblock %}
+
+{% block workspace_content %}
+<section class="store-stock store-stock--trade" data-animate="rise" data-store-stock>
+  <header class="store-stock-hero">
+    <div class="store-stock-hero-copy">
+      <p class="store-stock-kicker">
+        <span class="store-stock-mode-pill" aria-hidden="true">
+          <i data-lucide="{{ meta.icon }}"></i>
+        </span>
+        Store inventory
+      </p>
+      <h2>{{ meta.headline }}</h2>
+      <p class="store-stock-lead" data-trade-lead>{{ meta.summary }}</p>
+    </div>
+    <dl class="store-stock-stats">
+      <div class="store-stock-stat">
+        <dt>Items</dt>
+        <dd data-store-visible-count>{{ item_count }}</dd>
+      </div>
+      <div class="store-stock-stat">
+        <dt>Lines filled</dt>
+        <dd data-store-filled-count>0</dd>
+      </div>
+    </dl>
+  </header>
+
+  <form class="store-stock-form" method="post" data-store-stock-form>
+    {% csrf_token %}
+
+    <section class="store-stock-panel" aria-labelledby="store-trade-meta-title">
+      <div class="store-stock-panel-head">
+        <div>
+          <h3 id="store-trade-meta-title">Trade details</h3>
+          <p>Pick the direction, then the person on the other side of this trade.</p>
+        </div>
+        <p class="store-stock-actor">
+          <span class="store-stock-actor-label">Recorded by</span>
+          <strong>{{ actor_label }}</strong>
+        </p>
+      </div>
+
+      <div class="store-stock-meta-grid">
+        <div class="store-stock-field">
+          <span>Trade type</span>
+          <div class="shop-cart-seg stock-trade-seg" role="group" aria-label="Trade type">
+            <label class="shop-cart-seg-option">
+              <input type="radio" name="trade_kind" value="trade_out" data-trade-kind checked>
+              <span>Trade out</span>
+            </label>
+            <label class="shop-cart-seg-option">
+              <input type="radio" name="trade_kind" value="trade_in" data-trade-kind>
+              <span>Trade in</span>
+            </label>
+          </div>
+        </div>
+        <label class="store-stock-field">
+          <span>Other person's name{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="user" aria-hidden="true"></i>
+            <input
+              type="text"
+              name="person_name"
+              maxlength="160"
+              placeholder="Full name"
+              data-uppercase
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Other person's phone{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="phone" aria-hidden="true"></i>
+            <input
+              type="tel"
+              name="person_phone"
+              maxlength="40"
+              placeholder="e.g. 0722 000 000"
+            >
+          </div>
+        </label>
+        <label class="store-stock-field">
+          <span>Note <em>optional</em></span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="notebook-pen" aria-hidden="true"></i>
+            <input type="text" name="note" maxlength="255" placeholder="Trade note, reference…">
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <section class="store-stock-panel store-stock-panel--list" aria-labelledby="store-trade-list-title">
+      <div class="store-stock-panel-head store-stock-panel-head--list">
+        <div>
+          <h3 id="store-trade-list-title">Items</h3>
+          <p>Enter qty only on the lines you need. Blank rows are ignored.</p>
+        </div>
+        <label class="store-stock-filter">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Filter by name or category"
+            autocomplete="off"
+            data-store-item-filter
+            aria-label="Filter items"
+          >
+        </label>
+      </div>
+
+      {% if items %}
+      <div class="store-stock-table-wrap">
+        <table class="store-stock-table">
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              <th scope="col">Category</th>
+              <th scope="col" class="store-stock-col-qty">In store</th>
+              <th scope="col" class="store-stock-col-input">Qty</th>
+              <th scope="col" class="store-stock-col-input" data-trade-price>Unit value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+            <tr
+              class="store-stock-row"
+              data-store-item-row
+              data-search="{{ item.search_text }}"
+            >
+              <td data-label="Item">
+                <div class="store-stock-item-cell">
+                  <span class="store-stock-item-name">{{ item.name }}</span>
+                  <span class="store-stock-item-cat-mobile">{{ item.category }}</span>
+                </div>
+              </td>
+              <td class="store-stock-col-category" data-label="Category">{{ item.category }}</td>
+              <td class="store-stock-col-qty" data-label="In store">
+                <span class="store-stock-balance-pill">{{ item.store_qty_display }}</span>
+              </td>
+              <td class="store-stock-col-input" data-label="Qty">
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="qty_{{ item.id }}"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="0"
+                  aria-label="Quantity for {{ item.name }}"
+                  data-store-qty-input
+                >
+              </td>
+              <td class="store-stock-col-input" data-label="Unit value" data-trade-price>
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="price_{{ item.id }}"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="0.00"
+                  aria-label="Unit value for {{ item.name }}"
+                >
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="store-stock-empty-filter" data-store-no-filter-results hidden>
+        No items match that filter.
+      </p>
+      {% else %}
+      <div class="store-stock-empty">
+        <i data-lucide="package" aria-hidden="true"></i>
+        <p><strong>No items yet.</strong> Register items in Item Management first.</p>
+      </div>
+      {% endif %}
+    </section>
+
+    <div class="store-stock-footer" data-store-footer>
+      <p class="store-stock-footer-summary">
+        <span data-store-filled-summary>No quantities entered yet</span>
+      </p>
+      <div class="store-stock-actions">
+        <a class="store-stock-btn store-stock-btn--ghost" href="{% url 'employees:role_store_manager' %}">Back</a>
+        <button type="submit" class="store-stock-btn store-stock-btn--primary"><span data-trade-submit-label>{{ submit_label }}</span></button>
+      </div>
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
+{% endblock %}

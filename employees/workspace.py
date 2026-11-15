@@ -657,8 +657,20 @@ def store_stock_in_url():
     return reverse("employees:store_stock_in")
 
 
+def store_stock_items_url():
+    return reverse("employees:store_stock_items")
+
+
 def store_stock_out_url():
     return reverse("employees:store_stock_out")
+
+
+def store_stock_trade_url():
+    return reverse("employees:store_stock_trade")
+
+
+def store_stock_movement_url():
+    return reverse("employees:store_stock_movement")
 
 
 def store_stock_report_url():
@@ -679,7 +691,119 @@ def _store_shelf_stock_link(profile, *, active):
     if not shelf_mode_shops():
         return []
     return [
-        _link("Shelf stock", "layers", href=store_shelf_stock_url(), active=active)
+        _link("Shelf stock", "layers", href=store_shelf_stock_url(), active=active),
+    ]
+
+
+def _store_item_stock_links(*, active=None):
+    """Central-store item stock nav — the five stock pages.
+
+    Hidden under company-wide Shelf-only stock. The dashboard uses only the
+    first link; the stock pages' sidebar carries all five.
+    """
+    from .store_stock_views import item_stock_tracking_enabled
+
+    if not item_stock_tracking_enabled():
+        return []
+    return [
+        _link(
+            "Item stock",
+            "boxes",
+            href=store_stock_items_url(),
+            active=active == "items",
+        ),
+        _action(
+            "Item stock in",
+            "package-plus",
+            action="store-stock-in",
+            href=store_stock_in_url(),
+            active=active == "in",
+        ),
+        _action(
+            "Item stock out",
+            "package-minus",
+            action="store-stock-out",
+            href=store_stock_out_url(),
+            active=active == "out",
+        ),
+        _action(
+            "Item stock trade",
+            "repeat",
+            action="store-stock-trade",
+            href=store_stock_trade_url(),
+            active=active == "trade",
+        ),
+        _link(
+            "Item stock movement",
+            "arrow-down-up",
+            href=store_stock_movement_url(),
+            active=active == "movement",
+        ),
+        _link(
+            "Item stock report",
+            "bar-chart-3",
+            href=store_stock_report_url(),
+            active=active == "report",
+        ),
+    ]
+
+
+def _store_shelf_nav_links(profile, *, active=None):
+    """Shelf stock nav for the stock sidebar — register stays a popup action."""
+    from .module_permissions import employee_may
+    from .store_stock_views import shelf_mode_shops
+
+    if profile is not None and not employee_may(profile, "my-shop", "shelf_stock"):
+        return []
+    if not shelf_mode_shops():
+        return []
+    base = store_shelf_stock_url()
+    return [
+        _link(
+            "Shelf stock",
+            "layers",
+            href=base,
+            active=active == "shelf-stock",
+        ),
+        _action(
+            "Shelf stock in",
+            "package-plus",
+            action="shelf-stock-in",
+            href=f"{base}?mode=in",
+            active=active == "shelf-in",
+        ),
+        _action(
+            "Shelf stock out",
+            "package-minus",
+            action="shelf-stock-out",
+            href=f"{base}?mode=out",
+            active=active == "shelf-out",
+        ),
+        _action(
+            "Shelf stock trade",
+            "repeat",
+            action="shelf-stock-trade",
+            href=f"{base}?mode=trade",
+            active=active == "shelf-trade",
+        ),
+        _link(
+            "Shelf stock movement",
+            "arrow-down-up",
+            href=f"{base}?mode=movements",
+            active=active == "shelf-movements",
+        ),
+        _link(
+            "Shelf stock report",
+            "bar-chart-3",
+            href=f"{base}?mode=report",
+            active=active == "shelf-report",
+        ),
+        _action(
+            "Register shelf stock",
+            "package-plus",
+            action="shelf-stock",
+            href=f"{base}?shelf=1",
+        ),
     ]
 
 
@@ -743,33 +867,23 @@ def _stock_management_shelf_links(role, profile):
 
 
 def sidebar_for_store_stock(role, *, profile=None, active="in"):
-    """Sidebar for central store stock in/out/report pages."""
+    """Sidebar for central store stock + shelf stock pages.
+
+    Each stock area carries only its own nav links — item pages never show
+    shelf links, shelf pages never show item links.
+    """
     dashboard_url = reverse(role_home_url_name(role))
+    on_shelf = str(active or "").startswith("shelf")
+    primary = (
+        _store_shelf_nav_links(profile, active=active)
+        if on_shelf
+        else _store_item_stock_links(active=active)
+    )
     return resolve_sidebar_hrefs(
         {
             "page": "store_stock",
             "dashboard_url": dashboard_url,
-            "primary": [
-                _link(
-                    "Store Stock In",
-                    "package-plus",
-                    href=store_stock_in_url(),
-                    active=active == "in",
-                ),
-                _link(
-                    "Store Stock Out",
-                    "package-minus",
-                    href=store_stock_out_url(),
-                    active=active == "out",
-                ),
-                _link(
-                    "Store Report",
-                    "clipboard-list",
-                    href=store_stock_report_url(),
-                    active=active == "report",
-                ),
-                *_store_shelf_stock_link(profile, active=active == "shelf"),
-            ],
+            "primary": primary,
             "footer": _footer_site_links(
                 profile=profile,
                 tail=[
@@ -1056,26 +1170,13 @@ def sidebar_for_role_dashboard(
             role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
         )
     if role == EmployeeRole.STORE_MANAGER:
+        # Dashboard keeps entry links only — the five sub-links live in the
+        # stock pages' sidebar (sidebar_for_store_stock).
         primary.extend(
             [
-                _link(
-                    "Store Stock In",
-                    "package-plus",
-                    href=store_stock_in_url(),
-                    active=active_slug == "store-stock-in",
-                ),
-                _link(
-                    "Store Stock Out",
-                    "package-minus",
-                    href=store_stock_out_url(),
-                    active=active_slug == "store-stock-out",
-                ),
-                _link(
-                    "Store Report",
-                    "clipboard-list",
-                    href=store_stock_report_url(),
-                    active=active_slug == "store-report",
-                ),
+                *_store_item_stock_links(
+                    active="items" if active_slug == "item-stock" else None
+                )[:1],
                 *_store_shelf_stock_link(profile, active=active_slug == "shelf-stock"),
             ]
         )
@@ -1412,6 +1513,14 @@ def sidebar_for_my_shop(
                     active=True,
                 )
             )
+            primary.append(
+                _action(
+                    "Register shelf stock",
+                    "package-plus",
+                    action="shelf-stock",
+                    href=f"{reverse('employees:my_shop_shelf_stock', kwargs={'shop_id': shop.pk})}?shelf=1",
+                )
+            )
         elif (
             active == "stock_count"
             and _allowed("stock_count")
@@ -1468,12 +1577,13 @@ def sidebar_for_my_shop(
     )
 
 
-def _action(label, icon, *, action, href=None):
+def _action(label, icon, *, action, href=None, active=False):
     item = {
         "type": "action",
         "label": label,
         "icon": icon,
         "action": action,
+        "active": active,
     }
     if href:
         item["href"] = href

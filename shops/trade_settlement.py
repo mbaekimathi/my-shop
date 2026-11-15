@@ -8,7 +8,12 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from shops.models import ShopPaymentMethod, ShopReceiptKind, ShopReceiptStatus
+from shops.models import (
+    ShopPaymentMethod,
+    ShopReceiptKind,
+    ShopReceiptStatus,
+    payment_method_for_channels,
+)
 
 
 def _money(value) -> Decimal:
@@ -28,18 +33,15 @@ def trade_balance_due(receipt) -> Decimal:
 
 
 def _sync_sale_payment_fields(receipt) -> None:
-    cash = _money(receipt.cash_amount)
-    mpesa = _money(receipt.mpesa_amount)
+    used = [
+        channel
+        for channel in ("cash", "mpesa", "card")
+        if _money(getattr(receipt, f"{channel}_amount", 0)) > 0
+    ]
+    if used:
+        receipt.payment_method = payment_method_for_channels(used)
+        return
     paid = _money(receipt.amount_paid)
-    if cash > 0 and mpesa > 0:
-        receipt.payment_method = ShopPaymentMethod.BOTH
-        return
-    if mpesa > 0:
-        receipt.payment_method = ShopPaymentMethod.MPESA
-        return
-    if cash > 0:
-        receipt.payment_method = ShopPaymentMethod.CASH
-        return
     if (receipt.mpesa_receipt_number or "").strip():
         receipt.payment_method = ShopPaymentMethod.MPESA
         receipt.mpesa_amount = paid
@@ -114,8 +116,12 @@ def record_trade_payment(
         raise ValidationError(f"Amount exceeds balance left (KSh {due}).")
 
     method = (payment_method or "cash").strip().lower()
-    if method not in {ShopPaymentMethod.CASH, ShopPaymentMethod.MPESA}:
-        raise ValidationError("Choose cash or M-Pesa.")
+    if method not in {
+        ShopPaymentMethod.CASH,
+        ShopPaymentMethod.MPESA,
+        ShopPaymentMethod.CARD,
+    }:
+        raise ValidationError("Choose cash, M-Pesa, or card.")
 
     receipt.amount_paid = _money(Decimal(receipt.amount_paid or 0) + apply)
     update_fields = ["amount_paid", "trade_settlements"]
@@ -126,6 +132,11 @@ def record_trade_payment(
         if ref and not (receipt.mpesa_receipt_number or "").strip():
             receipt.mpesa_receipt_number = ref
             update_fields.append("mpesa_receipt_number")
+    elif method == ShopPaymentMethod.CARD:
+        receipt.card_amount = _money(
+            Decimal(getattr(receipt, "card_amount", 0) or 0) + apply
+        )
+        update_fields.append("card_amount")
     else:
         receipt.cash_amount = _money(Decimal(receipt.cash_amount or 0) + apply)
         update_fields.append("cash_amount")
@@ -149,6 +160,7 @@ def record_trade_payment(
             "payment_method",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "settled_from_trade",
             "status",
         ):
@@ -319,6 +331,7 @@ def record_trade_exchange(
             "payment_method",
             "cash_amount",
             "mpesa_amount",
+            "card_amount",
             "settled_from_trade",
             "status",
         ):
@@ -369,14 +382,22 @@ def _clamp_trade_applied_to_total(receipt) -> list[str]:
         # Keep till splits aligned when possible.
         cash = _money(receipt.cash_amount)
         mpesa = _money(receipt.mpesa_amount)
-        if cash + mpesa > 0:
-            # Trim cash first, then M-Pesa.
-            cash_trim = min(cash, trim)
-            receipt.cash_amount = _money(cash - cash_trim)
-            leftover = trim - cash_trim
-            if leftover > 0:
-                receipt.mpesa_amount = _money(max(Decimal("0.00"), mpesa - leftover))
-            update_fields.extend(["cash_amount", "mpesa_amount"])
+        card = _money(getattr(receipt, "card_amount", 0))
+        if cash + mpesa + card > 0:
+            # Trim cash first, then M-Pesa, then card.
+            leftover = trim
+            for channel in ("cash", "mpesa", "card"):
+                if leftover <= 0:
+                    break
+                current = _money(getattr(receipt, f"{channel}_amount", 0))
+                channel_trim = min(current, leftover)
+                setattr(
+                    receipt,
+                    f"{channel}_amount",
+                    _money(current - channel_trim),
+                )
+                leftover -= channel_trim
+            update_fields.extend(["cash_amount", "mpesa_amount", "card_amount"])
         excess -= trim
         paid = _money(receipt.amount_paid)
 

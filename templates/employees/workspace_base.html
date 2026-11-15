@@ -11,7 +11,7 @@
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261114-shelf-links">
 <link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261115-toast-dismiss">
-<link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261115-sticky-search">
+<link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261115-shelf-tabs">
 <link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261113-mobile-cards">
 <link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261113-online-take-day">
 <link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261114-confirm-paid">
@@ -337,7 +337,18 @@
       return true;
     };
 
-    ["buy-stock", "register-expense", "print-stock"].forEach((name) => {
+    const ACTION_MODAL_FOCUS = {
+      "buy-stock": "[data-item-search]",
+      "register-expense": "[data-expense-name-draft]",
+      "shelf-stock": "[data-shelf-register-form] input[name='name']",
+      "store-stock-in": "[data-stock-flow-filter]",
+      "store-stock-out": "[data-stock-flow-filter]",
+      "store-stock-trade": "[data-stock-flow-filter]",
+      "shelf-stock-in": "[data-stock-flow-filter]",
+      "shelf-stock-out": "[data-stock-flow-filter]",
+      "shelf-stock-trade": "[data-stock-flow-filter]",
+    };
+    ["buy-stock", "register-expense", "print-stock", "shelf-stock", "store-stock-in", "store-stock-out", "store-stock-trade", "shelf-stock-in", "shelf-stock-out", "shelf-stock-trade"].forEach((name) => {
       document.querySelectorAll(`[data-modal-open="${name}"]`).forEach((trigger) => {
         trigger.addEventListener("click", (event) => {
           if (name === "print-stock") {
@@ -350,9 +361,7 @@
             }
             return;
           }
-          const focusSelector =
-            name === "buy-stock" ? "[data-item-search]" : "[data-expense-name-draft]";
-          if (openWorkspaceActionModal(name, focusSelector)) {
+          if (openWorkspaceActionModal(name, ACTION_MODAL_FOCUS[name])) {
             event.preventDefault();
             return;
           }

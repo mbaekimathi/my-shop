@@ -344,6 +344,48 @@
   const hasRenderedItems = () =>
     Boolean(root.querySelector("[data-item-row]"));
 
+  const reduceMotion = () =>
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Pin the first match just under the sticky toolbar so a search never
+  // leaves the user scrolled past their results — the section (with its
+  // category header) starts below the floating search, never under it.
+  // The jump is instant — a long smooth scroll can be cancelled mid-glide
+  // and land halfway — with a delayed correction once layout settles.
+  const scrollResultsToTop = () => {
+    const jump = () => {
+      const firstRow = root.querySelector("[data-item-row]:not([hidden])");
+      const first =
+        firstRow?.closest("[data-item-category-group]") ||
+        firstRow ||
+        (noResults && !noResults.hidden ? noResults : null);
+      if (!first) return;
+      // Reveal the first match inside its horizontal category rail.
+      if (firstRow) {
+        const track = firstRow.closest("[data-category-scroll-track]");
+        if (track && track.scrollWidth > track.clientWidth) {
+          const c = firstRow.getBoundingClientRect();
+          const t = track.getBoundingClientRect();
+          if (c.left < t.left + 4 || c.right > t.right - 4) {
+            track.scrollLeft += c.left - t.left - 8;
+          }
+        }
+      }
+      const toolbar = floor.querySelector(".shop-floor-toolbar");
+      const minTop =
+        (toolbar ? toolbar.getBoundingClientRect().bottom : 0) + 8;
+      const delta = first.getBoundingClientRect().top - minTop;
+      if (Math.abs(delta) > 2) window.scrollTo({ top: window.scrollY + delta, behavior: "auto" });
+    };
+    jump();
+    const settle = window.scrollY;
+    window.setTimeout(() => {
+      // Skip if the user grabbed the scroll in the meantime.
+      if (Math.abs(window.scrollY - settle) < 4) jump();
+    }, 220);
+  };
+
   const filterRenderedItems = (query) => {
     const tokens = tokensFrom(query);
     const hasQuery = tokens.length > 0;
@@ -369,6 +411,13 @@
     if (root) root.hidden = visible === 0 && hasQuery;
     updateCountLabel(hasQuery ? visible : totalCount, hasQuery);
     floor.toggleAttribute("data-catalog-local-filter", hasQuery);
+    if (hasQuery) {
+      scrollResultsToTop();
+      if (!String(searchInput?.value || "").trim()) {
+        const btn = ensureShowAllButton();
+        if (btn) btn.hidden = false;
+      }
+    }
   };
 
   const syncUiAfterRender = () => {
@@ -511,6 +560,13 @@
       activeQuery = String(data.localFilter || data.q || q || "");
 
       const firstItems = Array.isArray(data.items) ? data.items : [];
+      // Fade the old catalog out before the swap so the collapse isn't a
+      // visible jump; new sections fade/rise back in.
+      if (!append && hasRenderedItems() && !reduceMotion()) {
+        root.classList.add("is-swapping");
+        await new Promise((resolve) => window.setTimeout(resolve, 140));
+        if (seq !== inFlight) return;
+      }
       const ok = await appendItems(firstItems, { replace: !append, seq });
       if (!ok || seq !== inFlight) return;
 
@@ -524,6 +580,15 @@
         filterRenderedItems(localFilter);
       } else {
         syncUiAfterRender();
+        if (!append && activeQuery) {
+          scrollResultsToTop();
+          // Results arrived after the box was already cleared (picked an
+          // item mid-flight) — offer the way back to the full catalog.
+          if (!String(searchInput?.value || "").trim()) {
+            const btn = ensureShowAllButton();
+            if (btn) btn.hidden = false;
+          }
+        }
       }
 
       // First paint is done — keep fetching remaining pages in the background.
@@ -545,6 +610,7 @@
       }
     } finally {
       if (seq === inFlight) {
+        root.classList.remove("is-swapping");
         setLoading(false);
       }
     }
@@ -554,8 +620,13 @@
     const { isAppOnline } = await import("./offline/net.js");
     const offline = !(await isAppOnline());
     if (offline && hasRenderedItems()) {
+      if (!reduceMotion()) {
+        root.classList.add("is-swapping");
+        await new Promise((resolve) => window.setTimeout(resolve, 140));
+      }
       filterRenderedItems(q);
       activeQuery = q;
+      root.classList.remove("is-swapping");
       return;
     }
     if (!offline) {
@@ -598,42 +669,45 @@
     rootEl.style.scrollBehavior = prev;
   };
 
-  const waitAndPlaceCard = (itemId, staleCard, keepTop) => {
-    if (itemId === "" || keepTop == null) return;
-    const locked = () =>
-      document.body.classList.contains("workspace-modal-open") ||
-      document.body.classList.contains("shop-cart-open");
-    const findCard = () =>
-      root.querySelector(
-        `[data-cart-item][data-item-id="${CSS.escape(itemId)}"]`
-      );
-    const attempt = () => {
-      // User started a new search — stop chasing the old anchor.
-      if (String(searchInput?.value || "").trim()) {
-        cleanup();
+  // Picking an item from a live search keeps the filtered list on screen —
+  // no reload — so the user can keep working with the card. The box is
+  // cleared for the next search; "Show all" restores the full catalog.
+  let showAllBtn = null;
+  const hideShowAllButton = () => {
+    if (showAllBtn) showAllBtn.hidden = true;
+  };
+
+  const ensureShowAllButton = () => {
+    if (showAllBtn) return showAllBtn;
+    const toolbar = floor.querySelector(".shop-floor-toolbar");
+    if (!toolbar) return null;
+    showAllBtn = document.createElement("button");
+    showAllBtn.type = "button";
+    showAllBtn.className = "btn btn--ghost btn--sm shop-floor-show-all";
+    showAllBtn.setAttribute("data-catalog-show-all", "");
+    showAllBtn.innerHTML =
+      '<i data-lucide="layout-grid" aria-hidden="true"></i><span>Show all</span>';
+    showAllBtn.hidden = true;
+    showAllBtn.addEventListener("click", () => {
+      hideShowAllButton();
+      if (floor.hasAttribute("data-catalog-local-filter")) {
+        // Rows are only hidden — reveal them and keep the viewport put.
+        const anchor = root.querySelector("[data-item-row]:not([hidden])");
+        const keepTop = anchor ? anchor.getBoundingClientRect().top : null;
+        filterRenderedItems("");
+        activeQuery = "";
+        placeCardAtSpot(anchor, keepTop);
         return;
       }
-      const card = findCard();
-      if (!card || card === staleCard || locked()) return;
-      placeCardAtSpot(card, keepTop);
-      cleanup();
-    };
-    const observer = new MutationObserver(attempt);
-    const cleanup = () => {
-      document.removeEventListener("shop-catalog:rendered", attempt);
-      observer.disconnect();
-      window.clearTimeout(timer);
-    };
-    const timer = window.setTimeout(() => {
-      const card = findCard();
-      if (card && !locked()) placeCardAtSpot(card, keepTop);
-      cleanup();
-    }, 20000);
-    document.addEventListener("shop-catalog:rendered", attempt);
-    observer.observe(document.body, {
-      attributes: true,
-      attributeFilter: ["class"],
+      activeQuery = "";
+      reload("");
     });
+    const anchor =
+      visibleCountEl?.parentNode === toolbar ? visibleCountEl : null;
+    if (anchor?.nextSibling) toolbar.insertBefore(showAllBtn, anchor.nextSibling);
+    else toolbar.appendChild(showAllBtn);
+    if (window.lucide?.createIcons) window.lucide.createIcons();
+    return showAllBtn;
   };
 
   floor.addEventListener("click", (event) => {
@@ -643,36 +717,25 @@
     if (!trigger) return;
     const card = trigger.closest("[data-item-row]");
     if (!card || !searchInput) return;
-    const localFilter = floor.hasAttribute("data-catalog-local-filter");
-    const filtering = Boolean(String(activeQuery || "").trim()) || localFilter;
+    const filtering =
+      Boolean(String(activeQuery || "").trim()) ||
+      floor.hasAttribute("data-catalog-local-filter");
     window.clearTimeout(searchTimer);
     searchInput.value = "";
     if (!filtering) return;
-    const itemId = String(card.dataset.itemId ?? "");
-    const keepTop = card.getBoundingClientRect().top;
-    (async () => {
-      // Mirror reload()'s offline branch: with rendered rows it filters
-      // locally (no re-render event) — un-hide and anchor in place.
-      const { isAppOnline } = await import("./offline/net.js");
-      const offline = !(await isAppOnline());
-      if (localFilter || (offline && hasRenderedItems())) {
-        filterRenderedItems("");
-        activeQuery = "";
-        placeCardAtSpot(card, keepTop);
-        return;
-      }
-      reload("");
-      waitAndPlaceCard(itemId, card, keepTop);
-    })().catch(() => {});
+    const btn = ensureShowAllButton();
+    if (btn) btn.hidden = false;
   });
 
   searchInput?.addEventListener("input", () => {
+    hideShowAllButton();
     window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
       reload(String(searchInput.value || "").trim());
     }, 220);
   });
   searchInput?.addEventListener("search", () => {
+    hideShowAllButton();
     window.clearTimeout(searchTimer);
     reload(String(searchInput.value || "").trim());
   });

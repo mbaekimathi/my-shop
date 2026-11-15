@@ -81,6 +81,12 @@
             <span>M-Pesa STK{% if not stk_ready %} ({{ stk_off_label|default:"STK off" }}){% endif %}</span>
           </label>
           {% endif %}
+          {% if pos_pay_card %}
+          <label class="ax-pay-method{% if not pos_pay_cash and not pos_pay_mpesa %} is-active{% endif %}">
+            <input type="radio" name="payment_method" value="card"{% if not pos_pay_cash and not pos_pay_mpesa %} checked{% endif %} data-ax-pay-method>
+            <span>Card</span>
+          </label>
+          {% endif %}
         </div>
         <label class="ax-pay-label ax-pay-mpesa-row" data-ax-pay-mpesa-row hidden>
           M-Pesa receipt no.

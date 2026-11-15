@@ -15,7 +15,13 @@ from employees.models import (
     EmployeeRole,
     EmployeeStatus,
 )
-from items.models import Item, ShelfItem, ShelfStockMovement, ShopStock
+from items.models import (
+    Item,
+    ShelfItem,
+    ShelfStockMovement,
+    ShopStock,
+    StoreStock,
+)
 from shops.models import CompanyPosSettings, Shop, ShopPosSettings
 from shops.services import (
     _invalidate_pos_settings_cache,
@@ -396,6 +402,50 @@ class StoreManagerShelfStockTests(TestCase):
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("15"))
 
+    def test_register_form_lives_in_popup_not_page_body(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self.client.post(
+            self.url,
+            {"action": "register", "name": "Gunny bags", "opening_qty": "20", "shop": self.shop.pk},
+        )
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        # The register trigger lives in the sidebar, not the listing panel.
+        self.assertContains(page, 'data-modal-open="shelf-stock"')
+        self.assertNotContains(page, "stock-shelf-register-btn")
+        self.assertContains(page, 'data-modal="shelf-stock"')
+        self.assertContains(page, 'data-shelf-register-form')
+        self.assertContains(page, "GUNNY BAGS")
+        # Registering is name/category/unit + optional image — no qty fields.
+        body = page.content.decode()
+        self.assertNotIn('name="opening_qty"', body)
+        self.assertNotIn('name="low_stock_threshold"', body)
+        self.assertIn('name="image"', body)
+
+    def test_register_shelf_item_accepts_optional_image(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        photo = SimpleUploadedFile(
+            "rolls.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg"
+        )
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Thermal rolls",
+                "shop": self.shop.pk,
+                "image": photo,
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(shelf.quantity, Decimal("0"))
+        self.assertTrue(shelf.image)
+
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, shelf.public_image_url())
+        photo_url = reverse("core:shelf_photo", kwargs={"shelf_item_id": shelf.pk})
+        self.assertEqual(self.client.get(photo_url).status_code, 200)
+
     def test_post_rejected_when_company_shelf_mode_off(self):
         other = Shop.objects.create(
             name="OTHER SHELF SHOP",
@@ -413,3 +463,497 @@ class StoreManagerShelfStockTests(TestCase):
         set_company_pos_setting(field="stock_mode_shelf", enabled=True)
         self.client.post(self.url, {"action": "register", "name": "Right", "shop": other.pk})
         self.assertEqual(ShelfItem.objects.get().shop, other)
+
+    def test_shelf_only_mode_hides_item_store_pages(self):
+        items_url = reverse("employees:store_stock_items")
+        in_url = reverse("employees:store_stock_in")
+        out_url = reverse("employees:store_stock_out")
+        trade_url = reverse("employees:store_stock_trade")
+        movement_url = reverse("employees:store_stock_movement")
+        report_url = reverse("employees:store_stock_report")
+        item_urls = (
+            items_url,
+            in_url,
+            out_url,
+            trade_url,
+            movement_url,
+            report_url,
+        )
+
+        page = self.client.get("/store-manager/")
+        self.assertContains(page, items_url)
+        for url in item_urls:
+            self.assertEqual(self.client.get(url).status_code, 200)
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        page = self.client.get("/store-manager/")
+        self.assertNotContains(page, items_url)
+        for url in item_urls:
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 302)
+            self.assertIn("/store-manager/shelf-stock/", response["Location"])
+        self.assertContains(page, self.url)
+        payload = self.client.get(
+            reverse("employees:store_stock_item_search")
+        ).json()
+        self.assertEqual(payload["results"], [])
+
+        # Both mode: items are tracked again — item links and pages return.
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        page = self.client.get("/store-manager/")
+        self.assertContains(page, items_url)
+        for url in item_urls:
+            self.assertEqual(self.client.get(url).status_code, 200)
+        self.assertContains(page, self.url)
+
+    def test_dashboard_links_item_and_shelf_stock_per_mode(self):
+        items_url = reverse("employees:store_stock_items")
+
+        page = self.client.get("/store-manager/")
+        self.assertContains(page, "Item stock")
+        self.assertContains(page, items_url)
+        self.assertNotContains(page, self.url)
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.client.post(
+            self.url,
+            {"action": "register", "name": "Gunny bags", "opening_qty": "20", "shop": self.shop.pk},
+        )
+        page = self.client.get("/store-manager/")
+        self.assertContains(page, items_url)
+        self.assertContains(page, self.url)
+        self.assertContains(page, "Shelf stock")
+        # Registering happens from the stock pages' sidebar, not the dashboard.
+        self.assertNotContains(page, 'data-modal-open="shelf-stock"')
+
+        # Shelf-only: the item stock link disappears, shelf stays.
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        page = self.client.get("/store-manager/")
+        self.assertContains(page, self.url)
+        self.assertNotContains(page, items_url)
+        self.assertNotContains(page, "Item stock")
+
+    def test_item_stock_page_lists_central_store_qty_and_tabs(self):
+        item = Item.objects.create(
+            category="GEN",
+            name="Rice 5kg",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("20"),
+            created_by=self.manager,
+        )
+        StoreStock.objects.create(item=item, quantity=Decimal("150"))
+
+        page = self.client.get(reverse("employees:store_stock_items"))
+        self.assertContains(page, "Rice 5kg")
+        self.assertContains(page, "150.000")
+        # The five item-stock links live in the page sidebar.
+        for name in (
+            "store_stock_in",
+            "store_stock_out",
+            "store_stock_movement",
+            "store_stock_report",
+        ):
+            self.assertContains(page, reverse(f"employees:{name}"))
+        self.assertContains(page, "Item stock in")
+        self.assertContains(page, "Item stock movement")
+        # Item pages never carry shelf links.
+        self.assertNotContains(page, self.url)
+
+    def test_item_stock_movement_page_lists_in_out_ledger(self):
+        item = Item.objects.create(
+            category="GEN",
+            name="Rice 5kg",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("20"),
+            created_by=self.manager,
+        )
+        self.client.post(
+            reverse("employees:store_stock_in"),
+            {
+                f"qty_{item.pk}": "25",
+                "received_by_id": self.manager.pk,
+                "supplier_name": "Brookside",
+                "supplier_phone": "0722000000",
+                "payment_status": "paid",
+                "note": "Delivery",
+            },
+        )
+        page = self.client.get(reverse("employees:store_stock_movement"))
+        self.assertContains(page, "Rice 5kg")
+        self.assertContains(page, "Stock in")
+        self.assertContains(page, "Delivery")
+
+    def test_shelf_stock_modes_cover_in_out_movement_and_report(self):
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.client.post(
+            self.url,
+            {"action": "register", "name": "Gunny bags", "opening_qty": "20", "shop": self.shop.pk},
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+
+        # The five shelf-stock links live in the page sidebar; item links
+        # never appear on shelf pages.
+        stock_page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(stock_page, "Shelf stock in")
+        self.assertContains(stock_page, f"{self.url}?mode=out")
+        self.assertContains(stock_page, f"{self.url}?mode=movements")
+        self.assertContains(stock_page, f"{self.url}?mode=report")
+        self.assertNotContains(stock_page, reverse("employees:store_stock_items"))
+
+        # Stock in: batch form posts qty_<id> lines like the item pages.
+        in_page = self.client.get(f"{self.url}?shop={self.shop.pk}&mode=in")
+        self.assertContains(in_page, f'name="qty_{shelf.pk}"')
+        self.client.post(
+            self.url,
+            {
+                "mode": "in",
+                "shop": self.shop.pk,
+                f"qty_{shelf.pk}": "7",
+                "supplier_name": "Kenafric",
+                "supplier_phone": "0733111222",
+                "payment_status": "unpaid",
+                "note": "Top up",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("27"))
+
+        # Stock out: same batch form with reason + refund, qty capped at
+        # what is on the shelf.
+        self.client.post(
+            self.url,
+            {
+                "mode": "out",
+                "shop": self.shop.pk,
+                f"qty_{shelf.pk}": "2",
+                "reason": "waste",
+                "refund": "no",
+            },
+        )
+        self.client.post(
+            self.url,
+            {
+                "mode": "out",
+                "shop": self.shop.pk,
+                f"qty_{shelf.pk}": "999",
+                "reason": "waste",
+                "refund": "no",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("25"))
+        out_move = shelf.movements.get(movement_type="out")
+        self.assertEqual(out_move.reason, "waste")
+        self.assertEqual(out_move.refund, "no")
+
+        # Movement + report tabs render the ledger and the summary.
+        movements = self.client.get(f"{self.url}?shop={self.shop.pk}&mode=movements")
+        self.assertContains(movements, "Top up")
+        self.assertContains(movements, "GUNNY BAGS")
+        report = self.client.get(f"{self.url}?shop={self.shop.pk}&mode=report")
+        self.assertContains(report, "GUNNY BAGS")
+        self.assertContains(report, "Stock report")
+
+    def test_shelf_trade_is_one_way_with_a_person(self):
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.client.post(
+            self.url,
+            {"action": "register", "name": "Gunny bags", "opening_qty": "20", "shop": self.shop.pk},
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+
+        # Sidebar action + popup; the trade page shows the direction toggle.
+        stock_page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(stock_page, "Shelf stock trade")
+        self.assertContains(stock_page, 'data-modal-open="shelf-stock-trade"')
+        self.assertContains(stock_page, 'data-modal="shelf-stock-trade"')
+        trade_page = self.client.get(f"{self.url}?shop={self.shop.pk}&mode=trade")
+        self.assertContains(trade_page, 'name="trade_kind"')
+        self.assertContains(trade_page, f'name="qty_{shelf.pk}"')
+
+        # Trade out: the person takes items off the shelf.
+        resp = self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "4",
+                "person_name": "Jane Trader",
+                "person_phone": "0722000000",
+                "note": "swap deal",
+            },
+        )
+        self.assertRedirects(resp, f"{self.url}?shop={self.shop.pk}")
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("16"))
+        trade_out = ShelfStockMovement.objects.get(
+            shelf_item=shelf, movement_type="out", reason="trade_out"
+        )
+        self.assertEqual(trade_out.supplier_name, "JANE TRADER")
+        self.assertEqual(trade_out.supplier_phone, "0722000000")
+        self.assertEqual(trade_out.note, "swap deal")
+
+        # Trade in: the person brings items onto the shelf.
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_in",
+                f"qty_{shelf.pk}": "3",
+                "person_name": "Jane Trader",
+                "person_phone": "0722000000",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("19"))
+        trade_in = ShelfStockMovement.objects.get(
+            shelf_item=shelf, movement_type="in", reason="trade_in"
+        )
+        self.assertEqual(trade_in.supplier_name, "JANE TRADER")
+
+        # No direction, no lines, and over-quantity trades are rejected.
+        self.client.post(
+            self.url,
+            {"mode": "trade", "shop": self.shop.pk, f"qty_{shelf.pk}": "1"},
+        )
+        self.client.post(
+            self.url,
+            {"mode": "trade", "shop": self.shop.pk, "trade_kind": "trade_out"},
+        )
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "999",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("19"))
+        self.assertEqual(
+            ShelfStockMovement.objects.filter(
+                shelf_item=shelf, reason__in=("trade_out", "trade_in")
+            ).count(),
+            2,
+        )
+
+    def test_both_mode_adds_item_and_shelf_tabs_to_item_management(self):
+        page_url = "/store-manager/item-management/"
+
+        page = self.client.get(page_url)
+        self.assertNotContains(page, 'href="?tab=shelf"')
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Gunny bags",
+                "opening_qty": "4",
+                "shop": self.shop.pk,
+            },
+        )
+
+        page = self.client.get(page_url)
+        self.assertContains(page, 'href="?tab=shelf"')
+        self.assertContains(page, 'href="?tab=items"')
+        self.assertContains(page, "data-item-catalog-api")
+
+        shelf_page = self.client.get(f"{page_url}?tab=shelf")
+        self.assertContains(shelf_page, "Shelf stock")
+        self.assertContains(shelf_page, "STORE SHELF SHOP")
+        self.assertContains(shelf_page, "GUNNY BAGS")
+        self.assertNotContains(shelf_page, "data-item-catalog-root")
+
+        # Shelf-only mode lands on the shelf list by default.
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        page = self.client.get(page_url)
+        self.assertContains(page, "GUNNY BAGS")
+        self.assertNotContains(page, "data-item-catalog-root")
+
+    def test_stock_in_and_out_live_in_popups(self):
+        item = Item.objects.create(
+            category="GEN",
+            name="Rice 5kg",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("20"),
+            created_by=self.manager,
+        )
+
+        # Item stock: sidebar triggers open modals on every item-stock page.
+        for url in (
+            reverse("employees:store_stock_items"),
+            reverse("employees:store_stock_movement"),
+            reverse("employees:store_stock_report"),
+        ):
+            page = self.client.get(url)
+            self.assertContains(page, 'data-modal-open="store-stock-in"')
+            self.assertContains(page, 'data-modal-open="store-stock-out"')
+            self.assertContains(page, 'data-modal="store-stock-in"')
+            self.assertContains(page, 'data-modal="store-stock-out"')
+            self.assertContains(
+                page, f'action="{reverse("employees:store_stock_in")}"'
+            )
+            self.assertContains(
+                page, f'action="{reverse("employees:store_stock_out")}"'
+            )
+            self.assertContains(page, f'name="qty_{item.pk}"')
+
+        # Stock-in popups capture supplier details + payment; stock-out
+        # popups do not.
+        page = self.client.get(reverse("employees:store_stock_items"))
+        body = page.content.decode()
+        in_modal = body.split('data-modal="store-stock-in"', 1)[1].split(
+            'data-modal="store-stock-out"', 1
+        )[0]
+        self.assertIn('name="supplier_name"', in_modal)
+        self.assertIn('name="supplier_phone"', in_modal)
+        self.assertIn('name="payment_status"', in_modal)
+        self.assertIn(f'name="price_{item.pk}"', in_modal)
+        # Pick-and-add flow: rows offer an Add button into a selected list.
+        self.assertIn('data-store-row-add', in_modal)
+        self.assertIn('data-store-row-remove', in_modal)
+        self.assertIn('data-store-selected-list', in_modal)
+        out_modal = body.split('data-modal="store-stock-out"', 1)[1].split(
+            'data-modal="store-stock-trade"', 1
+        )[0]
+        self.assertNotIn(f'name="price_{item.pk}"', out_modal)
+        self.assertNotIn('name="supplier_name"', out_modal)
+        for field in ("reason", "refund", "refund_amount"):
+            self.assertIn(f'name="{field}"', out_modal)
+
+        # A popup POST lands on Current stock, not the standalone form page.
+        resp = self.client.post(
+            reverse("employees:store_stock_in"),
+            {
+                f"qty_{item.pk}": "5",
+                f"price_{item.pk}": "32.50",
+                "received_by_id": self.manager.pk,
+                "supplier_name": "Brookside",
+                "supplier_phone": "0722000000",
+                "payment_status": "partial",
+                "note": "Pop up",
+            },
+        )
+        self.assertRedirects(resp, reverse("employees:store_stock_items"))
+        movement = item.store_stock_movements.get()
+        self.assertEqual(movement.buying_price, Decimal("32.50"))
+        self.assertEqual(movement.supplier_name, "BROOKSIDE")
+        self.assertEqual(movement.supplier_phone, "0722000000")
+        self.assertEqual(movement.payment_status, "partial")
+
+        # Supplier + payment are required on stock in by default.
+        denied = self.client.post(
+            reverse("employees:store_stock_in"),
+            {f"qty_{item.pk}": "1", "received_by_id": self.manager.pk},
+        )
+        self.assertContains(denied, "supplier name", status_code=200)
+        self.assertEqual(item.store_stock_movements.count(), 1)
+
+        # Stock in needs no counterpart — it records the acting manager.
+        self.assertNotIn('name="received_by_id"', in_modal)
+        resp = self.client.post(
+            reverse("employees:store_stock_in"),
+            {
+                f"qty_{item.pk}": "3",
+                "supplier_name": "Brookside",
+                "supplier_phone": "0722000000",
+                "payment_status": "paid",
+            },
+        )
+        self.assertRedirects(resp, reverse("employees:store_stock_items"))
+        no_counterpart = item.store_stock_movements.latest("id")
+        self.assertEqual(no_counterpart.received_by, self.manager)
+
+        # Stock out needs no receiving employee either — and the popup
+        # defaults the reason to Custom with the custom-reason field open.
+        self.assertNotIn('name="received_by_id"', out_modal)
+        self.assertIn('value="custom" selected', out_modal)
+        resp = self.client.post(
+            reverse("employees:store_stock_out"),
+            {
+                f"qty_{item.pk}": "1",
+                "reason": "waste",
+                "refund": "no",
+            },
+        )
+        self.assertRedirects(resp, reverse("employees:store_stock_items"))
+        no_emp_out = item.store_stock_movements.get(movement_type="out")
+        self.assertEqual(no_emp_out.received_by, self.manager)
+
+        # Stock out carries reason + refund like the shop-level stock-out
+        # panel: custom reason uses the note field, refund=yes needs an amount.
+        out = self.client.post(
+            reverse("employees:store_stock_out"),
+            {
+                f"qty_{item.pk}": "2",
+                "received_by_id": self.manager.pk,
+                "reason": "custom",
+                "note": "Damaged in transit",
+                "refund": "yes",
+                "refund_amount": "45.50",
+            },
+        )
+        self.assertRedirects(out, reverse("employees:store_stock_items"))
+        out_move = item.store_stock_movements.filter(
+            movement_type="out"
+        ).latest("id")
+        self.assertEqual(out_move.reason, "custom")
+        self.assertEqual(out_move.note, "Damaged in transit")
+        self.assertEqual(out_move.refund, "yes")
+        self.assertEqual(out_move.refund_amount, Decimal("45.50"))
+
+        # Reason and refund choice are required by default on stock out.
+        denied_out = self.client.post(
+            reverse("employees:store_stock_out"),
+            {f"qty_{item.pk}": "1", "received_by_id": self.manager.pk},
+        )
+        self.assertContains(denied_out, "Choose a reason", status_code=200)
+        self.assertEqual(item.store_stock_movements.count(), 4)
+
+        # Shelf stock: the same popup pattern posts mode + shop + qty_<id>.
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.client.post(
+            self.url,
+            {"action": "register", "name": "Gunny bags", "shop": self.shop.pk},
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+
+        shelf_page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(shelf_page, 'data-modal-open="shelf-stock-in"')
+        self.assertContains(shelf_page, 'data-modal-open="shelf-stock-out"')
+        self.assertContains(shelf_page, 'data-modal="shelf-stock-in"')
+        self.assertContains(shelf_page, 'data-modal="shelf-stock-out"')
+        self.assertContains(shelf_page, 'name="mode" value="in"')
+        self.assertContains(shelf_page, 'name="mode" value="out"')
+        self.assertContains(shelf_page, f'name="qty_{shelf.pk}"')
+        self.assertContains(shelf_page, 'name="supplier_name"')
+        self.assertContains(shelf_page, 'name="payment_status"')
+        shelf_body = shelf_page.content.decode()
+        shelf_out = shelf_body.split('data-modal="shelf-stock-out"', 1)[1]
+        for field in ("reason", "refund", "refund_amount"):
+            self.assertIn(f'name="{field}"', shelf_out)
+        self.assertNotIn('name="supplier_name"', shelf_out)
+
+        resp = self.client.post(
+            self.url,
+            {
+                "mode": "in",
+                "shop": self.shop.pk,
+                f"qty_{shelf.pk}": "7",
+                "supplier_name": "Kenafric",
+                "supplier_phone": "0733111222",
+                "payment_status": "unpaid",
+                "note": "Pop up",
+            },
+        )
+        self.assertRedirects(resp, f"{self.url}?shop={self.shop.pk}")
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("7"))
+        in_move = shelf.movements.get(movement_type="in")
+        self.assertEqual(in_move.supplier_name, "KENAFRIC")
+        self.assertEqual(in_move.supplier_phone, "0733111222")
+        self.assertEqual(in_move.payment_status, "unpaid")

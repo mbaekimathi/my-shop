@@ -13,6 +13,11 @@ urlpatterns = [
         item_views.item_photo,
         name="item_photo",
     ),
+    path(
+        "catalog/shelf-items/<int:shelf_item_id>/photo/",
+        item_views.shelf_photo,
+        name="shelf_photo",
+    ),
     path("", views.landing, name="landing"),
     path("sw.js", views.service_worker, name="service_worker"),
     path("manifest.webmanifest", views.web_manifest, name="web_manifest"),

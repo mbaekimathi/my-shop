@@ -9,7 +9,14 @@ from django.db import transaction
 from django.db.models import Q
 
 from employees.models import EmployeeProfile, EmployeeStatus
-from items.models import Item, StoreStock, StoreStockMovement, StoreStockMovementType
+from items.models import (
+    Item,
+    StockOutReason,
+    StockPaymentStatus,
+    StoreStock,
+    StoreStockMovement,
+    StoreStockMovementType,
+)
 
 
 def _parse_qty(raw) -> Decimal:
@@ -40,14 +47,25 @@ def list_store_stock_items(*, query: str = "") -> list[dict]:
         if q.isdigit():
             filt = filt | Q(pk=int(q))
         items = items.filter(filt)
+    item_ids = items.values_list("id", flat=True)
     qty_by_item = {
         row.item_id: row.quantity
-        for row in StoreStock.objects.filter(item_id__in=items.values_list("id", flat=True))
+        for row in StoreStock.objects.filter(item_id__in=item_ids)
         .only("item_id", "quantity")
     }
+    last_price = {}
+    for move_item_id, price in (
+        StoreStockMovement.objects.filter(
+            item_id__in=item_ids, buying_price__isnull=False
+        )
+        .order_by("item_id", "-created_at", "-id")
+        .values_list("item_id", "buying_price")
+    ):
+        last_price.setdefault(move_item_id, price)
     rows = []
     for item in items:
         qty = qty_by_item.get(item.pk) or Decimal("0")
+        price = last_price.get(item.pk)
         rows.append(
             {
                 "id": item.pk,
@@ -56,6 +74,10 @@ def list_store_stock_items(*, query: str = "") -> list[dict]:
                 "label": f"{item.name} · {item.category}",
                 "store_qty": qty,
                 "store_qty_display": str(qty),
+                "last_buying_price": price,
+                "last_buying_price_display": (
+                    str(price) if price is not None else ""
+                ),
                 "search_text": f"{item.name} {item.category} {item.pk}".lower(),
             }
         )
@@ -77,8 +99,111 @@ def search_store_items(*, query: str, limit: int = 12) -> list[dict]:
     ]
 
 
-def parse_store_stock_qty_lines(post_data) -> list[tuple[int, Decimal]]:
-    """Read qty_<item_id> fields; skip blanks and zeros."""
+def parse_supplier_payment_details(post_data, *, stock_req) -> dict:
+    """Read supplier name/phone + payment status from a stock-in payload.
+
+    Honours CompanyStockSettings: when require_supplier_on_in /
+    require_payment_status_on_in are off the fields are optional.
+    """
+    name = str(post_data.get("supplier_name") or "").strip().upper()
+    phone = str(post_data.get("supplier_phone") or "").strip()
+    payment = str(post_data.get("payment_status") or "").strip().lower()
+    if getattr(stock_req, "require_supplier_on_in", False):
+        if not name:
+            raise ValidationError("Enter the supplier name.")
+        if not phone:
+            raise ValidationError("Enter the supplier phone number.")
+    valid = {choice.value for choice in StockPaymentStatus}
+    if getattr(stock_req, "require_payment_status_on_in", False):
+        if payment not in valid:
+            raise ValidationError(
+                "Choose a payment status (unpaid, paid, or partial)."
+            )
+    elif payment not in valid:
+        payment = ""
+    return {
+        "supplier_name": name[:160],
+        "supplier_phone": phone[:40],
+        "payment_status": payment,
+    }
+
+
+def parse_stock_out_details(post_data, *, stock_req) -> dict:
+    """Read reason / refund from a stock-out payload.
+
+    Same rules as the per-shop stock-out panel: the reason is one of
+    StockOutReason (custom needs a note), refund is yes/no (yes needs an
+    amount), and CompanyStockSettings.require_reason_on_out /
+    require_refund_on_out decide whether the fields are compulsory.
+    """
+    from items.services import _parse_price
+
+    reason = str(post_data.get("reason") or "").strip().lower()
+    note = str(post_data.get("note") or "").strip()
+    valid_reasons = {choice.value for choice in StockOutReason}
+    if getattr(stock_req, "require_reason_on_out", False):
+        if reason not in valid_reasons:
+            raise ValidationError(
+                "Choose a reason (waste, transfer, display, supplier return, "
+                "trade out, trade in, or custom)."
+            )
+    elif reason not in valid_reasons:
+        reason = ""
+    if reason == StockOutReason.CUSTOM:
+        if not note:
+            raise ValidationError("Enter a custom reason.")
+        if len(note) > 200:
+            raise ValidationError(
+                "Custom reason must be 200 characters or fewer."
+            )
+    elif reason:
+        # Preset reasons carry no free-text note from this form.
+        note = ""
+
+    refund = str(post_data.get("refund") or "").strip().lower()
+    refund_amount = None
+    if getattr(stock_req, "require_refund_on_out", False):
+        if refund not in ("yes", "no"):
+            raise ValidationError(
+                "Choose whether a refund applies (yes or no)."
+            )
+    elif refund not in ("yes", "no"):
+        refund = ""
+    if refund == "yes":
+        refund_amount = _parse_price(
+            post_data.get("refund_amount"), "Refund amount"
+        )
+        if refund_amount <= 0:
+            raise ValidationError("Refund amount must be greater than zero.")
+    return {
+        "reason": reason,
+        "note": note,
+        "refund": refund,
+        "refund_amount": refund_amount,
+    }
+
+
+def _parse_buying_price(raw, item_raw) -> Decimal | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        price = Decimal(text)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError(
+            f"Invalid buying price for item {item_raw}."
+        ) from exc
+    if price < 0:
+        raise ValidationError(
+            f"Buying price cannot be negative for item {item_raw}."
+        )
+    return price.quantize(Decimal("0.01"))
+
+
+def parse_store_stock_qty_lines(
+    post_data,
+) -> list[tuple[int, Decimal, Decimal | None]]:
+    """Read qty_<item_id> (+ optional price_<item_id>) fields; skip blanks/zeros."""
     lines = []
     for key, raw in (post_data or {}).items():
         if not str(key).startswith("qty_"):
@@ -93,7 +218,13 @@ def parse_store_stock_qty_lines(post_data) -> list[tuple[int, Decimal]]:
             qty = _parse_qty(text)
         except ValidationError:
             raise ValidationError(f"Invalid quantity for item {item_raw}.")
-        lines.append((int(item_raw), qty))
+        lines.append(
+            (
+                int(item_raw),
+                qty,
+                _parse_buying_price(post_data.get(f"price_{item_raw}"), item_raw),
+            )
+        )
     if not lines:
         raise ValidationError("Enter a quantity for at least one item.")
     return lines
@@ -104,9 +235,15 @@ def record_store_stock_lines(
     *,
     mode: str,
     actor: EmployeeProfile,
-    lines: list[tuple[int, Decimal]],
+    lines: list[tuple[int, Decimal, Decimal | None]],
     received_by_id,
     note: str = "",
+    supplier_name: str = "",
+    supplier_phone: str = "",
+    payment_status: str = "",
+    reason: str = "",
+    refund: str = "",
+    refund_amount=None,
 ) -> list[StoreStockMovement]:
     mode = (mode or "").strip().lower()
     if mode not in {StoreStockMovementType.IN, StoreStockMovementType.OUT}:
@@ -114,7 +251,7 @@ def record_store_stock_lines(
     if not lines:
         raise ValidationError("Enter a quantity for at least one item.")
     movements = []
-    for item_id, qty in lines:
+    for item_id, qty, buying_price in lines:
         if mode == StoreStockMovementType.IN:
             movements.append(
                 record_store_stock_in(
@@ -123,6 +260,11 @@ def record_store_stock_lines(
                     quantity=qty,
                     received_by_id=received_by_id,
                     note=note,
+                    supplier_name=supplier_name,
+                    supplier_phone=supplier_phone,
+                    payment_status=payment_status,
+                    buying_price=buying_price,
+                    reason=reason,
                 )
             )
         else:
@@ -133,6 +275,11 @@ def record_store_stock_lines(
                     quantity=qty,
                     received_by_id=received_by_id,
                     note=note,
+                    reason=reason,
+                    refund=refund,
+                    refund_amount=refund_amount,
+                    supplier_name=supplier_name,
+                    supplier_phone=supplier_phone,
                 )
             )
     return movements
@@ -195,13 +342,23 @@ def record_store_stock_in(
     quantity,
     received_by_id,
     note: str = "",
+    supplier_name: str = "",
+    supplier_phone: str = "",
+    payment_status: str = "",
+    buying_price=None,
+    reason: str = "",
 ) -> StoreStockMovement:
     if actor is None or not getattr(actor, "pk", None):
         raise ValidationError("Sign in to record store stock in.")
     item = _resolve_item(item_id)
     qty = _parse_qty(quantity)
-    receiver = _resolve_counterpart(
-        received_by_id, mode=StoreStockMovementType.IN
+    reason = (reason or "").strip().lower()
+    if reason not in {choice.value for choice in StockOutReason}:
+        reason = ""
+    receiver = (
+        _resolve_counterpart(received_by_id, mode=StoreStockMovementType.IN)
+        if received_by_id
+        else actor
     )
     stock, _ = StoreStock.objects.select_for_update().get_or_create(item=item)
     stock.quantity = (stock.quantity or Decimal("0")) + qty
@@ -213,6 +370,11 @@ def record_store_stock_in(
         balance_after=stock.quantity,
         created_by=actor,
         received_by=receiver,
+        supplier_name=(supplier_name or "").strip().upper()[:160],
+        supplier_phone=(supplier_phone or "").strip()[:40],
+        payment_status=(payment_status or "").strip().lower()[:16],
+        buying_price=buying_price,
+        reason=reason,
         note=(note or "").strip()[:255],
     )
 
@@ -225,13 +387,20 @@ def record_store_stock_out(
     quantity,
     received_by_id,
     note: str = "",
+    reason: str = "",
+    refund: str = "",
+    refund_amount=None,
+    supplier_name: str = "",
+    supplier_phone: str = "",
 ) -> StoreStockMovement:
     if actor is None or not getattr(actor, "pk", None):
         raise ValidationError("Sign in to record store stock out.")
     item = _resolve_item(item_id)
     qty = _parse_qty(quantity)
-    receiver = _resolve_counterpart(
-        received_by_id, mode=StoreStockMovementType.OUT
+    receiver = (
+        _resolve_counterpart(received_by_id, mode=StoreStockMovementType.OUT)
+        if received_by_id
+        else actor
     )
     stock, _ = StoreStock.objects.select_for_update().get_or_create(item=item)
     current = stock.quantity or Decimal("0")
@@ -241,6 +410,14 @@ def record_store_stock_out(
         )
     stock.quantity = current - qty
     stock.save(update_fields=["quantity", "updated_at"])
+    reason = (reason or "").strip().lower()
+    if reason not in {choice.value for choice in StockOutReason}:
+        reason = ""
+    refund = (refund or "").strip().lower()
+    if refund not in ("yes", "no"):
+        refund = ""
+    if refund != "yes":
+        refund_amount = None
     return StoreStockMovement.objects.create(
         movement_type=StoreStockMovementType.OUT,
         item=item,
@@ -248,8 +425,90 @@ def record_store_stock_out(
         balance_after=stock.quantity,
         created_by=actor,
         received_by=receiver,
+        supplier_name=(supplier_name or "").strip().upper()[:160],
+        supplier_phone=(supplier_phone or "").strip()[:40],
+        reason=reason,
+        refund=refund,
+        refund_amount=refund_amount,
         note=(note or "").strip()[:255],
     )
+
+
+def parse_store_trade_lines(
+    post_data,
+) -> tuple[str, list[tuple[int, Decimal, Decimal | None]]]:
+    """Read a one-way store trade: trade_kind plus qty_<id>/price_<id> rows."""
+    kind = str((post_data or {}).get("trade_kind") or "").strip().lower()
+    if kind not in {StockOutReason.TRADE_OUT, StockOutReason.TRADE_IN}:
+        raise ValidationError(
+            "Choose the trade direction — trade out or trade in."
+        )
+    return kind, parse_store_stock_qty_lines(post_data)
+
+
+@transaction.atomic
+def record_store_trade(
+    *,
+    actor: EmployeeProfile,
+    kind: str,
+    person_name: str = "",
+    person_phone: str = "",
+    lines: list[tuple[int, Decimal, Decimal | None]],
+    note: str = "",
+    require_person: bool = False,
+) -> list[StoreStockMovement]:
+    """One-way store trade with one person.
+
+    trade_out: items leave the store to the person (stock out tagged
+    trade_out). trade_in: items enter the store from the person (stock
+    in tagged trade_in, optional unit value per line).
+    """
+    if actor is None or not getattr(actor, "pk", None):
+        raise ValidationError("Sign in to record a store trade.")
+    kind = (kind or "").strip().lower()
+    if kind not in {StockOutReason.TRADE_OUT, StockOutReason.TRADE_IN}:
+        raise ValidationError(
+            "Choose the trade direction — trade out or trade in."
+        )
+    if not lines:
+        raise ValidationError("Enter a quantity for at least one item.")
+    person_name = (person_name or "").strip().upper()[:160]
+    person_phone = (person_phone or "").strip()[:40]
+    if require_person and kind == StockOutReason.TRADE_IN:
+        if not person_name:
+            raise ValidationError("Enter the other person's name.")
+        if not person_phone:
+            raise ValidationError("Enter the other person's phone number.")
+    movements = []
+    for item_id, qty, buying_price in lines:
+        if kind == StockOutReason.TRADE_OUT:
+            movements.append(
+                record_store_stock_out(
+                    actor=actor,
+                    item_id=item_id,
+                    quantity=qty,
+                    received_by_id=None,
+                    note=note,
+                    reason=StockOutReason.TRADE_OUT,
+                    supplier_name=person_name,
+                    supplier_phone=person_phone,
+                )
+            )
+        else:
+            movements.append(
+                record_store_stock_in(
+                    actor=actor,
+                    item_id=item_id,
+                    quantity=qty,
+                    received_by_id=None,
+                    note=note,
+                    reason=StockOutReason.TRADE_IN,
+                    supplier_name=person_name,
+                    supplier_phone=person_phone,
+                    buying_price=buying_price,
+                )
+            )
+    return movements
 
 
 def _employee_display_name(profile) -> str:
@@ -339,10 +598,36 @@ def build_store_stock_report(*, request) -> dict:
                 "recorded_by": _employee_display_name(movement.created_by),
                 "counterpart_label": counterpart_label,
                 "counterpart": _employee_display_name(movement.received_by),
+                "supplier_name": (movement.supplier_name or "").strip(),
+                "supplier_phone": (movement.supplier_phone or "").strip(),
+                "payment_status": (movement.payment_status or "").strip(),
+                "payment_label": (
+                    movement.get_payment_status_display()
+                    if movement.payment_status
+                    else ""
+                ),
+                "buying_price_display": (
+                    str(movement.buying_price)
+                    if movement.buying_price is not None
+                    else ""
+                ),
+                "reason": (movement.reason or "").strip(),
+                "reason_label": (
+                    movement.get_reason_display()
+                    if movement.reason
+                    else ""
+                ),
+                "refund": (movement.refund or "").strip(),
+                "refund_amount_display": (
+                    str(movement.refund_amount)
+                    if movement.refund_amount is not None
+                    else ""
+                ),
                 "note": (movement.note or "").strip(),
                 "search_text": (
                     f"{movement.item.name} {movement.item.category} "
-                    f"{movement.movement_type} {movement.note}"
+                    f"{movement.movement_type} {movement.note} "
+                    f"{movement.supplier_name} {movement.supplier_phone}"
                 ).lower(),
             }
         )

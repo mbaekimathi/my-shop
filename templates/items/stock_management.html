@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=11">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
 {% endblock %}
 
 {% block workspace_content %}
@@ -1215,7 +1215,7 @@
       </button>
     </div>
 
-    <form method="post" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
+    <form method="post" enctype="multipart/form-data" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
       {% csrf_token %}
       <input type="hidden" name="shelf_action" value="register">
       <label class="store-stock-field store-stock-field--full">
@@ -1258,18 +1258,11 @@
           </select>
         </div>
       </label>
-      <label class="store-stock-field">
-        <span>Quantity on shelf now</span>
+      <label class="store-stock-field store-stock-field--full">
+        <span>Upload image <em>optional</em></span>
         <div class="store-stock-input-wrap">
-          <i data-lucide="hash" aria-hidden="true"></i>
-          <input type="number" name="opening_qty" min="0" step="any" inputmode="decimal" placeholder="0">
-        </div>
-      </label>
-      <label class="store-stock-field">
-        <span>Low stock alert at <em>optional</em></span>
-        <div class="store-stock-input-wrap">
-          <i data-lucide="bell" aria-hidden="true"></i>
-          <input type="number" name="low_stock_threshold" min="0" step="any" inputmode="decimal" placeholder="0">
+          <i data-lucide="image-plus" aria-hidden="true"></i>
+          <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif">
         </div>
       </label>
       <div class="workspace-modal-actions">

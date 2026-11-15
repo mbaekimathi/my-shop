@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=11">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
 {% endblock %}
 
 {% block workspace_content %}
@@ -27,7 +27,7 @@
     <dl class="store-stock-stats">
       <div class="store-stock-stat">
         <dt>Shelf items</dt>
-        <dd>{{ shelf_item_count }}</dd>
+        <dd data-store-visible-count>{{ shelf_item_count }}</dd>
       </div>
       <div class="store-stock-stat">
         <dt>Low</dt>
@@ -38,4 +38,9 @@
 
   {% include "shops/partials/shelf_stock_body.html" %}
 </section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/stock-shelf.js' %}?v=2"></script>
 {% endblock %}

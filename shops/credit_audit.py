@@ -136,11 +136,10 @@ def log_credit_payment(
     occurred_at=None,
 ) -> None:
     method = (payment_method or "cash").strip().lower()
-    kind = (
-        ClientCreditAccountEventKind.PAYMENT_MPESA
-        if method == "mpesa"
-        else ClientCreditAccountEventKind.PAYMENT_CASH
-    )
+    kind = {
+        "mpesa": ClientCreditAccountEventKind.PAYMENT_MPESA,
+        "card": ClientCreditAccountEventKind.PAYMENT_CARD,
+    }.get(method, ClientCreditAccountEventKind.PAYMENT_CASH)
     ref_bit = f" · Ref {mpesa_receipt_number}" if mpesa_receipt_number else ""
     due_after = _due_amount(receipt.total, receipt.amount_paid)
     detail = (
@@ -437,6 +436,7 @@ def build_client_credit_audit_trail(*, profile, client_id: int, request=None) ->
         if kind in {
             ClientCreditAccountEventKind.PAYMENT_CASH,
             ClientCreditAccountEventKind.PAYMENT_MPESA,
+            ClientCreditAccountEventKind.PAYMENT_CARD,
         }:
             payment_count += 1
         elif kind in {
@@ -690,6 +690,7 @@ def build_credit_audits(*, profile, request=None, event_kind: str = "") -> dict:
         if kind in {
             ClientCreditAccountEventKind.PAYMENT_CASH,
             ClientCreditAccountEventKind.PAYMENT_MPESA,
+            ClientCreditAccountEventKind.PAYMENT_CARD,
         }:
             payment_count += 1
             if event.amount is not None:
@@ -823,6 +824,7 @@ _CLEAR_EVENT_KINDS = frozenset(
     {
         ClientCreditAccountEventKind.PAYMENT_CASH,
         ClientCreditAccountEventKind.PAYMENT_MPESA,
+        ClientCreditAccountEventKind.PAYMENT_CARD,
         ClientCreditAccountEventKind.CREDIT_CANCELLED,
     }
 )
@@ -835,6 +837,7 @@ def _event_cleared_credit(event) -> bool:
     if event.kind not in {
         ClientCreditAccountEventKind.PAYMENT_CASH,
         ClientCreditAccountEventKind.PAYMENT_MPESA,
+        ClientCreditAccountEventKind.PAYMENT_CARD,
     }:
         return False
     receipt = getattr(event, "receipt", None)
@@ -851,6 +854,7 @@ def _event_cleared_credit_fast(event) -> bool:
     if kind not in {
         ClientCreditAccountEventKind.PAYMENT_CASH,
         ClientCreditAccountEventKind.PAYMENT_MPESA,
+        ClientCreditAccountEventKind.PAYMENT_CARD,
     }:
         return False
     meta = event.meta or {}
@@ -1057,6 +1061,7 @@ def build_credit_follow_ups_page(*, profile, request=None) -> dict:
         if event.kind in {
             ClientCreditAccountEventKind.PAYMENT_CASH,
             ClientCreditAccountEventKind.PAYMENT_MPESA,
+            ClientCreditAccountEventKind.PAYMENT_CARD,
         } and not is_cleared:
             continue
         if not is_follow_up and not is_cleared:

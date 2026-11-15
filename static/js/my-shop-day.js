@@ -12,6 +12,7 @@
   const tillRoot = root.querySelector("[data-till-live]");
   const closeCashInput = form.querySelector("[data-close-cash-amount]");
   const closeMpesaInput = form.querySelector("[data-close-mpesa-amount]");
+  const closeCardInput = form.querySelector("[data-close-card-amount]");
 
   let verified = false;
   let timer = null;
@@ -50,9 +51,11 @@
     setText("[data-till-total]", till.expected_total);
     setText("[data-till-cash]", till.expected_cash);
     setText("[data-till-mpesa]", till.expected_mpesa);
+    setText("[data-till-card]", till.expected_card);
     setText("[data-till-opening]", till.opening_total);
     setText("[data-till-cash-sales]", till.cash_sales);
     setText("[data-till-mpesa-sales]", till.mpesa_sales);
+    setText("[data-till-card-sales]", till.card_sales);
     setRefundRow(
       "[data-till-cash-refunds-row]",
       "[data-till-cash-refunds]",
@@ -63,10 +66,16 @@
       "[data-till-mpesa-refunds]",
       till.mpesa_refunds
     );
+    setRefundRow(
+      "[data-till-card-refunds-row]",
+      "[data-till-card-refunds]",
+      till.card_refunds
+    );
     setText("[data-till-expenses]", till.expenses_paid);
     setText("[data-till-drawings]", till.drawings_paid);
     setText("[data-till-drawings-cash]", till.drawings_cash);
     setText("[data-till-drawings-mpesa]", till.drawings_mpesa);
+    setText("[data-till-drawings-card]", till.drawings_card);
     setText("[data-till-suppliers]", till.suppliers_paid);
 
     // Keep close-form suggestions in sync when the user has not typed over them.
@@ -82,6 +91,13 @@
         closeMpesaInput.dataset.userEdited === "0")
     ) {
       closeMpesaInput.value = formatMoney(till.expected_mpesa);
+    }
+    if (
+      closeCardInput &&
+      (!closeCardInput.dataset.userEdited ||
+        closeCardInput.dataset.userEdited === "0")
+    ) {
+      closeCardInput.value = formatMoney(till.expected_card);
     }
   };
 
@@ -107,6 +123,9 @@
   });
   closeMpesaInput?.addEventListener("input", () => {
     closeMpesaInput.dataset.userEdited = "1";
+  });
+  closeCardInput?.addEventListener("input", () => {
+    closeCardInput.dataset.userEdited = "1";
   });
 
   const setStatus = (message, { ok = false, error = false } = {}) => {
@@ -202,14 +221,21 @@
   stockInput?.addEventListener("change", syncSubmit);
 
   form.addEventListener("submit", async (event) => {
-    const missing = ["cash_amount", "mpesa_amount"].filter((name) => {
-      const input = form.querySelector(`[name="${name}"]`);
-      if (!input) return false;
-      return !(input.value || "").trim();
-    });
+    const missing = ["cash_amount", "mpesa_amount", "card_amount"].filter(
+      (name) => {
+        const input = form.querySelector(`[name="${name}"]`);
+        if (!input) return false;
+        return !(input.value || "").trim();
+      }
+    );
     if (missing.length) {
       event.preventDefault();
-      const label = missing[0] === "cash_amount" ? "cash" : "M-Pesa";
+      const label =
+        missing[0] === "cash_amount"
+          ? "cash"
+          : missing[0] === "mpesa_amount"
+            ? "M-Pesa"
+            : "card";
       setStatus(`Enter the ${label} balance.`, { error: true });
       form.querySelector(`[name="${missing[0]}"]`)?.focus();
       return;
@@ -242,6 +268,9 @@
     const drawingMpesaAmount = drawingForm.querySelector(
       "[data-drawing-mpesa-amount]"
     );
+    const drawingCardAmount = drawingForm.querySelector(
+      "[data-drawing-card-amount]"
+    );
     const drawingAmount = drawingForm.querySelector("[data-drawing-amount]");
     const drawingStatus = drawingForm.querySelector("[data-drawing-status]");
     const drawingSubmit = drawingForm.querySelector("[data-drawing-submit]");
@@ -267,6 +296,7 @@
       const parts = [];
       if (drawingCashAmount) parts.push(parseAmount(drawingCashAmount));
       if (drawingMpesaAmount) parts.push(parseAmount(drawingMpesaAmount));
+      if (drawingCardAmount) parts.push(parseAmount(drawingCardAmount));
       if (!parts.length && drawingAmount) {
         parts.push(parseAmount(drawingAmount));
       }
@@ -323,10 +353,12 @@
       if (staffVerified && drawerVerified) {
         const cash = drawingCashAmount ? parseAmount(drawingCashAmount) : 0;
         const mpesa = drawingMpesaAmount ? parseAmount(drawingMpesaAmount) : 0;
-        let channelNote = "funds";
-        if (cash > 0 && mpesa > 0) channelNote = "cash + M-Pesa";
-        else if (cash > 0) channelNote = "cash";
-        else if (mpesa > 0) channelNote = "M-Pesa";
+        const card = drawingCardAmount ? parseAmount(drawingCardAmount) : 0;
+        const used = [];
+        if (cash > 0) used.push("cash");
+        if (mpesa > 0) used.push("M-Pesa");
+        if (card > 0) used.push("card");
+        const channelNote = used.length ? used.join(" + ") : "funds";
         setDrawingStatus(
           `Ready: ${staffName || "employee"} releases · ${
             drawerName || "person drawing"
@@ -488,19 +520,31 @@
       syncDrawingSubmit();
       if (staffVerified && drawerVerified) refreshDrawingStatus();
     });
+    drawingCardAmount?.addEventListener("input", () => {
+      syncDrawingSubmit();
+      if (staffVerified && drawerVerified) refreshDrawingStatus();
+    });
     drawingAmount?.addEventListener("input", syncDrawingSubmit);
 
     drawingForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!amountOk()) {
+        const present = [
+          drawingCashAmount && "cash",
+          drawingMpesaAmount && "M-Pesa",
+          drawingCardAmount && "card",
+        ].filter(Boolean);
         const message =
-          drawingCashAmount && drawingMpesaAmount
-            ? "Enter a cash and/or M-Pesa amount to draw."
-            : drawingMpesaAmount
-              ? "Enter the M-Pesa amount drawn from the counter."
-              : "Enter the cash amount drawn from the counter.";
+          present.length > 1
+            ? `Enter a ${present.join(" and/or ")} amount to draw.`
+            : `Enter the ${present[0] || "amount"} drawn from the counter.`;
         setDrawingStatus(message, { error: true });
-        (drawingCashAmount || drawingMpesaAmount || drawingAmount)?.focus();
+        (
+          drawingCashAmount ||
+          drawingMpesaAmount ||
+          drawingCardAmount ||
+          drawingAmount
+        )?.focus();
         return;
       }
       if (!staffVerified) {
@@ -549,6 +593,7 @@
         if (data.till) applyTill(data.till);
         if (drawingCashAmount) drawingCashAmount.value = "";
         if (drawingMpesaAmount) drawingMpesaAmount.value = "";
+        if (drawingCardAmount) drawingCardAmount.value = "";
         if (drawingAmount) drawingAmount.value = "";
         if (drawingCode) drawingCode.value = "";
         if (drawerCode) drawerCode.value = "";

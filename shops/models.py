@@ -154,8 +154,59 @@ COUNTED_RECEIPT_STATUSES = (
 class ShopPaymentMethod(models.TextChoices):
     CASH = "cash", "Cash"
     MPESA = "mpesa", "M-Pesa"
+    CARD = "card", "Card"
     BOTH = "both", "Cash & M-Pesa"
+    CASH_CARD = "cash_card", "Cash & Card"
+    MPESA_CARD = "mpesa_card", "M-Pesa & Card"
+    CASH_MPESA_CARD = "cash_mpesa_card", "Cash, M-Pesa & Card"
     NONE = "none", "None"
+
+
+# Till channels each payment method feeds, in deterministic order.
+PAYMENT_METHOD_CHANNELS = {
+    ShopPaymentMethod.CASH: ("cash",),
+    ShopPaymentMethod.MPESA: ("mpesa",),
+    ShopPaymentMethod.CARD: ("card",),
+    ShopPaymentMethod.BOTH: ("cash", "mpesa"),
+    ShopPaymentMethod.CASH_CARD: ("cash", "card"),
+    ShopPaymentMethod.MPESA_CARD: ("mpesa", "card"),
+    ShopPaymentMethod.CASH_MPESA_CARD: ("cash", "mpesa", "card"),
+    ShopPaymentMethod.NONE: (),
+}
+
+# Payment method → POS settings toggle that enables it.
+PAYMENT_METHOD_TOGGLES = {
+    ShopPaymentMethod.CASH: "enable_cash",
+    ShopPaymentMethod.MPESA: "enable_mpesa",
+    ShopPaymentMethod.CARD: "enable_card",
+    ShopPaymentMethod.BOTH: "enable_cash_mpesa",
+    ShopPaymentMethod.CASH_CARD: "enable_cash_card",
+    ShopPaymentMethod.MPESA_CARD: "enable_mpesa_card",
+    ShopPaymentMethod.CASH_MPESA_CARD: "enable_cash_mpesa_card",
+}
+
+# Methods a customer can pay a sale with at checkout (all except NONE).
+SALE_PAYMENT_METHODS = tuple(PAYMENT_METHOD_TOGGLES)
+
+CHANNEL_LABELS = {"cash": "Cash", "mpesa": "M-Pesa", "card": "Card"}
+
+_CHANNEL_SET_TO_METHOD = {
+    frozenset(channels): method
+    for method, channels in PAYMENT_METHOD_CHANNELS.items()
+    if channels
+}
+
+
+def payment_method_channels(method) -> tuple:
+    """Till channels (cash/mpesa/card) a payment method draws on."""
+    return PAYMENT_METHOD_CHANNELS.get((method or "").strip().lower(), ())
+
+
+def payment_method_for_channels(channels) -> str:
+    """Payment method matching an exact set of non-zero till channels."""
+    return _CHANNEL_SET_TO_METHOD.get(
+        frozenset(str(c) for c in channels if c), ShopPaymentMethod.NONE
+    )
 
 
 class Client(models.Model):
@@ -224,6 +275,7 @@ class ShopReceipt(models.Model):
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     cash_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     mpesa_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    card_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     mpesa_receipt_number = models.CharField(max_length=40, blank=True, default="")
     confirmed_payment_at = models.DateTimeField(
         null=True,
@@ -601,11 +653,15 @@ class ShopDaySession(models.Model):
     closed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     opening_cash = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     opening_mpesa = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    opening_card = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     opening_credit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     closing_cash = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True
     )
     closing_mpesa = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    closing_card = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True
     )
     closing_credit = models.DecimalField(
@@ -686,7 +742,11 @@ class CompanyPosSettings(models.Model):
     enable_trade_in = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
+    enable_card = models.BooleanField(default=False)
     enable_cash_mpesa = models.BooleanField(default=True)
+    enable_cash_card = models.BooleanField(default=False)
+    enable_mpesa_card = models.BooleanField(default=False)
+    enable_cash_mpesa_card = models.BooleanField(default=False)
     enable_discount = models.BooleanField(default=True)
     enable_stock_tracking = models.BooleanField(
         default=True,
@@ -723,6 +783,10 @@ class CompanyPosSettings(models.Model):
     enable_cart_delivery = models.BooleanField(
         default=True,
         help_text="When on, the cart shows the \"Delivery\" option. When off, it is hidden.",
+    )
+    enable_cart_payment_options = models.BooleanField(
+        default=True,
+        help_text="When on, the cart shows the payment method options. When off, it is hidden and cash is used by default.",
     )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
@@ -890,14 +954,11 @@ class CompanyPosSettings(models.Model):
         return kinds
 
     def enabled_payment_methods(self):
-        methods = []
-        if self.enable_cash:
-            methods.append(ShopPaymentMethod.CASH)
-        if self.enable_mpesa:
-            methods.append(ShopPaymentMethod.MPESA)
-        if self.enable_cash_mpesa:
-            methods.append(ShopPaymentMethod.BOTH)
-        return methods
+        return [
+            method
+            for method, toggle in PAYMENT_METHOD_TOGGLES.items()
+            if getattr(self, toggle, False)
+        ]
 
     def kind_enabled(self, kind: str) -> bool:
         return kind in self.enabled_kinds()
@@ -906,7 +967,7 @@ class CompanyPosSettings(models.Model):
         return method in self.enabled_payment_methods()
 
     def cash_sale_checkout_enabled(self) -> bool:
-        return self.enable_cash or self.enable_mpesa or self.enable_cash_mpesa
+        return bool(self.enabled_payment_methods())
 
     def enabled_print_channels(self):
         channels = []
@@ -1044,7 +1105,11 @@ class ShopPosSettings(models.Model):
     enable_trade_in = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
+    enable_card = models.BooleanField(default=False)
     enable_cash_mpesa = models.BooleanField(default=True)
+    enable_cash_card = models.BooleanField(default=False)
+    enable_mpesa_card = models.BooleanField(default=False)
+    enable_cash_mpesa_card = models.BooleanField(default=False)
     enable_discount = models.BooleanField(default=True)
     enable_stock_tracking = models.BooleanField(
         default=True,
@@ -1077,6 +1142,10 @@ class ShopPosSettings(models.Model):
     enable_cart_delivery = models.BooleanField(
         default=True,
         help_text="When on, the cart shows the \"Delivery\" option. When off, it is hidden.",
+    )
+    enable_cart_payment_options = models.BooleanField(
+        default=True,
+        help_text="When on, the cart shows the payment method options. When off, it is hidden and cash is used by default.",
     )
     enable_tax = models.BooleanField(default=False)
     tax_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
@@ -1877,6 +1946,12 @@ class Expense(models.Model):
         default=0,
         help_text="M-Pesa portion paid from the till (used for owner drawings).",
     )
+    card_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Card portion paid from the till (used for owner drawings).",
+    )
     payment_status = models.CharField(
         max_length=16,
         choices=ExpensePaymentStatus.choices,
@@ -1911,6 +1986,7 @@ class ClientCreditAccountEventKind(models.TextChoices):
     CREDIT_ISSUED = "credit_issued", "Credit issued"
     PAYMENT_CASH = "payment_cash", "Cash payment"
     PAYMENT_MPESA = "payment_mpesa", "M-Pesa payment"
+    PAYMENT_CARD = "payment_card", "Card payment"
     DUE_DATE_SET = "due_date_set", "Payment due date set"
     DUE_DATE_CHANGED = "due_date_changed", "Payment due date changed"
     FOLLOW_UP_SET = "follow_up_set", "Follow-up date set"

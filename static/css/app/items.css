@@ -79,6 +79,22 @@
   font-weight: 600;
 }
 
+.item-panel-tabs {
+  padding: 0 1rem 0.7rem;
+}
+
+.item-panel-tabs .ax-tab {
+  gap: 0.35rem;
+}
+
+.item-panel > .store-stock-panel {
+  margin: 0 1rem 1rem;
+}
+
+.item-panel > .dashboard-placeholder {
+  margin: 1rem;
+}
+
 .item-search {
   display: flex;
   flex-wrap: wrap;

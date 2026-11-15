@@ -371,13 +371,15 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
             for col in page["tables"][0]["columns"]
         ]
         self.assertEqual(
-            columns[:7],
+            columns[:9],
             [
                 "Shop",
                 "Cash",
                 "M-Pesa",
+                "Card",
                 "Paid cash",
                 "Paid M-Pesa",
+                "Paid card",
                 "Paid total",
                 "Unpaid",
             ],
@@ -390,11 +392,15 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         self.assertEqual(shop_row[2]["kind"], "money")
         self.assertEqual(shop_row[2]["label"], "50")
         self.assertEqual(shop_row[3]["kind"], "money")
-        self.assertEqual(shop_row[3]["label"], "30")
+        self.assertEqual(shop_row[3]["label"], "0")
         self.assertEqual(shop_row[4]["kind"], "money")
-        self.assertEqual(shop_row[4]["label"], "50")
-        self.assertEqual(shop_row[5]["amount"], "80")
-        self.assertEqual(shop_row[5]["qty"], "2")
-        self.assertEqual(shop_row[6]["amount"], "100")
-        self.assertEqual(shop_row[6]["qty"], "1")
-        self.assertEqual(shop_row[7]["amount"], "330")
+        self.assertEqual(shop_row[4]["label"], "30")
+        self.assertEqual(shop_row[5]["kind"], "money")
+        self.assertEqual(shop_row[5]["label"], "50")
+        self.assertEqual(shop_row[6]["kind"], "money")
+        self.assertEqual(shop_row[6]["label"], "0")
+        self.assertEqual(shop_row[7]["amount"], "80")
+        self.assertEqual(shop_row[7]["qty"], "2")
+        self.assertEqual(shop_row[8]["amount"], "100")
+        self.assertEqual(shop_row[8]["qty"], "1")
+        self.assertEqual(shop_row[9]["amount"], "330")

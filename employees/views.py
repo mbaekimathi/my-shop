@@ -2498,7 +2498,12 @@ POS_SETTING_GROUPS = (
         "toggles": (
             ("enable_cash", "Cash"),
             ("enable_mpesa", "M-Pesa"),
+            ("enable_card", "Card"),
             ("enable_cash_mpesa", "Cash + M-Pesa"),
+            ("enable_cash_card", "Cash + Card"),
+            ("enable_mpesa_card", "M-Pesa + Card"),
+            ("enable_cash_mpesa_card", "Cash + M-Pesa + Card"),
+            ("enable_cart_payment_options", "Show options in cart"),
         ),
     },
     {

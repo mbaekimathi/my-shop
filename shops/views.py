@@ -1739,9 +1739,19 @@ def my_shop_workspace(request, shop_id):
     default_print_via = enabled_print_channels[0] if enabled_print_channels else ""
     checkout_enabled = bool(cart_kinds)
     show_document_picker = len(picker_kinds) > 1
-    show_payment_picker = bool(
-        default_kind == "sale" and pos_flags["cash_sale_checkout"] and enabled_payments
+    payment_options_visible = bool(
+        pos_flags.get("enable_cart_payment_options", True)
     )
+    show_payment_picker = bool(
+        default_kind == "sale"
+        and pos_flags["cash_sale_checkout"]
+        and enabled_payments
+        and payment_options_visible
+    )
+    if not payment_options_visible and enabled_payments:
+        default_payment = (
+            "cash" if "cash" in enabled_payments else enabled_payments[0]
+        )
     daraja_settings = get_daraja_settings()
 
     # Lean buy-stock modal context: avoid Item.count()/SUM(quantity) on every
@@ -2023,7 +2033,13 @@ def my_shop_shelf_stock(request, shop_id):
             actor = verify_active_employee_code(login_code)
         try:
             messages.success(
-                request, apply_shelf_action(shop=shop, actor=actor, data=request.POST)
+                request,
+                apply_shelf_action(
+                    shop=shop,
+                    actor=actor,
+                    data=request.POST,
+                    files=request.FILES,
+                ),
             )
         except ValidationError as exc:
             for message in _validation_errors(exc):
@@ -3030,6 +3046,7 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
                 "payment_method": request.POST.get("payment_method"),
                 "cash_amount": request.POST.get("cash_amount"),
                 "mpesa_amount": request.POST.get("mpesa_amount"),
+                "card_amount": request.POST.get("card_amount"),
             }
     except (TypeError, ValueError, json.JSONDecodeError):
         return JsonResponse({"ok": False, "error": "Invalid confirm payload."}, status=400)
@@ -3073,6 +3090,7 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
             payment_method=(payload.get("payment_method") or "").strip(),
             cash_amount=payload.get("cash_amount"),
             mpesa_amount=payload.get("mpesa_amount"),
+            card_amount=payload.get("card_amount"),
         )
     except ValidationError as exc:
         errors = _validation_errors(exc)
@@ -3108,6 +3126,7 @@ def my_shop_day_toggle(request, shop_id):
     form_data = {
         "cash_amount": "",
         "mpesa_amount": "",
+        "card_amount": "",
         "credit_amount": "",
         "stock_confirmed": False,
         "login_code": "",
@@ -3115,6 +3134,7 @@ def my_shop_day_toggle(request, shop_id):
     drawing_data = {
         "cash_amount": "",
         "mpesa_amount": "",
+        "card_amount": "",
         "name": "",
         "login_code": "",
         "drawer_login_code": "",
@@ -3153,6 +3173,7 @@ def my_shop_day_toggle(request, shop_id):
             drawing_data = {
                 "cash_amount": (request.POST.get("cash_amount") or "").strip(),
                 "mpesa_amount": (request.POST.get("mpesa_amount") or "").strip(),
+                "card_amount": (request.POST.get("card_amount") or "").strip(),
                 "amount": (request.POST.get("amount") or "").strip(),
                 "name": (request.POST.get("name") or "").strip(),
                 "login_code": (request.POST.get("login_code") or "").strip(),
@@ -3201,6 +3222,7 @@ def my_shop_day_toggle(request, shop_id):
             form_data = {
                 "cash_amount": (request.POST.get("cash_amount") or "").strip(),
                 "mpesa_amount": (request.POST.get("mpesa_amount") or "").strip(),
+                "card_amount": (request.POST.get("card_amount") or "").strip(),
                 "credit_amount": (request.POST.get("credit_amount") or "").strip(),
                 "stock_confirmed": request.POST.get("stock_confirmed")
                 in ("1", "true", "on", "yes"),
@@ -3209,6 +3231,7 @@ def my_shop_day_toggle(request, shop_id):
             payload = {
                 "cash_amount": form_data["cash_amount"],
                 "mpesa_amount": form_data["mpesa_amount"],
+                "card_amount": form_data["card_amount"],
                 "credit_amount": form_data["credit_amount"],
                 "stock_confirmed": form_data["stock_confirmed"],
                 "login_code": form_data["login_code"],
@@ -3285,6 +3308,12 @@ def my_shop_day_toggle(request, shop_id):
             form_data["mpesa_amount"] = str(
                 int(open_summary["expected_mpesa"].quantize(Decimal("1")))
             )
+        if balance_channels.get("card") and not str(
+            form_data.get("card_amount") or ""
+        ).strip():
+            form_data["card_amount"] = str(
+                int(open_summary["expected_card"].quantize(Decimal("1")))
+            )
     # Suggest last closing as opening balances when starting a new day.
     # Same rule: do not overwrite user-entered values.
     elif not is_open and last_closed and not form_errors:
@@ -3303,6 +3332,14 @@ def my_shop_day_toggle(request, shop_id):
         ):
             form_data["mpesa_amount"] = str(
                 int(Decimal(last_closed.closing_mpesa).quantize(Decimal("1")))
+            )
+        if (
+            balance_channels.get("card")
+            and not str(form_data.get("card_amount") or "").strip()
+            and last_closed.closing_card is not None
+        ):
+            form_data["card_amount"] = str(
+                int(Decimal(last_closed.closing_card).quantize(Decimal("1")))
             )
 
     if stale_open:
@@ -3409,6 +3446,7 @@ def my_shop_checkout(request, shop_id):
                 "payment_method": request.POST.get("payment_method"),
                 "cash_amount": request.POST.get("cash_amount"),
                 "mpesa_amount": request.POST.get("mpesa_amount"),
+                "card_amount": request.POST.get("card_amount"),
                 "client_name": request.POST.get("client_name"),
                 "client_phone": request.POST.get("client_phone"),
                 "login_code": request.POST.get("login_code"),
@@ -4298,7 +4336,12 @@ SHOP_POS_SETTING_GROUPS = (
         "toggles": (
             ("enable_cash", "Cash"),
             ("enable_mpesa", "M-Pesa"),
+            ("enable_card", "Card"),
             ("enable_cash_mpesa", "Cash + M-Pesa"),
+            ("enable_cash_card", "Cash + Card"),
+            ("enable_mpesa_card", "M-Pesa + Card"),
+            ("enable_cash_mpesa_card", "Cash + M-Pesa + Card"),
+            ("enable_cart_payment_options", "Show options in cart"),
         ),
     },
     {

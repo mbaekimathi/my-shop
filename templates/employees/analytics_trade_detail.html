@@ -149,6 +149,12 @@
               <span>M-Pesa</span>
             </label>
             {% endif %}
+            {% if pos_pay_card %}
+            <label class="td-method">
+              <input type="radio" name="payment_method" value="card"{% if not pos_pay_cash and not pos_pay_mpesa %} checked{% endif %}>
+              <span>Card</span>
+            </label>
+            {% endif %}
           </div>
           <label class="td-field">
             <span>Amount paid</span>

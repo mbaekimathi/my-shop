@@ -98,8 +98,32 @@ class ItemStockReportRowsTests(TestCase):
                     "shop_id": self.shop_a.pk,
                     "shop_name": "REPORT SHOP A",
                     "quantity": "2",
+                    "hidden": False,
+                    "display": "2",
                 }
             ],
+        )
+        self.assertEqual(row["stock_display"], "2")
+        self.assertFalse(row["stock_hidden"])
+
+    def test_catalog_page_masks_hidden_item_stock(self):
+        from items.services import build_item_management_catalog_page
+        from shops.services import (
+            _invalidate_stock_settings_cache,
+            save_stock_visibility,
+        )
+
+        self.addCleanup(_invalidate_stock_settings_cache)
+        save_stock_visibility(
+            mode="items", categories=[], item_ids=[self.item.pk]
+        )
+        payload = build_item_management_catalog_page(q="REPORT CABLE")
+        row = next(r for r in payload["items"] if r["id"] == self.item.pk)
+        self.assertTrue(row["stock_hidden"])
+        self.assertEqual(row["stock_display"], "Hidden")
+        self.assertEqual(
+            [entry["display"] for entry in row["stock_rows"]],
+            ["Hidden", "Hidden"],
         )
 
     def test_destination_shop_counts_transfer_in(self):

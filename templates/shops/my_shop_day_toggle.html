@@ -78,6 +78,13 @@
             <em data-till-mpesa>{{ open_summary.expected_mpesa|floatformat:0 }}</em>
           </li>
           {% endif %}
+          {% if balance_channels.card %}
+          <li class="is-card">
+            <i data-lucide="credit-card" aria-hidden="true"></i>
+            <span>Card</span>
+            <em data-till-card>{{ open_summary.expected_card|floatformat:0 }}</em>
+          </li>
+          {% endif %}
         </ul>
       </div>
       <details class="shop-day-live-detail">
@@ -93,6 +100,9 @@
           {% if balance_channels.mpesa %}
           <li><span>M-Pesa sales</span><em data-till-mpesa-sales>{{ open_summary.mpesa_sales|floatformat:0 }}</em></li>
           {% endif %}
+          {% if balance_channels.card %}
+          <li><span>Card sales</span><em data-till-card-sales>{{ open_summary.card_sales|floatformat:0 }}</em></li>
+          {% endif %}
           {% if balance_channels.cash %}
           <li data-till-cash-refunds-row{% if not open_summary.cash_refunds %} hidden{% endif %}>
             <span>Cash returns</span><em>−<span data-till-cash-refunds>{{ open_summary.cash_refunds|floatformat:0 }}</span></em>
@@ -103,10 +113,22 @@
             <span>M-Pesa returns</span><em>−<span data-till-mpesa-refunds>{{ open_summary.mpesa_refunds|floatformat:0 }}</span></em>
           </li>
           {% endif %}
+          {% if balance_channels.card %}
+          <li data-till-card-refunds-row{% if not open_summary.card_refunds %} hidden{% endif %}>
+            <span>Card returns</span><em>−<span data-till-card-refunds>{{ open_summary.card_refunds|floatformat:0 }}</span></em>
+          </li>
+          {% endif %}
           <li><span>Expenses (cash)</span><em>−<span data-till-expenses>{{ open_summary.expenses_paid|floatformat:0 }}</span></em></li>
-          {% if balance_channels.cash and balance_channels.mpesa %}
+          {% if balance_channels.multi %}
+          {% if balance_channels.cash %}
           <li><span>Drawings (cash)</span><em>−<span data-till-drawings-cash>{{ open_summary.drawings_cash|floatformat:0 }}</span></em></li>
+          {% endif %}
+          {% if balance_channels.mpesa %}
           <li><span>Drawings (M-Pesa)</span><em>−<span data-till-drawings-mpesa>{{ open_summary.drawings_mpesa|floatformat:0 }}</span></em></li>
+          {% endif %}
+          {% if balance_channels.card %}
+          <li><span>Drawings (card)</span><em>−<span data-till-drawings-card>{{ open_summary.drawings_card|floatformat:0 }}</span></em></li>
+          {% endif %}
           {% else %}
           <li><span>Drawings</span><em>−<span data-till-drawings>{{ open_summary.drawings_paid|floatformat:0 }}</span></em></li>
           {% endif %}
@@ -134,6 +156,9 @@
           {% endif %}
           {% if balance_channels.mpesa %}
           · M-Pesa {{ last_closed.closing_mpesa|floatformat:0 }}
+          {% endif %}
+          {% if balance_channels.card %}
+          · Card {{ last_closed.closing_card|floatformat:0 }}
           {% endif %}
           {% else %}
           No day recorded yet.
@@ -171,10 +196,12 @@
             <div>
               <h3>Draw from counter</h3>
               <p>
-                {% if balance_channels.cash and balance_channels.mpesa %}
-                Enter cash and/or M-Pesa amounts · employee and person drawing codes required
+                {% if balance_channels.multi %}
+                Enter {{ balance_channels.count_copy }} amounts · employee and person drawing codes required
                 {% elif balance_channels.mpesa %}
                 Deducted from M-Pesa · employee and person drawing codes required
+                {% elif balance_channels.card %}
+                Deducted from card · employee and person drawing codes required
                 {% else %}
                 Deducted from cash · employee and person drawing codes required
                 {% endif %}
@@ -197,7 +224,7 @@
                 value="{{ drawing_data.cash_amount }}"
                 placeholder="0"
                 data-drawing-cash-amount
-                {% if not balance_channels.mpesa %}required{% endif %}
+                {% if not balance_channels.mpesa and not balance_channels.card %}required{% endif %}
               >
             </label>
             {% endif %}
@@ -213,7 +240,23 @@
                 value="{{ drawing_data.mpesa_amount }}"
                 placeholder="0"
                 data-drawing-mpesa-amount
-                {% if not balance_channels.cash %}required{% endif %}
+                {% if not balance_channels.cash and not balance_channels.card %}required{% endif %}
+              >
+            </label>
+            {% endif %}
+            {% if balance_channels.card %}
+            <label class="shop-cart-input shop-day-drawing-amount is-card">
+              <span><i data-lucide="credit-card" aria-hidden="true"></i> Card</span>
+              <input
+                type="text"
+                name="card_amount"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{{ drawing_data.card_amount }}"
+                placeholder="0"
+                data-drawing-card-amount
+                {% if not balance_channels.cash and not balance_channels.mpesa %}required{% endif %}
               >
             </label>
             {% endif %}
@@ -332,6 +375,22 @@
             >
           </label>
           {% endif %}
+          {% if balance_channels.card %}
+          <label class="shop-cart-input is-card">
+            <span><i data-lucide="credit-card" aria-hidden="true"></i> Card</span>
+            <input
+              type="text"
+              name="card_amount"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ form_data.card_amount }}"
+              placeholder="0"
+              data-close-card-amount
+            >
+          </label>
+          {% endif %}
         </div>
 
         <label class="shop-cart-check shop-day-confirm">
@@ -417,6 +476,7 @@
                   {% if balance_channels.cash %}C {{ row.opening_cash|floatformat:0 }}{% endif %}
                   {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
                   {% if balance_channels.mpesa %}M {{ row.opening_mpesa|floatformat:0 }}{% endif %}
+                  {% if balance_channels.card %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}K {{ row.opening_card|floatformat:0 }}{% endif %}
                 </span>
               </td>
               <td class="shop-day-table-balances" data-label="Closing">
@@ -426,6 +486,7 @@
                   {% if balance_channels.cash %}C {{ row.closing_cash|floatformat:0 }}{% endif %}
                   {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
                   {% if balance_channels.mpesa %}M {{ row.closing_mpesa|floatformat:0 }}{% endif %}
+                  {% if balance_channels.card %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}K {{ row.closing_card|floatformat:0 }}{% endif %}
                 </span>
                 {% else %}
                 <span class="shop-day-table-sub">Expected {{ row.expected_total|floatformat:0 }}</span>

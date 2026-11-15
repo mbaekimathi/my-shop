@@ -7,7 +7,13 @@ from decimal import Decimal, InvalidOperation
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
-from items.models import ShelfItem, ShelfStockMovement, ShelfStockMovementType
+from items.models import (
+    ShelfItem,
+    ShelfStockMovement,
+    ShelfStockMovementType,
+    StockOutReason,
+)
+from items.store_stock_services import _parse_buying_price
 
 _MAX_QTY = Decimal("999999999.999")
 
@@ -73,9 +79,24 @@ def parse_shelf_qty(raw, *, allow_zero=False, label="Quantity") -> Decimal:
 
 
 def list_shelf_items(*, shop) -> list[dict]:
+    items = list(
+        ShelfItem.objects.filter(shop=shop, is_archived=False).order_by(
+            "category", "name"
+        )
+    )
+    last_price = {}
+    for shelf_item_id, price in (
+        ShelfStockMovement.objects.filter(
+            shelf_item__in=items, buying_price__isnull=False
+        )
+        .order_by("shelf_item_id", "-created_at", "-id")
+        .values_list("shelf_item_id", "buying_price")
+    ):
+        last_price.setdefault(shelf_item_id, price)
     rows = []
-    for item in ShelfItem.objects.filter(shop=shop, is_archived=False).order_by("name"):
+    for item in items:
         threshold = Decimal(item.low_stock_threshold or 0)
+        price = last_price.get(item.pk)
         rows.append(
             {
                 "id": item.pk,
@@ -86,6 +107,11 @@ def list_shelf_items(*, shop) -> list[dict]:
                 "quantity_display": _qty_display(item.quantity),
                 "low_stock_threshold_display": _qty_display(threshold),
                 "is_low": threshold > 0 and item.quantity <= threshold,
+                "image_url": item.public_image_url(),
+                "last_buying_price": price,
+                "last_buying_price_display": (
+                    str(price) if price is not None else ""
+                ),
                 "search_text": f"{item.name} {item.category} {item.unit}".lower(),
             }
         )
@@ -110,6 +136,7 @@ def register_shelf_item(
     unit="",
     opening_qty=None,
     low_stock_threshold=None,
+    image=None,
 ) -> ShelfItem:
     name = " ".join(str(name or "").split()).upper()
     if not name:
@@ -138,17 +165,19 @@ def register_shelf_item(
             existing.quantity = qty
             existing.low_stock_threshold = threshold
             existing.is_archived = False
-            existing.save(
-                update_fields=[
-                    "name",
-                    "category",
-                    "unit",
-                    "quantity",
-                    "low_stock_threshold",
-                    "is_archived",
-                    "updated_at",
-                ]
-            )
+            update_fields = [
+                "name",
+                "category",
+                "unit",
+                "quantity",
+                "low_stock_threshold",
+                "is_archived",
+                "updated_at",
+            ]
+            if image is not None:
+                existing.image = image
+                update_fields.append("image")
+            existing.save(update_fields=update_fields)
             item = existing
         else:
             item = ShelfItem.objects.create(
@@ -158,6 +187,7 @@ def register_shelf_item(
                 unit=unit,
                 quantity=qty,
                 low_stock_threshold=threshold,
+                image=image,
                 created_by=actor,
             )
     except IntegrityError as exc:
@@ -174,7 +204,20 @@ def register_shelf_item(
 
 @transaction.atomic
 def record_shelf_movement(
-    *, shop, shelf_item_id, mode, qty, actor=None, note=""
+    *,
+    shop,
+    shelf_item_id,
+    mode,
+    qty,
+    actor=None,
+    note="",
+    supplier_name: str = "",
+    supplier_phone: str = "",
+    payment_status: str = "",
+    buying_price=None,
+    reason: str = "",
+    refund: str = "",
+    refund_amount=None,
 ) -> ShelfStockMovement:
     if mode not in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
         raise ValidationError("Choose stock in or stock out.")
@@ -186,6 +229,11 @@ def record_shelf_movement(
     )
     if item is None:
         raise ValidationError("Shelf item not found for this shop.")
+    reason_clean = (reason or "").strip().lower()
+    keep_person = (
+        mode == ShelfStockMovementType.IN
+        or reason_clean == StockOutReason.TRADE_OUT
+    )
     if mode == ShelfStockMovementType.OUT:
         if amount > item.quantity:
             raise ValidationError(
@@ -200,6 +248,41 @@ def record_shelf_movement(
         movement_type=mode,
         quantity=amount,
         balance_after=item.quantity,
+        supplier_name=(
+            (supplier_name or "").strip().upper()[:160] if keep_person else ""
+        ),
+        supplier_phone=(
+            (supplier_phone or "").strip()[:40] if keep_person else ""
+        ),
+        payment_status=(
+            (payment_status or "").strip().lower()[:16]
+            if mode == ShelfStockMovementType.IN
+            else ""
+        ),
+        buying_price=(
+            buying_price if mode == ShelfStockMovementType.IN else None
+        ),
+        reason=(
+            reason_clean[:16]
+            if reason_clean in {choice.value for choice in StockOutReason}
+            and (
+                mode == ShelfStockMovementType.OUT
+                or reason_clean == StockOutReason.TRADE_IN
+            )
+            else ""
+        ),
+        refund=(
+            (refund or "").strip().lower()[:8]
+            if mode == ShelfStockMovementType.OUT
+            and (refund or "").strip().lower() in ("yes", "no")
+            else ""
+        ),
+        refund_amount=(
+            refund_amount
+            if mode == ShelfStockMovementType.OUT
+            and (refund or "").strip().lower() == "yes"
+            else None
+        ),
         note=str(note or "").strip()[:255],
         created_by=actor,
     )
@@ -267,7 +350,7 @@ def archive_shelf_item(*, shop, shelf_item_id) -> ShelfItem:
     return item
 
 
-def apply_shelf_action(*, shop, actor, data, to_shop=None) -> str:
+def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
     """Run one shelf page action (register / in / out / transfer / archive); returns a success message."""
     action = (data.get("action") or "").strip()
     if action == "register":
@@ -279,6 +362,7 @@ def apply_shelf_action(*, shop, actor, data, to_shop=None) -> str:
             unit=data.get("unit"),
             opening_qty=data.get("opening_qty"),
             low_stock_threshold=data.get("low_stock_threshold"),
+            image=files.get("image") if files else None,
         )
         return f"“{item.name}” added to the shelf list."
     if action in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
@@ -289,6 +373,13 @@ def apply_shelf_action(*, shop, actor, data, to_shop=None) -> str:
             qty=data.get("qty"),
             actor=actor,
             note=data.get("note") or "",
+            buying_price=(
+                _parse_buying_price(
+                    data.get("price"), data.get("shelf_item_id")
+                )
+                if action == ShelfStockMovementType.IN
+                else None
+            ),
         )
         is_in = action == ShelfStockMovementType.IN
         return (

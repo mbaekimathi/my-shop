@@ -280,6 +280,11 @@ urlpatterns = [
     path("shop-manager/", views.role_shop_manager, name="role_shop_manager"),
     path("store-manager/", views.role_store_manager, name="role_store_manager"),
     path(
+        "store-manager/item-stock/",
+        store_stock_views.store_stock_items,
+        name="store_stock_items",
+    ),
+    path(
         "store-manager/store-stock-in/",
         store_stock_views.store_stock_in,
         name="store_stock_in",
@@ -290,9 +295,19 @@ urlpatterns = [
         name="store_stock_out",
     ),
     path(
+        "store-manager/store-stock-trade/",
+        store_stock_views.store_stock_trade,
+        name="store_stock_trade",
+    ),
+    path(
         "store-manager/shelf-stock/",
         store_stock_views.store_shelf_stock,
         name="store_shelf_stock",
+    ),
+    path(
+        "store-manager/store-stock-movement/",
+        store_stock_views.store_stock_movement,
+        name="store_stock_movement",
     ),
     path(
         "store-manager/store-report/",
