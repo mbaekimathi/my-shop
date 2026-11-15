@@ -41,6 +41,10 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `shop.print_agent_token` is set (else 502 `agent_required`). A local agent
   (`static/print-agent/print_agent.py`) polls `print-agent/<shop>/jobs/` with
   the `X-Print-Agent-Token` header and acks `…/jobs/<id>/` (done/failed).
+  The agent also TCP-probes its own /24s for printer ports ~every 45s and
+  POSTs results to `print-agent/<shop>/report/` → stored on
+  `shop.print_agent_scan`/`_scan_at`; hosted Wi‑Fi "Scan" returns those
+  (fresh within 5 min) so discovery still works server-side-off-LAN.
   Views: `shops/agent_views.py`; token (re)generation: action `print_agent_token`
   on the shop receipt settings page (gated by `shop_settings`). Tests:
   `shops/tests/test_print_agent.py`.

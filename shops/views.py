@@ -3762,8 +3762,54 @@ def my_shop_wifi_printer_scan(request, shop_id):
         )
 
     result = discover_lan_printers(thorough=thorough)
-    result["hosted"] = not result.get("networks")
+    hosted = not result.get("networks")
+    result["hosted"] = hosted
     result["agent"] = bool(shop.print_agent_token)
+
+    if hosted:
+        # Hosted server — it cannot see the shop LAN, so return whatever the
+        # shop's local print agent last reported (it scans its own network).
+        from django.utils import timezone
+
+        report = shop.print_agent_scan if isinstance(shop.print_agent_scan, list) else []
+        fresh = False
+        if shop.print_agent_scan_at:
+            age = (timezone.now() - shop.print_agent_scan_at).total_seconds()
+            fresh = age <= 300
+        printers = report if fresh else []
+        if printers:
+            hint = f"{len(printers)} printer(s) reported by your print agent."
+        elif shop.print_agent_token:
+            hint = (
+                "Your print agent hasn't reported any Wi‑Fi printers yet — it "
+                "scans the shop network about once a minute while running. "
+                "Check the agent window, or enter the printer IP and Connect."
+            )
+        else:
+            hint = (
+                "Hosted server — set up the print agent under Shop settings → "
+                "Receipt → Cloud print agent so it can find printers on your "
+                "shop's Wi‑Fi, or enter the printer IP and Connect."
+            )
+        return JsonResponse(
+            {
+                "ok": True,
+                "hosted": True,
+                "agent": bool(shop.print_agent_token),
+                "from_agent": True,
+                "printers": printers,
+                "agent_scan_at": (
+                    shop.print_agent_scan_at.isoformat()
+                    if shop.print_agent_scan_at
+                    else ""
+                ),
+                "local_ips": result.get("local_ips") or [],
+                "networks": [],
+                "hint": hint,
+                "cached": False,
+            }
+        )
+
     if not result.get("ok"):
         return JsonResponse(result, status=400)
     return JsonResponse(result)

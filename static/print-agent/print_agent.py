@@ -2,8 +2,11 @@
 """MY-SHOP local print agent.
 
 Polls the hosted MY-SHOP server for queued receipt jobs and prints them to
-the shop's LAN Wi-Fi printer (raw TCP, usually port 9100). Run this on any
-computer in the shop that can reach the printer — e.g. the till PC.
+the shop's LAN Wi-Fi printer (raw TCP, usually port 9100). It also scans the
+local network for printers about once a minute and reports them, so the shop
+floor's Wi-Fi "Scan" can list them even though the hosted server cannot see
+the shop LAN. Run this on any computer in the shop that can reach the
+printer — e.g. the till PC.
 
 Setup:
     1. Put this file anywhere and create print_agent.json next to it:
@@ -28,10 +31,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
+import ipaddress
 import json
 import os
 import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +45,12 @@ import urllib.request
 CONNECT_TIMEOUT = 5.0
 WRITE_TIMEOUT = 10.0
 MAX_BACKOFF = 30.0
+
+# LAN printer discovery: probe each host's first open printer port.
+PRINTER_PORTS = (9100, 9101, 9102, 9112, 9200, 10001, 631, 515)
+PROBE_TIMEOUT = 0.15
+SCAN_WORKERS = 64
+SCAN_INTERVAL = 45.0
 
 
 def log(msg: str) -> None:
@@ -70,6 +82,16 @@ def ack_url(poll_url: str, job_id: int) -> str:
     return f"{poll_url.rstrip('/')}/{job_id}/"
 
 
+def report_url(cfg: dict) -> str:
+    explicit = str(cfg.get("report_url") or "").strip()
+    if explicit:
+        return explicit
+    url = str(cfg["poll_url"]).rstrip("/")
+    if url.endswith("/jobs"):
+        return url[: -len("/jobs")] + "/report/"
+    return url + "/report/"
+
+
 def request(url: str, *, token: str, method: str = "GET", payload: dict | None = None,
             timeout: float = 15.0) -> tuple[int, dict]:
     body = None
@@ -88,6 +110,107 @@ def request(url: str, *, token: str, method: str = "GET", payload: dict | None =
             return exc.code, {}
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         return 0, {"ok": False, "error": str(exc)}
+
+
+def local_ipv4_addresses() -> set[str]:
+    found: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                found.add(ip)
+    except OSError:
+        pass
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(("8.8.8.8", 80))
+            ip = probe.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                found.add(ip)
+        finally:
+            probe.close()
+    except OSError:
+        pass
+    return found
+
+
+def private_networks(ips) -> list:
+    nets = set()
+    for ip in ips:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if isinstance(addr, ipaddress.IPv4Address) and (
+            addr.is_private or addr.is_link_local
+        ):
+            nets.add(ipaddress.ip_network(f"{ip}/24", strict=False))
+    return sorted(nets)
+
+
+def _reverse_name(host: str) -> str:
+    try:
+        socket.setdefaulttimeout(0.15)
+        name, _, _ = socket.gethostbyaddr(host)
+        return (name or "").split(".")[0] or ""
+    except OSError:
+        return ""
+    finally:
+        socket.setdefaulttimeout(None)
+
+
+def probe_host(host: str) -> dict | None:
+    for port in PRINTER_PORTS:
+        try:
+            with socket.create_connection((host, port), timeout=PROBE_TIMEOUT):
+                pass
+        except OSError:
+            continue
+        label = _reverse_name(host) or "Network printer"
+        return {
+            "host": host,
+            "port": port,
+            "name": f"{label} · {host}",
+            "detail": f"Raw :{port}",
+        }
+    return None
+
+
+def scan_lan() -> tuple[list, int]:
+    """TCP-probe every host on this PC's private /24s for printer ports."""
+    hosts: list[str] = []
+    for net in private_networks(local_ipv4_addresses()):
+        hosts.extend(str(h) for h in net.hosts())
+    printers: list[dict] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
+        for result in pool.map(probe_host, hosts):
+            if result:
+                printers.append(result)
+    printers.sort(key=lambda row: tuple(int(p) for p in row["host"].split(".")))
+    return printers, len(hosts)
+
+
+def scanner_loop(cfg: dict, stop: threading.Event) -> None:
+    """Periodically scan the shop LAN and report printers to the server."""
+    url = report_url(cfg)
+    while not stop.is_set():
+        try:
+            printers, scanned = scan_lan()
+        except Exception as exc:
+            log(f"Printer scan failed: {exc}")
+            printers, scanned = [], 0
+        status, data = request(
+            url,
+            token=cfg["token"],
+            method="POST",
+            payload={"printers": printers, "scanned": scanned},
+        )
+        if status == 200 and data.get("ok"):
+            log(f"Reported {len(printers)} LAN printer(s) ({scanned} hosts scanned)")
+        else:
+            log(f"Printer report failed: {data.get('error') or f'HTTP {status}'}")
+        stop.wait(SCAN_INTERVAL)
 
 
 def print_job(job: dict) -> None:
@@ -150,7 +273,27 @@ def main() -> None:
     log(f"Agent polling {cfg['poll_url']} every {args.interval:g}s")
     if args.once:
         run_once(cfg)
+        try:
+            printers, scanned = scan_lan()
+            status, data = request(
+                report_url(cfg),
+                token=cfg["token"],
+                method="POST",
+                payload={"printers": printers, "scanned": scanned},
+            )
+            if status == 200 and data.get("ok"):
+                log(f"Reported {len(printers)} LAN printer(s) ({scanned} hosts scanned)")
+            else:
+                log(f"Printer report failed: {data.get('error') or f'HTTP {status}'}")
+        except Exception as exc:
+            log(f"Printer scan failed: {exc}")
         return
+
+    stop = threading.Event()
+    scanner = threading.Thread(
+        target=scanner_loop, args=(cfg, stop), daemon=True
+    )
+    scanner.start()
 
     backoff = args.interval
     while True:
@@ -166,6 +309,7 @@ def main() -> None:
             time.sleep(backoff)
         except KeyboardInterrupt:
             break
+    stop.set()
     log("Stopped.")
 
 

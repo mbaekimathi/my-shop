@@ -82,6 +82,19 @@ class Shop(models.Model):
             "shop LAN — the agent polls PrintAgentJob rows and prints them locally."
         ),
     )
+    print_agent_scan = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Last LAN printer list reported by the shop's local print agent. "
+            "Hosted deployments show these in the Wi‑Fi printer Scan."
+        ),
+    )
+    print_agent_scan_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the print agent last reported its LAN printer scan.",
+    )
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,

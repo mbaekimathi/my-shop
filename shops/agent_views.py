@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import ipaddress
 import json
 from datetime import timedelta
 
@@ -50,6 +51,14 @@ def _unauthorized():
         {"ok": False, "error": "Invalid or missing print agent token."},
         status=401,
     )
+
+
+def _lan_ip(host: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
 
 
 @require_GET
@@ -148,3 +157,58 @@ def print_agent_ack(request, shop_id: int, job_id: int):
             {"ok": False, "error": "Job not found or not claimed."}, status=404
         )
     return JsonResponse({"ok": True, "job_id": job_id, "status": status})
+
+
+@csrf_exempt
+@require_POST
+def print_agent_report(request, shop_id: int):
+    """Store the agent's LAN printer scan for hosted-mode Wi‑Fi discovery.
+
+    Body: {"printers": [{"host", "port", "name", "detail"}, ...]}
+    Only private/loopback/link-local addresses are kept (the agent reports
+    IPs it can actually reach on the shop LAN).
+    """
+    shop = _agent_shop(request, shop_id)
+    if shop is None:
+        return _unauthorized()
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid payload."}, status=400)
+
+    printers = payload.get("printers")
+    if not isinstance(printers, list):
+        return JsonResponse(
+            {"ok": False, "error": "printers must be a list."}, status=400
+        )
+
+    cleaned: list[dict] = []
+    for row in printers[:20]:
+        if not isinstance(row, dict):
+            continue
+        host = str(row.get("host") or "").strip()
+        try:
+            port = int(row.get("port") or 9100)
+        except (TypeError, ValueError):
+            continue
+        if port < 1 or port > 65535 or not _lan_ip(host):
+            continue
+        cleaned.append(
+            {
+                "id": f"wifi-{host}:{port}",
+                "host": host,
+                "port": port,
+                "name": str(row.get("name") or f"Network printer · {host}")[:120],
+                "detail": str(row.get("detail") or f"Raw :{port}")[:160],
+                "kind": "printer",
+                "connect_mode": "raw",
+            }
+        )
+
+    shop.print_agent_scan = cleaned
+    shop.print_agent_scan_at = timezone.now()
+    shop.save(
+        update_fields=["print_agent_scan", "print_agent_scan_at", "updated_at"]
+    )
+    return JsonResponse({"ok": True, "count": len(cleaned)})

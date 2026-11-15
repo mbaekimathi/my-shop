@@ -211,6 +211,11 @@ urlpatterns = [
         name="print_agent_ack",
     ),
     path(
+        "print-agent/<int:shop_id>/report/",
+        shop_agent_views.print_agent_report,
+        name="print_agent_report",
+    ),
+    path(
         "my-shop/<int:shop_id>/clients/lookup/",
         shop_views.my_shop_client_lookup,
         name="my_shop_client_lookup",
