@@ -95,6 +95,19 @@ class Shop(models.Model):
         blank=True,
         help_text="When the print agent last reported its LAN printer scan.",
     )
+    print_agent_seen_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the print agent last polled for jobs (liveness).",
+    )
+    print_agent_scan_request = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Pending on-demand scan the print agent picks up on its next "
+            'poll: {"at": epoch_seconds, "hosts": [...], "subnets": [...]}.'
+        ),
+    )
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,

@@ -43,6 +43,7 @@ from items.models import (
 from items.services import (
     _clamp_price,
     _fallback_list_price,
+    _is_free_price,
     _parse_price,
     apply_stock_movement,
     build_stock_catalog_page,
@@ -452,10 +453,14 @@ def shop_products_management(request, role_segment, shop_id):
                 ).strip().lower() in truthy
             price = None
             if raw_price:
-                try:
-                    price = _parse_price(raw_price, f"Price for {item.name}")
-                except ValidationError as exc:
-                    form_errors.extend(_validation_errors(exc))
+                if _is_free_price(raw_price):
+                    # '-' / 0 / negative = free: keep it sold at KSh 0.00.
+                    price = Decimal("0.00")
+                else:
+                    try:
+                        price = _parse_price(raw_price, f"Price for {item.name}")
+                    except ValidationError as exc:
+                        form_errors.extend(_validation_errors(exc))
             updates.append(
                 {
                     "item": item,
@@ -3668,6 +3673,16 @@ def my_shop_print_relay(request, shop_id):
         on_server_lan = None
 
     if on_server_lan is False:
+        # Off the detected /24s — but the host may still be routable (another
+        # LAN segment, VPN). Try a direct connection before queueing the job
+        # for the shop's print agent.
+        try:
+            with socket.create_connection((host, port), timeout=2.0) as sock:
+                sock.settimeout(4)
+                sock.sendall(data)
+            return JsonResponse({"ok": True, "host": host, "port": port})
+        except OSError:
+            pass
         if shop.print_agent_token:
             job = PrintAgentJob.objects.create(
                 shop=shop,
@@ -3746,8 +3761,11 @@ def my_shop_wifi_printer_scan(request, shop_id):
         )
 
     thorough = False
+    scan_host = ""
+    is_retry = False
     if request.method == "GET":
         thorough = request.GET.get("thorough", "0") in ("1", "true", "yes")
+        scan_host = str(request.GET.get("host") or "").strip()
     else:
         import json
 
@@ -3760,30 +3778,74 @@ def my_shop_wifi_printer_scan(request, shop_id):
             "true",
             "yes",
         )
+        scan_host = str(payload.get("host") or "").strip()
+        is_retry = bool(payload.get("retry"))
 
-    result = discover_lan_printers(thorough=thorough)
+    import time
+
+    # Ask the agent for an on-demand scan before the (slow) local sweep — it
+    # picks this up on its next poll (~2s) and probes the typed host + its own
+    # LAN while we scan here. Skipped on the client's automatic retry so we
+    # don't retrigger it.
+    if shop.print_agent_token and not is_retry:
+        Shop.objects.filter(pk=shop.pk).update(
+            print_agent_scan_request={
+                "at": time.time(),
+                "hosts": [scan_host] if scan_host else [],
+                "subnets": [],
+            }
+        )
+
+    # Probe the typed IP and the shop's saved printer even when they sit
+    # outside the server's detected /24s — routed subnets are still reachable.
+    result = discover_lan_printers(
+        thorough=thorough,
+        extra_hosts=[scan_host, shop.wifi_printer_host or ""],
+    )
     hosted = not result.get("networks")
     result["hosted"] = hosted
     result["agent"] = bool(shop.print_agent_token)
 
+    # The print agent scans the shop's own network — its report can see
+    # printers the server can't (hosted server, or a different LAN segment).
+    from django.utils import timezone
+
+    now = timezone.now()
+    report = shop.print_agent_scan if isinstance(shop.print_agent_scan, list) else []
+    seen_fresh = bool(
+        shop.print_agent_seen_at
+        and (now - shop.print_agent_seen_at).total_seconds() <= 120
+    )
+    report_fresh = bool(
+        shop.print_agent_scan_at
+        and (now - shop.print_agent_scan_at).total_seconds() <= 300
+    )
+    agent_alive = seen_fresh or report_fresh
+    agent_printers = (
+        [dict(row, via_agent=True) for row in report] if report_fresh else []
+    )
+    result["agent_alive"] = agent_alive
+    # True while a live agent is around to fulfil an on-demand scan — the
+    # client waits a few seconds and retries once for the report to land.
+    result["agent_scan_pending"] = bool(shop.print_agent_token and seen_fresh)
+
     if hosted:
         # Hosted server — it cannot see the shop LAN, so return whatever the
         # shop's local print agent last reported (it scans its own network).
-        from django.utils import timezone
-
-        report = shop.print_agent_scan if isinstance(shop.print_agent_scan, list) else []
-        fresh = False
-        if shop.print_agent_scan_at:
-            age = (timezone.now() - shop.print_agent_scan_at).total_seconds()
-            fresh = age <= 300
-        printers = report if fresh else []
+        printers = agent_printers
         if printers:
             hint = f"{len(printers)} printer(s) reported by your print agent."
+        elif agent_alive:
+            hint = (
+                "Your print agent is online but found no Wi‑Fi printers on the "
+                "shop network — check the printer is powered on and on the same "
+                "Wi‑Fi as the agent PC. Or enter the printer IP and Connect."
+            )
         elif shop.print_agent_token:
             hint = (
-                "Your print agent hasn't reported any Wi‑Fi printers yet — it "
-                "scans the shop network about once a minute while running. "
-                "Check the agent window, or enter the printer IP and Connect."
+                "No scan report from your print agent yet — make sure it is "
+                "running the latest version (it reports about once a minute). "
+                "Or enter the printer IP and Connect."
             )
         else:
             hint = (
@@ -3796,7 +3858,9 @@ def my_shop_wifi_printer_scan(request, shop_id):
                 "ok": True,
                 "hosted": True,
                 "agent": bool(shop.print_agent_token),
-                "from_agent": True,
+                "agent_alive": agent_alive,
+                "agent_scan_pending": bool(shop.print_agent_token and seen_fresh),
+                "from_agent": bool(printers),
                 "printers": printers,
                 "agent_scan_at": (
                     shop.print_agent_scan_at.isoformat()
@@ -3812,6 +3876,31 @@ def my_shop_wifi_printer_scan(request, shop_id):
 
     if not result.get("ok"):
         return JsonResponse(result, status=400)
+
+    # On a LAN server the agent may still see printers on segments the server
+    # can't reach — merge its fresh report in, flagged so the UI can badge it.
+    direct = result.get("printers") or []
+    seen_hosts = {str(row.get("host") or "") for row in direct}
+    merged = direct + [
+        row for row in agent_printers if str(row.get("host") or "") not in seen_hosts
+    ]
+    result["printers"] = merged
+    result["from_agent"] = bool(agent_printers)
+    if agent_printers:
+        note = (
+            f"{len(agent_printers)} printer(s) reported by your print agent."
+            if not direct
+            else f"{len(agent_printers)} more reported by your print agent."
+        )
+        result["hint"] = f"{result.get('hint') or ''} {note}".strip()
+    elif not merged and shop.print_agent_token:
+        # Nothing found anywhere — say what the agent is doing about it.
+        extra = (
+            " Your print agent is scanning its network now — try Scan again in a few seconds."
+            if seen_fresh
+            else " Your print agent isn't reporting — start print_agent.py on the shop PC so it can check other shop networks."
+        )
+        result["hint"] = f"{result.get('hint') or ''}{extra}".strip()
     return JsonResponse(result)
 
 
@@ -3838,10 +3927,16 @@ def my_shop_wifi_printer_config(request, shop_id):
         )
 
     if request.method == "GET":
+        from django.utils import timezone
+
         from .printer_discovery import _local_ipv4_addresses, _networks_from_local_ips
 
         local_ips = _local_ipv4_addresses()
         networks = _networks_from_local_ips(local_ips)
+        agent_alive = bool(
+            shop.print_agent_scan_at
+            and (timezone.now() - shop.print_agent_scan_at).total_seconds() <= 300
+        )
         return JsonResponse(
             {
                 "ok": True,
@@ -3853,6 +3948,7 @@ def my_shop_wifi_printer_config(request, shop_id):
                 # shop's local print agent instead of a direct connection.
                 "hosted": not networks,
                 "agent": bool(shop.print_agent_token),
+                "agent_alive": agent_alive,
             }
         )
 

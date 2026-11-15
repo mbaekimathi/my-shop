@@ -163,6 +163,65 @@ class PrinterDiscoveryLoopsTests(unittest.TestCase):
         self.assertIn("POS-80C", result["hint"])
         self.assertIn("POS-80C", result["usb_hints"])
 
+    def test_clean_extra_hosts_keeps_only_private_ips(self):
+        cleaned = pd._clean_extra_hosts(
+            [
+                "192.168.100.171",
+                "10.0.0.5",
+                "8.8.8.8",          # public — rejected
+                "printer.local",    # hostname — rejected
+                "192.168.100.171",  # dup — dropped
+                "",                 # blank — dropped
+            ]
+        )
+        self.assertEqual(cleaned, ["192.168.100.171", "10.0.0.5"])
+
+    def test_discover_probes_extra_hosts_off_network(self):
+        calls = {"probe": []}
+
+        def fake_probe(host, *, resolve_name=False, connect_timeout=0.12):
+            calls["probe"].append(host)
+            if host == "192.168.100.171":
+                return {
+                    "id": "wifi-192.168.100.171:9100",
+                    "host": "192.168.100.171",
+                    "port": 9100,
+                    "ports": [9100],
+                    "services": ["Raw / ESC-POS :9100"],
+                    "name": "POS · 192.168.100.171",
+                    "detail": "Raw / ESC-POS :9100",
+                    "kind": "printer",
+                    "connect_mode": "raw",
+                }
+            return None
+
+        with mock.patch.object(pd, "_local_ipv4_addresses", return_value=["192.168.88.237"]):
+            with mock.patch.object(
+                pd,
+                "_networks_from_local_ips",
+                return_value=[__import__("ipaddress").ip_network("192.168.88.0/24")],
+            ):
+                with mock.patch.object(pd, "_arp_live_hosts", return_value=set()):
+                    with mock.patch.object(pd, "_ping_sweep", return_value=set()):
+                        with mock.patch.object(pd, "_probe_host", side_effect=fake_probe):
+                            with mock.patch.object(pd, "_windows_tcp_printers", return_value=[]):
+                                with mock.patch.object(
+                                    pd, "_windows_pos_usb_printers", return_value=[]
+                                ):
+                                    result = pd.discover_lan_printers(
+                                        use_cache=False,
+                                        extra_hosts=[
+                                            "192.168.100.171",  # off-/24, routable
+                                            "8.8.8.8",          # public — never probed
+                                        ],
+                                    )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["printers"]), 1)
+        self.assertEqual(result["printers"][0]["host"], "192.168.100.171")
+        self.assertIn("192.168.100.171", calls["probe"])
+        self.assertNotIn("8.8.8.8", calls["probe"])
+
     def test_live_discover_loop_is_fast(self):
         """Integration loop against the real LAN — must finish quickly."""
         times = []

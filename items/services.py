@@ -1498,10 +1498,27 @@ def _parse_price(raw_value: str, label: str) -> Decimal:
     return amount.quantize(Decimal("0.01"))
 
 
+def _is_free_price(raw_value) -> bool:
+    """True when a price entry means free/unpriced: a bare dash, 0, or negative."""
+    value = str(raw_value or "").strip()
+    if not value:
+        return False
+    if set(value) <= {"-"}:
+        return True
+    try:
+        return Decimal(value) <= 0
+    except InvalidOperation:
+        return False
+
+
 def _clamp_price(price: Decimal, minimum_price) -> Decimal:
-    """Raise a price up to the minimum selling price when needed."""
+    """Raise a price up to the minimum selling price when needed.
+
+    An explicit 0 (free) price is never raised — the floor only applies to
+    positive prices.
+    """
     clamped = price
-    if minimum_price is not None and clamped < minimum_price:
+    if minimum_price is not None and 0 < clamped < minimum_price:
         clamped = minimum_price
     return clamped.quantize(Decimal("0.01"))
 
@@ -1571,6 +1588,8 @@ def _parse_individual_shop_prices(
     minimum selling price. On update, blank or unchanged prices keep the
     current shop price and are raised to min when the floor increases. Shops
     outside editable_shop_ids always keep their stored (or materialized) price.
+    A dash, 0, or negative entry stores 0.00 — the item stays listed and is
+    sold free at that shop.
     """
     errors = []
     prices_by_shop = {}
@@ -1596,6 +1615,10 @@ def _parse_individual_shop_prices(
                 prices_by_shop[shop.pk] = _clamp_price(existing, minimum_price)
             continue
 
+        if _is_free_price(raw_str):
+            prices_by_shop[shop.pk] = Decimal("0.00")
+            continue
+
         if existing_item is not None and existing is not None:
             if not raw_str:
                 prices_by_shop[shop.pk] = _clamp_price(existing, minimum_price)
@@ -1607,9 +1630,6 @@ def _parse_individual_shop_prices(
                 continue
             if submitted == existing:
                 prices_by_shop[shop.pk] = _clamp_price(existing, minimum_price)
-                continue
-            if submitted <= 0:
-                errors.append(f"Enter a shop price for “{shop.name}”.")
                 continue
             if minimum_price is not None and submitted < minimum_price:
                 errors.append(
@@ -1627,9 +1647,6 @@ def _parse_individual_shop_prices(
         except ValidationError as exc:
             errors.append(exc.message)
             continue
-        if price <= 0:
-            errors.append(f"Shop price for “{shop.name}” must be greater than zero.")
-            continue
         if minimum_price is not None and price < minimum_price:
             errors.append(
                 f"Shop price for “{shop.name}” cannot be below the minimum selling price."
@@ -1646,7 +1663,11 @@ def _parse_single_shop_price(
     existing_item=None,
     minimum_price=None,
 ):
-    """Parse the shared “Set shop price” field into one Decimal (or None)."""
+    """Parse the shared “Set shop price” field into one Decimal (or None).
+
+    A dash, 0, or negative entry becomes 0.00 — the item stays listed and is
+    sold free.
+    """
     errors = []
     raw_shop_price = data.get("shop_price")
     raw_shop_price_str = str(raw_shop_price).strip() if raw_shop_price is not None else ""
@@ -1656,6 +1677,9 @@ def _parse_single_shop_price(
         else None
     )
     shop_price = None
+
+    if _is_free_price(raw_shop_price_str):
+        return Decimal("0.00"), errors
 
     if existing_item is not None and existing_single_price is not None:
         if not raw_shop_price_str:
@@ -1667,9 +1691,7 @@ def _parse_single_shop_price(
                 errors.append(exc.message)
                 submitted = None
             if submitted is not None:
-                if submitted <= 0:
-                    errors.append("Shop price must be greater than zero.")
-                elif submitted == existing_single_price:
+                if submitted == existing_single_price:
                     shop_price = _clamp_price(existing_single_price, minimum_price)
                 elif minimum_price is not None and submitted < minimum_price:
                     errors.append(
@@ -1684,10 +1706,6 @@ def _parse_single_shop_price(
             shop_price = _parse_price(raw_shop_price_str, "Shop price")
         except ValidationError as exc:
             errors.append(exc.message)
-            shop_price = None
-
-        if shop_price is not None and shop_price <= 0:
-            errors.append("Shop price must be greater than zero.")
             shop_price = None
 
         if (
@@ -1848,11 +1866,16 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
     # Prices are always stored per shop so one shop's edit cannot change others.
     cleaned["use_individual_shop_prices"] = True
 
-    try:
-        minimum_price = _parse_price(data.get("minimum_selling_price"), "Minimum selling price")
-    except ValidationError as exc:
-        errors.append(exc.message)
-        minimum_price = None
+    raw_min_price = data.get("minimum_selling_price")
+    if _is_free_price(raw_min_price):
+        # Dash / 0 / negative = no price floor.
+        minimum_price = Decimal("0.00")
+    else:
+        try:
+            minimum_price = _parse_price(raw_min_price, "Minimum selling price")
+        except ValidationError as exc:
+            errors.append(exc.message)
+            minimum_price = None
 
     shops = _active_shops()
     shop_price = None

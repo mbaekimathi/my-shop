@@ -388,6 +388,32 @@ def _windows_pos_usb_hints() -> list[str]:
     return [row["name"] for row in _windows_pos_usb_printers()]
 
 
+def _clean_extra_hosts(extra_hosts: Iterable[str] | None) -> list[str]:
+    """Literal private IPv4 addresses the caller explicitly wants probed.
+
+    These may sit outside the detected /24s (routed subnet, the shop's saved
+    printer IP, or an IP the user typed) so they bypass the in-network filter.
+    Hostnames are skipped — probing must stay limited to literal LAN addresses.
+    """
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in extra_hosts or []:
+        host = str(raw or "").strip()
+        if not host or host in seen or len(seen) >= 8:
+            continue
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        if not isinstance(ip, ipaddress.IPv4Address):
+            continue
+        if not (ip.is_private or ip.is_loopback or ip.is_link_local):
+            continue
+        seen.add(host)
+        cleaned.append(str(ip))
+    return cleaned
+
+
 def _merge_printers(*groups: list[dict]) -> list[dict]:
     merged: dict[str, dict] = {}
     for group in groups:
@@ -414,16 +440,26 @@ def _merge_printers(*groups: list[dict]) -> list[dict]:
     )
 
 
-def discover_lan_printers(*, thorough: bool = False, use_cache: bool = True) -> dict:
+def discover_lan_printers(
+    *,
+    thorough: bool = False,
+    use_cache: bool = True,
+    extra_hosts: Iterable[str] | None = None,
+) -> dict:
     """
     Fast printer discovery:
 
     1) Windows TCP ports + ARP hosts (cheap)
     2) Probe those hosts for printer ports only
-    3) Ping common DHCP suffixes only if still empty
-    4) Optional thorough /24 sweep only if still empty
+    3) Explicit extra_hosts (typed / saved printer IPs) — even off the
+       detected /24s, since routed subnets can still be reachable
+    4) Ping common DHCP suffixes only if still empty
+    5) Optional thorough /24 sweep only if still empty
     """
-    cache_key = f"thorough={int(bool(thorough))}"
+    explicit_hosts = _clean_extra_hosts(extra_hosts)
+    cache_key = (
+        f"thorough={int(bool(thorough))}|hosts={','.join(explicit_hosts)}"
+    )
     if use_cache:
         cached = _cache_get(cache_key)
         if cached is not None:
@@ -547,6 +583,18 @@ def discover_lan_printers(*, thorough: bool = False, use_cache: bool = True) -> 
                     future.cancel()
 
     _probe_many(probe_targets, min(PHASE_DEADLINE_SEC, 2.0, _remaining()))
+
+    # Explicit hosts (typed IP, saved shop printer) may be off the detected
+    # /24s but still routable — probe any not already covered, with a slightly
+    # longer timeout since routed hops respond slower than same-subnet peers.
+    extra_probe = [h for h in explicit_hosts if h not in probe_targets]
+    if extra_probe:
+        _probe_many(
+            extra_probe,
+            min(1.5, _remaining()),
+            connect_timeout=0.5,
+        )
+        probe_targets = sorted(set(probe_targets) | set(extra_probe))
     printers = _merge_printers(found, windows_ports)
 
     # Only ping DHCP guesses when nothing found yet and time remains.
