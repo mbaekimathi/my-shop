@@ -1590,7 +1590,13 @@ ${bodyHtml}
     let scanUrl = "";
     let configUrl = "";
     let defaults = { host: "", port: 9100 };
-    let localNet = { ips: [], networks: [], hosted: false, agent: false };
+    let localNet = {
+      ips: [],
+      networks: [],
+      hosted: false,
+      agent: false,
+      fromAgent: false,
+    };
     // True when the hosted server queued the job for the shop's local agent.
     let viaAgent = false;
     const displayName = () =>
@@ -1627,6 +1633,7 @@ ${bodyHtml}
           networks: [...localNet.networks],
           hosted: localNet.hosted,
           agent: localNet.agent,
+          fromAgent: localNet.fromAgent,
         };
       },
       async fetchConfig() {
@@ -1645,6 +1652,7 @@ ${bodyHtml}
             networks: Array.isArray(data.networks) ? data.networks : [],
             hosted: Boolean(data.hosted),
             agent: Boolean(data.agent),
+            fromAgent: Boolean(data.from_agent),
           };
           return data;
         } catch (_) {
@@ -1715,13 +1723,12 @@ ${bodyHtml}
           throw new Error(data.error || "Wi‑Fi printer scan failed.");
         }
 
+        localNet.hosted = Boolean(data.hosted ?? localNet.hosted);
+        if (data.agent != null) localNet.agent = Boolean(data.agent);
+        localNet.fromAgent = Boolean(data.from_agent);
         if (Array.isArray(data.local_ips) && data.local_ips.length) {
-          localNet = {
-            ips: data.local_ips,
-            networks: Array.isArray(data.networks) ? data.networks : [],
-            hosted: Boolean(data.hosted),
-            agent: localNet.agent,
-          };
+          localNet.ips = data.local_ips;
+          localNet.networks = Array.isArray(data.networks) ? data.networks : [];
         }
 
         const printers = Array.isArray(data.printers) ? data.printers : [];
@@ -2522,9 +2529,11 @@ ${bodyHtml}
       if (!netEl) return;
       const net = drivers.wifi.getLocalNet();
       if (net.hosted) {
-        netEl.textContent = net.agent
-          ? "Hosted server — Scan can't see your shop's Wi‑Fi. Enter the printer's LAN IP (e.g. 192.168.x.x) and Connect; the job prints through your print agent."
-          : "Hosted server — Wi‑Fi printing goes through the shop's print agent. Set it up under Shop settings → Receipt → Cloud print agent, then enter the printer's LAN IP and Connect.";
+        netEl.textContent = !net.agent
+          ? "Hosted server — Wi‑Fi printing goes through the shop's print agent. Set it up under Shop settings → Receipt → Cloud print agent, then enter the printer's LAN IP and Connect."
+          : net.fromAgent
+            ? "Hosted server — listed printers were found on the shop's Wi‑Fi by your print agent. Tap one to connect."
+            : "Hosted server — Scan shows printers your print agent reports from the shop's Wi‑Fi. You can also enter the printer IP and Connect directly.";
         netEl.hidden = false;
         return;
       }
@@ -2639,19 +2648,6 @@ ${bodyHtml}
 
       const runScan = async (thorough = false) => {
         const deepBtn = card.querySelector("[data-printer-scan-deep]");
-        if (channel === "wifi" && drivers.wifi.getLocalNet().hosted) {
-          if (deepBtn) deepBtn.hidden = true;
-          const net = drivers.wifi.getLocalNet();
-          setCardState(card, {
-            badge: "Idle",
-            status: "Not connected",
-            hint: net.agent
-              ? "This MY-SHOP server is hosted — Scan can't see your shop's Wi‑Fi. Enter the printer IP and press Connect; the job prints through your print agent."
-              : "This MY-SHOP server is hosted — Scan can't see your shop's Wi‑Fi. Set up the print agent under Shop settings → Receipt → Cloud print agent, then enter the printer IP and press Connect.",
-            connected: false,
-          });
-          return;
-        }
         try {
           if (deepBtn) deepBtn.hidden = true;
           setCardState(card, {
@@ -2745,7 +2741,12 @@ ${bodyHtml}
         } catch (err) {
           renderDevices(card, []);
           refreshWifiNetLine(card);
-          if (deepBtn && channel === "wifi" && err?.code === "wifi_no_results") {
+          if (
+            deepBtn &&
+            channel === "wifi" &&
+            err?.code === "wifi_no_results" &&
+            !drivers.wifi.getLocalNet().hosted
+          ) {
             deepBtn.hidden = false;
           }
           setCardState(card, {

@@ -49,6 +49,27 @@ class PrintAgentFlowTests(TestCase):
             kwargs={"shop_id": self.shop.pk, "job_id": job_id},
         )
 
+    def _report_url(self):
+        return reverse(
+            "employees:print_agent_report", kwargs={"shop_id": self.shop.pk}
+        )
+
+    def _hosted_scan(self, client):
+        # Public "server" IP only → no private networks → hosted mode.
+        # (TEST-NET ranges like 203.0.113.x count as private for ipaddress.)
+        with mock.patch(
+            "shops.printer_discovery._local_ipv4_addresses",
+            return_value=["8.8.8.8"],
+        ):
+            return client.post(
+                reverse(
+                    "employees:my_shop_wifi_printer_scan",
+                    kwargs={"shop_id": self.shop.pk},
+                ),
+                data=json.dumps({}),
+                content_type="application/json",
+            )
+
     def _post_relay(self, client, host=OFF_LAN_HOST):
         return client.post(
             reverse("employees:my_shop_print_relay", kwargs={"shop_id": self.shop.pk}),
@@ -217,6 +238,95 @@ class PrintAgentFlowTests(TestCase):
         self.assertEqual(response.status_code, 401)
         job.refresh_from_db()
         self.assertEqual(job.status, PrintAgentJob.Status.CLAIMED)
+
+    # --- agent printer report + hosted scan --------------------------------
+
+    def test_report_requires_token(self):
+        client = Client()
+        response = client.post(
+            self._report_url(),
+            data=json.dumps({"printers": []}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_report_keeps_only_lan_hosts(self):
+        client = Client()
+        response = client.post(
+            self._report_url(),
+            data=json.dumps(
+                {
+                    "printers": [
+                        {
+                            "host": "192.168.100.171",
+                            "port": 9100,
+                            "name": "POS-80 · 192.168.100.171",
+                            "detail": "Raw :9100",
+                        },
+                        {"host": "8.8.8.8", "port": 9100},
+                        {"host": "not-an-ip", "port": 9100},
+                    ]
+                }
+            ),
+            content_type="application/json",
+            HTTP_X_PRINT_AGENT_TOKEN=AGENT_TOKEN,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], 1)
+        self.shop.refresh_from_db()
+        self.assertEqual(len(self.shop.print_agent_scan), 1)
+        self.assertEqual(
+            self.shop.print_agent_scan[0]["host"], "192.168.100.171"
+        )
+        self.assertIsNotNone(self.shop.print_agent_scan_at)
+
+    def test_hosted_scan_returns_agent_reported_printers(self):
+        self.shop.print_agent_scan = [
+            {
+                "id": "wifi-192.168.100.171:9100",
+                "host": "192.168.100.171",
+                "port": 9100,
+                "name": "POS-80 · 192.168.100.171",
+                "detail": "Raw :9100",
+                "kind": "printer",
+                "connect_mode": "raw",
+            }
+        ]
+        self.shop.print_agent_scan_at = timezone.now()
+        self.shop.save(update_fields=["print_agent_scan", "print_agent_scan_at"])
+
+        response = self._hosted_scan(self._portal_client())
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["hosted"])
+        self.assertTrue(payload["agent"])
+        self.assertTrue(payload["from_agent"])
+        self.assertEqual(len(payload["printers"]), 1)
+        self.assertEqual(payload["printers"][0]["host"], "192.168.100.171")
+
+    def test_hosted_scan_empty_report_explains(self):
+        response = self._hosted_scan(self._portal_client())
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["hosted"])
+        self.assertEqual(payload["printers"], [])
+        self.assertIn("agent", payload["hint"].lower())
+
+    def test_hosted_scan_ignores_stale_report(self):
+        self.shop.print_agent_scan = [
+            {
+                "host": "192.168.1.50",
+                "port": 9100,
+                "name": "x",
+                "detail": "d",
+            }
+        ]
+        self.shop.print_agent_scan_at = timezone.now() - timedelta(minutes=10)
+        self.shop.save(update_fields=["print_agent_scan", "print_agent_scan_at"])
+        payload = self._hosted_scan(self._portal_client()).json()
+        self.assertEqual(payload["printers"], [])
 
     # --- token management --------------------------------------------------
 
