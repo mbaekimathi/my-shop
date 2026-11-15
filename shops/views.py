@@ -95,6 +95,7 @@ from .services import (
     create_shop,
     day_session_balance_summary,
     stock_mode_of,
+    MY_SHOP_SUBMODULE_SIDEBAR_FIELD,
     till_summary_payload,
     delete_shop,
     find_client_by_phone,
@@ -134,6 +135,9 @@ from .services import (
     search_clients_by_name,
     search_expense_suppliers,
     set_shop_maintainer_phone,
+    SHOP_POS_FIELD_NAMES,
+    SHOP_RECEIPT_FIELD_NAMES,
+    STOCK_MODE_FIELDS,
     set_shop_return_notice_text,
     set_shop_mpesa_payment_details,
     set_shop_pos_override,
@@ -143,6 +147,7 @@ from .services import (
     set_shop_receipt_paper_width,
     set_shop_receipt_phone,
     set_shop_receipt_qr_settings,
+    set_shop_delivery_amount,
     set_shop_tax_percent,
     set_shop_theme,
     shop_day_balance_channels,
@@ -747,6 +752,7 @@ def _shop_floor_chrome(
             trade_in_enabled=bool(getattr(pos, "enable_trade_in", False)),
             trade_out_enabled=bool(getattr(pos, "enable_trade_out", False)),
             shelf_mode_enabled=shelf_mode_enabled,
+            pos=pos,
         ),
         "shop": shop,
         "shops": shops,
@@ -786,6 +792,32 @@ def _require_my_shop_permission(
     """
     from employees.module_permissions import require_module_permission
     from employees.services import invalid_staff_code_message, verify_active_employee_code
+
+    # Sidebar-hidden features are denied for every session against the shop's
+    # effective settings, so a hidden page stays unreachable even by URL.
+    target_shop = shop
+    if target_shop is None:
+        shop_pk = None
+        if request is not None and request.resolver_match is not None:
+            shop_pk = request.resolver_match.kwargs.get("shop_id")
+        if shop_pk:
+            target_shop = Shop.objects.filter(pk=shop_pk).first()
+    field = MY_SHOP_SUBMODULE_SIDEBAR_FIELD.get(submodule)
+    if (
+        target_shop is not None
+        and field
+        and not getattr(get_effective_pos_settings(target_shop), field, True)
+    ):
+        message = "That page is disabled in POS settings."
+        if as_json:
+            from django.http import JsonResponse
+
+            return JsonResponse({"ok": False, "error": message}, status=403)
+        from django.contrib import messages
+        from django.shortcuts import redirect
+
+        messages.error(request, message)
+        return redirect("employees:my_shop_workspace", shop_id=target_shop.pk)
 
     acting = actor
     if acting is None and login_code is not None:
@@ -1248,6 +1280,12 @@ def shop_website(request, shop_id):
             "suggestions_url_template": suggestions_url_template,
             "whatsapp_phone": whatsapp_phone,
             "google_maps_api_key": settings.GOOGLE_MAPS_API_KEY,
+            "delivery_enabled": bool(
+                get_effective_pos_settings(shop).enable_cart_delivery
+            ),
+            "delivery_amount": str(
+                get_effective_pos_settings(shop).delivery_amount or "0.00"
+            ),
         },
     )
 
@@ -1597,6 +1635,33 @@ def _require_active_shop_session(request, shop_id):
         messages.info(request, "Enter the shop password to open this workspace.")
         return None, None, redirect(_shop_select_url(shop_id=shop.pk))
     return profile, shop, None
+
+
+def _require_allocated_shop_access(request, shop_id):
+    """
+    Floor session OR an employee allocated to the shop.
+
+    Tools that ask for a staff ID inside the payload (register expense,
+    open/close shop day) also run from role dashboards (e.g. the cashier
+    home) where the floor has not been unlocked — allocation is enough there
+    because the staff ID still authorises the write.
+    """
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is not None and str(portal_shop.pk) == str(shop_id):
+        return None, portal_shop, None
+
+    profile = get_profile_for_request(request)
+    if profile is None:
+        return _require_active_shop_session(request, shop_id)
+
+    active = resolve_active_shop(request, profile)
+    if active is not None and str(active.pk) == str(shop_id):
+        return profile, active, None
+
+    shop = get_shop_for_profile(profile, shop_id)
+    if shop is not None:
+        return profile, shop, None
+    return _require_active_shop_session(request, shop_id)
 
 
 def _require_shop_read_access(request, shop_id):
@@ -2648,7 +2713,7 @@ def my_shop_stock_request_supplier_ack(request, shop_id):
 @require_http_methods(["GET", "POST"])
 def my_shop_register_expense(request, shop_id):
     """Register an outside expense against the active shop (modal on workspace)."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         if _wants_json_response(request):
             return JsonResponse(
@@ -2990,6 +3055,8 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
                 "payment_at": request.POST.get("payment_at"),
                 "amount": request.POST.get("amount"),
                 "payment_method": request.POST.get("payment_method"),
+                "cash_amount": request.POST.get("cash_amount"),
+                "mpesa_amount": request.POST.get("mpesa_amount"),
             }
     except (TypeError, ValueError, json.JSONDecodeError):
         return JsonResponse({"ok": False, "error": "Invalid confirm payload."}, status=400)
@@ -3031,6 +3098,8 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
             payment_at=(payload.get("payment_at") or "").strip() or None,
             amount=payload.get("amount"),
             payment_method=(payload.get("payment_method") or "").strip(),
+            cash_amount=payload.get("cash_amount"),
+            mpesa_amount=payload.get("mpesa_amount"),
         )
     except ValidationError as exc:
         errors = _validation_errors(exc)
@@ -3050,7 +3119,7 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
 @require_http_methods(["GET", "POST"])
 def my_shop_day_toggle(request, shop_id):
     """Open or close the shop day with balances, stock confirm, and staff ID."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         return denied
     denied = _require_my_shop_permission(request, profile, "open_close", portal_ok=True)
@@ -3188,28 +3257,34 @@ def my_shop_day_toggle(request, shop_id):
                 # Force low-stock alert once after opening only.
                 if result.get("action") == "open" and shop_has_low_stock_alerts(shop):
                     request.session[_low_stock_alert_force_key(shop)] = True
+                opened = result.get("action") == "open"
+                active_floor = (
+                    resolve_active_shop(request, profile)
+                    if profile is not None
+                    else None
+                )
+                floor_ready = resolve_portal_shop(request) is not None or (
+                    active_floor is not None
+                    and str(active_floor.pk) == str(shop.pk)
+                )
+                next_view = (
+                    "employees:my_shop_workspace"
+                    if opened and floor_ready
+                    else "employees:my_shop_day_toggle"
+                )
                 if wants_json:
-                    redirect_url = (
-                        reverse(
-                            "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
-                        )
-                        if result.get("action") == "open"
-                        else reverse(
-                            "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
-                        )
-                    )
                     return JsonResponse(
                         {
                             "ok": True,
                             "message": result["message"],
                             "action": result["action"],
-                            "redirect_url": redirect_url,
+                            "redirect_url": reverse(
+                                next_view, kwargs={"shop_id": shop.pk}
+                            ),
                         }
                     )
                 messages.success(request, result["message"])
-                if result.get("action") == "open":
-                    return redirect("employees:my_shop_workspace", shop_id=shop.pk)
-                return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
+                return redirect(next_view, shop_id=shop.pk)
 
     # Refresh open state after failed post / for GET
     open_session = get_open_shop_day(shop)
@@ -3310,7 +3385,7 @@ def my_shop_day_toggle(request, shop_id):
 @require_POST
 def my_shop_verify_login_code(request, shop_id):
     """Validate an active employee 6-digit ID before accept/decline is unlocked."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         return JsonResponse({"ok": False, "error": "Shop session required."}, status=403)
 
@@ -4279,6 +4354,23 @@ SHOP_POS_SETTING_GROUPS = (
             ("enable_cart_confirm_receipt", "Show \"Confirm receipt now\""),
             ("enable_cart_delivery", "Show \"Delivery\""),
         ),
+        "show_delivery_amount": True,
+    },
+    {
+        "title": "Shop floor sidebar",
+        "summary": "Choose which menu links appear on the shop page.",
+        "toggles": (
+            ("enable_sidebar_open_close", 'Show "Open / Close shop"'),
+            ("enable_sidebar_trade", 'Show "Trade"'),
+            ("enable_sidebar_buy_stock", 'Show "Buy stock items"'),
+            ("enable_sidebar_stock_transfers", 'Show "Stock transfers"'),
+            ("enable_sidebar_stock_count", 'Show "Stock count"'),
+            ("enable_sidebar_shelf_stock", 'Show "Shelf stock"'),
+            ("enable_sidebar_expense", 'Show "Register expense"'),
+            ("enable_sidebar_printer", 'Show "Connect to printer"'),
+            ("enable_sidebar_receipts", 'Show "Receipts"'),
+            ("enable_sidebar_website", 'Show "Shop website"'),
+        ),
     },
     {
         "title": "Tax",
@@ -4293,7 +4385,7 @@ SHOP_RECEIPT_SETTING_GROUPS = (
         "title": "Printing",
         "summary": "Require printing on sales and choose available print channels.",
         "toggles": (
-            ("compulsory_print_on_sale", "Compulsory printing on sale"),
+            ("compulsory_print_on_sale", "Compulsory printing on sale or credit"),
             ("enable_print_bluetooth", "Print via Bluetooth"),
             ("enable_print_usb", "Print via USB"),
             ("enable_print_wifi", "Print via Wi‑Fi"),
@@ -4358,9 +4450,29 @@ def _shop_settings_section_context(shop, profile, shops, *, active, section):
     }
 
 
+SHOP_SETTINGS_ACTION_SECTIONS = {
+    "set_tax_percent": "pos",
+    "set_delivery_amount": "pos",
+    "set_receipt_paper_width": "receipt",
+    "set_receipt_number_formats": "receipt",
+    "set_mpesa_payment_details": "receipt",
+    "set_shop_receipt_phone": "receipt",
+    "set_receipt_font_style": "receipt",
+    "set_receipt_qr_settings": "receipt",
+    "set_maintainer_phone": "receipt",
+    "set_return_notice_text": "receipt",
+}
+
+
 def _handle_shop_settings_post(request, shop, *, section: str):
     action = (request.POST.get("action") or "").strip()
     wants_json = _shop_settings_wants_json(request)
+
+    action_section = SHOP_SETTINGS_ACTION_SECTIONS.get(action)
+    if action_section is not None and action_section != section:
+        return _shop_settings_error(
+            request, "That action does not belong to this page."
+        )
 
     if action == "set_shop_override":
         enabled = (request.POST.get("enabled") or "").strip().lower() in (
@@ -4387,6 +4499,14 @@ def _handle_shop_settings_post(request, shop, *, section: str):
 
     if action == "toggle_pos_setting":
         field = (request.POST.get("field") or "").strip()
+        section_fields = {
+            "pos": SHOP_POS_FIELD_NAMES,
+            "receipt": SHOP_RECEIPT_FIELD_NAMES,
+        }.get(section, frozenset())
+        if field not in section_fields and field not in STOCK_MODE_FIELDS:
+            return _shop_settings_error(
+                request, "That setting does not belong to this page."
+            )
         enabled = (request.POST.get("enabled") or "").strip() in (
             "1",
             "true",
@@ -4442,6 +4562,25 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                 }
             )
         messages.success(request, "Tax percentage updated.")
+        return redirect(request.path)
+
+    if action == "set_delivery_amount":
+        try:
+            row = set_shop_delivery_amount(
+                shop=shop, amount=request.POST.get("delivery_amount") or ""
+            )
+        except ValidationError as exc:
+            message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return _shop_settings_error(request, message)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "delivery_amount": str(row.delivery_amount),
+                    "enable_cart_delivery": row.enable_cart_delivery,
+                }
+            )
+        messages.success(request, "Delivery amount updated.")
         return redirect(request.path)
 
     if action == "set_receipt_paper_width":
@@ -4690,6 +4829,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
                 "title": group["title"],
                 "summary": group["summary"],
                 "show_tax_percent": bool(group.get("show_tax_percent")),
+                "show_delivery_amount": bool(group.get("show_delivery_amount")),
                 "toggles": toggles,
             }
         )
@@ -4718,6 +4858,7 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
         "pos_enabled_count": enabled_count,
         "pos_toggle_count": toggle_count,
         "tax_percent_value": f"{pos.tax_percent:.0f}",
+        "delivery_amount_value": f"{pos.delivery_amount:.0f}",
         "receipt_paper_width": paper_width,
         "receipt_font_size": font["size"],
         "receipt_font_weight": font["weight"],

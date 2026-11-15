@@ -100,25 +100,15 @@
         {% endif %}
         {% if section_slug == "clients" %}
         <select name="receipt_kind" aria-label="Client activity">
-          <option value="all"{% if page.receipt_kind == 'all' or not page.receipt_kind %} selected{% endif %}>All types</option>
-          <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
-          <option value="credits"{% if page.receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
-          <option value="quotations"{% if page.receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
-          <option value="trade_out"{% if page.receipt_kind == 'trade_out' %} selected{% endif %}>Trade out</option>
-          <option value="trade_in"{% if page.receipt_kind == 'trade_in' %} selected{% endif %}>Trade in</option>
+          {% for value, label in page.receipt_kind_options %}
+          <option value="{{ value }}"{% if page.receipt_kind == value or not page.receipt_kind and value == 'all' %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
         </select>
         {% elif section_slug == "receipts" or section_slug == "return-receipts" %}
         <select name="receipt_kind" aria-label="Receipt type">
-          <option value="all"{% if page.receipt_kind == 'all' or not page.receipt_kind %} selected{% endif %}>All types</option>
-          <option value="sales"{% if page.receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
-          <option value="credits"{% if page.receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
-          <option value="quotations"{% if page.receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
-          <option value="trade_out"{% if page.receipt_kind == 'trade_out' %} selected{% endif %}>Trade out</option>
-          <option value="trade_in"{% if page.receipt_kind == 'trade_in' %} selected{% endif %}>Trade in</option>
-          <option value="stock"{% if page.receipt_kind == 'stock' %} selected{% endif %}>Stock suppliers</option>
-          <option value="expense"{% if page.receipt_kind == 'expense' %} selected{% endif %}>Expense suppliers</option>
-          <option value="cancelled"{% if page.receipt_kind == 'cancelled' %} selected{% endif %}>Cancelled</option>
-          <option value="partial-returns"{% if page.receipt_kind == 'partial-returns' %} selected{% endif %}>Partial returns</option>
+          {% for value, label in page.receipt_kind_options %}
+          <option value="{{ value }}"{% if page.receipt_kind == value or not page.receipt_kind and value == 'all' %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
         </select>
         {% endif %}
         {% if section_slug == "suppliers" and page.status_options %}
@@ -498,34 +488,39 @@
       </header>
       {% if table.shop_grid and section_slug == "overview" %}
       <div class="ax-band-legend ax-band-legend--items" aria-label="Column groups">
-        <span class="is-flow">Sales · Credits</span>
+        <span class="is-flow">{% if pos_flags.sale and pos_flags.credit %}Sales · Credits{% elif pos_flags.credit %}Credits{% else %}Sales{% endif %}</span>
         <span class="is-total">Total revenue</span>
         <span class="is-result">Stock · Gross · Expenses · Profit · Margin</span>
       </div>
       {% elif table.shop_grid and section_slug == "revenue" %}
       <div class="ax-band-legend ax-band-legend--items" aria-label="Column groups">
-        <span class="is-flow">Sales · Credits</span>
+        <span class="is-flow">{% if pos_flags.sale and pos_flags.credit %}Sales · Credits{% elif pos_flags.credit %}Credits{% else %}Sales{% endif %}</span>
         <span class="is-total">Total</span>
         <span class="is-result">Stock · Expenses · Profit</span>
       </div>
       {% elif table.shop_grid and section_slug == "balances" %}
       <div class="ax-band-legend ax-band-legend--balances" aria-label="Column groups">
+        {% if pos_flags.cash %}<span class="is-cash-open">Cash</span>{% endif %}
+        {% if pos_flags.mpesa %}<span class="is-mpesa-open">M-Pesa</span>{% endif %}
         {% if table.title == "Live cashbox by shop" %}
-        <span class="is-cash-open">Cash</span>
-        <span class="is-mpesa-open">M-Pesa</span>
         <span class="is-cash-close">Live / close</span>
         {% else %}
-        <span class="is-cash-open">Cash</span>
-        <span class="is-mpesa-open">M-Pesa</span>
         <span class="is-cash-close">Opening → closing</span>
         {% endif %}
       </div>
       {% elif table.shop_grid and section_slug == "sales" %}
       <div class="ax-band-legend ax-band-legend--sales" aria-label="Column groups">
-        <span class="is-cash">Cash</span>
-        <span class="is-mpesa">M-Pesa</span>
-        <span class="is-credits">Paid cash · Paid M-Pesa · Paid total</span>
+        {% if pos_flags.cash %}<span class="is-cash">Cash</span>{% endif %}
+        {% if pos_flags.mpesa %}<span class="is-mpesa">M-Pesa</span>{% endif %}
+        {% if pos_flags.credit %}
+        <span class="is-credits">
+          {% if pos_flags.pay_cash and pos_flags.pay_mpesa %}Paid cash · Paid M-Pesa · Paid total
+          {% elif pos_flags.pay_cash %}Paid cash · Paid total
+          {% elif pos_flags.pay_mpesa %}Paid M-Pesa · Paid total
+          {% else %}Paid total{% endif %}
+        </span>
         <span class="is-unpaid">Unpaid</span>
+        {% endif %}
         <span class="is-total">General total</span>
         <span class="is-result">Stock · Expected · Actual</span>
       </div>
@@ -813,6 +808,7 @@
 </div>
 {% endif %}
 {% include "employees/partials/analytics_credit_due_followup_modal.html" %}
+{% include "shops/partials/register_expense_modal.html" %}
 {% endblock %}
 
 {% block extra_js %}
@@ -825,6 +821,9 @@
 {% endif %}
 {% if page.credit_due_today and page.credit_due_today.rows %}
 <script defer src="{% static 'js/analytics-credit-due-followup.js' %}?v=1"></script>
+{% endif %}
+{% if register_expense_modal %}
+<script defer src="{% static 'js/my-shop-expense.js' %}?v=20261024-decimal-inputs"></script>
 {% endif %}
 <script>
   (() => {

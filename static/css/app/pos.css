@@ -395,9 +395,16 @@
 }
 
 .shop-floor {
-  display: grid;
+  /* Column flex (not grid) so the sticky toolbar's containing block is the
+     whole section — a grid item can only stick within its own row. */
+  display: flex;
+  flex-direction: column;
   gap: 1.25rem;
   padding-bottom: 5.5rem;
+}
+
+.shop-floor > * {
+  min-width: 0;
 }
 
 .shop-floor-notice {
@@ -919,6 +926,195 @@
 
 .shop-receipt-card--confirm {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.shop-receipt-card--sheet {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
+.shop-receipt-sheet {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0 0.9rem 0.95rem;
+}
+
+.shop-receipt-sheet-head {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  margin: 0 -0.9rem;
+  padding: 0.85rem 0.9rem 0.8rem;
+  text-align: center;
+  background: linear-gradient(
+    135deg,
+    rgba(var(--accent-rgb), 0.16),
+    rgba(var(--accent-rgb), 0.04)
+  );
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.28);
+}
+
+.shop-receipt-sheet-brand {
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 80%, var(--mist-dim));
+}
+
+.shop-receipt-sheet-no {
+  margin: 0;
+  font-size: 1.16rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+}
+
+.shop-receipt-sheet-rows {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.shop-receipt-sheet-rows > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.shop-receipt-sheet-rows dt {
+  color: var(--mist-dim);
+  min-width: 0;
+  flex: none;
+}
+
+.shop-receipt-sheet-rows dd {
+  margin: 0;
+  font-weight: 650;
+  text-align: right;
+  color: var(--text-strong);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-receipt-sheet-rows > div.is-total {
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.95rem;
+}
+
+.shop-receipt-sheet-rows > div.is-total dd {
+  color: var(--accent);
+  font-size: 1.02rem;
+  font-weight: 800;
+}
+
+.shop-receipt-sheet-sep {
+  border-top: 1px dashed var(--line);
+}
+
+.shop-receipt-sheet .shop-receipt-items-wrap {
+  margin: 0;
+}
+
+.shop-receipt-sheet-lines-head,
+.shop-receipt-sheet-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 3rem 4.2rem 4.6rem;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  min-width: 0;
+}
+
+.shop-receipt-sheet-lines-head {
+  padding: 0.32rem 0.55rem;
+  border-radius: 7px;
+  background: rgba(var(--accent-rgb), 0.09);
+  color: color-mix(in srgb, var(--accent) 82%, var(--mist-dim));
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.shop-receipt-sheet-lines {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.shop-receipt-sheet-line {
+  padding: 0.5rem 0.55rem;
+  border-bottom: 1px dashed var(--line);
+}
+
+.shop-receipt-sheet-line:last-child {
+  border-bottom: 0;
+}
+
+.shop-receipt-sheet-line:nth-child(even) {
+  background: color-mix(in srgb, var(--line) 16%, transparent);
+}
+
+.shop-receipt-sheet-line-item {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.shop-receipt-sheet-line-item strong {
+  font-size: 0.86rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.shop-receipt-sheet-line-qty,
+.shop-receipt-sheet-line-price {
+  color: var(--mist-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-receipt-sheet-line-total {
+  color: var(--text-strong);
+  font-weight: 750;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-receipt-sheet-lines-head .is-num {
+  text-align: right;
+}
+
+.shop-receipt-sheet-empty {
+  padding: 0.7rem;
+  color: var(--mist-dim);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+@media (max-width: 430px) {
+  .shop-receipt-sheet-lines-head,
+  .shop-receipt-sheet-line {
+    grid-template-columns: minmax(0, 1fr) 2.6rem 3.8rem 4.2rem;
+    gap: 0.35rem;
+  }
 }
 
 .shop-receipt-card--confirm > .shop-receipt-muted {
@@ -2026,11 +2222,21 @@
   height: 2.4rem;
 }
 
+/* Sticky live-search toolbar — floats under the workspace header while
+   the catalog scrolls. */
 .shop-floor-toolbar {
+  position: sticky;
+  top: calc(var(--workspace-header-h, 4.35rem) + 0.5rem);
+  z-index: 24;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--mist) 4%, var(--surface));
+  box-shadow: 0 12px 26px -14px rgba(8, 28, 34, 0.35);
 }
 
 .shop-floor-search {

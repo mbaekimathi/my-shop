@@ -43,12 +43,9 @@
           {% endfor %}
         </select>
         <select name="receipt_kind" aria-label="Transaction type">
-          <option value="all"{% if receipt_kind == 'all' or not receipt_kind %} selected{% endif %}>All types</option>
-          <option value="sales"{% if receipt_kind == 'sales' %} selected{% endif %}>Sales</option>
-          <option value="credits"{% if receipt_kind == 'credits' %} selected{% endif %}>Credits</option>
-          <option value="quotations"{% if receipt_kind == 'quotations' %} selected{% endif %}>Quotations</option>
-          <option value="trade_out"{% if receipt_kind == 'trade_out' %} selected{% endif %}>Trade out</option>
-          <option value="trade_in"{% if receipt_kind == 'trade_in' %} selected{% endif %}>Trade in</option>
+          {% for value, label in receipt_kind_options %}
+          <option value="{{ value }}"{% if receipt_kind == value or not receipt_kind and value == 'all' %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
         </select>
         {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
         <button type="submit" class="ax-apply">Apply</button>

@@ -7722,7 +7722,7 @@ def stock_request_audits(request, profile, meta, module):
 
 @require_http_methods(["GET", "POST"])
 def stock_management(request, profile, meta, module, page_sidebar):
-    from employees.models import FULL_STOCK_WORKFLOW_ROLES
+    from employees.models import FULL_STOCK_WORKFLOW_ROLES, EmployeeRole
     from employees.module_permissions import employee_may, require_module_permission
 
     from .models import ShopStock
@@ -7767,13 +7767,17 @@ def stock_management(request, profile, meta, module, page_sidebar):
             return denied
 
     # Stock In / Out / Request / Report / Movements / Serials: shop/store manager and IT.
-    if mode not in (
+    # Shop cashiers get a focused stock page: Stock In is their only workflow mode.
+    lite_modes = {
         "view",
         "settings",
         "low-stock",
         "stock-take",
         "online-stock-take",
-    ) and profile.role not in FULL_STOCK_WORKFLOW_ROLES:
+    }
+    if profile.role == EmployeeRole.SHOP_CASHIER:
+        lite_modes.add("in")
+    if mode not in lite_modes and profile.role not in FULL_STOCK_WORKFLOW_ROLES:
         return _stock_redirect(request.path, "view")
 
     if mode == "settings":

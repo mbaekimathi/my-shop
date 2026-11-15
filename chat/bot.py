@@ -30,6 +30,7 @@ from .myshop_models import (
 )
 
 COUNTED_STATUSES = ("active", "confirmed", "partial_return")
+ANALYTICS_ALL = "all"
 ANALYTICS_PENDING = "pending"
 ANALYTICS_CONFIRMED = "confirmed"
 SALE_KIND = "sale"
@@ -206,11 +207,11 @@ def _window(start_date, end_date):
 
 
 def analytics_receipt_default() -> str:
-    """Company default from MY-SHOP analytics settings (`pending` | `confirmed`)."""
+    """Company default from MY-SHOP analytics settings (`all` | `pending` | `confirmed`)."""
     try:
         row = CompanyAnalyticsSettings.objects.filter(pk=1).first()
         value = ((row.receipt_data_source if row else "") or "").strip().lower()
-        if value in (ANALYTICS_PENDING, ANALYTICS_CONFIRMED):
+        if value in (ANALYTICS_ALL, ANALYTICS_PENDING, ANALYTICS_CONFIRMED):
             return value
     except Exception:
         pass
@@ -218,12 +219,14 @@ def analytics_receipt_default() -> str:
 
 
 def resolve_receipt_status(text: str | None = None) -> str:
-    """Pending/confirmed for sales & item analytics — message override or company default."""
+    """All/pending/confirmed for sales & item analytics — message override or company default."""
     low = (text or "").lower()
     if re.search(r"\bconfirmed\b", low):
         return ANALYTICS_CONFIRMED
     if re.search(r"\b(pending|unconfirmed)\b", low):
         return ANALYTICS_PENDING
+    if re.search(r"\b(all|both)\b", low):
+        return ANALYTICS_ALL
     return analytics_receipt_default()
 
 
@@ -234,10 +237,14 @@ def _analytics_statuses(status_key: str | None) -> tuple[str, ...]:
         return ("active",)
     if key == ANALYTICS_CONFIRMED:
         return ("confirmed", "partial_return")
+    if key in (ANALYTICS_ALL, "any", "both"):
+        return COUNTED_STATUSES
     return _analytics_statuses(analytics_receipt_default())
 
 
 def _status_scope_label(status_key: str) -> str:
+    if status_key == ANALYTICS_ALL:
+        return "all receipts"
     return (
         "confirmed receipts"
         if status_key == ANALYTICS_CONFIRMED

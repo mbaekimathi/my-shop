@@ -498,7 +498,7 @@
       } else if (receiptKind === "sale" || receiptKind === "sales") {
         params.set("kind", "sale");
       } else {
-        params.set("kind", "sale");
+        params.set("kind", "all");
       }
     }
     if (!params.has("range")) {
@@ -630,6 +630,43 @@
       });
   };
 
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  const confirmReceiptTotal = () => {
+    const n = Number(currentDetail?.receipt?.total || 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const syncConfirmPaymentSplit = () => {
+    const select = modalBody?.querySelector("[data-confirm-payment-method]");
+    const wrap = modalBody?.querySelector("[data-confirm-split-wrap]");
+    if (!select || !wrap) return;
+    const both = select.value === "both";
+    wrap.hidden = !both;
+    if (both) {
+      const receipt = currentDetail?.receipt || {};
+      const cashInput = wrap.querySelector("[data-confirm-cash-amount]");
+      const mpesaInput = wrap.querySelector("[data-confirm-mpesa-amount]");
+      if (cashInput && cashInput.value === "") {
+        cashInput.value = String(receipt.cash_amount ?? "");
+      }
+      if (mpesaInput && mpesaInput.value === "") {
+        mpesaInput.value = String(receipt.mpesa_amount ?? "");
+      }
+    }
+  };
+
+  const autoBalanceSplit = (edited) => {
+    const wrap = modalBody?.querySelector("[data-confirm-split-wrap]");
+    if (!wrap) return;
+    const cashInput = wrap.querySelector("[data-confirm-cash-amount]");
+    const mpesaInput = wrap.querySelector("[data-confirm-mpesa-amount]");
+    const other = edited === cashInput ? mpesaInput : cashInput;
+    const n = Number(edited.value);
+    if (!other || edited.value === "" || !Number.isFinite(n)) return;
+    other.value = String(round2(Math.max(0, confirmReceiptTotal() - n)));
+  };
+
   const renderDetail = (payload) => {
     const receipt = payload.receipt || {};
     currentDetail = payload;
@@ -662,19 +699,15 @@
           line.returned_quantity > 0
             ? `<span class="shop-receipt-muted">Returned ${line.returned_quantity} of ${line.quantity}</span>`
             : "";
-        return `<li class="shop-receipt-item-row">
-  <div class="shop-receipt-item-row-main">
+        return `<li class="shop-receipt-sheet-line">
+  <div class="shop-receipt-sheet-line-item">
     <strong>${escapeHtml(line.item_name)}</strong>
     ${returnedNote}
     ${serials ? `<div class="shop-receipt-serials">${serials}</div>` : ""}
   </div>
-  <div class="shop-receipt-item-row-meta">
-    <span>${line.remaining_quantity}<span class="shop-receipt-muted"> / ${line.quantity}</span></span>
-    <span>KSh ${escapeHtml(money(line.unit_price))}</span>
-    <span class="shop-receipt-item-row-total">KSh ${escapeHtml(
-      money(line.remaining_total)
-    )}</span>
-  </div>
+  <span class="shop-receipt-sheet-line-qty">${line.remaining_quantity}<span class="shop-receipt-muted"> / ${line.quantity}</span></span>
+  <span class="shop-receipt-sheet-line-price">${escapeHtml(money(line.unit_price))}</span>
+  <span class="shop-receipt-sheet-line-total">${escapeHtml(money(line.remaining_total))}</span>
 </li>`;
       })
       .join("");
@@ -725,10 +758,104 @@
       >
     </div>`
       : "";
+    const methodLabels = {
+      cash: "Cash",
+      mpesa: "M-Pesa",
+      both: "Cash + M-Pesa",
+    };
+    const currentMethod = String(receipt.payment_method || "")
+      .trim()
+      .toLowerCase();
+    const saleMethod = methodLabels[currentMethod] ? currentMethod : "";
+    let paidByField = "";
+    let paymentSplitField = "";
+    if (!isCredit && saleMethod) {
+      const enabledMethods = (
+        Array.isArray(receipt.payment_methods) && receipt.payment_methods.length
+          ? receipt.payment_methods
+          : ["cash", "mpesa", "both"]
+      )
+        .map((m) => String(m || "").toLowerCase())
+        .filter((m) => methodLabels[m]);
+      if (!enabledMethods.includes(saleMethod)) {
+        enabledMethods.push(saleMethod);
+      }
+      const paidByOptions = enabledMethods
+        .map(
+          (m) =>
+            `<option value="${m}"${m === saleMethod ? " selected" : ""}>${escapeHtml(
+              methodLabels[m]
+            )}</option>`
+        )
+        .join("");
+      paidByField = `<div class="shop-receipt-mpesa-ref">
+      <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-method">
+        Paid by
+      </label>
+      <select
+        id="ax-confirm-payment-method"
+        class="shop-receipt-mpesa-ref-input"
+        name="payment_method"
+        data-confirm-payment-method
+      >
+        ${paidByOptions}
+      </select>
+    </div>`;
+      const splitCash =
+        saleMethod === "both"
+          ? String(receipt.cash_amount ?? "")
+          : saleMethod === "cash"
+            ? String(receipt.total ?? "")
+            : "0";
+      const splitMpesa =
+        saleMethod === "both"
+          ? String(receipt.mpesa_amount ?? "")
+          : saleMethod === "mpesa"
+            ? String(receipt.total ?? "")
+            : "0";
+      paymentSplitField = `<div class="shop-receipt-confirm-datetime" data-confirm-split-wrap${
+        saleMethod === "both" ? "" : " hidden"
+      }>
+      <div class="shop-receipt-mpesa-ref">
+        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-cash-amount">
+          Cash amount
+        </label>
+        <input
+          id="ax-confirm-cash-amount"
+          class="shop-receipt-mpesa-ref-input"
+          type="number"
+          name="cash_amount"
+          min="0"
+          step="0.01"
+          value="${escapeHtml(splitCash)}"
+          inputmode="decimal"
+          data-confirm-cash-amount
+        >
+      </div>
+      <div class="shop-receipt-mpesa-ref">
+        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-mpesa-amount">
+          M-Pesa amount
+        </label>
+        <input
+          id="ax-confirm-mpesa-amount"
+          class="shop-receipt-mpesa-ref-input"
+          type="number"
+          name="mpesa_amount"
+          min="0"
+          step="0.01"
+          value="${escapeHtml(splitMpesa)}"
+          inputmode="decimal"
+          data-confirm-mpesa-amount
+        >
+      </div>
+    </div>`;
+    }
     const confirmFieldsHtml = `<div class="shop-receipt-card shop-receipt-card--confirm" data-confirm-fields${
       showConfirmFields ? "" : " hidden"
     }>
   <div class="shop-receipt-confirm-fields">
+    ${paidByField}
+    ${paymentSplitField}
     ${creditAmountField}
     <div class="shop-receipt-confirm-datetime" data-confirm-payment-at-wrap>
       <div class="shop-receipt-mpesa-ref">
@@ -793,53 +920,89 @@
       ? "partial_confirmation"
       : receipt.status;
 
+    const clientLine = receipt.client_name
+      ? `${receipt.client_name}${
+          receipt.client_phone ? ` · ${receipt.client_phone}` : ""
+        }`
+      : receipt.client_phone || "";
+    const paidAtLabel = String(
+      receipt.confirmed_payment_label || ""
+    ).trim();
+    const paymentSplitLabel =
+      receipt.payment_method === "both"
+        ? `Cash KSh ${money(receipt.cash_amount)} + M-Pesa KSh ${money(
+            receipt.mpesa_amount
+          )}`
+        : "";
+
     if (modalBody) {
       modalBody.innerHTML = `
 <div class="shop-receipt-detail">
-  <div class="shop-receipt-summary">
-    <div class="shop-receipt-summary-badges">
-      <span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
-        (receipt.kind || "").replace(/\s+/g, "_")
-      )}">${escapeHtml(receipt.kind_label || "")}</span>
-      <span class="shop-receipt-status ${statusClass(
-        detailStatus
-      )}">${escapeHtml(receipt.status_label || "")}</span>
+  <div class="shop-receipt-card shop-receipt-card--sheet">
+    <div class="shop-receipt-sheet">
+      <div class="shop-receipt-sheet-head">
+        <p class="shop-receipt-sheet-brand">${escapeHtml(
+          receipt.shop_name || "MY-SHOP"
+        )} · ${escapeHtml(receipt.kind_label || "Receipt")}</p>
+        <h3 class="shop-receipt-sheet-no">${escapeHtml(
+          receipt.receipt_number || "—"
+        )}</h3>
+        <div class="shop-receipt-summary-badges">
+          <span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
+            (receipt.kind || "").replace(/\s+/g, "_")
+          )}">${escapeHtml(receipt.kind_label || "")}</span>
+          <span class="shop-receipt-status ${statusClass(
+            detailStatus
+          )}">${escapeHtml(receipt.status_label || "")}</span>
+        </div>
+      </div>
+      ${creditNoticeHtml}
+      <dl class="shop-receipt-sheet-rows">
+        <div><dt>Printed</dt><dd>${escapeHtml(
+          receipt.created_label || "—"
+        )}</dd></div>
+        ${
+          paidAtLabel
+            ? `<div><dt>Paid</dt><dd>${escapeHtml(paidAtLabel)}</dd></div>`
+            : ""
+        }
+        <div><dt>Served by</dt><dd>${escapeHtml(receipt.cashier || "—")}</dd></div>
+        <div><dt>Client</dt><dd>${escapeHtml(clientLine || "Walk-in")}</dd></div>
+        ${
+          existingRef
+            ? `<div><dt>Reference</dt><dd>${escapeHtml(existingRef)}</dd></div>`
+            : ""
+        }
+      </dl>
+      <div class="shop-receipt-sheet-sep" aria-hidden="true"></div>
+      <div class="shop-receipt-sheet-lines-head" aria-hidden="true">
+        <span>Item</span><span class="is-num">Qty</span><span class="is-num">Price</span><span class="is-num">Total</span>
+      </div>
+      ${
+        lines.length
+          ? `<ul class="shop-receipt-sheet-lines">${itemsHtml}</ul>`
+          : `<p class="shop-receipt-muted">No line items on this receipt.</p>`
+      }
+      <dl class="shop-receipt-sheet-rows">
+        <div><dt>Subtotal</dt><dd>KSh ${escapeHtml(money(receipt.subtotal))}</dd></div>
+        ${
+          Number(receipt.tax_amount) > 0
+            ? `<div><dt>Tax (${escapeHtml(
+                receipt.tax_percent
+              )}%)</dt><dd>KSh ${escapeHtml(money(receipt.tax_amount))}</dd></div>`
+            : ""
+        }
+        <div class="is-total"><dt>Total</dt><dd>KSh ${escapeHtml(
+          money(receipt.total)
+        )}</dd></div>
+      </dl>
+      <div class="shop-receipt-sheet-sep" aria-hidden="true"></div>
+      <dl class="shop-receipt-sheet-rows">
+        <div><dt>Payment</dt><dd>${escapeHtml(
+          receipt.payment_label || "—"
+        )}${paymentSplitLabel ? ` · ${escapeHtml(paymentSplitLabel)}` : ""}</dd></div>
+      </dl>
     </div>
-    ${creditNoticeHtml}
-    <p class="shop-receipt-summary-when"><strong>${escapeHtml(
-      receipt.created_label || "—"
-    )}</strong></p>
-    <p class="shop-receipt-muted">Cashier: ${escapeHtml(
-      receipt.cashier || "—"
-    )}</p>
-  </div>
-
-  <div class="shop-receipt-card">
-    <h3>Payment &amp; client</h3>
-    <dl>
-      <div><dt>Payment</dt><dd>${escapeHtml(
-        receipt.payment_label || "—"
-      )}</dd></div>
-      <div><dt>Client</dt><dd>${escapeHtml(
-        receipt.client_name || "Walk-in"
-      )}</dd></div>
-      <div><dt>Phone</dt><dd>${escapeHtml(
-        receipt.client_phone || "—"
-      )}</dd></div>
-      <div><dt>Shop</dt><dd>${escapeHtml(receipt.shop_name || "—")}</dd></div>
-      <div class="is-total"><dt>Total</dt><dd>KSh ${escapeHtml(
-        money(receipt.total)
-      )}</dd></div>
-    </dl>
-  </div>
-
-  <div class="shop-receipt-card shop-receipt-card--items">
-    <h3>Items</h3>
-    ${
-      lines.length
-        ? `<ul class="shop-receipt-item-list">${itemsHtml}</ul>`
-        : `<p class="shop-receipt-muted">No line items on this receipt.</p>`
-    }
   </div>
 
   ${confirmFieldsHtml}
@@ -1195,6 +1358,22 @@
 
   statusSelect?.addEventListener("change", syncConfirmFieldsVisibility);
 
+  modalBody?.addEventListener("change", (event) => {
+    if (event.target.matches?.("[data-confirm-payment-method]")) {
+      syncConfirmPaymentSplit();
+    }
+  });
+
+  modalBody?.addEventListener("input", (event) => {
+    if (
+      event.target.matches?.(
+        "[data-confirm-cash-amount], [data-confirm-mpesa-amount]"
+      )
+    ) {
+      autoBalanceSplit(event.target);
+    }
+  });
+
   printBtn?.addEventListener("click", () => {
     const printUrl =
       printBtn.getAttribute("data-print-url") ||
@@ -1275,6 +1454,41 @@
       }
       body.set("amount", amount);
       body.set("payment_method", ref || existingRef ? "mpesa" : "cash");
+    }
+    if (!isCredit) {
+      const methodSelect = modal?.querySelector(
+        "[data-confirm-payment-method]"
+      );
+      const method = (methodSelect?.value || "").trim().toLowerCase();
+      if (method === "both") {
+        const cashInput = modal?.querySelector("[data-confirm-cash-amount]");
+        const mpesaInput = modal?.querySelector("[data-confirm-mpesa-amount]");
+        const cash = Number(cashInput?.value);
+        const mpesa = Number(mpesaInput?.value);
+        const total = confirmReceiptTotal();
+        if (
+          !Number.isFinite(cash) ||
+          !Number.isFinite(mpesa) ||
+          cash < 0 ||
+          mpesa < 0
+        ) {
+          window.alert("Enter how much was paid by cash and by M-Pesa.");
+          cashInput?.focus();
+          return false;
+        }
+        if (Math.abs(round2(cash + mpesa) - round2(total)) > 0.009) {
+          window.alert(
+            `Cash + M-Pesa must add up to the receipt total (KSh ${total.toFixed(2)}).`
+          );
+          cashInput?.focus();
+          return false;
+        }
+        body.set("cash_amount", String(round2(cash)));
+        body.set("mpesa_amount", String(round2(mpesa)));
+      }
+      if (method) {
+        body.set("payment_method", method);
+      }
     }
     if (ref) body.set("mpesa_receipt_number", ref);
     if (paymentAt) body.set("payment_at", paymentAt);

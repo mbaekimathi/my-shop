@@ -115,14 +115,22 @@
       <strong>{% if p.total_units %}{{ p.total_units }}{% else %}0{% endif %}</strong>
     </div>
     {% else %}
-    {% if p.show_tax %}
+    {% if p.show_tax or p.show_delivery_fee %}
     <div>
       <span>Subtotal</span>
       <strong>KSh {{ p.subtotal }}</strong>
     </div>
+    {% endif %}
+    {% if p.show_tax %}
     <div>
       <span>Tax ({{ p.tax_percent }}%)</span>
       <strong>KSh {{ p.tax_amount }}</strong>
+    </div>
+    {% endif %}
+    {% if p.show_delivery_fee %}
+    <div>
+      <span>Delivery</span>
+      <strong>KSh {{ p.delivery_fee }}</strong>
     </div>
     {% endif %}
     <div class="receipt-ticket-grand">

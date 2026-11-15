@@ -571,6 +571,101 @@
     fetchPage({ page: 1, q, append: false });
   };
 
+  // After picking a searched item (open or add to cart), restore the full
+  // catalog but keep that card at the same viewport spot — clear the box,
+  // don't lose the place.
+  const placeCardAtSpot = (card, keepTop) => {
+    if (!card || keepTop == null) return;
+    const rootEl = document.documentElement;
+    const prev = rootEl.style.scrollBehavior;
+    rootEl.style.scrollBehavior = "auto";
+    // Reveal it inside its horizontal category rail if it scrolled away.
+    const track = card.closest("[data-category-scroll-track]");
+    if (track && track.scrollWidth > track.clientWidth) {
+      const c = card.getBoundingClientRect();
+      const t = track.getBoundingClientRect();
+      if (c.left < t.left + 4 || c.right > t.right - 4) {
+        track.scrollLeft +=
+          c.left + c.width / 2 - (t.left + t.width / 2);
+      }
+    }
+    const toolbar = floor.querySelector(".shop-floor-toolbar");
+    const minTop =
+      (toolbar ? toolbar.getBoundingClientRect().bottom : 0) + 6;
+    const delta =
+      card.getBoundingClientRect().top - Math.max(keepTop, minTop);
+    if (Math.abs(delta) > 2) window.scrollBy(0, delta);
+    rootEl.style.scrollBehavior = prev;
+  };
+
+  const waitAndPlaceCard = (itemId, staleCard, keepTop) => {
+    if (itemId === "" || keepTop == null) return;
+    const locked = () =>
+      document.body.classList.contains("workspace-modal-open") ||
+      document.body.classList.contains("shop-cart-open");
+    const findCard = () =>
+      root.querySelector(
+        `[data-cart-item][data-item-id="${CSS.escape(itemId)}"]`
+      );
+    const attempt = () => {
+      // User started a new search — stop chasing the old anchor.
+      if (String(searchInput?.value || "").trim()) {
+        cleanup();
+        return;
+      }
+      const card = findCard();
+      if (!card || card === staleCard || locked()) return;
+      placeCardAtSpot(card, keepTop);
+      cleanup();
+    };
+    const observer = new MutationObserver(attempt);
+    const cleanup = () => {
+      document.removeEventListener("shop-catalog:rendered", attempt);
+      observer.disconnect();
+      window.clearTimeout(timer);
+    };
+    const timer = window.setTimeout(() => {
+      const card = findCard();
+      if (card && !locked()) placeCardAtSpot(card, keepTop);
+      cleanup();
+    }, 20000);
+    document.addEventListener("shop-catalog:rendered", attempt);
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  };
+
+  floor.addEventListener("click", (event) => {
+    const trigger = event.target.closest(
+      "[data-cart-preview], [data-cart-add]"
+    );
+    if (!trigger) return;
+    const card = trigger.closest("[data-item-row]");
+    if (!card || !searchInput) return;
+    const localFilter = floor.hasAttribute("data-catalog-local-filter");
+    const filtering = Boolean(String(activeQuery || "").trim()) || localFilter;
+    window.clearTimeout(searchTimer);
+    searchInput.value = "";
+    if (!filtering) return;
+    const itemId = String(card.dataset.itemId ?? "");
+    const keepTop = card.getBoundingClientRect().top;
+    (async () => {
+      // Mirror reload()'s offline branch: with rendered rows it filters
+      // locally (no re-render event) — un-hide and anchor in place.
+      const { isAppOnline } = await import("./offline/net.js");
+      const offline = !(await isAppOnline());
+      if (localFilter || (offline && hasRenderedItems())) {
+        filterRenderedItems("");
+        activeQuery = "";
+        placeCardAtSpot(card, keepTop);
+        return;
+      }
+      reload("");
+      waitAndPlaceCard(itemId, card, keepTop);
+    })().catch(() => {});
+  });
+
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {

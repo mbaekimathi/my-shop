@@ -39,6 +39,7 @@
   data-pos-require-client-name="{% if pos_flags.enable_client_data and pos_flags.require_client_name %}1{% else %}0{% endif %}"
   data-pos-tax="{% if pos_settings.enable_tax %}1{% else %}0{% endif %}"
   data-pos-tax-percent="{{ pos_flags.effective_tax_percent }}"
+  data-pos-delivery-amount="{{ pos_flags.delivery_amount }}"
   data-pos-receipt-width="{{ pos_flags.receipt_paper_width }}"
   data-pos-receipt-font-size="{{ pos_flags.receipt_font_size }}"
   data-pos-receipt-font-px80="{{ pos_flags.receipt_font_size_px_80 }}"
@@ -289,6 +290,10 @@
       <div class="shop-cart-total-row shop-cart-total-row--sub" data-cart-tax-row{% if not pos_settings.enable_tax %} hidden{% endif %}>
         <span data-cart-tax-label>Tax{% if pos_settings.enable_tax %} ({{ pos_flags.effective_tax_percent }}%){% endif %}</span>
         <strong data-cart-tax>KSh 0.00</strong>
+      </div>
+      <div class="shop-cart-total-row shop-cart-total-row--sub" data-cart-delivery-row hidden>
+        <span>Delivery</span>
+        <strong data-cart-delivery-fee>KSh 0.00</strong>
       </div>
       <div class="shop-cart-total-row">
         <span>Total</span>
@@ -564,11 +569,11 @@
       >
         <label class="shop-cart-check">
           <input type="checkbox" name="delivery" value="1" data-cart-delivery>
-          <span>Delivery</span>
+          <span>Delivery{% if pos_flags.delivery_amount != "0.00" %} <em>(+KSh {{ pos_flags.delivery_amount }})</em>{% else %} <em>(Free)</em>{% endif %}</span>
         </label>
         <div class="shop-cart-delivery-fields" data-cart-delivery-fields hidden>
           <label class="shop-cart-input shop-cart-delivery-location">
-            <span>Delivery location <span class="shop-serial-required" aria-hidden="true">*</span></span>
+            <span>Delivery location <em>(optional)</em></span>
             <div class="shop-cart-delivery-search">
               <i data-lucide="map-pin" aria-hidden="true"></i>
               <input
@@ -993,7 +998,7 @@
   src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&callback=__shopFloorMapsReady&v=weekly"
 ></script>
 {% endif %}
-<script defer src="{% static 'js/shop-catalog.js' %}?v=20261115-no-shelf-floor"></script>
+<script defer src="{% static 'js/shop-catalog.js' %}?v=20261115-keep-spot"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=20261217-batch-copies"></script>

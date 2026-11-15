@@ -61,10 +61,24 @@
     var rsEl = document.getElementById("all-init-receipt-status");
     if (rsEl) receiptStatusDefault = JSON.parse(rsEl.textContent);
   } catch (e) {}
-  if (receiptStatusDefault !== "confirmed" && receiptStatusDefault !== "pending") {
+  if (
+    receiptStatusDefault !== "all" &&
+    receiptStatusDefault !== "confirmed" &&
+    receiptStatusDefault !== "pending"
+  ) {
     receiptStatusDefault = "pending";
   }
-  var receiptStatus = receiptStatusDefault;
+  var RECEIPT_STATUS_KEY = "myshop-receipt-status";
+  var storedReceiptStatus = "";
+  try {
+    storedReceiptStatus = window.localStorage.getItem(RECEIPT_STATUS_KEY) || "";
+  } catch (e) {}
+  var receiptStatus =
+    storedReceiptStatus === "all" ||
+    storedReceiptStatus === "confirmed" ||
+    storedReceiptStatus === "pending"
+      ? storedReceiptStatus
+      : receiptStatusDefault;
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -77,7 +91,7 @@
   function fmt(t) {
     var h = esc(t);
     h = h.replace(
-      /%%items\|([0-9-]+)\|([0-9-]+)(?:\|(pending|confirmed))?%%/g,
+      /%%items\|([0-9-]+)\|([0-9-]+)(?:\|(all|pending|confirmed))?%%/g,
       '<a class="wa-link" href="#" data-bitems="$1:$2:$3">View items sold →</a>'
     );
     h = h.replace(/\*([^*\n]+)\*/g, "<strong>$1</strong>");
@@ -443,9 +457,12 @@
   }
 
   function setReceiptStatus(status) {
-    if (status !== "pending" && status !== "confirmed") return;
+    if (status !== "all" && status !== "pending" && status !== "confirmed") return;
     receiptStatus = status;
     if (receiptStatusSel) receiptStatusSel.value = status;
+    try {
+      window.localStorage.setItem(RECEIPT_STATUS_KEY, status);
+    } catch (e) {}
   }
 
   function setPeriodMode(mode) {
@@ -471,7 +488,7 @@
     yearSel.value = String(now.getFullYear());
     setPeriodMode("day");
     if (receiptScope) receiptScope.hidden = !topicNeedsReceiptStatus(topic);
-    setReceiptStatus(receiptStatusDefault);
+    setReceiptStatus(receiptStatus);
     period.hidden = false;
     dateDay.focus();
     if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();

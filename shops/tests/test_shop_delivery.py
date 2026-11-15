@@ -217,7 +217,7 @@ class ShopDeliveryTests(TestCase):
         with self.assertRaises(ValidationError):
             accept_shop_delivery(delivery_id=delivery.pk, rider=self.rider_b)
 
-    def test_delivery_requires_location_and_client(self):
+    def test_delivery_requires_client_but_location_optional(self):
         with self.assertRaises(ValidationError):
             self._checkout(
                 delivery=True,
@@ -226,22 +226,24 @@ class ShopDeliveryTests(TestCase):
                 delivery_lat="-1.2",
                 delivery_lng="36.8",
             )
-        with self.assertRaises(ValidationError):
-            complete_shop_checkout(
-                shop=self.shop,
-                profile=self.cashier,
-                payload={
-                    "kind": ShopReceiptKind.SALE,
-                    "payment_method": ShopPaymentMethod.CASH,
-                    "cash_amount": "1200",
-                    "login_code": "330001",
-                    "client_name": "CLIENT ONE",
-                    "client_phone": "0712345678",
-                    "delivery": True,
-                    "delivery_location": "",
-                    "lines": [{"id": self.item.pk, "qty": "1", "price": "1200"}],
-                },
-            )
+        result = complete_shop_checkout(
+            shop=self.shop,
+            profile=self.cashier,
+            payload={
+                "kind": ShopReceiptKind.SALE,
+                "payment_method": ShopPaymentMethod.CASH,
+                "cash_amount": "1200",
+                "login_code": "330001",
+                "client_name": "CLIENT ONE",
+                "client_phone": "0712345678",
+                "delivery": True,
+                "delivery_location": "",
+                "lines": [{"id": self.item.pk, "qty": "1", "price": "1200"}],
+            },
+        )
+        delivery = ShopDelivery.objects.get(receipt=result["receipt"])
+        self.assertEqual(delivery.location_text, "")
+        self.assertEqual(delivery.maps_url, "")
 
     def test_rider_portal_accept_and_complete(self):
         self._checkout(delivery=True)

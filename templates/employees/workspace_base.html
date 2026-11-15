@@ -10,13 +10,13 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261114-shelf-links">
-<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261108-mobile-fit">
-<link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261026-item-images">
+<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261115-toast-dismiss">
+<link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261115-sticky-search">
 <link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261113-mobile-cards">
 <link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261113-online-take-day">
 <link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261114-confirm-paid">
 <link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261114-receipt-paid-at">
+<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261115-sheet">
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261108-act-view">
 <link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
 <link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261019-split">
@@ -445,6 +445,49 @@
     });
 
     const TRANSFER_FLASH_KEY = "myshop:transfer-flash";
+
+    // Auto-dismiss: any item tagged data-toast-duration animates out on its
+    // own schedule; the host is removed once its last item is gone.
+    const dismissToastItem = (item) => {
+      const host = item.closest(".workspace-toast");
+      item.classList.add("is-hiding");
+      window.setTimeout(() => {
+        item.remove();
+        if (
+          host &&
+          host.isConnected &&
+          !host.querySelector(".workspace-toast__item")
+        ) {
+          host.classList.add("is-hiding");
+          window.setTimeout(() => host.remove(), 220);
+        }
+      }, 240);
+    };
+    const armToastItem = (item) => {
+      if (!item || item.hasAttribute("data-toast-armed")) return;
+      item.setAttribute("data-toast-armed", "1");
+      const duration = Math.max(
+        Number(item.getAttribute("data-toast-duration")) || 4500,
+        1000
+      );
+      window.setTimeout(() => dismissToastItem(item), duration);
+    };
+    const armToastItemsIn = (scope) => {
+      if (!scope || scope.nodeType !== 1) return;
+      if (scope.matches?.(".workspace-toast__item")) armToastItem(scope);
+      scope
+        .querySelectorAll?.(".workspace-toast__item[data-toast-duration]")
+        .forEach(armToastItem);
+    };
+    // Catch items appended later by other scripts that tag themselves with
+    // data-toast-duration but rely on the shell to retire them.
+    const toastObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => armToastItemsIn(node));
+      });
+    });
+    toastObserver.observe(document.body, { childList: true, subtree: true });
+
     const showToastMessage = (text, tone = "success") => {
       if (!text) return;
       let host = document.querySelector("[data-workspace-toast]");
@@ -481,6 +524,7 @@
         <span class="workspace-toast__text"></span>`;
       item.querySelector(".workspace-toast__text").textContent = text;
       list.appendChild(item);
+      armToastItem(item);
     };
     window.showWorkspaceToast = showToastMessage;
 
@@ -501,22 +545,12 @@
       }
     }
 
-    const toast = document.querySelector("[data-workspace-toast]");
-    if (toast) {
-      const items = [...toast.querySelectorAll("[data-toast-duration]")];
-      if (!items.length) {
-        toast.remove();
-      } else {
-        const duration = Math.max(
-          ...items.map((el) => Number(el.dataset.toastDuration) || 1000),
-          1000
-        );
-        window.setTimeout(() => {
-          toast.classList.add("is-hiding");
-          window.setTimeout(() => toast.remove(), 220);
-        }, duration);
-      }
-    }
+    document
+      .querySelectorAll("[data-workspace-toast] .workspace-toast__item")
+      .forEach(armToastItem);
+    document.querySelectorAll("[data-workspace-toast]").forEach((host) => {
+      if (!host.querySelector(".workspace-toast__item")) host.remove();
+    });
   })();
 </script>
 {% endblock %}

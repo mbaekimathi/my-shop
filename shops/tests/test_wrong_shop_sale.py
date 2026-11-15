@@ -149,6 +149,19 @@ class WrongShopSaleTests(TestCase):
         self.assertEqual(data.get("allocated_shop_names"), [])
 
     def test_checkout_succeeds_at_unallocated_shop(self):
+        from shops.services import open_shop_day
+
+        # Compulsory open & close is on by default: open the day first.
+        open_shop_day(
+            shop=self.other_shop,
+            payload={
+                "cash_amount": "0",
+                "mpesa_amount": "0",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": self.profile.employee_id,
+            },
+        )
         client = Client()
         self._login(client)
         self._unlock_shop(client, self.other_shop)

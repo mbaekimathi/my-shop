@@ -582,6 +582,12 @@ button.workspace-user-dropdown-item {
   transition: opacity 0.22s ease, transform 0.22s ease;
 }
 
+.workspace-toast__item.is-hiding {
+  opacity: 0;
+  transform: translateY(-0.55rem) scale(0.97);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
 .workspace-toast__item {
   display: flex;
   align-items: center;

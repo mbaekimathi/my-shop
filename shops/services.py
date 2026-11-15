@@ -82,6 +82,16 @@ POS_SETTING_FIELDS = {
     "enable_cart_confirm_receipt",
     "enable_cart_delivery",
     "enable_tax",
+    "enable_sidebar_open_close",
+    "enable_sidebar_trade",
+    "enable_sidebar_buy_stock",
+    "enable_sidebar_stock_transfers",
+    "enable_sidebar_stock_count",
+    "enable_sidebar_shelf_stock",
+    "enable_sidebar_expense",
+    "enable_sidebar_printer",
+    "enable_sidebar_receipts",
+    "enable_sidebar_website",
     "compulsory_print_on_sale",
     "enable_print_bluetooth",
     "enable_print_usb",
@@ -116,6 +126,17 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_cart_delivery",
         "enable_tax",
         "tax_percent",
+        "delivery_amount",
+        "enable_sidebar_open_close",
+        "enable_sidebar_trade",
+        "enable_sidebar_buy_stock",
+        "enable_sidebar_stock_transfers",
+        "enable_sidebar_stock_count",
+        "enable_sidebar_shelf_stock",
+        "enable_sidebar_expense",
+        "enable_sidebar_printer",
+        "enable_sidebar_receipts",
+        "enable_sidebar_website",
     }
 )
 SHOP_RECEIPT_FIELD_NAMES = frozenset(
@@ -505,6 +526,24 @@ def set_shop_tax_percent(*, shop: Shop, percent) -> ShopPosSettings:
     return row
 
 
+def set_shop_delivery_amount(*, shop: Shop, amount) -> ShopPosSettings:
+    try:
+        fee = Decimal(str(amount).strip() or "0")
+    except (InvalidOperation, AttributeError, TypeError, ValueError) as exc:
+        raise ValidationError("Enter a valid delivery amount.") from exc
+    if fee < 0:
+        raise ValidationError("Delivery amount cannot be negative.")
+    row = get_shop_pos_settings(shop)
+    if not row.override_pos:
+        raise ValidationError(
+            "Turn on custom shop POS settings before changing delivery amount."
+        )
+    row.delivery_amount = fee.quantize(Decimal("0.01"))
+    row.save(update_fields=["delivery_amount", "updated_at"])
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
+    return row
+
+
 def set_shop_receipt_paper_width(*, shop: Shop, width: str) -> ShopPosSettings:
     value = (width or "").strip()
     if value not in RECEIPT_PAPER_WIDTHS:
@@ -730,6 +769,7 @@ STOCK_SETTING_FIELDS = frozenset(
 ANALYTICS_SETTINGS_CACHE_KEY = "company_analytics_settings:v1"
 ANALYTICS_RECEIPT_DATA_SOURCES = frozenset(
     {
+        AnalyticsReceiptDataSource.ALL,
         AnalyticsReceiptDataSource.PENDING,
         AnalyticsReceiptDataSource.CONFIRMED,
     }
@@ -764,7 +804,7 @@ def get_analytics_receipt_data_source_default() -> str:
 def set_analytics_receipt_data_source(*, source: str) -> CompanyAnalyticsSettings:
     value = (source or "").strip().lower()
     if value not in ANALYTICS_RECEIPT_DATA_SOURCES:
-        raise ValidationError("Choose pending or confirmed receipts.")
+        raise ValidationError("Choose all, pending or confirmed receipts.")
     settings_row = get_company_analytics_settings()
     settings_row.receipt_data_source = value
     settings_row.save(update_fields=["receipt_data_source", "updated_at"])
@@ -2370,6 +2410,10 @@ def developer_payment_prompt_for_request(request) -> dict | None:
         "role_settings_section",
     }:
         return None
+    # Path fallback covers any settings page (role-scoped, shop-level, or
+    # legacy flat URLs) even when resolver_match is not populated yet.
+    if "/settings/" in f"{path.rstrip('/')}/":
+        return None
     if path.startswith("/employees/login") or path.startswith("/employees/register"):
         return None
 
@@ -2886,6 +2930,29 @@ def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
             settings_row.save(update_fields=[*changed, "updated_at"])
         _invalidate_pos_settings_cache()
         return get_company_pos_settings()
+    if field in ("enable_stock_tracking", "enable_shelf_mode"):
+        # Raw stock-flag writes must not leave a state the one-of stock-mode
+        # toggles cannot represent (both off = no stock mode at all).
+        _invalidate_pos_settings_cache()
+        settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
+        tracking = (
+            bool(enabled)
+            if field == "enable_stock_tracking"
+            else bool(settings_row.enable_stock_tracking)
+        )
+        shelf = (
+            bool(enabled)
+            if field == "enable_shelf_mode"
+            else bool(settings_row.enable_shelf_mode)
+        )
+        if not (tracking or shelf):
+            raise ValidationError(
+                "One stock mode must stay on. Turn on another mode instead."
+            )
+        setattr(settings_row, field, bool(enabled))
+        settings_row.save(update_fields=[field, "updated_at"])
+        _invalidate_pos_settings_cache()
+        return get_company_pos_settings()
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
     _invalidate_pos_settings_cache()
@@ -2908,6 +2975,20 @@ def set_company_tax_percent(*, percent) -> CompanyPosSettings:
     settings_row = get_company_pos_settings()
     settings_row.tax_percent = rate.quantize(Decimal("0.01"))
     settings_row.save(update_fields=["tax_percent", "updated_at"])
+    _invalidate_pos_settings_cache()
+    return settings_row
+
+
+def set_company_delivery_amount(*, amount) -> CompanyPosSettings:
+    try:
+        fee = Decimal(str(amount).strip() or "0")
+    except (InvalidOperation, AttributeError, TypeError, ValueError) as exc:
+        raise ValidationError("Enter a valid delivery amount.") from exc
+    if fee < 0:
+        raise ValidationError("Delivery amount cannot be negative.")
+    settings_row = get_company_pos_settings()
+    settings_row.delivery_amount = fee.quantize(Decimal("0.01"))
+    settings_row.save(update_fields=["delivery_amount", "updated_at"])
     _invalidate_pos_settings_cache()
     return settings_row
 
@@ -3477,12 +3558,47 @@ _POS_FIELD_TO_ANALYTICS_SECTION = {
     "enable_trade_out": "tradings",
 }
 
+# Fields with no permission-matrix link still hide their analytics section.
+_POS_FIELD_EXTRA_ANALYTICS_SECTION = {
+    "enable_cart_delivery": "deliveries",
+}
+
 _POS_FIELD_TO_RECEIPT_KIND = {
     "enable_sale": "sale",
     "enable_credit": "credit",
     "enable_quotation": "quotation",
     "enable_trade_out": "trade_out",
     "enable_trade_in": "trade_in",
+}
+
+# Sidebar-link toggles also block the matching my-shop permission so the
+# feature is unreachable for employees, not just hidden from the menu.
+# ("Connect to printer" and "Shop website" stay link-only: printing is
+# governed by the print-channel toggles and the storefront is shareable.)
+_POS_FIELD_TO_MY_SHOP_PERMS = {
+    "enable_sidebar_open_close": ("open_close",),
+    "enable_sidebar_trade": ("trade_out", "trade_in"),
+    "enable_sidebar_buy_stock": ("buy_stock",),
+    "enable_sidebar_stock_transfers": ("stock_requests",),
+    "enable_sidebar_stock_count": ("stock_count",),
+    "enable_sidebar_shelf_stock": ("shelf_stock",),
+    "enable_sidebar_expense": ("register_expense",),
+    "enable_sidebar_receipts": ("receipts",),
+}
+
+# Shop-portal pages bypass the employee matrix, so sidebar-hidden pages are
+# denied directly against the effective per-shop flags.
+MY_SHOP_SUBMODULE_SIDEBAR_FIELD = {
+    "open_close": "enable_sidebar_open_close",
+    "buy_stock": "enable_sidebar_buy_stock",
+    "stock_requests": "enable_sidebar_stock_transfers",
+    "stock_count": "enable_sidebar_stock_count",
+    "shelf_stock": "enable_sidebar_shelf_stock",
+    "register_expense": "enable_sidebar_expense",
+    "receipts": "enable_sidebar_receipts",
+    "return_receipt": "enable_sidebar_receipts",
+    "trade_out": "enable_sidebar_trade",
+    "trade_in": "enable_sidebar_trade",
 }
 
 
@@ -3501,6 +3617,13 @@ def company_pos_disabled_permission_keys(
         disabled.discard(("analytics", "tradings"))
     else:
         disabled.add(("analytics", "tradings"))
+    for field, analytics_slug in _POS_FIELD_EXTRA_ANALYTICS_SECTION.items():
+        if not bool(getattr(row, field, True)):
+            disabled.add(("analytics", analytics_slug))
+    for field, submodules in _POS_FIELD_TO_MY_SHOP_PERMS.items():
+        if not bool(getattr(row, field, True)):
+            for submodule in submodules:
+                disabled.add(("my-shop", submodule))
     if not row.enabled_print_channels():
         disabled.add(("my-shop", "print"))
     return frozenset(disabled)
@@ -3522,7 +3645,15 @@ def company_pos_analytics_section_visible(
 ) -> bool:
     slug = (section_slug or "").strip().lower()
     row = pos or get_company_pos_settings()
-    for field, analytics_slug in _POS_FIELD_TO_ANALYTICS_SECTION.items():
+    if slug == "tradings":
+        # Trade in and trade out share one section; either flow keeps it live.
+        return bool(getattr(row, "enable_trade_out", True)) or bool(
+            getattr(row, "enable_trade_in", True)
+        )
+    for field, analytics_slug in {
+        **_POS_FIELD_TO_ANALYTICS_SECTION,
+        **_POS_FIELD_EXTRA_ANALYTICS_SECTION,
+    }.items():
         if slug == analytics_slug and not bool(getattr(row, field, True)):
             return False
     return True
@@ -3714,6 +3845,39 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_tax": row.enable_tax,
         "tax_percent": str(Decimal(row.tax_percent or 0).quantize(Decimal("0.01"))),
         "effective_tax_percent": str(tax_percent.quantize(Decimal("0.01"))),
+        "delivery_amount": str(
+            Decimal(getattr(row, "delivery_amount", 0) or 0).quantize(
+                Decimal("0.01")
+            )
+        ),
+        "enable_sidebar_open_close": bool(
+            getattr(row, "enable_sidebar_open_close", True)
+        ),
+        "enable_sidebar_trade": bool(getattr(row, "enable_sidebar_trade", True)),
+        "enable_sidebar_buy_stock": bool(
+            getattr(row, "enable_sidebar_buy_stock", True)
+        ),
+        "enable_sidebar_stock_transfers": bool(
+            getattr(row, "enable_sidebar_stock_transfers", True)
+        ),
+        "enable_sidebar_stock_count": bool(
+            getattr(row, "enable_sidebar_stock_count", True)
+        ),
+        "enable_sidebar_shelf_stock": bool(
+            getattr(row, "enable_sidebar_shelf_stock", True)
+        ),
+        "enable_sidebar_expense": bool(
+            getattr(row, "enable_sidebar_expense", True)
+        ),
+        "enable_sidebar_printer": bool(
+            getattr(row, "enable_sidebar_printer", True)
+        ),
+        "enable_sidebar_receipts": bool(
+            getattr(row, "enable_sidebar_receipts", True)
+        ),
+        "enable_sidebar_website": bool(
+            getattr(row, "enable_sidebar_website", True)
+        ),
         "compulsory_print_on_sale": row.compulsory_print_on_sale,
         "enable_print_bluetooth": row.enable_print_bluetooth,
         "enable_print_usb": row.enable_print_usb,
@@ -4578,6 +4742,7 @@ def _delivery_ticket_fields(receipt) -> dict:
                 "has_delivery": False,
                 "delivery_rider": "",
                 "delivery_location": "",
+                "delivery_fee": Decimal("0.00"),
             }
 
     rider_name = ""
@@ -4592,6 +4757,7 @@ def _delivery_ticket_fields(receipt) -> dict:
         "has_delivery": True,
         "delivery_rider": rider_name,
         "delivery_location": (delivery.location_text or "").strip(),
+        "delivery_fee": Decimal(delivery.fee_amount or 0).quantize(Decimal("0.01")),
     }
 
 
@@ -4713,6 +4879,8 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         "has_delivery": delivery_fields["has_delivery"],
         "delivery_rider": delivery_fields["delivery_rider"],
         "delivery_location": delivery_fields["delivery_location"],
+        "delivery_fee": _receipt_money(delivery_fields["delivery_fee"]),
+        "show_delivery_fee": delivery_fields["delivery_fee"] > 0,
         "status": status_label,
         "lines": ticket_lines,
         "cancelled": bool(
@@ -4897,17 +5065,24 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
             )
         rows.append(_receipt_pad_line("UNITS", _qty_label(units), width))
     else:
-        if ticket.get("show_tax"):
+        if ticket.get("show_tax") or ticket.get("show_delivery_fee"):
             rows.append(
                 _receipt_pad_line(
                     "Subtotal", f"KSh {ticket.get('subtotal') or '0'}", width
                 )
             )
+        if ticket.get("show_tax"):
             rows.append(
                 _receipt_pad_line(
                     f"Tax ({ticket.get('tax_percent') or '0'}%)",
                     f"KSh {ticket.get('tax_amount') or '0'}",
                     width,
+                )
+            )
+        if ticket.get("show_delivery_fee"):
+            rows.append(
+                _receipt_pad_line(
+                    "Delivery", f"KSh {ticket.get('delivery_fee') or '0'}", width
                 )
             )
         rows.append(
@@ -5435,8 +5610,6 @@ def _route_estimate_from_shop(shop, *, latitude, longitude) -> dict:
 
 def _parse_delivery_payload(payload: dict, *, shop=None) -> dict:
     location = (payload.get("delivery_location") or payload.get("location_text") or "").strip()
-    if not location:
-        raise ValidationError("Enter or select a delivery location.")
 
     lat = payload.get("delivery_lat")
     lng = payload.get("delivery_lng")
@@ -5459,7 +5632,7 @@ def _parse_delivery_payload(payload: dict, *, shop=None) -> dict:
             "https://www.google.com/maps/search/?api=1"
             f"&query={latitude},{longitude}"
         )
-    elif not maps_url:
+    elif not maps_url and location:
         from urllib.parse import quote
 
         maps_url = (
@@ -5543,6 +5716,7 @@ def _create_shop_delivery(*, receipt, shop, actor, delivery_payload: dict):
         latitude=delivery_payload["latitude"],
         longitude=delivery_payload["longitude"],
         maps_url=delivery_payload["maps_url"],
+        fee_amount=delivery_payload.get("fee_amount") or Decimal("0.00"),
         distance_km=delivery_payload.get("distance_km"),
         eta_minutes=delivery_payload.get("eta_minutes"),
         created_by=actor,
@@ -5905,7 +6079,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         raise ValidationError("That transaction type is disabled in POS settings.")
 
     print_via = (payload.get("print_via") or "").strip().lower()
-    if kind == ShopReceiptKind.SALE and pos_settings.compulsory_print_on_sale:
+    if (
+        kind in (ShopReceiptKind.SALE, ShopReceiptKind.CREDIT)
+        and pos_settings.compulsory_print_on_sale
+    ):
         if not print_via:
             raise ValidationError("Select a print method before completing the sale.")
         if not pos_settings.print_channel_enabled(print_via):
@@ -6288,6 +6465,16 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         tax = pos_settings.tax_breakdown(subtotal)
         total = tax["total"]
 
+        delivery_fee = Decimal("0.00")
+        if delivery_payload is not None:
+            delivery_fee = Decimal(
+                getattr(pos_settings, "delivery_amount", 0) or 0
+            ).quantize(Decimal("0.01"))
+            if delivery_fee < 0:
+                delivery_fee = Decimal("0.00")
+            delivery_payload["fee_amount"] = delivery_fee
+            total = (total + delivery_fee).quantize(Decimal("0.01"))
+
         payment_method = ShopPaymentMethod.NONE
         cash_amount = Decimal("0.00")
         mpesa_amount = Decimal("0.00")
@@ -6618,13 +6805,15 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         "kind": receipt.kind,
         "kind_label": receipt.get_kind_display(),
         "total": str(receipt.total),
+        "delivery_fee": str(delivery_fee),
         "whatsapp_url": whatsapp_url,
         "message": message,
         "receipt_ticket": ticket,
         "print_copies": print_copies,
         "print_via": print_via,
         "print_required": bool(
-            kind == ShopReceiptKind.SALE and pos_settings.compulsory_print_on_sale
+            kind in (ShopReceiptKind.SALE, ShopReceiptKind.CREDIT)
+            and pos_settings.compulsory_print_on_sale
         ),
         "authorised_by": authorising.user.get_full_name()
         or authorising.user.username,
@@ -8367,6 +8556,9 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
                 "tax_amount": str(receipt.tax_amount),
                 "cash_amount": str(receipt.cash_amount),
                 "mpesa_amount": str(receipt.mpesa_amount),
+                "payment_methods": [
+                    str(method) for method in pos_settings.enabled_payment_methods()
+                ],
                 "require_mpesa_reference_on_confirm": bool(
                     getattr(pos_settings, "require_mpesa_reference_on_confirm", False)
                 ),
@@ -9592,6 +9784,33 @@ def return_shop_receipt_items(
     }
 
 
+def _parse_confirm_payment_split(cash_raw, mpesa_raw, *, total: Decimal):
+    """Cash/M-Pesa split when confirming a sale paid by 'both'.
+
+    A missing side is filled with the remainder of the receipt total.
+    """
+    cash_txt = str(cash_raw or "").strip()
+    mpesa_txt = str(mpesa_raw or "").strip()
+    try:
+        cash = Decimal(cash_txt).quantize(Decimal("0.01")) if cash_txt else None
+        mpesa = Decimal(mpesa_txt).quantize(Decimal("0.01")) if mpesa_txt else None
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError("Enter valid cash and M-Pesa amounts.") from exc
+    if cash is None and mpesa is None:
+        raise ValidationError("Enter how much was paid by cash and by M-Pesa.")
+    if cash is None:
+        cash = (total - mpesa).quantize(Decimal("0.01"))
+    if mpesa is None:
+        mpesa = (total - cash).quantize(Decimal("0.01"))
+    if cash < 0 or mpesa < 0:
+        raise ValidationError("Cash and M-Pesa amounts cannot be negative.")
+    if (cash + mpesa).quantize(Decimal("0.01")) != total:
+        raise ValidationError(
+            f"Cash + M-Pesa must add up to the receipt total (KSh {total:,.2f})."
+        )
+    return cash, mpesa
+
+
 def _resolve_confirm_receipt_status(raw: str | None) -> str:
     key = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
     mapping = {
@@ -9967,6 +10186,8 @@ def confirm_shop_receipt(
     payment_at=None,
     amount=None,
     payment_method: str = "",
+    cash_amount=None,
+    mpesa_amount=None,
 ) -> dict:
     """Mark a pending sale as confirmed, or apply a credit confirm amount."""
     from .models import ShopReceipt
@@ -10053,6 +10274,14 @@ def confirm_shop_receipt(
         if method not in {"cash", "mpesa"}:
             method = "mpesa" if ref or existing_ref else "cash"
         if apply_amount > 0:
+            if method == "mpesa" and not getattr(pos, "enable_mpesa", True):
+                raise ValidationError(
+                    "M-Pesa payments are disabled for this company."
+                )
+            if method == "cash" and not getattr(pos, "enable_cash", True):
+                raise ValidationError(
+                    "Cash payments are disabled for this company."
+                )
             from shops.credit_settlement import record_credit_collection
 
             cleared_credit = record_credit_collection(
@@ -10132,6 +10361,35 @@ def confirm_shop_receipt(
 
     receipt.status = ShopReceiptStatus.CONFIRMED
     update_fields = ["status"]
+    if not is_credit:
+        # The confirmer may correct how the sale was paid (cash / M-Pesa / both).
+        method_key = (payment_method or "").strip().lower()
+        if method_key:
+            if method_key not in {
+                ShopPaymentMethod.CASH,
+                ShopPaymentMethod.MPESA,
+                ShopPaymentMethod.BOTH,
+            }:
+                raise ValidationError("Choose cash, M-Pesa, or cash + M-Pesa.")
+            if not pos.payment_method_enabled(method_key):
+                raise ValidationError(
+                    "That payment method is not enabled for this shop."
+                )
+            total = Decimal(receipt.total or 0).quantize(Decimal("0.01"))
+            if method_key == ShopPaymentMethod.CASH:
+                receipt.cash_amount = total
+                receipt.mpesa_amount = Decimal("0.00")
+            elif method_key == ShopPaymentMethod.MPESA:
+                receipt.cash_amount = Decimal("0.00")
+                receipt.mpesa_amount = total
+            else:
+                receipt.cash_amount, receipt.mpesa_amount = (
+                    _parse_confirm_payment_split(
+                        cash_amount, mpesa_amount, total=total
+                    )
+                )
+            receipt.payment_method = method_key
+            update_fields += ["payment_method", "cash_amount", "mpesa_amount"]
     if cleared_credit:
         for field in (
             "kind",
@@ -10182,6 +10440,8 @@ def set_confirm_receipt_status(
     payment_at=None,
     amount=None,
     payment_method: str = "",
+    cash_amount=None,
+    mpesa_amount=None,
 ) -> dict:
     """Set a sales/credit receipt status from confirm-receipts."""
     from .models import ShopReceipt
@@ -10238,6 +10498,8 @@ def set_confirm_receipt_status(
             payment_at=payment_at,
             amount=amount,
             payment_method=payment_method,
+            cash_amount=cash_amount,
+            mpesa_amount=mpesa_amount,
         )
 
     if target == ShopReceiptStatus.CANCELLED:
