@@ -232,7 +232,8 @@
   flex-shrink: 0;
 }
 
-.store-stock-input-wrap input {
+.store-stock-input-wrap input,
+.store-stock-input-wrap select {
   flex: 1;
   min-width: 0;
   border: 0;
@@ -242,7 +243,8 @@
   color: var(--text);
 }
 
-.store-stock-input-wrap input:focus {
+.store-stock-input-wrap input:focus,
+.store-stock-input-wrap select:focus {
   outline: none;
 }
 
@@ -887,6 +889,31 @@
   justify-content: flex-end;
 }
 
+/* Shelf register inside the stock-management modal: the page form above is a
+   wide 4-up strip; the modal keeps two columns with wide fields full-width. */
+.stock-shelf-modal .shelf-stock-register {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.95rem 0.9rem;
+  padding: 1.15rem 1.25rem 1.25rem;
+}
+
+.stock-shelf-modal .shelf-stock-register .store-stock-field--full,
+.stock-shelf-modal .shelf-stock-register .workspace-modal-actions {
+  grid-column: 1 / -1;
+}
+
+.stock-shelf-modal .shelf-stock-register .workspace-modal-actions {
+  position: static;
+  padding: 0.4rem 0 0;
+  border-top: 0;
+}
+
+@media (max-width: 420px) {
+  .stock-shelf-modal .shelf-stock-register {
+    grid-template-columns: 1fr;
+  }
+}
+
 .shelf-stock-move {
   display: inline-flex;
   flex-wrap: nowrap;
@@ -959,4 +986,58 @@
   display: grid;
   max-width: 240px;
   padding: 1rem 1.15rem 1.15rem;
+}
+
+/* Shelf register form: entries are stored uppercase, so inputs show them that
+   way too (placeholders stay sentence-case). */
+.shelf-stock-register input[type="text"],
+.shelf-stock-register select {
+  text-transform: uppercase;
+}
+
+.shelf-stock-register input[type="text"]::placeholder {
+  text-transform: none;
+}
+
+/* Multi-shop picker on the register form: pill checkboxes for the shops the
+   actor may stock. */
+.shelf-register-shops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.shelf-register-shop {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--stock-line, #e2e8f0);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--stock-muted, #64748b);
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.shelf-register-shop svg {
+  width: 14px;
+  height: 14px;
+}
+
+.shelf-register-shop input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.shelf-register-shop:has(input:checked) {
+  border-color: var(--stock-brand, #0f766e);
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--stock-brand, #0f766e);
 }

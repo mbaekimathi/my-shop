@@ -731,6 +731,11 @@
       {% endif %}
     {% endif %}
   </div>
+
+  {% if shelf_report %}
+  {# "Both"-mode shop: catalog report above, its shelf stock below. #}
+  {% include "items/partials/stock_shelf_report_block.html" %}
+  {% endif %}
 </section>
 
 {% if view_by == 'timeline' or is_movements_page %}

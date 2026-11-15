@@ -100,6 +100,7 @@ from .pagination import page_url, pagination_links, redirect_query_page
 from .services import (
     EMPLOYEE_ID_RE,
     EMPTY_EMPLOYEE_FORM,
+    build_employee_performance,
     employee_form_data_from_post,
     employee_id_is_taken,
     mark_employee_id_taken,
@@ -688,7 +689,21 @@ def dashboard(request):
 
 @role_required(EmployeeRole.EMPLOYEE)
 def role_employee(request):
-    return _render_role_page(request, EmployeeRole.EMPLOYEE)
+    profile = get_profile_for_request(request)
+    return render(
+        request,
+        "employees/employee_home.html",
+        {
+            "profile": profile,
+            "meta": ROLE_PAGE_META[EmployeeRole.EMPLOYEE],
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "perf": build_employee_performance(profile),
+            "page_sidebar": sidebar_for_role_dashboard(
+                EmployeeRole.EMPLOYEE, profile=profile
+            ),
+        },
+    )
 
 
 @role_required(EmployeeRole.SUPER_ADMIN)
@@ -2919,16 +2934,11 @@ def _company_pos_settings(
 
     from django.urls import reverse
 
-    from shops.models import Shop
-
     stk_shop = stk_shop_activation_status(pos=pos)
     context.update(
         {
             "pos_settings": pos,
             "pos_setting_groups": groups,
-            "shelf_shortcut_shops": list(
-                Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-            ),
             "pos_settings_flags": pos_settings_as_dict(pos),
             "pos_enabled_count": enabled_count,
             "pos_toggle_count": toggle_count,

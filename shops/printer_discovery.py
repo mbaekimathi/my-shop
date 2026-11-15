@@ -29,7 +29,7 @@ CONNECT_TIMEOUT = 0.12
 PING_TIMEOUT_MS = 120
 MAX_WORKERS = 48
 PHASE_DEADLINE_SEC = 3.0
-THOROUGH_DEADLINE_SEC = 8.0
+THOROUGH_DEADLINE_SEC = 10.0
 FAST_OVERALL_DEADLINE_SEC = 4.5
 ARP_TIMEOUT_SEC = 2.0
 POWERSHELL_TIMEOUT_SEC = 2.0
@@ -66,6 +66,7 @@ def clear_discovery_cache() -> None:
 
 def _local_ipv4_addresses() -> list[str]:
     found: set[str] = set()
+    primary = ""
     try:
         hostname = socket.gethostname()
         for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
@@ -82,12 +83,19 @@ def _local_ipv4_addresses() -> list[str]:
             ip = probe.getsockname()[0]
             if ip and not ip.startswith("127."):
                 found.add(ip)
+                primary = ip
         finally:
             probe.close()
     except OSError:
         pass
 
-    return sorted(found)
+    ordered = sorted(found)
+    if primary and primary in ordered:
+        # Primary internet-facing interface first so real LANs are probed
+        # before dead virtual adapters (Hyper-V, VPN, tunnel NICs).
+        ordered.remove(primary)
+        ordered.insert(0, primary)
+    return ordered
 
 
 def _networks_from_local_ips(local_ips: Iterable[str]) -> list[ipaddress.IPv4Network]:
@@ -132,10 +140,10 @@ def _arp_live_hosts() -> set[str]:
     return hosts
 
 
-def _ping_host(host: str) -> bool:
+def _ping_host(host: str, timeout_ms: int = PING_TIMEOUT_MS) -> bool:
     try:
         completed = subprocess.run(
-            ["ping", "-n", "1", "-w", str(PING_TIMEOUT_MS), host],
+            ["ping", "-n", "1", "-w", str(timeout_ms), host],
             capture_output=True,
             text=True,
             timeout=1.2,
@@ -146,13 +154,18 @@ def _ping_host(host: str) -> bool:
     return completed.returncode == 0
 
 
-def _ping_sweep(hosts: Iterable[str], *, deadline: float = PHASE_DEADLINE_SEC) -> set[str]:
+def _ping_sweep(
+    hosts: Iterable[str],
+    *,
+    deadline: float = PHASE_DEADLINE_SEC,
+    timeout_ms: int = PING_TIMEOUT_MS,
+) -> set[str]:
     live: set[str] = set()
     ordered = list(dict.fromkeys(hosts))
     if not ordered:
         return live
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {pool.submit(_ping_host, host): host for host in ordered}
+        futures = {pool.submit(_ping_host, host, timeout_ms): host for host in ordered}
         try:
             for future in concurrent.futures.as_completed(futures, timeout=deadline):
                 host = futures[future]
@@ -202,11 +215,16 @@ def _reverse_name(host: str) -> str:
         socket.setdefaulttimeout(None)
 
 
-def _probe_host(host: str, *, resolve_name: bool = False) -> dict | None:
+def _probe_host(
+    host: str,
+    *,
+    resolve_name: bool = False,
+    connect_timeout: float = CONNECT_TIMEOUT,
+) -> dict | None:
     # Stop at the first open printer port (prefer raw 9100 via PORT_PRIORITY order).
     preferred = None
     for port in PORT_PRIORITY:
-        if _port_open(host, port):
+        if _port_open(host, port, timeout=connect_timeout):
             preferred = port
             break
     if preferred is None:
@@ -487,12 +505,21 @@ def discover_lan_printers(*, thorough: bool = False, use_cache: bool = True) -> 
     found: list[dict] = []
     scanned = 0
 
-    def _probe_many(hosts: list[str], deadline: float) -> None:
+    def _probe_many(
+        hosts: list[str],
+        deadline: float,
+        connect_timeout: float = CONNECT_TIMEOUT,
+    ) -> None:
         nonlocal scanned, found
         if not hosts or deadline <= 0.05:
             return
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(_probe_host, host): host for host in hosts}
+            futures = {
+                pool.submit(
+                    _probe_host, host, connect_timeout=connect_timeout
+                ): host
+                for host in hosts
+            }
             try:
                 for future in concurrent.futures.as_completed(futures, timeout=deadline):
                     scanned += 1
@@ -529,13 +556,37 @@ def discover_lan_printers(*, thorough: bool = False, use_cache: bool = True) -> 
         printers = _merge_printers(found, windows_ports)
         probe_targets = sorted(set(probe_targets) | set(extra_targets))
 
-    # Thorough fallback: full /24 only when still empty.
+    # Thorough fallback: sweep the whole /24 of every detected network.
     if thorough and not printers:
+        # Own budget — the frontend allows ~25s total, so the deep phase gets
+        # its own clock instead of sharing the fast scan's deadline.
+        thorough_started = time.perf_counter()
+
+        def _thor_remaining() -> float:
+            return max(
+                0.05,
+                THOROUGH_DEADLINE_SEC - (time.perf_counter() - thorough_started),
+            )
+
         all_hosts: list[str] = []
         for net in networks:
             all_hosts.extend(str(host) for host in net.hosts())
         remaining = [h for h in all_hosts if h not in probe_targets]
-        _probe_many(remaining, min(THOROUGH_DEADLINE_SEC, max(_remaining(THOROUGH_DEADLINE_SEC), 1.0)))
+        # Ping-sweep first: TCP-probing every address burns the deadline on
+        # dead hosts and virtual adapters before reaching the real LAN. A
+        # slower ping window catches sleepy Wi‑Fi printers too.
+        live = _ping_sweep(
+            remaining,
+            deadline=min(5.0, _thor_remaining()),
+            timeout_ms=350,
+        )
+        extra_targets = _hosts_in_networks(live)
+        if extra_targets:
+            _probe_many(extra_targets, _thor_remaining(), connect_timeout=0.35)
+        elif remaining:
+            # Nothing answered ping — fall back to probing the full range so
+            # ICMP-silent printers are still covered.
+            _probe_many(remaining, _thor_remaining(), connect_timeout=0.35)
         printers = _merge_printers(found, windows_ports)
 
     usb_hints: list[str] = []

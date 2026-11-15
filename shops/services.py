@@ -108,8 +108,6 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_mpesa",
         "enable_cash_mpesa",
         "enable_discount",
-        "enable_stock_tracking",
-        "enable_shelf_mode",
         "enable_open_close",
         "enable_client_data",
         "require_client_phone",
@@ -471,14 +469,14 @@ def _require_shop_override_for_field(shop_row: ShopPosSettings, field: str) -> N
 
 
 def set_shop_pos_setting(*, shop: Shop, field: str, enabled: bool) -> ShopPosSettings:
-    if field in STOCK_MODE_FIELDS:
-        row = get_shop_pos_settings(shop)
-        _require_shop_override_for_field(row, "enable_stock_tracking")
-        changed = _apply_stock_mode(row, field, enabled)
-        if changed:
-            row.save(update_fields=[*changed, "updated_at"])
-            _invalidate_pos_settings_cache(shop_id=shop.pk)
-        return row
+    if field in STOCK_MODE_FIELDS or field in (
+        "enable_stock_tracking",
+        "enable_shelf_mode",
+    ):
+        # Stock mode is a company-wide decision — every shop uses the same one.
+        raise ValidationError(
+            "Stock mode is set in Company POS settings and applies to all shops."
+        )
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")
     row = get_shop_pos_settings(shop)

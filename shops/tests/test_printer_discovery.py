@@ -67,11 +67,11 @@ class PrinterDiscoveryLoopsTests(unittest.TestCase):
     def test_discover_fast_path_loop_uses_live_hosts_only(self):
         calls = {"ping": 0, "probe": []}
 
-        def fake_ping_sweep(hosts, *, deadline=3.0):
+        def fake_ping_sweep(hosts, *, deadline=3.0, timeout_ms=120):
             calls["ping"] += 1
             return {"192.168.88.50", "192.168.88.51"}
 
-        def fake_probe(host, *, resolve_name=False):
+        def fake_probe(host, *, resolve_name=False, connect_timeout=0.12):
             calls["probe"].append(host)
             if host == "192.168.88.50":
                 return {

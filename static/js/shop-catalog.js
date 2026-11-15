@@ -450,7 +450,8 @@
         hasMore = Boolean(data.has_more);
         nextPage = data.next_page || null;
 
-        const ok = await appendItems(data.items, { replace: false, seq });
+        const moreItems = Array.isArray(data.items) ? data.items : [];
+        const ok = await appendItems(moreItems, { replace: false, seq });
         if (!ok || seq !== inFlight || loadId !== backgroundLoad) return;
 
         if (fromCache) floor.setAttribute("data-catalog-from-cache", "1");
@@ -509,7 +510,8 @@
       nextPage = data.next_page || null;
       activeQuery = String(data.localFilter || data.q || q || "");
 
-      const ok = await appendItems(data.items, { replace: !append, seq });
+      const firstItems = Array.isArray(data.items) ? data.items : [];
+      const ok = await appendItems(firstItems, { replace: !append, seq });
       if (!ok || seq !== inFlight) return;
 
       if (fromCache) floor.setAttribute("data-catalog-from-cache", "1");

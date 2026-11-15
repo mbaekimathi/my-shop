@@ -799,6 +799,7 @@ class ShelfItem(models.Model):
         related_name="shelf_items",
     )
     name = models.CharField(max_length=200)
+    category = models.CharField(max_length=120, blank=True, default="")
     unit = models.CharField(max_length=40, blank=True, default="")
     quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
     low_stock_threshold = models.DecimalField(

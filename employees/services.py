@@ -2,10 +2,15 @@
 
 import re
 
+from datetime import timedelta
+from decimal import Decimal
+
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from .countries import COUNTRY_DIAL_CODES
 from .models import SHOP_ALLOCATION_ROLES, SHOP_ASSIGNABLE_ROLES, EmployeeProfile, EmployeeRole, EmployeeStatus
@@ -363,3 +368,126 @@ def delete_employee(profile: EmployeeProfile) -> None:
     user.delete()
     invalidate_employee_id_cache(employee_id)
     invalidate_profile_cache(user_id)
+
+
+def _money_ksh(value) -> str:
+    amount = Decimal(value or 0).quantize(Decimal("0.01"))
+    return f"KSh {amount:,.2f}"
+
+
+def build_employee_performance(profile: EmployeeProfile) -> dict:
+    """Sales/receipt activity for one employee — powers the employee home page."""
+    from pos.models import Sale as PosSale
+    from shops.models import (
+        COUNTED_RECEIPT_STATUSES,
+        ShopReceipt,
+        ShopReceiptKind,
+        ShopReceiptStatus,
+    )
+
+    now = timezone.now()
+    today = timezone.localdate()
+
+    receipts = ShopReceipt.objects.filter(
+        created_by=profile,
+        status__in=COUNTED_RECEIPT_STATUSES,
+    )
+    sales = receipts.filter(kind=ShopReceiptKind.SALE)
+
+    def _totals(qs):
+        row = qs.aggregate(
+            docs=Count("id"),
+            amount=Coalesce(Sum("total"), Decimal("0.00")),
+        )
+        return {
+            "docs": int(row["docs"] or 0),
+            "amount": row["amount"],
+            "amount_label": _money_ksh(row["amount"]),
+        }
+
+    windows = (
+        ("today", "Today", "calendar-day", {"created_at__date": today}),
+        (
+            "week",
+            "Last 7 days",
+            "calendar-days",
+            {"created_at__gte": now - timedelta(days=7)},
+        ),
+        (
+            "month",
+            "Last 30 days",
+            "calendar-range",
+            {"created_at__gte": now - timedelta(days=30)},
+        ),
+        ("all", "All time", "infinity", {}),
+    )
+    periods = [
+        {"key": key, "label": label, "icon": icon, **_totals(sales.filter(**filters))}
+        for key, label, icon, filters in windows
+    ]
+    by_key = {row["key"]: row for row in periods}
+
+    kinds = [
+        {"label": kind_label, **_totals(receipts.filter(kind=kind))}
+        for kind, kind_label in ShopReceiptKind.choices
+    ]
+
+    shops = [
+        {
+            "name": row["shop__name"] or "Shop",
+            "docs": int(row["docs"] or 0),
+            "amount": row["amount"],
+            "amount_label": _money_ksh(row["amount"]),
+        }
+        for row in sales.values("shop__name")
+        .annotate(
+            docs=Count("id"),
+            amount=Coalesce(Sum("total"), Decimal("0.00")),
+        )
+        .order_by("-amount", "shop__name")
+    ]
+
+    pill_by_status = {
+        ShopReceiptStatus.ACTIVE: "serial",
+        ShopReceiptStatus.CONFIRMED: "active",
+        ShopReceiptStatus.PARTIAL_RETURN: "active",
+        ShopReceiptStatus.CANCELLED: "suspended",
+    }
+    recent = [
+        {
+            "number": receipt.receipt_number,
+            "shop": receipt.shop.name if receipt.shop_id else "—",
+            "kind": receipt.get_kind_display(),
+            "status": receipt.get_status_display(),
+            "status_pill": pill_by_status.get(receipt.status, "serial"),
+            "total": _money_ksh(receipt.total),
+            "when": receipt.created_at,
+        }
+        for receipt in ShopReceipt.objects.filter(created_by=profile)
+        .select_related("shop")
+        .order_by("-created_at", "-id")[:8]
+    ]
+
+    pos_row = PosSale.objects.filter(employee=profile).aggregate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("total"), Decimal("0.00")),
+    )
+    pos_sales = (
+        {
+            "docs": int(pos_row["docs"] or 0),
+            "amount": pos_row["amount"],
+            "amount_label": _money_ksh(pos_row["amount"]),
+        }
+        if pos_row["docs"]
+        else None
+    )
+
+    return {
+        "periods": periods,
+        "all": by_key["all"],
+        "kinds": [row for row in kinds if row["docs"]],
+        "shops": shops,
+        "recent": recent,
+        "pos_sales": pos_sales,
+        "has_activity": bool(receipts.exists() or pos_sales),
+    }

@@ -125,9 +125,11 @@ def shelf_mode_shops():
 def store_shelf_stock(request):
     """Store Manager: register and adjust shelf stock for any shop in Shelf mode."""
     from items.shelf_stock_services import (
+        SHELF_UNIT_CHOICES,
         apply_shelf_action,
         list_shelf_items,
         recent_shelf_movements,
+        shelf_categories,
     )
 
     profile = get_profile_for_request(request)
@@ -175,8 +177,8 @@ def store_shelf_stock(request):
                 "headline": "Shelf stock",
                 "summary": (
                     "Register the stock on each shop's shelves and add or remove "
-                    "quantities by hand. Shelf items do not show on the shop selling "
-                    "page and sales do not change them."
+                    "quantities by hand. Shelf items are not sold, so they do "
+                    "not show on the shop page."
                 ),
                 "icon": "layers",
             },
@@ -189,6 +191,8 @@ def store_shelf_stock(request):
             "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", False)),
             "shelf_needs_staff_id": False,
             "shelf_shop_field": True,
+            "shelf_unit_choices": SHELF_UNIT_CHOICES,
+            "shelf_categories": shelf_categories(),
             "page_sidebar": sidebar_for_store_stock(
                 EmployeeRole.STORE_MANAGER, profile=profile, active="shelf"
             ),

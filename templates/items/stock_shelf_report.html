@@ -1,0 +1,123 @@
+{% extends "employees/workspace_base.html" %}
+
+{% block title %}{% if is_movements_page %}Shelf Stock Movement{% else %}Shelf Stock Report{% endif %} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--report" data-animate="rise" data-stock-mode="{{ stock_mode }}">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <h2>{% if is_movements_page %}Shelf stock movement{% else %}Shelf stock report{% endif %}</h2>
+        <p>{{ shelf_shop.name|default:"All shops" }} · {{ report_range_label }} · {{ report_period_label }}</p>
+      </div>
+    </div>
+
+    <form class="stock-report-filters" method="get" data-stock-report-filters>
+      <input type="hidden" name="mode" value="{{ stock_mode }}">
+      <label class="stock-report-field">
+        <span>Shop</span>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="stock-report-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field" data-range-field="day"{% if report_range != 'day' %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" data-stock-report-calendar required aria-label="Select day">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-stock-report-calendar required aria-label="Period start">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-stock-report-calendar required aria-label="Period end">
+      </label>
+      <label class="stock-report-field" data-range-field="month"{% if report_range != 'month' %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" data-stock-report-calendar required aria-label="Select month">
+      </label>
+      <label class="stock-report-field" data-range-field="year"{% if report_range != 'year' %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-stock-report-calendar
+          required
+          aria-label="Select year"
+        >
+      </label>
+
+      {% if is_movements_page %}
+      <label class="stock-report-field">
+        <span>Type</span>
+        <select name="shelf_type" aria-label="Change type">
+          <option value=""{% if not shelf_report.type_filter %} selected{% endif %}>All</option>
+          <option value="register"{% if shelf_report.type_filter == 'register' %} selected{% endif %}>Registered</option>
+          <option value="in"{% if shelf_report.type_filter == 'in' %} selected{% endif %}>In</option>
+          <option value="out"{% if shelf_report.type_filter == 'out' %} selected{% endif %}>Out</option>
+        </select>
+      </label>
+      {% endif %}
+
+      <div class="stock-report-filter-actions">
+        <button type="submit" class="stock-report-apply">Apply</button>
+      </div>
+    </form>
+  </header>
+
+  {% if shelf_report %}
+  {% include "items/partials/stock_shelf_report_block.html" %}
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="archive" aria-hidden="true"></i>
+    <p>Pick a shelf-mode shop above to see its shelf stock{% if is_movements_page %} movements{% endif %}.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const form = document.querySelector("[data-stock-report-filters]");
+    if (!form) return;
+    const rangeSelect = form.querySelector("[data-stock-report-range]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const syncRangeFields = (range) => {
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.classList.toggle("is-hidden", !match);
+        field.querySelectorAll("input").forEach((input) => {
+          input.disabled = !match;
+          if (match) input.setAttribute("required", "required");
+          else input.removeAttribute("required");
+        });
+      });
+    };
+    if (rangeSelect) {
+      rangeSelect.addEventListener("change", () => syncRangeFields(rangeSelect.value));
+      syncRangeFields(rangeSelect.value);
+    }
+  })();
+</script>
+{% endblock %}

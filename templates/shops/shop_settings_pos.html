@@ -56,9 +56,9 @@
             {% if toggle.field == "stock_mode_items" %}
             <p>Track stock on the items you sell. They show on the shop page, and sales need enough stock and reduce it.</p>
             {% elif toggle.field == "stock_mode_shelf" %}
-            <p>Track a separate shelf stock list you register on each shop's Shelf stock page. Shelf items don't show on the shop page. Items still sell, but their stock isn't counted.</p>
+            <p>Track a shelf stock list you register in Stock Management. Shelf items are not sold, so the shop page shows no items.</p>
             {% elif toggle.field == "stock_mode_both" %}
-            <p>Track stock on the items you sell and also keep a separate shelf stock list.</p>
+            <p>Track stock on the items you sell and keep a separate shelf stock list, managed in Stock Management.</p>
             {% endif %}
             </div>
             <label class="perm-switch">
@@ -111,5 +111,5 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/pos-settings.js' %}?v=5"></script>
-<script src="{% static 'js/shop-settings.js' %}?v=1"></script>
+<script src="{% static 'js/shop-settings.js' %}?v=2"></script>
 {% endblock %}

@@ -3,6 +3,11 @@
 
 {% block title %}Stock Management — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
+{% block extra_css %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=11">
+{% endblock %}
+
 {% block workspace_content %}
 <form
   class="stock-layout{% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %} stock-layout--action{% endif %}"
@@ -142,7 +147,7 @@
         {% endif %}
       </div>
 
-      {% if stock_mode == 'view' %}
+      {% if stock_mode == 'view' and not shelf_only %}
       <section class="stock-summary-board" aria-label="Stock summary">
         <article class="stock-summary-hero">
           <span class="stock-summary-hero-label">Units on hand</span>
@@ -172,7 +177,7 @@
             <i data-lucide="store" aria-hidden="true"></i>
             <div class="stock-summary-tile-body">
               <span class="stock-summary-tile-label">Shops</span>
-              <strong class="stock-summary-tile-value">{% if selected_shop %}1{% else %}{{ all_shops|length }}{% endif %}</strong>
+              <strong class="stock-summary-tile-value">{% if selected_shop %}1{% else %}{{ display_shops|length }}{% endif %}</strong>
               <em class="stock-summary-tile-hint">{% if selected_shop %}Filtered{% else %}In matrix{% endif %}</em>
             </div>
           </article>
@@ -201,7 +206,7 @@
             aria-label="Search items"
           >
         </label>
-        {% if can_print_stock != False %}
+        {% if can_print_stock != False and not shelf_only %}
         <button
           type="button"
           class="stock-print-trigger stock-view-print"
@@ -338,6 +343,18 @@
       <i data-lucide="store" aria-hidden="true"></i>
       <p>No shops are allocated to your account.</p>
     </div>
+    {% elif shelf_only and shelf_shop %}
+    {% include "items/partials/stock_shelf_panel.html" %}
+    {% elif shelf_only %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="archive" aria-hidden="true"></i>
+      <p>This shop tracks shelf stock instead of item stock.</p>
+    </div>
+    {% elif shelf_scope_pick %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="archive" aria-hidden="true"></i>
+      <p>These shops run shelf stock — pick a shop to manage its shelf items.</p>
+    </div>
     {% elif stock_mode == 'request' and not request_pair_ready %}
     <div class="dashboard-placeholder">
       <i data-lucide="arrow-left-right" aria-hidden="true"></i>
@@ -388,6 +405,18 @@
     <div class="dashboard-placeholder">
       <i data-lucide="store" aria-hidden="true"></i>
       <p>No shops are allocated to your account.</p>
+    </div>
+    {% elif shelf_only and shelf_shop %}
+    {% include "items/partials/stock_shelf_panel.html" %}
+    {% elif shelf_only %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="archive" aria-hidden="true"></i>
+      <p>This shop tracks shelf stock instead of item stock.</p>
+    </div>
+    {% elif shelf_scope_pick %}
+    <div class="dashboard-placeholder">
+      <i data-lucide="archive" aria-hidden="true"></i>
+      <p>These shops run shelf stock — pick a shop to manage its shelf items.</p>
     </div>
     {% elif use_stock_catalog_api and item_count %}
     <section class="stock-view-catalog">
@@ -920,6 +949,10 @@
       <p>No items registered in the system yet.</p>
     </div>
     {% endif %}
+    {% if shelf_shop and not shelf_only %}
+    {# Both-mode shops keep the catalog matrix; the shelf list follows it. #}
+    {% include "items/partials/stock_shelf_panel.html" %}
+    {% endif %}
   </section>
 
   {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
@@ -1153,6 +1186,100 @@
 
 {% block workspace_overlays %}
 {{ block.super }}
+{% if can_shelf_stock and shelf_register_shops %}
+<div
+  class="workspace-modal stock-shelf-modal"
+  data-modal="shelf-stock"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close></div>
+  <div
+    class="workspace-modal-dialog stock-print-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shelf-stock-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="shelf-stock-title">Register shelf item</h2>
+        <p class="stock-print-lead">Add something a shelf-mode shop keeps on its shelves. Shelf items are never sold, so they don't show on the shop page.</p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-modal-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form method="post" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
+      {% csrf_token %}
+      <input type="hidden" name="shelf_action" value="register">
+      <label class="store-stock-field store-stock-field--full">
+        <span>Shops <em>pick one or more</em></span>
+        <div class="shelf-register-shops" data-shelf-shop-select>
+          {% for row in shelf_register_shops %}
+          <label class="shelf-register-shop">
+            <input type="checkbox" name="shelf_shop_id" value="{{ row.pk }}"{% if shelf_shop and shelf_shop.pk == row.pk %} checked{% endif %}>
+            <i data-lucide="store" aria-hidden="true"></i>
+            <span>{{ row.name }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </label>
+      <label class="store-stock-field store-stock-field--full">
+        <span>Name</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="package" aria-hidden="true"></i>
+          <input type="text" name="name" maxlength="200" required placeholder="e.g. Sugar 50kg bag">
+        </div>
+      </label>
+      <label class="store-stock-field">
+        <span>Category <em>optional</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="tag" aria-hidden="true"></i>
+          <input type="text" name="category" maxlength="120" list="shelf-category-list" placeholder="e.g. Groceries">
+        </div>
+      </label>
+      <datalist id="shelf-category-list">
+        {% for cat in shelf_categories %}<option value="{{ cat }}">{% endfor %}
+      </datalist>
+      <label class="store-stock-field">
+        <span>Unit</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="ruler" aria-hidden="true"></i>
+          <select name="unit">
+            {% for unit in shelf_unit_choices %}
+            <option value="{{ unit }}"{% if forloop.first %} selected{% endif %}>{{ unit }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </label>
+      <label class="store-stock-field">
+        <span>Quantity on shelf now</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="hash" aria-hidden="true"></i>
+          <input type="number" name="opening_qty" min="0" step="any" inputmode="decimal" placeholder="0">
+        </div>
+      </label>
+      <label class="store-stock-field">
+        <span>Low stock alert at <em>optional</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="bell" aria-hidden="true"></i>
+          <input type="number" name="low_stock_threshold" min="0" step="any" inputmode="decimal" placeholder="0">
+        </div>
+      </label>
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="submit" class="store-stock-btn store-stock-btn--primary">Register</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% if stock_mode == 'view' and can_print_stock != False %}
 <div
   class="workspace-modal stock-print-modal"
@@ -1454,7 +1581,7 @@
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=4"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/stock-bulk.js' %}?v=20261024-decimals"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=20261115-shelf-action"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=9"
@@ -1463,4 +1590,5 @@
 {% if stock_mode == 'view' %}
 <script defer src="{% static 'js/stock-print.js' %}?v=13"></script>
 {% endif %}
+<script defer src="{% static 'js/stock-shelf.js' %}?v=2"></script>
 {% endblock %}

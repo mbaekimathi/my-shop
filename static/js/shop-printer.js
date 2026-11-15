@@ -1588,6 +1588,13 @@ ${bodyHtml}
     let connected = false;
     let relayUrl = "";
     let scanUrl = "";
+    let configUrl = "";
+    let defaults = { host: "", port: 9100 };
+    let localNet = { ips: [], networks: [] };
+    // True when the hosted server queued the job for the shop's local agent.
+    let viaAgent = false;
+    const displayName = () =>
+      `Wi‑Fi printer ${host}:${port}${viaAgent ? " · via agent" : ""}`;
 
     return {
       channel: "wifi",
@@ -1597,10 +1604,69 @@ ${bodyHtml}
       setScanUrl(url) {
         scanUrl = url || "";
       },
+      setConfigUrl(url) {
+        configUrl = url || "";
+      },
+      setDefaults(next) {
+        const nextHost = String(next?.host || "").trim();
+        const nextPort = Number(next?.port || 9100);
+        defaults = {
+          host: nextHost,
+          port:
+            Number.isFinite(nextPort) && nextPort > 0 && nextPort <= 65535
+              ? nextPort
+              : 9100,
+        };
+      },
+      getDefaults() {
+        return { ...defaults };
+      },
+      getLocalNet() {
+        return { ips: [...localNet.ips], networks: [...localNet.networks] };
+      },
+      async fetchConfig() {
+        if (!configUrl) return null;
+        try {
+          const response = await fetch(configUrl, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) return null;
+          this.setDefaults({ host: data.host, port: data.port });
+          localNet = {
+            ips: Array.isArray(data.local_ips) ? data.local_ips : [],
+            networks: Array.isArray(data.networks) ? data.networks : [],
+          };
+          return data;
+        } catch (_) {
+          return null;
+        }
+      },
+      saveConfig(nextHost, nextPort) {
+        if (!configUrl || !nextHost) return Promise.resolve(false);
+        return fetch(configUrl, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCsrfToken(),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            host: nextHost,
+            port: nextPort || 9100,
+          }),
+        })
+          .then((response) => response.json().catch(() => ({})))
+          .then((data) => Boolean(data?.ok))
+          .catch(() => false);
+      },
       async isSupported() {
         return true;
       },
-      async scan(card) {
+      async scan(card, options = {}) {
         const inputHost = card?.querySelector("[data-printer-wifi-host]");
         const inputPort = card?.querySelector("[data-printer-wifi-port]");
         if (!scanUrl) {
@@ -1608,7 +1674,7 @@ ${bodyHtml}
         }
 
         const controller = new AbortController();
-        const timer = window.setTimeout(() => controller.abort(), 20000);
+        const timer = window.setTimeout(() => controller.abort(), 25000);
         let response;
         try {
           response = await fetch(scanUrl, {
@@ -1620,7 +1686,7 @@ ${bodyHtml}
             },
             credentials: "same-origin",
             signal: controller.signal,
-            body: JSON.stringify({ thorough: false }),
+            body: JSON.stringify({ thorough: Boolean(options?.thorough) }),
           });
         } catch (err) {
           if (err?.name === "AbortError") {
@@ -1638,15 +1704,24 @@ ${bodyHtml}
           throw new Error(data.error || "Wi‑Fi printer scan failed.");
         }
 
+        if (Array.isArray(data.local_ips) && data.local_ips.length) {
+          localNet = {
+            ips: data.local_ips,
+            networks: Array.isArray(data.networks) ? data.networks : [],
+          };
+        }
+
         const printers = Array.isArray(data.printers) ? data.printers : [];
 
         if (!printers.length) {
           const hint = String(data.hint || "").trim();
           // Do not list USB printers under Wi‑Fi — keep channels separate.
-          throw new Error(
+          const err = new Error(
             hint.replace(/\s*USB POS printers were found — connect one below \(Windows print\)\./i, "").trim() ||
               "No Wi‑Fi printers found on this network. Keep the Wi‑Fi printer powered on and on the same Wi‑Fi, then scan again. For POS-80C / USB printers, use the USB channel."
           );
+          err.code = "wifi_no_results";
+          throw err;
         }
 
         return printers.map((row) => {
@@ -1707,33 +1782,42 @@ ${bodyHtml}
           throw new Error(data.error || `Could not reach printer at ${host}:${port}.`);
         }
         connected = true;
+        viaAgent = Boolean(data.queued);
         const store = loadStore();
         const next = Session()?.markConnected
-          ? Session().markConnected(store, "wifi", `Wi‑Fi printer ${host}:${port}`, {
+          ? Session().markConnected(store, "wifi", displayName(), {
               wifi: { host, port },
             })
           : { ...store, wifi: { host, port } };
         saveStore(next);
-        return { name: `Wi‑Fi printer ${host}:${port}`, id: `wifi-${host}:${port}` };
+        // Persist as the shop default so other terminals on this Wi‑Fi pick
+        // it up automatically. Fire-and-forget — printing must not wait on it.
+        this.saveConfig(host, port);
+        return { name: displayName(), id: `wifi-${host}:${port}` };
       },
       async disconnect({ explicit = true } = {}) {
         connected = false;
+        viaAgent = false;
         if (explicit) {
           // Keep host/port in form store for convenience; session intent cleared upstream.
         }
       },
       async restore(saved) {
         const wifi = saved || loadStore().wifi || {};
-        const nextHost = String(wifi.host || "").trim();
-        const nextPort = Number(wifi.port || 9100);
+        let nextHost = String(wifi.host || "").trim();
+        let nextPort = Number(wifi.port || 9100);
+        if (!nextHost && defaults.host) {
+          // No device-local config — adopt the shop default saved server-side.
+          nextHost = defaults.host;
+          nextPort = defaults.port || 9100;
+        }
         if (!nextHost) {
           return { ok: false, deferred: true, reason: "missing_host" };
         }
         host = nextHost;
         port = Number.isFinite(nextPort) && nextPort > 0 ? nextPort : 9100;
         if (!relayUrl) {
-          const modal = document.querySelector("[data-printer-modal]");
-          relayUrl = modal?.dataset.printRelayUrl || "";
+          relayUrl = resolvePrintRoot()?.dataset.printRelayUrl || "";
         }
         if (!relayUrl) {
           return {
@@ -1743,8 +1827,7 @@ ${bodyHtml}
             name: `Wi‑Fi printer ${host}:${port}`,
           };
         }
-        try {
-          const probe = new Uint8Array([0x1b, 0x40]);
+        const probeHost = async (probeHost, probePort) => {
           const response = await fetch(relayUrl, {
             method: "POST",
             headers: {
@@ -1754,30 +1837,57 @@ ${bodyHtml}
             },
             credentials: "same-origin",
             body: JSON.stringify({
-              host,
-              port,
-              data: bytesToBase64(probe),
+              host: probeHost,
+              port: probePort,
+              data: bytesToBase64(new Uint8Array([0x1b, 0x40])),
             }),
           });
           const data = await response.json().catch(() => ({}));
           if (!response.ok || !data.ok) {
-            connected = false;
-            return {
-              ok: false,
-              deferred: true,
-              reason: "unreachable",
-              name: `Wi‑Fi printer ${host}:${port}`,
-              error: data.error || `Could not reach printer at ${host}:${port}.`,
-            };
+            throw new Error(
+              data.error || `Could not reach printer at ${probeHost}:${probePort}.`
+            );
           }
+          return data;
+        };
+        try {
+          const data = await probeHost(host, port);
           connected = true;
-          return { ok: true, info: { name: `Wi‑Fi printer ${host}:${port}`, id: `wifi-${host}:${port}` } };
+          viaAgent = Boolean(data.queued);
+          return { ok: true, info: { name: displayName(), id: `wifi-${host}:${port}` } };
         } catch (err) {
           connected = false;
+          viaAgent = false;
+          // Saved host unreachable — try the shop's server-side default in
+          // case another terminal saved a newer address (DHCP re-lease).
+          const defaultHost = String(defaults.host || "").trim();
+          const defaultPortRaw = Number(defaults.port);
+          const defaultPort =
+            Number.isFinite(defaultPortRaw) && defaultPortRaw > 0
+              ? defaultPortRaw
+              : 9100;
+          if (defaultHost && defaultHost !== host) {
+            try {
+              const data = await probeHost(defaultHost, defaultPort);
+              host = defaultHost;
+              port = defaultPort;
+              connected = true;
+              viaAgent = Boolean(data.queued);
+              const store = loadStore();
+              saveStore({ ...store, wifi: { host, port } });
+              return {
+                ok: true,
+                info: { name: displayName(), id: `wifi-${host}:${port}` },
+              };
+            } catch (_) {
+              /* report the saved-host failure below */
+            }
+          }
+          host = nextHost;
           return {
             ok: false,
             deferred: true,
-            reason: "network",
+            reason: "unreachable",
             name: `Wi‑Fi printer ${host}:${port}`,
             error: err?.message || String(err),
           };
@@ -1787,7 +1897,7 @@ ${bodyHtml}
         return connected && Boolean(host);
       },
       getName() {
-        if (this.isConnected()) return `Wi‑Fi printer ${host}:${port}`;
+        if (this.isConnected()) return displayName();
         const saved = loadStore().wifi;
         return saved?.host ? `Wi‑Fi printer ${saved.host}:${saved.port || 9100}` : "";
       },
@@ -1851,6 +1961,7 @@ ${bodyHtml}
   };
 
   const setConnected = (channel, name) => {
+    restoreAttempt = 0;
     connection.activeChannel = channel;
     connection.name = name || CHANNEL_META[channel]?.label || channel;
     connection.restoring = false;
@@ -1903,12 +2014,71 @@ ${bodyHtml}
 
   const scheduleReconnect = (reason = "transport") => {
     if (pageUnloading) return;
+    // Pause while the tab is hidden — the visibilitychange listener re-arms
+    // the loop as soon as the user comes back.
+    if (document.visibilityState === "hidden") return;
     if (reconnectTimer) window.clearTimeout(reconnectTimer);
     const delay = Math.min(15000, 700 + restoreAttempt * 900);
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
       window.RichcomPrinter?.restoreSession?.({ reason, silent: true });
     }, delay);
+  };
+
+  /**
+   * Element carrying the print endpoints: the connect modal on the floor,
+   * or any page root with data-print-relay-url (e.g. the receipts page).
+   */
+  const resolvePrintRoot = () =>
+    document.querySelector("[data-printer-modal]") ||
+    document.querySelector("[data-print-relay-url]");
+
+  const wireWifiFromRoot = (root) => {
+    drivers.wifi.setRelayUrl(root?.dataset.printRelayUrl || "");
+    drivers.wifi.setScanUrl(root?.dataset.printScanUrl || "");
+    drivers.wifi.setConfigUrl(root?.dataset.wifiConfigUrl || "");
+    drivers.wifi.setDefaults({
+      host: root?.dataset.wifiDefaultHost || "",
+      port: Number(root?.dataset.wifiDefaultPort || 9100),
+    });
+  };
+
+  /**
+   * Adopt the shop's server-saved Wi‑Fi printer on this device.
+   * A printer the user picked on this device wins; a wifi entry that came
+   * from the shop default tracks the server value. Fresh devices opt into
+   * the shop printer automatically; explicit disconnects are respected.
+   */
+  const seedWifiDefault = (root) => {
+    const host = String(root?.dataset.wifiDefaultHost || "").trim();
+    if (!host) return;
+    const port = Number(root.dataset.wifiDefaultPort || 9100);
+    const nextPort = Number.isFinite(port) && port > 0 ? port : 9100;
+    const store = loadStore();
+    const applied = store.wifiServerDefault || null;
+    const localHost = String(store.wifi?.host || "").trim();
+
+    const localIsDefault = !localHost || (applied && applied.host === localHost);
+    if (!localIsDefault) return;
+    if (
+      localHost === host &&
+      applied &&
+      Number(applied.port) === nextPort
+    ) {
+      return;
+    }
+    const fresh = !localHost && !store.activeChannel;
+    const untouched = Object.keys(store).every((key) => key === "wantConnected");
+    const next = {
+      ...store,
+      wifi: { host, port: nextPort },
+      wifiServerDefault: { host, port: nextPort },
+    };
+    if (fresh && (untouched || store.wantConnected === true)) {
+      next.activeChannel = "wifi";
+      next.wantConnected = true;
+    }
+    saveStore(next);
   };
 
   window.RichcomPrinter = {
@@ -1954,17 +2124,16 @@ ${bodyHtml}
     getDriver(channel) {
       return drivers[channel] || null;
     },
-    async scan(channel, card) {
+    async scan(channel, card, options = {}) {
       const driver = drivers[channel];
       if (!driver) throw new Error("Unknown print channel.");
-      return driver.scan(card);
+      return driver.scan(card, options);
     },
     async connect(channel, selected, card) {
       const driver = drivers[channel];
       if (!driver) throw new Error("Unknown print channel.");
       if (channel === "wifi") {
-        const modal = document.querySelector("[data-printer-modal]");
-        driver.setRelayUrl(modal?.dataset.printRelayUrl || "");
+        wireWifiFromRoot(resolvePrintRoot());
       }
       const info = await driver.connect(selected, card);
       for (const other of CHANNELS) {
@@ -1994,7 +2163,7 @@ ${bodyHtml}
       const store = loadStore();
       const enabled =
         enabledChannels ||
-        String(document.querySelector("[data-printer-modal]")?.dataset.printChannels || "")
+        String(resolvePrintRoot()?.dataset.printChannels || "")
           .split(",")
           .map((v) => v.trim())
           .filter(Boolean);
@@ -2016,10 +2185,8 @@ ${bodyHtml}
       connection.name = store.name || CHANNEL_META[channel]?.label || channel;
       emit();
 
-      const modal = document.querySelector("[data-printer-modal]");
       if (channel === "wifi") {
-        drivers.wifi.setRelayUrl(modal?.dataset.printRelayUrl || "");
-        drivers.wifi.setScanUrl(modal?.dataset.printScanUrl || "");
+        wireWifiFromRoot(resolvePrintRoot());
       }
 
       let result = { ok: false };
@@ -2050,7 +2217,9 @@ ${bodyHtml}
       connection.lastRestoreError = result.error || result.reason || "";
       emit();
       restoreAttempt += 1;
-      if (result.deferred && restoreAttempt < 8) {
+      // Keep probing on a capped (~15s) interval until the printer rejoins
+      // the network or the user explicitly disconnects.
+      if (result.deferred) {
         scheduleReconnect(silent ? reason : "retry");
       }
       return { ok: false, channel, deferred: Boolean(result.deferred), result };
@@ -2093,18 +2262,37 @@ ${bodyHtml}
         styleOverride,
         prepared.ticket || ticket
       );
-      await withTimeout(
-        driver.print(bytes),
-        20000,
-        "Print timed out. Disconnect, reconnect, then try Test print again."
-      );
+      try {
+        await withTimeout(
+          driver.print(bytes),
+          20000,
+          "Print timed out. Disconnect, reconnect, then try Test print again."
+        );
+      } catch (err) {
+        // A failed direct write means the device dropped off — drop the
+        // driver's connected flag and let the auto-reconnect loop recover it.
+        try {
+          await driver.disconnect?.({ explicit: false });
+        } catch (_) {
+          /* ignore */
+        }
+        this.notifyTransportLost(target);
+        throw err;
+      }
       return true;
     },
     canAutoPrint(channel) {
       const status = this.getStatus();
-      if (!status.connected) return false;
-      if (channel && status.channel !== channel) return false;
-      return true;
+      if (status.connected && (!channel || status.channel === channel)) {
+        return true;
+      }
+      // Not live yet — still report printable when a saved session wants this
+      // channel: print() re-probes and reconnects on demand.
+      return Boolean(
+        status.wantConnected &&
+          status.preferredChannel &&
+          (!channel || status.preferredChannel === channel)
+      );
     },
     /**
      * Print a receipt payload (sale / supplier / expense).
@@ -2146,6 +2334,12 @@ ${bodyHtml}
         } catch (_) {
           /* fall through to browser print */
         }
+      }
+
+      // Wi‑Fi / Bluetooth print straight to the paired device — the browser
+      // print dialog is only a fallback for USB (Windows printer) mode.
+      if (targetChannel === "wifi" || targetChannel === "bluetooth") {
+        return { ok: false, via: "" };
       }
 
       if (typeof browserPrint === "function" && text) {
@@ -2199,16 +2393,33 @@ ${bodyHtml}
   };
 
   const bindUi = () => {
+    const root = resolvePrintRoot();
+    if (root) {
+      wireWifiFromRoot(root);
+      seedWifiDefault(root);
+    }
+
     const modal = document.querySelector("[data-printer-modal]");
-    if (!modal) return;
+    if (!modal) {
+      // Pages without the connect modal (receipts, etc.) — restore the saved
+      // or shop-default Wi‑Fi printer in the background so reprints can use it.
+      if (root && String(root.dataset.printRelayUrl || "")) {
+        const channels = String(root.dataset.printChannels || "")
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean);
+        window.RichcomPrinter.restoreSession({
+          reason: "boot",
+          enabledChannels: channels.length ? channels : undefined,
+        });
+      }
+      return;
+    }
 
     const enabled = String(modal.dataset.printChannels || "")
       .split(",")
       .map((v) => v.trim())
       .filter(Boolean);
-
-    drivers.wifi.setRelayUrl(modal.dataset.printRelayUrl || "");
-    drivers.wifi.setScanUrl(modal.dataset.printScanUrl || "");
 
     const badgeState = (badge) => {
       const key = String(badge || "idle").toLowerCase();
@@ -2291,6 +2502,22 @@ ${bodyHtml}
         li.appendChild(btn);
         list.appendChild(li);
       });
+    };
+
+    const refreshWifiNetLine = (card) => {
+      const netEl = card?.querySelector("[data-printer-wifi-network]");
+      if (!netEl) return;
+      const net = drivers.wifi.getLocalNet();
+      if (!net.ips.length && !net.networks.length) {
+        netEl.hidden = true;
+        netEl.textContent = "";
+        return;
+      }
+      const parts = [];
+      if (net.ips.length) parts.push(`this PC ${net.ips.join(" / ")}`);
+      if (net.networks.length) parts.push(`network ${net.networks.join(", ")}`);
+      netEl.textContent = `Same Wi‑Fi check — ${parts.join(" · ")}. Join the printer to this network.`;
+      netEl.hidden = false;
     };
 
     const refreshAll = () => {
@@ -2390,8 +2617,10 @@ ${bodyHtml}
       const card = modal.querySelector(`[data-printer-channel="${channel}"]`);
       if (!card) continue;
 
-      card.querySelector("[data-printer-scan]")?.addEventListener("click", async () => {
+      const runScan = async (thorough = false) => {
+        const deepBtn = card.querySelector("[data-printer-scan-deep]");
         try {
+          if (deepBtn) deepBtn.hidden = true;
           setCardState(card, {
             badge: "Scanning",
             status:
@@ -2400,12 +2629,15 @@ ${bodyHtml}
                 : "Scanning for printers…",
             hint:
               channel === "wifi"
-                ? "Checking live devices only (fast)."
+                ? thorough
+                  ? "Deep scan — sweeping the whole subnet for printer ports."
+                  : "Checking live devices only (fast)."
                 : "Pick a device when prompted.",
             connected: false,
           });
-          const devices = await window.RichcomPrinter.scan(channel, card);
+          const devices = await window.RichcomPrinter.scan(channel, card, { thorough });
           renderDevices(card, devices);
+          refreshWifiNetLine(card);
 
           const connectFound = async (device) => {
             if (typeof device.onSelect === "function") device.onSelect();
@@ -2479,6 +2711,10 @@ ${bodyHtml}
           }
         } catch (err) {
           renderDevices(card, []);
+          refreshWifiNetLine(card);
+          if (deepBtn && channel === "wifi" && err?.code === "wifi_no_results") {
+            deepBtn.hidden = false;
+          }
           setCardState(card, {
             badge: "Error",
             status: "Not connected",
@@ -2486,7 +2722,14 @@ ${bodyHtml}
             connected: false,
           });
         }
-      });
+      };
+
+      card
+        .querySelector("[data-printer-scan]")
+        ?.addEventListener("click", () => runScan(false));
+      card
+        .querySelector("[data-printer-scan-deep]")
+        ?.addEventListener("click", () => runScan(true));
 
       card.querySelector("[data-printer-connect]")?.addEventListener("click", async () => {
         try {
@@ -2586,13 +2829,34 @@ ${bodyHtml}
     }
 
     const store = loadStore();
-    if (store.wifi) {
+    const wifiSeed = store.wifi?.host ? store.wifi : drivers.wifi.getDefaults();
+    if (wifiSeed?.host) {
       const wifiCard = modal.querySelector('[data-printer-channel="wifi"]');
       const hostInput = wifiCard?.querySelector("[data-printer-wifi-host]");
       const portInput = wifiCard?.querySelector("[data-printer-wifi-port]");
-      if (hostInput && store.wifi.host) hostInput.value = store.wifi.host;
-      if (portInput && store.wifi.port) portInput.value = String(store.wifi.port);
+      if (hostInput) hostInput.value = wifiSeed.host;
+      if (portInput) portInput.value = String(wifiSeed.port || 9100);
     }
+
+    // Pull the shop's saved printer + this server's network so the Wi‑Fi card
+    // can show the same‑Wi‑Fi check without running a full scan first.
+    drivers.wifi
+      .fetchConfig()
+      .then(() => {
+        const wifiCard = modal.querySelector('[data-printer-channel="wifi"]');
+        if (!wifiCard) return;
+        const nextDefaults = drivers.wifi.getDefaults();
+        const hostInput = wifiCard.querySelector("[data-printer-wifi-host]");
+        const portInput = wifiCard.querySelector("[data-printer-wifi-port]");
+        if (!loadStore().wifi?.host && nextDefaults.host) {
+          if (hostInput && !hostInput.value) hostInput.value = nextDefaults.host;
+          if (portInput && nextDefaults.port !== 9100) {
+            portInput.value = String(nextDefaults.port);
+          }
+        }
+        refreshWifiNetLine(wifiCard);
+      })
+      .catch(() => {});
     if (store.usb) {
       const usbCard = modal.querySelector('[data-printer-channel="usb"]');
       const modeSelect = usbCard?.querySelector("[data-printer-usb-mode]");

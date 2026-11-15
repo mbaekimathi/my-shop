@@ -1,5 +1,6 @@
 from django.urls import path
 
+from shops import agent_views as shop_agent_views
 from shops import views as shop_views
 
 from . import (  # noqa: F401 — registers role_segment converter
@@ -193,6 +194,21 @@ urlpatterns = [
         "my-shop/<int:shop_id>/wifi-printers/scan/",
         shop_views.my_shop_wifi_printer_scan,
         name="my_shop_wifi_printer_scan",
+    ),
+    path(
+        "my-shop/<int:shop_id>/wifi-printers/config/",
+        shop_views.my_shop_wifi_printer_config,
+        name="my_shop_wifi_printer_config",
+    ),
+    path(
+        "print-agent/<int:shop_id>/jobs/",
+        shop_agent_views.print_agent_poll,
+        name="print_agent_poll",
+    ),
+    path(
+        "print-agent/<int:shop_id>/jobs/<int:job_id>/",
+        shop_agent_views.print_agent_ack,
+        name="print_agent_ack",
     ),
     path(
         "my-shop/<int:shop_id>/clients/lookup/",

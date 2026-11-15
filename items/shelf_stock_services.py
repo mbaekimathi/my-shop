@@ -19,6 +19,39 @@ def _qty_display(value) -> str:
     return format(value.normalize(), "f")
 
 
+SHELF_UNIT_CHOICES = (
+    "PCS",
+    "KG",
+    "G",
+    "LITRES",
+    "ML",
+    "BOXES",
+    "BAGS",
+    "SACKS",
+    "PACKETS",
+    "BOTTLES",
+    "CRATES",
+    "TRAYS",
+    "DOZEN",
+    "TINS",
+    "CARTONS",
+    "BUNDLES",
+    "ROLLS",
+    "METRES",
+    "SETS",
+    "PAIRS",
+)
+
+
+def shelf_categories() -> list[str]:
+    return list(
+        ShelfItem.objects.exclude(category="")
+        .order_by("category")
+        .values_list("category", flat=True)
+        .distinct()
+    )
+
+
 def parse_shelf_qty(raw, *, allow_zero=False, label="Quantity") -> Decimal:
     text = str(raw if raw is not None else "").strip().replace(",", "")
     if not text:
@@ -47,12 +80,13 @@ def list_shelf_items(*, shop) -> list[dict]:
             {
                 "id": item.pk,
                 "name": item.name,
+                "category": item.category,
                 "unit": item.unit,
                 "quantity": item.quantity,
                 "quantity_display": _qty_display(item.quantity),
                 "low_stock_threshold_display": _qty_display(threshold),
                 "is_low": threshold > 0 and item.quantity <= threshold,
-                "search_text": f"{item.name} {item.unit}".lower(),
+                "search_text": f"{item.name} {item.category} {item.unit}".lower(),
             }
         )
     return rows
@@ -68,14 +102,22 @@ def recent_shelf_movements(*, shop, limit: int = 30) -> list[ShelfStockMovement]
 
 @transaction.atomic
 def register_shelf_item(
-    *, shop, actor=None, name, unit="", opening_qty=None, low_stock_threshold=None
+    *,
+    shop,
+    actor=None,
+    name,
+    category="",
+    unit="",
+    opening_qty=None,
+    low_stock_threshold=None,
 ) -> ShelfItem:
-    name = " ".join(str(name or "").split())
+    name = " ".join(str(name or "").split()).upper()
     if not name:
         raise ValidationError("Enter the shelf item name.")
     if len(name) > 200:
         raise ValidationError("Shelf item name is too long.")
-    unit = " ".join(str(unit or "").split())[:40]
+    category = " ".join(str(category or "").split()).upper()[:120]
+    unit = " ".join(str(unit or "").split()).upper()[:40]
     qty = parse_shelf_qty(opening_qty, allow_zero=True, label="Opening quantity")
     threshold = parse_shelf_qty(
         low_stock_threshold, allow_zero=True, label="Low stock alert"
@@ -91,6 +133,7 @@ def register_shelf_item(
     try:
         if existing is not None:
             existing.name = name
+            existing.category = category
             existing.unit = unit
             existing.quantity = qty
             existing.low_stock_threshold = threshold
@@ -98,6 +141,7 @@ def register_shelf_item(
             existing.save(
                 update_fields=[
                     "name",
+                    "category",
                     "unit",
                     "quantity",
                     "low_stock_threshold",
@@ -110,6 +154,7 @@ def register_shelf_item(
             item = ShelfItem.objects.create(
                 shop=shop,
                 name=name,
+                category=category,
                 unit=unit,
                 quantity=qty,
                 low_stock_threshold=threshold,
@@ -161,6 +206,54 @@ def record_shelf_movement(
 
 
 @transaction.atomic
+def transfer_shelf_item(
+    *, from_shop, to_shop, shelf_item_id, qty, actor=None, note=""
+) -> tuple[ShelfItem, ShelfItem]:
+    """Move shelf qty between shops: stock out at source, stock in at target.
+
+    Auto-registers the item on the target shelf (qty 0 + REGISTER entry) when
+    it is not already listed there.
+    """
+    item = (
+        ShelfItem.objects.select_for_update()
+        .filter(pk=shelf_item_id, shop=from_shop, is_archived=False)
+        .first()
+    )
+    if item is None:
+        raise ValidationError("Shelf item not found for this shop.")
+    amount = parse_shelf_qty(qty)
+    record_shelf_movement(
+        shop=from_shop,
+        shelf_item_id=item.pk,
+        mode=ShelfStockMovementType.OUT,
+        qty=amount,
+        actor=actor,
+        note=note or f"Sent to {to_shop.name}",
+    )
+    target = (
+        ShelfItem.objects.filter(shop=to_shop, name__iexact=item.name).first()
+    )
+    if target is None or target.is_archived:
+        target = register_shelf_item(
+            shop=to_shop,
+            actor=actor,
+            name=item.name,
+            unit=item.unit,
+            opening_qty=0,
+            low_stock_threshold=item.low_stock_threshold,
+        )
+    record_shelf_movement(
+        shop=to_shop,
+        shelf_item_id=target.pk,
+        mode=ShelfStockMovementType.IN,
+        qty=amount,
+        actor=actor,
+        note=note or f"Received from {from_shop.name}",
+    )
+    return item, target
+
+
+@transaction.atomic
 def archive_shelf_item(*, shop, shelf_item_id) -> ShelfItem:
     item = (
         ShelfItem.objects.select_for_update()
@@ -174,14 +267,15 @@ def archive_shelf_item(*, shop, shelf_item_id) -> ShelfItem:
     return item
 
 
-def apply_shelf_action(*, shop, actor, data) -> str:
-    """Run one shelf page action (register / in / out / archive); returns a success message."""
+def apply_shelf_action(*, shop, actor, data, to_shop=None) -> str:
+    """Run one shelf page action (register / in / out / transfer / archive); returns a success message."""
     action = (data.get("action") or "").strip()
     if action == "register":
         item = register_shelf_item(
             shop=shop,
             actor=actor,
             name=data.get("name"),
+            category=data.get("category"),
             unit=data.get("unit"),
             opening_qty=data.get("opening_qty"),
             low_stock_threshold=data.get("low_stock_threshold"),
@@ -201,6 +295,18 @@ def apply_shelf_action(*, shop, actor, data) -> str:
             f"{'Added' if is_in else 'Removed'} {movement.quantity.normalize():f} "
             f"{'to' if is_in else 'from'} “{movement.shelf_item.name}”."
         )
+    if action == "transfer":
+        if to_shop is None or to_shop.pk == shop.pk:
+            raise ValidationError("Pick another shop to send the shelf stock to.")
+        item, _target = transfer_shelf_item(
+            from_shop=shop,
+            to_shop=to_shop,
+            shelf_item_id=data.get("shelf_item_id"),
+            qty=data.get("qty"),
+            actor=actor,
+            note=data.get("note") or "",
+        )
+        return f"Sent “{item.name}” to {to_shop.name}."
     if action == "archive":
         item = archive_shelf_item(shop=shop, shelf_item_id=data.get("shelf_item_id"))
         return f"“{item.name}” removed from the shelf list."

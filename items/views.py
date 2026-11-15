@@ -1404,6 +1404,151 @@ def _stock_next_url(path, mode, *, shop_id="", shop_ids=None, requested_from_sho
     return f"{path}?{urlencode(params)}"
 
 
+def _shop_shelf_mode_enabled(shop) -> bool:
+    from shops.services import get_effective_pos_settings
+
+    return bool(
+        getattr(get_effective_pos_settings(shop), "enable_shelf_mode", False)
+    )
+
+
+def _shop_stock_tracking_enabled(shop) -> bool:
+    """Catalog stock only applies when the shop tracks item stock."""
+    from shops.services import get_effective_pos_settings
+
+    return bool(
+        getattr(
+            get_effective_pos_settings(shop), "enable_stock_tracking", True
+        )
+    )
+
+
+def _stock_shelf_post(
+    request, profile, *, mode, selected_shop_ids, requested_from_id, shops_by_id
+):
+    """Handle register / in / out / transfer / archive actions on shelf stock."""
+    from employees.module_permissions import employee_may
+
+    from .shelf_stock_services import apply_shelf_action
+
+    def _next(shelf_shop=None):
+        ids = list(selected_shop_ids)
+        if shelf_shop is not None and shelf_shop.pk not in ids:
+            ids = [shelf_shop.pk]
+        return redirect(
+            _stock_next_url(
+                request.path,
+                mode,
+                shop_ids=ids,
+                requested_from_shop_id=requested_from_id,
+            )
+        )
+
+    if not employee_may(profile, "my-shop", "shelf_stock"):
+        messages.error(request, "You do not have permission to manage shelf stock.")
+        return _next()
+
+    action, _, row_id = (request.POST.get("shelf_action") or "").partition(":")
+    row_id = row_id.strip()
+
+    if action == "register":
+        from .shelf_stock_services import register_shelf_item
+
+        targets = []
+        for raw_id in request.POST.getlist("shelf_shop_id"):
+            target = shops_by_id.get(raw_id.strip())
+            if target is not None and target not in targets:
+                targets.append(target)
+        if not targets:
+            messages.error(request, "Pick at least one shop.")
+            return _next()
+        non_shelf = [
+            shop.name for shop in targets if not _shop_shelf_mode_enabled(shop)
+        ]
+        if non_shelf:
+            messages.error(
+                request,
+                f"{', '.join(non_shelf)} {'is' if len(non_shelf) == 1 else 'are'} "
+                "not in Shelf mode.",
+            )
+            return _next(targets[0])
+        data = {
+            "name": request.POST.get("name"),
+            "category": request.POST.get("category"),
+            "unit": request.POST.get("unit"),
+            "opening_qty": request.POST.get("opening_qty"),
+            "low_stock_threshold": request.POST.get("low_stock_threshold"),
+        }
+        registered = []
+        for shop in targets:
+            try:
+                item = register_shelf_item(shop=shop, actor=profile, **data)
+            except ValidationError as exc:
+                errors = (
+                    list(exc.messages) if hasattr(exc, "messages") else [str(exc)]
+                )
+                for error in errors:
+                    messages.error(request, f"{shop.name}: {error}")
+            else:
+                registered.append(shop.name)
+        if registered:
+            label = item.name if registered else "Shelf item"
+            messages.success(
+                request,
+                f"“{label}” added to the shelf list"
+                + (f" for {', '.join(registered)}." if len(registered) > 1 else "."),
+            )
+        return _next(targets[0])
+
+    shelf_shop = shops_by_id.get(
+        (
+            request.POST.get("shelf_shop_id") or request.POST.get("shop") or ""
+        ).strip()
+    )
+    if shelf_shop is None or not _shop_shelf_mode_enabled(shelf_shop):
+        messages.error(request, "That shop is not in Shelf mode.")
+        return _next()
+
+    if action in ("in", "out", "archive", "transfer") and not row_id.isdigit():
+        messages.error(request, "Pick a shelf item first.")
+        return _next(shelf_shop)
+    data = {
+        "action": action,
+        "name": request.POST.get("name"),
+        "unit": request.POST.get("unit"),
+        "opening_qty": request.POST.get("opening_qty"),
+        "low_stock_threshold": request.POST.get("low_stock_threshold"),
+        "shelf_item_id": row_id or request.POST.get("shelf_item_id"),
+        "qty": request.POST.get(f"shelf_qty_{row_id}") or request.POST.get("qty"),
+        "note": request.POST.get(f"shelf_note_{row_id}")
+        or request.POST.get("note")
+        or "",
+    }
+    to_shop = None
+    if action == "transfer":
+        target_id = request.POST.get(f"shelf_target_{row_id}") or request.POST.get(
+            "shelf_target_id"
+        )
+        to_shop = shops_by_id.get(str(target_id).strip())
+        if to_shop is None or to_shop.pk == shelf_shop.pk:
+            messages.error(request, "Pick another shop to send the shelf stock to.")
+            return _next(shelf_shop)
+        if not _shop_shelf_mode_enabled(to_shop):
+            messages.error(request, f"{to_shop.name} is not in Shelf mode.")
+            return _next(shelf_shop)
+    try:
+        message = apply_shelf_action(
+            shop=shelf_shop, actor=profile, data=data, to_shop=to_shop
+        )
+    except ValidationError as exc:
+        errors = list(exc.messages) if hasattr(exc, "messages") else [str(exc)]
+        for error in errors:
+            messages.error(request, error)
+        return _next(shelf_shop)
+    messages.success(request, message)
+    return _next(shelf_shop)
+
+
 def _wants_json_response(request) -> bool:
     accept = (request.headers.get("Accept") or "").lower()
     requested_with = (request.headers.get("X-Requested-With") or "").lower()
@@ -5686,6 +5831,160 @@ def _stock_report_download(
     return _stock_report_pdf_response(filename=filename, pdf_bytes=pdf_bytes)
 
 
+def _build_shelf_report(shop, *, day_start, day_end, type_filter=""):
+    """Shelf-stock report data for one shop over a period."""
+    from decimal import Decimal
+
+    from .models import ShelfItem, ShelfStockMovement
+
+    mvs = list(
+        ShelfStockMovement.objects.filter(
+            shelf_item__shop=shop,
+            created_at__gte=day_start,
+            created_at__lt=day_end,
+        )
+        .select_related("shelf_item", "created_by__user")
+        .order_by("-created_at", "-id")
+    )
+
+    sums = {}
+    for mv in mvs:
+        bucket = sums.setdefault(mv.shelf_item_id, {})
+        bucket[mv.movement_type] = bucket.get(mv.movement_type, Decimal("0")) + (
+            mv.quantity
+        )
+
+    rows = []
+    units_on_hand = Decimal("0")
+    for item in ShelfItem.objects.filter(shop=shop).order_by("name"):
+        agg = sums.get(item.pk) or {}
+        rows.append(
+            {
+                "item": item,
+                "register_qty": agg.get("register", Decimal("0")),
+                "in_qty": agg.get("in", Decimal("0")),
+                "out_qty": agg.get("out", Decimal("0")),
+            }
+        )
+        if not item.is_archived:
+            units_on_hand += item.quantity
+
+    if type_filter in ("register", "in", "out"):
+        mvs = [mv for mv in mvs if mv.movement_type == type_filter]
+    events = []
+    for mv in mvs[:300]:
+        actor = mv.created_by
+        events.append(
+            {
+                "created_at": mv.created_at,
+                "name": mv.shelf_item.name,
+                "type": mv.movement_type,
+                "type_label": mv.get_movement_type_display(),
+                "qty": mv.quantity,
+                "balance_after": mv.balance_after,
+                "by": (
+                    (actor.user.get_full_name() or actor.user.username)
+                    if actor and actor.user_id
+                    else "—"
+                ),
+                "note": mv.note,
+            }
+        )
+
+    return {
+        "rows": rows,
+        "events": events,
+        "item_count": len(rows),
+        "units_on_hand": units_on_hand,
+        "units_in": sum(
+            (mv.quantity for mv in mvs if mv.movement_type in ("register", "in")),
+            Decimal("0"),
+        ),
+        "units_out": sum(
+            (mv.quantity for mv in mvs if mv.movement_type == "out"),
+            Decimal("0"),
+        ),
+        "movement_count": len(mvs),
+        "type_filter": type_filter,
+    }
+
+
+def _stock_shelf_report(
+    request,
+    profile,
+    meta,
+    module,
+    *,
+    page_mode,
+    shop,
+    filter_shops,
+    selected_shop_ids,
+    range_type,
+    day_start,
+    day_end,
+    filter_context,
+):
+    """Dedicated report/movements page for a shelf-only shop."""
+    from employees.workspace import sidebar_for_stock_management
+
+    report_params = {"range": range_type}
+    if selected_shop_ids:
+        report_params["shop_id"] = selected_shop_ids[0]
+    if range_type == "day":
+        report_params["date"] = filter_context.get("report_date_value")
+    elif range_type == "period":
+        report_params["date_from"] = filter_context.get("report_date_from")
+        report_params["date_to"] = filter_context.get("report_date_to")
+    elif range_type == "month":
+        report_params["month"] = filter_context.get("report_month_value")
+    elif range_type == "year":
+        report_params["year"] = (filter_context.get("report_year_value") or "")[:4]
+
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode=page_mode,
+        shop_ids=selected_shop_ids,
+        report_params=report_params,
+        profile=profile,
+    )
+    return render(
+        request,
+        "items/stock_shelf_report.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "stock_mode": page_mode,
+            "is_movements_page": page_mode == "movements",
+            "filter_shops": filter_shops,
+            "selected_shop_ids": set(selected_shop_ids),
+            "shelf_shop": shop,
+            "shelf_report": (
+                _build_shelf_report(
+                    shop,
+                    day_start=day_start,
+                    day_end=day_end,
+                    type_filter=(
+                        request.GET.get("shelf_type") or ""
+                    ).strip().lower(),
+                )
+                if shop is not None
+                else None
+            ),
+            "report_range_label": {
+                "day": "Single day",
+                "period": "Period",
+                "month": "Month",
+                "year": "Year",
+            }[range_type],
+            **filter_context,
+        },
+    )
+
+
 def stock_report(request, profile, meta, module, *, page_mode="report"):
     from employees.models import SHOP_ASSIGNABLE_ROLES
 
@@ -5699,7 +5998,43 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
     selected_shop_ids = [
         pk for pk in _parse_id_list(request.GET.getlist("shop_id")) if pk in shops_by_id
     ]
-    active_shop_ids = selected_shop_ids or [shop.pk for shop in filter_shops]
+    tracked_shop_ids = {
+        shop.pk for shop in filter_shops if _shop_stock_tracking_enabled(shop)
+    }
+    # A shelf-mode shop reports its shelf list; a shelf-only shop has no
+    # catalog stock at all and gets a dedicated shelf report.
+    shelf_report_shop = None
+    if len(selected_shop_ids) == 1:
+        candidate = shops_by_id.get(selected_shop_ids[0])
+        if candidate is not None and _shop_shelf_mode_enabled(candidate):
+            shelf_report_shop = candidate
+    all_shelf_scope = bool(filter_shops) and all(
+        _shop_shelf_mode_enabled(shop) and shop.pk not in tracked_shop_ids
+        for shop in filter_shops
+    )
+    if (
+        shelf_report_shop is not None
+        and shelf_report_shop.pk not in tracked_shop_ids
+    ) or (all_shelf_scope and not selected_shop_ids):
+        return _stock_shelf_report(
+            request,
+            profile,
+            meta,
+            module,
+            page_mode=page_mode,
+            shop=shelf_report_shop,
+            filter_shops=filter_shops,
+            selected_shop_ids=selected_shop_ids,
+            range_type=range_type,
+            day_start=day_start,
+            day_end=day_end,
+            filter_context=filter_context,
+        )
+    active_shop_ids = [
+        pk
+        for pk in (selected_shop_ids or [shop.pk for shop in filter_shops])
+        if pk in tracked_shop_ids
+    ]
 
     item_mode = (request.GET.get("item_mode") or "all").strip().lower()
     if item_mode not in ("all", "category", "items"):
@@ -6336,6 +6671,19 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "report_next_url": report_next_url,
             "is_item_movement_summary": is_item_movement_summary,
             "is_item_movement_detail": is_item_movement_detail,
+            "shelf_report_shop": shelf_report_shop,
+            "shelf_report": (
+                _build_shelf_report(
+                    shelf_report_shop,
+                    day_start=day_start,
+                    day_end=day_end,
+                    type_filter=(
+                        request.GET.get("shelf_type") or ""
+                    ).strip().lower(),
+                )
+                if shelf_report_shop is not None
+                else None
+            ),
             "movement_item_rows": movement_item_rows,
             "movement_item_count": len(movement_item_rows),
             "movement_item_totals": movement_item_totals,
@@ -7463,11 +7811,19 @@ def stock_management(request, profile, meta, module, page_sidebar):
     shops = actionable_shops_for_profile(profile)
     all_shops = shops
     shops_by_id = {str(shop.pk): shop for shop in shops}
-    # Request-from may be any active company shop (parity with MY-SHOP floor).
-    request_from_shops = list(
-        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
-    )
+    # Request-from may be any active company shop that tracks catalog stock
+    # (shelf-only shops receive shelf transfers via the shelf panel instead).
+    request_from_shops = [
+        shop
+        for shop in Shop.objects.filter(
+            is_hidden=False, is_suspended=False
+        ).order_by("name")
+        if _shop_stock_tracking_enabled(shop)
+    ]
     request_from_by_id = {str(shop.pk): shop for shop in request_from_shops}
+    tracked_shop_ids = {
+        shop.pk for shop in shops if _shop_stock_tracking_enabled(shop)
+    }
 
     def _resolve_shop(raw):
         raw = (raw or "").strip()
@@ -7511,6 +7867,15 @@ def stock_management(request, profile, meta, module, page_sidebar):
     )
 
     if request.method == "POST":
+        if (request.POST.get("shelf_action") or "").strip():
+            return _stock_shelf_post(
+                request,
+                profile,
+                mode=mode,
+                selected_shop_ids=selected_shop_ids,
+                requested_from_id=requested_from_id,
+                shops_by_id=shops_by_id,
+            )
         wants_json = _wants_json_response(request)
         post_action = (request.POST.get("action") or "").strip().lower()
         if post_action == "verify_login":
@@ -7853,6 +8218,62 @@ def stock_management(request, profile, meta, module, page_sidebar):
     elif mode == "request" and request_pair_ready:
         use_stock_catalog_api = True
 
+    # Shelf mode: a shelf-only shop (shelf mode on, stock tracking off) has no
+    # tracked catalog stock — suppress the matrix for it regardless of shelf
+    # permissions. "Both" mode shops keep the catalog and get the shelf panel
+    # appended below it.
+    shelf_only = bool(
+        selected_shop is not None
+        and _shop_shelf_mode_enabled(selected_shop)
+        and not _shop_stock_tracking_enabled(selected_shop)
+    )
+    if shelf_only:
+        use_stock_catalog_api = False
+
+    # When the selected shop runs shelf stock, the page also lists its shelf
+    # items (register / in / out / transfer) — requires the shelf permission.
+    can_shelf_stock = employee_may(profile, "my-shop", "shelf_stock")
+    shelf_register_shops = []
+    shelf_shop = None
+    shelf_items = []
+    shelf_movements = []
+    shelf_transfer_shops = []
+    if can_shelf_stock:
+        from employees.store_stock_views import shelf_mode_shops
+
+        from .shelf_stock_services import list_shelf_items, recent_shelf_movements
+
+        actionable_ids = {shop.pk for shop in shops}
+        shelf_register_shops = [
+            shop for shop in shelf_mode_shops() if shop.pk in actionable_ids
+        ]
+        shelf_mode_ids = {shop.pk for shop in shelf_register_shops}
+        if selected_shop and selected_shop.pk in shelf_mode_ids:
+            shelf_shop = selected_shop
+        if shelf_shop is not None:
+            shelf_items = list_shelf_items(shop=shelf_shop)
+            shelf_movements = recent_shelf_movements(shop=shelf_shop, limit=20)
+            shelf_transfer_shops = [
+                shop for shop in shelf_register_shops if shop.pk != shelf_shop.pk
+            ]
+
+    # When every shop in scope is shelf-only (e.g. company-wide shelf mode),
+    # the catalog matrix has nothing to show — prompt for a shop pick so its
+    # shelf panel can render.
+    scope_shops = list(selected_shops) if selected_shops else list(shops)
+    shelf_scope_pick = (
+        selected_shop is None
+        and mode in ("view", "in", "out")
+        and bool(scope_shops)
+        and all(
+            _shop_shelf_mode_enabled(shop)
+            and not _shop_stock_tracking_enabled(shop)
+            for shop in scope_shops
+        )
+    )
+    if shelf_scope_pick:
+        use_stock_catalog_api = False
+
     items_by_category = []
     item_count = Item.objects.filter(is_suspended=False).count()
     category_count = 0
@@ -7868,20 +8289,31 @@ def stock_management(request, profile, meta, module, page_sidebar):
     from django.db.models import Sum
 
     if mode == "view":
-        display_shops = [selected_shop] if selected_shop else all_shops
+        # Shelf-only shops have no tracked catalog stock to matrix against.
         if selected_shop:
-            shop_total_units = (
-                ShopStock.objects.filter(
-                    shop=selected_shop, item__is_suspended=False
-                ).aggregate(
-                    total=Sum("quantity")
-                )["total"]
-                or 0
+            display_shops = (
+                [selected_shop]
+                if selected_shop.pk in tracked_shop_ids
+                else []
             )
-        elif all_shops:
+        else:
+            display_shops = [
+                shop for shop in all_shops if shop.pk in tracked_shop_ids
+            ]
+        if selected_shop:
+            if selected_shop.pk in tracked_shop_ids:
+                shop_total_units = (
+                    ShopStock.objects.filter(
+                        shop=selected_shop, item__is_suspended=False
+                    ).aggregate(
+                        total=Sum("quantity")
+                    )["total"]
+                    or 0
+                )
+        elif display_shops:
             shop_total_units = (
                 ShopStock.objects.filter(
-                    shop_id__in=[shop.pk for shop in all_shops],
+                    shop_id__in=[shop.pk for shop in display_shops],
                     item__is_suspended=False,
                 ).aggregate(total=Sum("quantity"))["total"]
                 or 0
@@ -7894,7 +8326,11 @@ def stock_management(request, profile, meta, module, page_sidebar):
             .count()
         )
     elif mode in ("in", "out") and shops:
-        display_shops = list(selected_shops) if selected_shops else list(shops)
+        display_shops = [
+            shop
+            for shop in (list(selected_shops) if selected_shops else list(shops))
+            if shop.pk in tracked_shop_ids
+        ]
         shop_total_units = (
             ShopStock.objects.filter(
                 shop_id__in=[shop.pk for shop in display_shops],
@@ -7910,11 +8346,15 @@ def stock_management(request, profile, meta, module, page_sidebar):
             .count()
         )
     elif mode == "request" and request_pair_ready:
-        # Sending shop and receiving shop.
-        display_shops = [selected_shop, requested_from_shop]
+        # Sending shop and receiving shop (tracked-stock shops only).
+        display_shops = [
+            shop
+            for shop in (selected_shop, requested_from_shop)
+            if shop and _shop_stock_tracking_enabled(shop)
+        ]
         shop_total_units = (
             ShopStock.objects.filter(
-                shop_id__in=[selected_shop.pk, requested_from_shop.pk],
+                shop_id__in=[shop.pk for shop in display_shops],
                 item__is_suspended=False,
             ).aggregate(total=Sum("quantity"))["total"]
             or 0
@@ -8001,6 +8441,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "verify_login_code_url": request.path,
         }
 
+    from .shelf_stock_services import SHELF_UNIT_CHOICES, shelf_categories
+
     return render(
         request,
         "items/stock_management.html",
@@ -8046,6 +8488,18 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 kwargs={"role_segment": role_url_segment(profile.role)},
             ),
             "can_print_stock": employee_may(profile, "stock-management", "print"),
+            "can_shelf_stock": can_shelf_stock,
+            "shelf_register_shops": shelf_register_shops,
+            "shelf_unit_choices": SHELF_UNIT_CHOICES,
+            "shelf_categories": shelf_categories(),
+            "shelf_shop": shelf_shop,
+            "shelf_only": shelf_only,
+            "shelf_scope_pick": shelf_scope_pick,
+            "shelf_items": shelf_items,
+            "shelf_movements": shelf_movements,
+            "shelf_transfer_shops": shelf_transfer_shops,
+            "shelf_shop_field": True,
+            "shelf_needs_staff_id": False,
             "online_stock_take_url": stock_management_url(
                 profile.role,
                 "online-stock-take",
@@ -8100,12 +8554,36 @@ def stock_management_catalog(request, role_segment):
 
     if mode == "view":
         action_shops = {shop.pk: shop for shop in actionable_shops_for_profile(profile)}
+        # Shelf-only shops have no tracked catalog stock — the page shows the
+        # shelf panel for them instead of this matrix.
+        tracked_shops = {
+            pk: shop
+            for pk, shop in action_shops.items()
+            if _shop_stock_tracking_enabled(shop)
+        }
         view_shop_id = requested_shop_ids[0] if requested_shop_ids else 0
         if view_shop_id and view_shop_id not in action_shops:
             return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+        if view_shop_id and view_shop_id not in tracked_shops:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "mode": "view",
+                    "total": 0,
+                    "page": 1,
+                    "page_size": 48,
+                    "has_more": False,
+                    "next_page": None,
+                    "total_units": "0",
+                    "stock_numbers_hidden": False,
+                    "items": [],
+                    "q": request.GET.get("q") or "",
+                    "shops": [],
+                }
+            )
         payload = build_stock_catalog_page(
             shop_id=view_shop_id or None,
-            shop_ids=None if view_shop_id else list(action_shops.keys()),
+            shop_ids=None if view_shop_id else list(tracked_shops.keys()),
             mode="view",
             q=request.GET.get("q") or "",
             page=request.GET.get("page") or 1,
@@ -8136,30 +8614,51 @@ def stock_management_catalog(request, role_segment):
                 if from_id
                 else None
             )
-            if from_shop is None:
+            if from_shop is None or not _shop_stock_tracking_enabled(from_shop):
                 return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
             if from_id == requesting_id:
                 return JsonResponse(
                     {"ok": False, "error": "from_shop_must_differ"}, status=400
                 )
-            catalog_shop_ids = [requesting_id, from_id]
-            prefer_shop_id = None
-        elif requested_shop_ids:
+            shops_for_track = dict(action_shops)
+            shops_for_track[from_id] = from_shop
             catalog_shop_ids = [
-                sid for sid in requested_shop_ids if sid in action_shops
+                sid
+                for sid in (requesting_id, from_id)
+                if _shop_stock_tracking_enabled(shops_for_track[sid])
             ]
             if not catalog_shop_ids:
                 return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
-            # Selecting every allocated shop is the same as all shops.
-            if len(catalog_shop_ids) >= len(action_shops):
-                catalog_shop_ids = list(action_shops.keys())
+            prefer_shop_id = None
+        elif requested_shop_ids:
+            tracked_ids = {
+                pk
+                for pk, shop in action_shops.items()
+                if _shop_stock_tracking_enabled(shop)
+            }
+            catalog_shop_ids = [
+                sid
+                for sid in requested_shop_ids
+                if sid in action_shops and sid in tracked_ids
+            ]
+            if not catalog_shop_ids:
+                return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
+            # Selecting every tracked shop is the same as all shops.
+            if len(catalog_shop_ids) >= len(tracked_ids):
+                catalog_shop_ids = list(tracked_ids)
                 prefer_shop_id = None
             else:
                 prefer_shop_id = (
                     catalog_shop_ids[0] if len(catalog_shop_ids) == 1 else None
                 )
         else:
-            catalog_shop_ids = list(action_shops.keys())
+            catalog_shop_ids = [
+                pk
+                for pk, shop in action_shops.items()
+                if _shop_stock_tracking_enabled(shop)
+            ]
+            if not catalog_shop_ids:
+                return JsonResponse({"ok": False, "error": "shop_required"}, status=400)
             prefer_shop_id = None
         payload = build_stock_catalog_page(
             shop_id=prefer_shop_id,

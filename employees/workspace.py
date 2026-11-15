@@ -683,6 +683,65 @@ def _store_shelf_stock_link(profile, *, active):
     ]
 
 
+def _sidebar_shelf_scope(shop_ids, profile=None):
+    """True when the whole current stock scope runs shelf-only stock.
+
+    A single selected shelf-only shop counts; with no selection (All shops)
+    the scope is every actionable shop — shelf links only when they all run
+    shelf-only stock (e.g. company-wide shelf mode).
+    """
+    from shops.models import Shop
+    from shops.services import get_effective_pos_settings
+
+    def _shelf_only(shop):
+        if shop is None:
+            return False
+        pos = get_effective_pos_settings(shop)
+        return bool(
+            getattr(pos, "enable_shelf_mode", False)
+            and not getattr(pos, "enable_stock_tracking", True)
+        )
+
+    if shop_ids:
+        if len(shop_ids) != 1:
+            return False
+        return _shelf_only(
+            Shop.objects.filter(
+                pk=shop_ids[0], is_hidden=False, is_suspended=False
+            ).first()
+        )
+    if profile is None:
+        return False
+    from items.services import actionable_shops_for_profile
+
+    shops = actionable_shops_for_profile(profile)
+    return bool(shops) and all(_shelf_only(shop) for shop in shops)
+
+
+def _stock_management_shelf_links(role, profile):
+    """Shelf stock sidebar action — opens the register-shelf-item popup."""
+    from items.services import actionable_shops_for_profile
+
+    from .module_permissions import employee_may
+    from .store_stock_views import shelf_mode_shops
+
+    if profile is None or not employee_may(profile, "my-shop", "shelf_stock"):
+        return []
+    actionable_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    if not [shop for shop in shelf_mode_shops() if shop.pk in actionable_ids]:
+        return []
+    base = stock_management_url(role, "view")
+    sep = "&" if "?" in base else "?"
+    return [
+        _action(
+            "Shelf stock",
+            "layers",
+            action="shelf-stock",
+            href=f"{base}{sep}shelf=1",
+        )
+    ]
+
+
 def sidebar_for_store_stock(role, *, profile=None, active="in"):
     """Sidebar for central store stock in/out/report pages."""
     dashboard_url = reverse(role_home_url_name(role))
@@ -1280,6 +1339,14 @@ def sidebar_for_stock_management(
         resolved_shop_ids = [str(sid).strip() for sid in shop_ids if str(sid).strip()]
     elif shop_id:
         resolved_shop_ids = [str(shop_id).strip()]
+    if not resolved_shop_ids and report_params:
+        raw_shop = report_params.get("shop_id")
+        if isinstance(raw_shop, (list, tuple)):
+            resolved_shop_ids = [
+                str(v).strip() for v in raw_shop if str(v).strip()
+            ]
+        elif raw_shop not in (None, ""):
+            resolved_shop_ids = [str(raw_shop).strip()]
     shop_kwargs = {
         "shop_ids": resolved_shop_ids,
         "requested_from_shop_id": requested_from_shop_id or "",
@@ -1345,6 +1412,7 @@ def sidebar_for_stock_management(
                         href=stock_management_url(role, "activity-audits"),
                         active=False,
                     ),
+                    *_stock_management_shelf_links(role, profile),
                 ]
             )
         elif active_mode in (
@@ -1410,6 +1478,9 @@ def sidebar_for_stock_management(
             view_shop_id = (
                 resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
             )
+            # Shelf-only scope: the in/out/movement/report pages run on shelf
+            # stock — label the links accordingly (no serials on the shelf).
+            shelf_scope = _sidebar_shelf_scope(resolved_shop_ids, profile)
             candidates = [
                 (
                     "view",
@@ -1423,7 +1494,7 @@ def sidebar_for_stock_management(
                 (
                     "in",
                     _link(
-                        "Stock In",
+                        "Shelf stock in" if shelf_scope else "Stock In",
                         "package-plus",
                         href=stock_management_url(
                             role, "in", shop_ids=resolved_shop_ids
@@ -1434,7 +1505,7 @@ def sidebar_for_stock_management(
                 (
                     "out",
                     _link(
-                        "Stock Out",
+                        "Shelf stock out" if shelf_scope else "Stock Out",
                         "package-minus",
                         href=stock_management_url(
                             role, "out", shop_ids=resolved_shop_ids
@@ -1463,7 +1534,7 @@ def sidebar_for_stock_management(
                 (
                     "movements",
                     _link(
-                        "Stock Movement",
+                        "Shelf movement" if shelf_scope else "Stock Movement",
                         "arrow-down-up",
                         href=movements_href,
                         active=active_mode == "movements",
@@ -1472,7 +1543,7 @@ def sidebar_for_stock_management(
                 (
                     "report",
                     _link(
-                        "Stock Report",
+                        "Shelf report" if shelf_scope else "Stock Report",
                         "bar-chart-3",
                         href=report_href,
                         active=active_mode == "report",
@@ -1488,7 +1559,11 @@ def sidebar_for_stock_management(
                     ),
                 ),
             ]
-            primary.extend(link for mode, link in candidates if _allowed(mode))
+            primary.extend(
+                link
+                for mode, link in candidates
+                if _allowed(mode) and not (shelf_scope and mode == "serials")
+            )
             if _allowed("view"):
                 primary.append(
                     _link(
@@ -1498,6 +1573,7 @@ def sidebar_for_stock_management(
                         active=active_mode == "activity-audits",
                     )
                 )
+            primary.extend(_stock_management_shelf_links(role, profile))
     else:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
         if active_mode in (
@@ -1572,6 +1648,7 @@ def sidebar_for_stock_management(
                         active=active_mode == "settings",
                     )
                 )
+            primary.extend(_stock_management_shelf_links(role, profile))
 
     return resolve_sidebar_hrefs(
         {

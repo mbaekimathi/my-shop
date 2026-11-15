@@ -123,7 +123,7 @@ class ShelfStockTests(TestCase):
             self.url,
             {"action": "register", "name": "Sugar bag", "unit": "bags", "opening_qty": "5", **self.staff},
         )
-        shelf = ShelfItem.objects.get(shop=self.shop, name="Sugar bag")
+        shelf = ShelfItem.objects.get(shop=self.shop, name="SUGAR BAG")
         self.assertEqual(shelf.quantity, Decimal("5"))
 
         client.post(self.url, {"action": "in", "shelf_item_id": shelf.pk, "qty": "3", **self.staff})
@@ -154,6 +154,69 @@ class ShelfStockTests(TestCase):
         response = client.get(self.url)
         self.assertContains(response, "No shelf stock yet")
 
+    def test_register_stores_uppercase_name_category_and_unit(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        client = self._login()
+        client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "sugar bag",
+                "category": "groceries",
+                "unit": "bags",
+                "opening_qty": "5",
+                **self.staff,
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(shelf.name, "SUGAR BAG")
+        self.assertEqual(shelf.category, "GROCERIES")
+        self.assertEqual(shelf.unit, "BAGS")
+
+    def test_register_via_stock_management_post_covers_multiple_shops(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        admin_user = User.objects.create_user(
+            username="800991", password="admin-pass", is_active=True
+        )
+        admin = EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="800991",
+            phone_country_code="+254",
+            phone_number="700000991",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        other = Shop.objects.create(
+            name="SECOND SHELF SHOP",
+            location="NAIROBI",
+            email="second-shelf@test.local",
+            phone_number="0700000955",
+            login_code="830955",
+            password_hash="x",
+            created_by=admin,
+        )
+        self.client.force_login(admin_user)
+        from employees.workspace import stock_management_url
+
+        response = self.client.post(
+            stock_management_url(admin.role, "view"),
+            {
+                "shelf_action": "register",
+                "shelf_shop_id": [str(self.shop.pk), str(other.pk)],
+                "name": "gunny bags",
+                "category": "packaging",
+                "unit": "BAGS",
+                "opening_qty": "7",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            ShelfItem.objects.filter(
+                name="GUNNY BAGS", category="PACKAGING", quantity=Decimal("7")
+            ).count(),
+            2,
+        )
+
     def test_portal_changes_require_permitted_staff_id(self):
         set_company_pos_setting(field="enable_shelf_mode", enabled=True)
         client = self._login()
@@ -173,7 +236,7 @@ class ShelfStockTests(TestCase):
         EmployeeModulePermission.objects.filter(employee=self.profile).update(allowed=True)
         client.post(self.url, {"action": "register", "name": "Allowed", **self.staff})
         shelf = ShelfItem.objects.get(shop=self.shop)
-        self.assertEqual(shelf.name, "Allowed")
+        self.assertEqual(shelf.name, "ALLOWED")
         self.assertEqual(shelf.created_by, self.profile)
 
     def test_shelf_items_do_not_touch_item_stock(self):
@@ -201,7 +264,11 @@ class ShelfStockTests(TestCase):
             ShopStock.objects.get(shop=self.shop, item=item).quantity, Decimal("4")
         )
 
-    def test_shop_override_controls_shelf_mode(self):
+    def test_shop_override_cannot_change_stock_mode(self):
+        from django.core.exceptions import ValidationError
+
+        from shops.services import set_shop_pos_setting
+
         ShopPosSettings.objects.update_or_create(
             shop=self.shop,
             defaults={
@@ -211,12 +278,65 @@ class ShelfStockTests(TestCase):
             },
         )
         _invalidate_pos_settings_cache()
+        self.assertFalse(get_effective_pos_settings(self.shop).enable_shelf_mode)
         client = self._login()
         workspace = client.get(
             reverse("employees:my_shop_workspace", kwargs={"shop_id": self.shop.pk})
         )
-        self.assertContains(workspace, self.url)
-        self.assertEqual(client.get(self.url).status_code, 200)
+        self.assertNotContains(workspace, self.url)
+        self.assertNotEqual(client.get(self.url).status_code, 200)
+        for field in ("stock_mode_shelf", "enable_shelf_mode", "enable_stock_tracking"):
+            with self.assertRaises(ValidationError):
+                set_shop_pos_setting(shop=self.shop, field=field, enabled=True)
+
+    def test_floor_catalog_matches_stock_mode(self):
+        catalog_url = reverse(
+            "employees:my_shop_catalog", kwargs={"shop_id": self.shop.pk}
+        )
+        Item.objects.create(
+            category="GEN",
+            name="Rice 5kg",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("20"),
+            created_by=self.profile,
+        )
+        client = self._login()
+
+        # Items mode (default): catalog lists items, no shelf rows.
+        payload = client.get(catalog_url).json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual([row["name"] for row in payload["items"]], ["Rice 5kg"])
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Sugar bag",
+                "opening_qty": "5",
+                **self.staff,
+            },
+        )
+
+        # Shelf mode: catalog items still sell on the floor — only the
+        # registered shelf item is excluded (it is never sold).
+        payload = client.get(catalog_url).json()
+        self.assertEqual(
+            [row["name"] for row in payload["items"]], ["Rice 5kg"]
+        )
+        self.assertEqual(payload["total"], 1)
+
+        # Both mode: only the sellable catalog items show on the floor.
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        payload = client.get(catalog_url).json()
+        self.assertEqual([row["name"] for row in payload["items"]], ["Rice 5kg"])
+        self.assertEqual(payload["total"], 1)
+
+        # Search hits catalog items only — shelf items are never returned.
+        payload = client.get(catalog_url, {"q": "sugar"}).json()
+        self.assertEqual(payload["items"], [])
+        payload = client.get(catalog_url, {"q": "rice"}).json()
+        self.assertEqual([row["name"] for row in payload["items"]], ["Rice 5kg"])
 
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
@@ -276,13 +396,7 @@ class StoreManagerShelfStockTests(TestCase):
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("15"))
 
-    def test_post_for_shop_not_in_shelf_mode_is_rejected(self):
-        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
-        ShopPosSettings.objects.update_or_create(
-            shop=self.shop,
-            defaults={"override_pos": True, "enable_shelf_mode": False},
-        )
-        _invalidate_pos_settings_cache()
+    def test_post_rejected_when_company_shelf_mode_off(self):
         other = Shop.objects.create(
             name="OTHER SHELF SHOP",
             location="NAIROBI",
@@ -296,5 +410,6 @@ class StoreManagerShelfStockTests(TestCase):
             self.url, {"action": "register", "name": "Wrong", "shop": self.shop.pk}
         )
         self.assertFalse(ShelfItem.objects.exists())
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
         self.client.post(self.url, {"action": "register", "name": "Right", "shop": other.pk})
         self.assertEqual(ShelfItem.objects.get().shop, other)

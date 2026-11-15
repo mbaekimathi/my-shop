@@ -70,9 +70,9 @@
             {% if toggle.field == "stock_mode_items" %}
             <p>Track stock on the items you sell. They show on the shop page, and sales need enough stock and reduce it.</p>
             {% elif toggle.field == "stock_mode_shelf" %}
-            <p>Track a separate shelf stock list you register on each shop's Shelf stock page. Shelf items don't show on the shop page. Items still sell, but their stock isn't counted.</p>
+            <p>Track a shelf stock list you register in Stock Management. Shelf items are not sold, so the shop page shows no items.</p>
             {% elif toggle.field == "stock_mode_both" %}
-            <p>Track stock on the items you sell and also keep a separate shelf stock list.</p>
+            <p>Track stock on the items you sell and keep a separate shelf stock list, managed in Stock Management.</p>
             {% endif %}
             {% if toggle.employee_perm %}
             <p class="pos-settings-employee-link">
@@ -123,16 +123,6 @@
         </li>
         {% endif %}
       </ul>
-      {% if group.title == "Stock" and shelf_shortcut_shops %}
-      <div class="pos-settings-shelf-links" data-shelf-shortcuts{% if not pos_settings.enable_shelf_mode %} hidden{% endif %}>
-        <p>Register shelf items for a shop:</p>
-        <ul>
-          {% for row in shelf_shortcut_shops %}
-          <li><a href="{% url 'employees:my_shop_shelf_stock' shop_id=row.pk %}"><i data-lucide="layers" aria-hidden="true"></i>{{ row.name }}</a></li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
     </section>
     {% endfor %}
   </div>

@@ -20,7 +20,7 @@
     <div class="store-stock-panel-head">
       <div>
         <h3 id="shelf-register-title">Register shelf stock</h3>
-        <p>Add something you keep on the shelf. It will not appear on the selling page.</p>
+        <p>Add something you keep on the shelf. Shelf items are never sold, so they don't show on the shop page.</p>
       </div>
     </div>
     <form method="post" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
@@ -34,10 +34,24 @@
         </div>
       </label>
       <label class="store-stock-field">
-        <span>Unit <em>optional</em></span>
+        <span>Category <em>optional</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="tag" aria-hidden="true"></i>
+          <input type="text" name="category" maxlength="120" list="shelf-category-list" placeholder="e.g. Groceries">
+        </div>
+      </label>
+      <datalist id="shelf-category-list">
+        {% for cat in shelf_categories %}<option value="{{ cat }}">{% endfor %}
+      </datalist>
+      <label class="store-stock-field">
+        <span>Unit</span>
         <div class="store-stock-input-wrap">
           <i data-lucide="ruler" aria-hidden="true"></i>
-          <input type="text" name="unit" maxlength="40" placeholder="pcs, kg, boxes…">
+          <select name="unit">
+            {% for unit in shelf_unit_choices %}
+            <option value="{{ unit }}"{% if forloop.first %} selected{% endif %}>{{ unit }}</option>
+            {% endfor %}
+          </select>
         </div>
       </label>
       <label class="store-stock-field">
@@ -84,7 +98,7 @@
             <td data-label="Item">
               <div class="store-stock-item-cell">
                 <span class="store-stock-item-name">{{ row.name }}</span>
-                {% if row.unit %}<span class="store-stock-item-cat-mobile">{{ row.unit }}</span>{% endif %}
+                {% if row.category or row.unit %}<span class="store-stock-item-cat-mobile">{% if row.category %}{{ row.category }}{% endif %}{% if row.category and row.unit %} · {% endif %}{% if row.unit %}{{ row.unit }}{% endif %}</span>{% endif %}
               </div>
             </td>
             <td class="store-stock-col-qty" data-label="On shelf">
