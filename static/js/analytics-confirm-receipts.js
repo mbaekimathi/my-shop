@@ -41,19 +41,33 @@
   const filtersForm = root.querySelector("[data-analytics-filters]");
   const printBtn = root.querySelector("[data-ax-confirm-print]");
 
+  const verifyUrl = root.getAttribute("data-verify-login-url") || "";
+
   const modal = document.querySelector("[data-confirm-receipt-modal]");
   const modalBody = modal?.querySelector("[data-confirm-receipt-modal-body]");
   const modalTitle = modal?.querySelector("[data-confirm-receipt-modal-title]");
   const modalActions = modal?.querySelector("[data-confirm-receipt-modal-actions]");
-  const statusWrap = modal?.querySelector("[data-confirm-receipt-status-wrap]");
-  const statusSelect = modal?.querySelector("[data-confirm-receipt-status]");
-  const saveStatusBtn = modal?.querySelector("[data-confirm-receipt-save-status]");
+  const startConfirmBtn = modal?.querySelector("[data-confirm-receipt-start]");
+  const setPendingBtn = modal?.querySelector("[data-confirm-receipt-set-pending]");
+  const setCancelledBtn = modal?.querySelector(
+    "[data-confirm-receipt-set-cancelled]"
+  );
+  const cancelConfirmBtn = modal?.querySelector(
+    "[data-confirm-receipt-cancel-mode]"
+  );
+  const submitConfirmBtn = modal?.querySelector(
+    "[data-confirm-receipt-submit]"
+  );
 
   let detailSeq = 0;
   let rowsSeq = 0;
   let currentDetail = null;
   let currentShopId = null;
-  let preferConfirmedStatus = false;
+  let autoConfirmOnLoad = false;
+  let confirmMode = false;
+  let confirmVerified = false;
+  let verifyTimer = null;
+  let verifySeq = 0;
   let busy = false;
   let searchTimer = 0;
   let countLabel = "receipt";
@@ -158,14 +172,6 @@
     row.getAttribute("data-can-confirm") === "1" ||
     row.getAttribute("data-can-cancel") === "1" ||
     row.getAttribute("data-can-set-pending") === "1";
-
-  const statusKeyForUi = (status) => {
-    const key = String(status || "").trim().toLowerCase();
-    if (key === "confirmed") return "confirmed";
-    if (key === "cancelled") return "cancelled";
-    if (key === "partial_return") return "cancelled";
-    return "pending";
-  };
 
   const selectedRows = () =>
     allRows().filter((row) => Boolean(rowCheckbox(row)?.checked));
@@ -558,7 +564,9 @@
     document.body.classList.remove("workspace-modal-open");
     currentDetail = null;
     currentShopId = null;
-    preferConfirmedStatus = false;
+    autoConfirmOnLoad = false;
+    confirmMode = false;
+    confirmVerified = false;
     busy = false;
   };
 
@@ -571,63 +579,245 @@
 
   const setActionBusy = (on) => {
     busy = Boolean(on);
-    if (saveStatusBtn) {
-      saveStatusBtn.disabled = busy || !currentDetail?.receipt?.can_edit_status;
-    }
-    if (statusSelect) statusSelect.disabled = busy;
+    syncActionButtons();
     syncSelectionBar();
   };
 
-  const syncStatusOptions = (receipt) => {
-    if (!statusSelect) return;
-    const current = statusKeyForUi(receipt?.status);
-    const isPartial = String(receipt?.status || "") === "partial_return";
-    [...statusSelect.options].forEach((option) => {
-      if (isPartial) {
-        option.hidden = option.value !== "cancelled" && option.value !== current;
-        option.disabled = option.hidden;
-      } else {
-        option.hidden = false;
-        option.disabled = false;
-      }
-    });
-    statusSelect.value = isPartial ? "cancelled" : current;
+  const isCreditReceipt = (receipt = {}) =>
+    Boolean(receipt.is_credit || receipt.kind === "credit");
+
+  const creditDueValue = (receipt = {}) => {
+    const due = Number(receipt.credit_due);
+    if (Number.isFinite(due) && due > 0) return due;
+    const total = Number(receipt.total);
+    const paid = Number(receipt.amount_paid);
+    if (Number.isFinite(total)) {
+      const bal = total - (Number.isFinite(paid) ? paid : 0);
+      return bal > 0 ? bal : 0;
+    }
+    return 0;
   };
 
-  const isMpesaPayment = (method) => {
-    const key = String(method || "").trim().toLowerCase();
-    return key === "mpesa" || key === "both";
+  const setConfirmStatus = (message, { ok = false, error = false } = {}) => {
+    const el = modalBody?.querySelector("[data-confirm-status]");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-ok", ok);
+    el.classList.toggle("is-error", error);
   };
 
-  const shouldShowConfirmFields = (receipt, chosenStatus) => {
-    if (!receipt) return false;
-    if (!Boolean(receipt.can_edit_status)) return false;
-    if (String(receipt.status || "") === "partial_return") return false;
-    const chosen = chosenStatus || statusKeyForUi(receipt.status);
-    // Always offer payment time + reference when confirming (required only if setting on).
-    return chosen === "confirmed";
-  };
-
-  const syncConfirmFieldsVisibility = () => {
+  const confirmFieldValues = () => {
     const receipt = currentDetail?.receipt || {};
-    const chosen = statusSelect?.value || statusKeyForUi(receipt.status);
-    const wrap = modalBody?.querySelector("[data-confirm-fields]");
-    const show = shouldShowConfirmFields(receipt, chosen);
-    if (wrap) wrap.hidden = !show;
+    const paymentDate = (
+      modalBody?.querySelector("[data-confirm-payment-date]")?.value || ""
+    ).trim();
+    const paymentTime = (
+      modalBody?.querySelector("[data-confirm-payment-time]")?.value || ""
+    ).trim();
+    const paymentAt =
+      paymentDate && paymentTime ? `${paymentDate}T${paymentTime}` : "";
+    const ref = (
+      modalBody?.querySelector("[data-confirm-mpesa-ref]")?.value || ""
+    ).trim();
+    const amount = (
+      modalBody?.querySelector("[data-confirm-credit-amount]")?.value || ""
+    ).trim();
+    const existingRef = String(receipt.mpesa_receipt_number || "").trim();
     const requireDetails = Boolean(receipt.require_mpesa_reference_on_confirm);
-    modalBody
-      ?.querySelectorAll(
-        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref]"
-      )
-      .forEach((input) => {
-        if (requireDetails) {
-          input.setAttribute("required", "required");
-          input.setAttribute("aria-required", "true");
-        } else {
-          input.removeAttribute("required");
-          input.setAttribute("aria-required", "false");
-        }
+    const credit = isCreditReceipt(receipt);
+    const due = creditDueValue(receipt);
+    const method = (
+      modalBody?.querySelector("[data-confirm-payment-method]")?.value || ""
+    )
+      .trim()
+      .toLowerCase();
+    const cashAmount = (
+      modalBody?.querySelector("[data-confirm-cash-amount]")?.value || ""
+    ).trim();
+    const mpesaAmount = (
+      modalBody?.querySelector("[data-confirm-mpesa-amount]")?.value || ""
+    ).trim();
+    return {
+      paymentAt,
+      paymentDate,
+      paymentTime,
+      ref,
+      amount,
+      existingRef,
+      requireDetails,
+      credit,
+      due,
+      method,
+      cashAmount,
+      mpesaAmount,
+    };
+  };
+
+  const syncSubmitConfirm = () => {
+    if (!submitConfirmBtn) return;
+    const {
+      paymentAt,
+      ref,
+      amount,
+      existingRef,
+      requireDetails,
+      credit,
+      due,
+      method,
+      cashAmount,
+      mpesaAmount,
+    } = confirmFieldValues();
+    const detailsOk =
+      !requireDetails ||
+      ((Boolean(ref) || Boolean(existingRef)) && Boolean(paymentAt));
+    const amountOk =
+      !credit || due <= 0 || (Boolean(amount) && Number(amount) > 0);
+    const splitOk =
+      credit ||
+      method !== "both" ||
+      (Boolean(cashAmount) &&
+        Boolean(mpesaAmount) &&
+        Number.isFinite(Number(cashAmount)) &&
+        Number.isFinite(Number(mpesaAmount)));
+    submitConfirmBtn.disabled = !(
+      confirmMode &&
+      !busy &&
+      confirmVerified &&
+      detailsOk &&
+      amountOk &&
+      splitOk
+    );
+  };
+
+  const syncActionButtons = () => {
+    const receipt = currentDetail?.receipt || {};
+    if (startConfirmBtn) {
+      startConfirmBtn.hidden = confirmMode || !receipt.can_confirm;
+      startConfirmBtn.disabled = busy;
+    }
+    if (setPendingBtn) {
+      setPendingBtn.hidden = confirmMode || !receipt.can_set_pending;
+      setPendingBtn.disabled = busy;
+    }
+    if (setCancelledBtn) {
+      setCancelledBtn.hidden = confirmMode || !receipt.can_cancel;
+      setCancelledBtn.disabled = busy;
+    }
+    if (cancelConfirmBtn) {
+      cancelConfirmBtn.hidden = !confirmMode;
+      cancelConfirmBtn.disabled = busy;
+    }
+    if (submitConfirmBtn) {
+      submitConfirmBtn.hidden = !confirmMode;
+      if (!confirmMode) {
+        submitConfirmBtn.disabled = true;
+      } else {
+        syncSubmitConfirm();
+      }
+    }
+  };
+
+  const setConfirmMode = (on) => {
+    const receipt = currentDetail?.receipt || {};
+    confirmMode = Boolean(on);
+    const panel = modalBody?.querySelector("[data-confirm-panel]");
+    const detailPanel = modalBody?.querySelector("[data-detail-panel]");
+    if (panel) panel.hidden = !confirmMode;
+    if (detailPanel) detailPanel.hidden = confirmMode;
+    syncActionButtons();
+    if (!confirmMode) {
+      confirmVerified = false;
+      syncSubmitConfirm();
+      return;
+    }
+    confirmVerified = false;
+    const codeInput = modalBody?.querySelector("[data-confirm-login-code]");
+    if (codeInput) codeInput.value = "";
+    const parts = defaultConfirmPaymentParts(receipt);
+    const paymentDate = modalBody?.querySelector("[data-confirm-payment-date]");
+    const paymentTime = modalBody?.querySelector("[data-confirm-payment-time]");
+    if (paymentDate) paymentDate.value = parts.date;
+    if (paymentTime) paymentTime.value = parts.time;
+    const refInput = modalBody?.querySelector("[data-confirm-mpesa-ref]");
+    if (refInput && !refInput.value) {
+      refInput.value = String(receipt.mpesa_receipt_number || "").trim();
+    }
+    const amountInput = modalBody?.querySelector("[data-confirm-credit-amount]");
+    if (amountInput) {
+      const due = creditDueValue(receipt);
+      amountInput.value = due > 0 ? String(due) : "";
+    }
+    window.setTimeout(() => {
+      const focusEl =
+        modalBody?.querySelector("[data-confirm-credit-amount]") ||
+        modalBody?.querySelector("[data-confirm-login-code]");
+      focusEl?.focus?.({ preventScroll: true });
+    }, 40);
+    const creditNotice = String(receipt.credit_confirm_notice || "").trim();
+    setConfirmStatus(
+      creditNotice ||
+        (receipt.require_mpesa_reference_on_confirm
+          ? "Date defaults to today. Enter time, reference number, and staff 6-digit ID."
+          : "Date defaults to today. Enter time and staff 6-digit ID to confirm.")
+    );
+    syncSubmitConfirm();
+    refreshIcons();
+  };
+
+  const verifyStaffCode = async () => {
+    const codeInput = modalBody?.querySelector("[data-confirm-login-code]");
+    const code = (codeInput?.value || "").trim();
+    const current = ++verifySeq;
+    if (code.length < 6) {
+      confirmVerified = false;
+      setConfirmStatus(
+        code.length
+          ? `Enter ${6 - code.length} more digit${6 - code.length === 1 ? "" : "s"}.`
+          : "Enter an active staff 6-digit ID to authorise confirmation."
+      );
+      syncSubmitConfirm();
+      return;
+    }
+    if (!verifyUrl) {
+      confirmVerified = false;
+      setConfirmStatus("Verification is unavailable.", { error: true });
+      syncSubmitConfirm();
+      return;
+    }
+    setConfirmStatus("Checking staff ID…");
+    try {
+      const body = new URLSearchParams({ login_code: code });
+      const res = await fetch(verifyUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": getCsrf(),
+        },
+        credentials: "same-origin",
+        body,
       });
+      const data = await res.json().catch(() => ({}));
+      if (current !== verifySeq) return;
+      const ok = Boolean(res.ok && data.ok);
+      confirmVerified = ok;
+      setConfirmStatus(
+        ok
+          ? `Authorised${data.name ? `: ${data.name}` : ""}.`
+          : data.error || "Invalid staff ID.",
+        { ok, error: !ok }
+      );
+      syncSubmitConfirm();
+    } catch (_err) {
+      if (current !== verifySeq) return;
+      confirmVerified = false;
+      setConfirmStatus("Could not verify staff ID.", { error: true });
+      syncSubmitConfirm();
+    }
+  };
+
+  const scheduleVerify = () => {
+    window.clearTimeout(verifyTimer);
+    verifyTimer = window.setTimeout(verifyStaffCode, 280);
   };
 
   const round2 = (n) => Math.round(n * 100) / 100;
@@ -674,20 +864,9 @@
       modalTitle.textContent = receipt.receipt_number || "Receipt";
     }
     if (modalActions) modalActions.hidden = false;
-    const canEdit = Boolean(receipt.can_edit_status);
-    if (statusWrap) statusWrap.hidden = !canEdit;
-    if (saveStatusBtn) {
-      saveStatusBtn.hidden = !canEdit;
-      saveStatusBtn.disabled = !canEdit;
-    }
-    syncStatusOptions(receipt);
-    if (preferConfirmedStatus && statusSelect && canEdit) {
-      const current = statusKeyForUi(receipt.status);
-      if (current !== "confirmed" && !statusSelect.querySelector("option[value='confirmed']")?.disabled) {
-        statusSelect.value = "confirmed";
-      }
-      preferConfirmedStatus = false;
-    }
+    confirmMode = false;
+    confirmVerified = false;
+    syncActionButtons();
 
     const lines = receipt.lines || [];
     const itemsHtml = lines
@@ -718,22 +897,11 @@
     );
     const optionalHint = requireConfirmDetails ? "required" : "optional";
     const paymentParts = defaultConfirmPaymentParts(receipt);
-    const showConfirmFields = shouldShowConfirmFields(
-      receipt,
-      statusSelect?.value || statusKeyForUi(receipt.status)
-    );
     const requiredAttrs = requireConfirmDetails
       ? `required aria-required="true"`
       : `aria-required="false"`;
-    const isCredit = Boolean(receipt.is_credit || receipt.kind === "credit");
-    const creditDue = Number(receipt.credit_due);
-    const dueValue =
-      Number.isFinite(creditDue) && creditDue > 0
-        ? creditDue
-        : Math.max(
-            0,
-            Number(receipt.total || 0) - Number(receipt.amount_paid || 0)
-          );
+    const isCredit = isCreditReceipt(receipt);
+    const dueValue = creditDueValue(receipt);
     const creditAmountField = isCredit
       ? `<div class="shop-receipt-mpesa-ref" data-confirm-credit-amount-wrap>
       <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-credit-amount">
@@ -850,65 +1018,90 @@
       </div>
     </div>`;
     }
-    const confirmFieldsHtml = `<div class="shop-receipt-card shop-receipt-card--confirm" data-confirm-fields${
-      showConfirmFields ? "" : " hidden"
-    }>
-  <div class="shop-receipt-confirm-fields">
-    ${paidByField}
-    ${paymentSplitField}
-    ${creditAmountField}
-    <div class="shop-receipt-confirm-datetime" data-confirm-payment-at-wrap>
-      <div class="shop-receipt-mpesa-ref">
-        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-date">
-          Payment date
+    const confirmLead = isCredit
+      ? "Enter the amount received. Full balance clears and confirms the credit; a smaller amount records a partial confirmation."
+      : "Confirm this sale. Date defaults to today; enter the payment time, then confirm.";
+    const confirmPanelHtml = `<div class="shop-receipt-return shop-receipt-confirm" data-confirm-panel hidden>
+  <p class="shop-receipt-muted">
+    ${confirmLead}
+    ${
+      requireConfirmDetails
+        ? "Reference number is compulsory."
+        : "Reference number is optional."
+    }
+  </p>
+  <div class="shop-receipt-card shop-receipt-card--confirm">
+    <div class="shop-receipt-confirm-fields">
+      ${paidByField}
+      ${paymentSplitField}
+      ${creditAmountField}
+      <div class="shop-receipt-confirm-datetime" data-confirm-payment-at-wrap>
+        <div class="shop-receipt-mpesa-ref">
+          <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-date">
+            Payment date
+            <span class="shop-receipt-muted">(${optionalHint})</span>
+          </label>
+          <input
+            id="ax-confirm-payment-date"
+            class="shop-receipt-mpesa-ref-input"
+            type="date"
+            name="payment_date"
+            value="${escapeHtml(paymentParts.date)}"
+            data-confirm-payment-date
+            ${requiredAttrs}
+          >
+        </div>
+        <div class="shop-receipt-mpesa-ref">
+          <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-time">
+            Payment time
+            <span class="shop-receipt-muted">(${optionalHint})</span>
+          </label>
+          <input
+            id="ax-confirm-payment-time"
+            class="shop-receipt-mpesa-ref-input"
+            type="time"
+            name="payment_time"
+            value="${escapeHtml(paymentParts.time)}"
+            data-confirm-payment-time
+            ${requiredAttrs}
+          >
+        </div>
+      </div>
+      <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
+        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-mpesa-ref">
+          Reference number
           <span class="shop-receipt-muted">(${optionalHint})</span>
         </label>
         <input
-          id="ax-confirm-payment-date"
+          id="ax-confirm-mpesa-ref"
           class="shop-receipt-mpesa-ref-input"
-          type="date"
-          name="payment_date"
-          value="${escapeHtml(paymentParts.date)}"
-          data-confirm-payment-date
+          type="text"
+          name="mpesa_receipt_number"
+          value="${escapeHtml(existingRef)}"
+          placeholder="e.g. TKL4X2ABCD"
+          maxlength="40"
+          autocomplete="off"
+          spellcheck="false"
+          data-confirm-mpesa-ref
           ${requiredAttrs}
         >
       </div>
-      <div class="shop-receipt-mpesa-ref">
-        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-time">
-          Payment time
-          <span class="shop-receipt-muted">(${optionalHint})</span>
-        </label>
-        <input
-          id="ax-confirm-payment-time"
-          class="shop-receipt-mpesa-ref-input"
-          type="time"
-          name="payment_time"
-          value="${escapeHtml(paymentParts.time)}"
-          data-confirm-payment-time
-          ${requiredAttrs}
-        >
-      </div>
-    </div>
-    <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
-      <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-mpesa-ref">
-        Reference number
-        <span class="shop-receipt-muted">(${optionalHint})</span>
-      </label>
-      <input
-        id="ax-confirm-mpesa-ref"
-        class="shop-receipt-mpesa-ref-input"
-        type="text"
-        name="mpesa_receipt_number"
-        value="${escapeHtml(existingRef)}"
-        placeholder="e.g. TKL4X2ABCD"
-        maxlength="40"
-        autocomplete="off"
-        spellcheck="false"
-        data-confirm-mpesa-ref
-        ${requiredAttrs}
-      >
     </div>
   </div>
+  <label class="shop-cart-input shop-receipt-return-code">
+    <span>Staff 6-digit ID</span>
+    <input
+      type="password"
+      inputmode="numeric"
+      maxlength="6"
+      autocomplete="one-time-code"
+      placeholder="••••••"
+      data-confirm-login-code
+    >
+  </label>
+  <p class="shop-receipts-status" data-confirm-status>
+    Enter an active staff 6-digit ID to authorise confirmation.
+  </p>
 </div>`;
     const creditNotice = String(receipt.credit_confirm_notice || "").trim();
     const creditNoticeHtml = creditNotice
@@ -934,10 +1127,22 @@
             receipt.mpesa_amount
           )}`
         : "";
+    const paymentRow =
+      receipt.kind === "sale" || receipt.payment_label
+        ? `<div><dt>Payment</dt><dd>${escapeHtml(
+            receipt.payment_label || "—"
+          )}${paymentSplitLabel ? ` · ${escapeHtml(paymentSplitLabel)}` : ""}</dd></div>`
+        : "";
+    const creditBalanceRow =
+      isCredit && Number(receipt.credit_due) > 0
+        ? `<div><dt>Balance due</dt><dd>KSh ${escapeHtml(
+            money(receipt.credit_due)
+          )}</dd></div>`
+        : "";
 
     if (modalBody) {
       modalBody.innerHTML = `
-<div class="shop-receipt-detail">
+<div class="shop-receipt-detail" data-detail-panel>
   <div class="shop-receipt-card shop-receipt-card--sheet">
     <div class="shop-receipt-sheet">
       <div class="shop-receipt-sheet-head">
@@ -996,25 +1201,32 @@
           money(receipt.total)
         )}</dd></div>
       </dl>
-      <div class="shop-receipt-sheet-sep" aria-hidden="true"></div>
+      ${
+        paymentRow || creditBalanceRow || isCredit
+          ? `<div class="shop-receipt-sheet-sep" aria-hidden="true"></div>
       <dl class="shop-receipt-sheet-rows">
-        <div><dt>Payment</dt><dd>${escapeHtml(
-          receipt.payment_label || "—"
-        )}${paymentSplitLabel ? ` · ${escapeHtml(paymentSplitLabel)}` : ""}</dd></div>
-      </dl>
+        ${paymentRow}
+        ${
+          isCredit
+            ? `<div><dt>Paid</dt><dd>KSh ${escapeHtml(
+                money(receipt.amount_paid)
+              )}</dd></div>`
+            : ""
+        }
+        ${creditBalanceRow}
+      </dl>`
+          : ""
+      }
     </div>
   </div>
-
-  ${confirmFieldsHtml}
-</div>`;
-    }
-    syncConfirmFieldsVisibility();
-    if (showConfirmFields) {
-      modalBody
-        ?.querySelector("[data-confirm-mpesa-ref]")
-        ?.focus?.({ preventScroll: true });
+</div>
+${confirmPanelHtml}`;
     }
     refreshIcons();
+    if (autoConfirmOnLoad) {
+      autoConfirmOnLoad = false;
+      if (receipt.can_confirm) setConfirmMode(true);
+    }
   };
 
   const loadDetail = async (shopId, receiptId, source) => {
@@ -1103,7 +1315,7 @@
     row.getAttribute("data-require-confirm-details") === "1";
 
   const openConfirmWithDetails = (row) => {
-    preferConfirmedStatus = true;
+    autoConfirmOnLoad = true;
     openRowDetail(row);
   };
 
@@ -1136,7 +1348,7 @@
           return;
         }
         window.alert(
-          "Credits need a confirm amount. Open each credit, enter the amount (full balance clears; less is a partial confirmation), then save as Confirmed."
+          "Credits need a confirm amount. Open each credit, enter the amount (full balance clears; less is a partial confirmation), then confirm it."
         );
         openConfirmWithDetails(creditTargets[0]);
         return;
@@ -1150,7 +1362,7 @@
       const needsDetails = targets.filter(rowRequiresConfirmDetails);
       if (needsDetails.length) {
         window.alert(
-          "Compulsory reference is enabled. Open each receipt, enter the reference number and payment date & time, then save as Confirmed."
+          "Compulsory reference is enabled. Open each receipt, enter the reference number and payment date & time, then confirm it."
         );
         openConfirmWithDetails(needsDetails[0]);
         return;
@@ -1356,21 +1568,45 @@
     ?.querySelectorAll("[data-confirm-receipt-modal-close]")
     .forEach((el) => el.addEventListener("click", closeModal));
 
-  statusSelect?.addEventListener("change", syncConfirmFieldsVisibility);
-
   modalBody?.addEventListener("change", (event) => {
-    if (event.target.matches?.("[data-confirm-payment-method]")) {
+    const target = event.target;
+    if (target?.matches?.("[data-confirm-payment-method]")) {
       syncConfirmPaymentSplit();
+      syncSubmitConfirm();
+      return;
+    }
+    if (
+      target?.matches?.(
+        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
+      )
+    ) {
+      syncSubmitConfirm();
     }
   });
 
   modalBody?.addEventListener("input", (event) => {
+    const target = event.target;
     if (
-      event.target.matches?.(
+      target?.matches?.(
         "[data-confirm-cash-amount], [data-confirm-mpesa-amount]"
       )
     ) {
-      autoBalanceSplit(event.target);
+      autoBalanceSplit(target);
+      syncSubmitConfirm();
+      return;
+    }
+    if (target?.matches?.("[data-confirm-login-code]")) {
+      confirmVerified = false;
+      scheduleVerify();
+      syncSubmitConfirm();
+      return;
+    }
+    if (
+      target?.matches?.(
+        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
+      )
+    ) {
+      syncSubmitConfirm();
     }
   });
 
@@ -1400,134 +1636,160 @@
     window.open(href, "_blank", "noopener");
   });
 
-  const appendConfirmFields = (body) => {
-    const receipt = currentDetail?.receipt || {};
-    const requireDetails = Boolean(receipt.require_mpesa_reference_on_confirm);
-    const dateInput = modal?.querySelector("[data-confirm-payment-date]");
-    const timeInput = modal?.querySelector("[data-confirm-payment-time]");
-    const paymentDate = (dateInput?.value || "").trim();
-    const paymentTime = (timeInput?.value || "").trim();
-    const paymentAt =
-      paymentDate && paymentTime ? `${paymentDate}T${paymentTime}` : "";
-    const refInput = modal?.querySelector("[data-confirm-mpesa-ref]");
-    const ref = (refInput?.value || "").trim();
-    const amountInput = modal?.querySelector("[data-confirm-credit-amount]");
-    const amount = (amountInput?.value || "").trim();
-    const existingRef = String(receipt.mpesa_receipt_number || "").trim();
-    const isCredit = Boolean(receipt.is_credit || receipt.kind === "credit");
-    const due = Number(receipt.credit_due);
-    const dueValue =
-      Number.isFinite(due) && due > 0
-        ? due
-        : Math.max(
-            0,
-            Number(receipt.total || 0) - Number(receipt.amount_paid || 0)
-          );
-
-    if (requireDetails) {
-      if (!ref && !existingRef) {
-        window.alert(
-          "Enter the reference number before confirming this receipt."
-        );
-        refInput?.focus();
-        return false;
-      }
-      if (!paymentAt) {
-        window.alert("Enter the payment date and time before confirming.");
-        (!paymentDate ? dateInput : timeInput)?.focus();
-        return false;
-      }
-    }
-    if (isCredit && dueValue > 0) {
-      const n = Number(amount);
-      if (!amount || !Number.isFinite(n) || n <= 0) {
-        window.alert("Enter the amount to confirm for this credit.");
-        amountInput?.focus();
-        return false;
-      }
-      if (n > dueValue + 0.0001) {
-        window.alert(
-          `Confirm amount cannot exceed the balance due (KSh ${money(dueValue)}).`
-        );
-        amountInput?.focus();
-        return false;
-      }
-      body.set("amount", amount);
-      body.set("payment_method", ref || existingRef ? "mpesa" : "cash");
-    }
-    if (!isCredit) {
-      const methodSelect = modal?.querySelector(
-        "[data-confirm-payment-method]"
-      );
-      const method = (methodSelect?.value || "").trim().toLowerCase();
-      if (method === "both") {
-        const cashInput = modal?.querySelector("[data-confirm-cash-amount]");
-        const mpesaInput = modal?.querySelector("[data-confirm-mpesa-amount]");
-        const cash = Number(cashInput?.value);
-        const mpesa = Number(mpesaInput?.value);
-        const total = confirmReceiptTotal();
-        if (
-          !Number.isFinite(cash) ||
-          !Number.isFinite(mpesa) ||
-          cash < 0 ||
-          mpesa < 0
-        ) {
-          window.alert("Enter how much was paid by cash and by M-Pesa.");
-          cashInput?.focus();
-          return false;
-        }
-        if (Math.abs(round2(cash + mpesa) - round2(total)) > 0.009) {
-          window.alert(
-            `Cash + M-Pesa must add up to the receipt total (KSh ${total.toFixed(2)}).`
-          );
-          cashInput?.focus();
-          return false;
-        }
-        body.set("cash_amount", String(round2(cash)));
-        body.set("mpesa_amount", String(round2(mpesa)));
-      }
-      if (method) {
-        body.set("payment_method", method);
-      }
-    }
-    if (ref) body.set("mpesa_receipt_number", ref);
-    if (paymentAt) body.set("payment_at", paymentAt);
-    return true;
-  };
-
-  saveStatusBtn?.addEventListener("click", async () => {
-    if (busy || !currentDetail?.receipt?.can_edit_status) return;
-    if (!setStatusUrlTemplate || !currentShopId || !currentDetail?.receipt?.id) {
+  const submitConfirm = async () => {
+    if (!currentDetail?.receipt?.id || !confirmUrlTemplate || !currentShopId) {
       return;
     }
+    const code = (
+      modalBody?.querySelector("[data-confirm-login-code]")?.value || ""
+    ).trim();
+    const {
+      paymentAt,
+      ref,
+      amount,
+      existingRef,
+      requireDetails,
+      credit,
+      due,
+      method,
+      cashAmount,
+      mpesaAmount,
+    } = confirmFieldValues();
+    if (requireDetails) {
+      if (!ref && !existingRef) {
+        setConfirmStatus(
+          "Enter the reference number before confirming this receipt.",
+          { error: true }
+        );
+        modalBody?.querySelector("[data-confirm-mpesa-ref]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+      if (!paymentAt) {
+        const { paymentDate } = confirmFieldValues();
+        setConfirmStatus(
+          "Enter the payment date and time before confirming.",
+          { error: true }
+        );
+        modalBody
+          ?.querySelector(
+            !paymentDate
+              ? "[data-confirm-payment-date]"
+              : "[data-confirm-payment-time]"
+          )
+          ?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+    }
+    if (credit && due > 0) {
+      const n = Number(amount);
+      if (!amount || !Number.isFinite(n) || n <= 0) {
+        setConfirmStatus("Enter the amount to confirm for this credit.", {
+          error: true,
+        });
+        modalBody?.querySelector("[data-confirm-credit-amount]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+      if (n > due + 0.0001) {
+        setConfirmStatus(
+          `Confirm amount cannot exceed the balance due (KSh ${money(due)}).`,
+          { error: true }
+        );
+        modalBody?.querySelector("[data-confirm-credit-amount]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+    }
+    if (!credit && method === "both") {
+      const cash = Number(cashAmount);
+      const mpesa = Number(mpesaAmount);
+      const total = confirmReceiptTotal();
+      if (!Number.isFinite(cash) || !Number.isFinite(mpesa) || cash < 0 || mpesa < 0) {
+        setConfirmStatus("Enter how much was paid by cash and by M-Pesa.", {
+          error: true,
+        });
+        modalBody?.querySelector("[data-confirm-cash-amount]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+      if (Math.abs(round2(cash + mpesa) - round2(total)) > 0.009) {
+        setConfirmStatus(
+          `Cash + M-Pesa must add up to the receipt total (KSh ${total.toFixed(2)}).`,
+          { error: true }
+        );
+        modalBody?.querySelector("[data-confirm-cash-amount]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+    }
+    if (!confirmVerified || code.length !== 6) {
+      syncSubmitConfirm();
+      return;
+    }
+    if (credit) {
+      const n = Number(amount);
+      const full = !(due > 0) || (Number.isFinite(n) && n >= due - 0.0001);
+      const notice = full
+        ? "This will clear the credit fully and convert it to a confirmed sale."
+        : "This will record a partial confirmation for the amount entered.";
+      if (!window.confirm(`${notice}\n\nContinue?`)) {
+        syncSubmitConfirm();
+        return;
+      }
+    }
+    if (submitConfirmBtn) submitConfirmBtn.disabled = true;
+    setConfirmStatus("Confirming receipt…");
+    try {
+      const body = {
+        login_code: code,
+        mpesa_receipt_number: ref,
+        payment_at: paymentAt,
+      };
+      if (credit) {
+        body.amount = amount;
+        body.payment_method = ref || existingRef ? "mpesa" : "cash";
+      } else if (method) {
+        body.payment_method = method;
+        if (method === "both") {
+          body.cash_amount = cashAmount;
+          body.mpesa_amount = mpesaAmount;
+        }
+      }
+      const res = await fetch(
+        urlFor(confirmUrlTemplate, currentShopId, currentDetail.receipt.id),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "X-CSRFToken": getCsrf(),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify(body),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setConfirmStatus(data.error || "Confirm failed.", { error: true });
+        syncSubmitConfirm();
+        return;
+      }
+      renderDetail(data);
+      loadRows();
+    } catch (_err) {
+      setConfirmStatus("Confirm failed.", { error: true });
+      syncSubmitConfirm();
+    }
+  };
+
+  const submitModalStatus = async (status) => {
+    if (busy || !currentDetail?.receipt?.id || !currentShopId) return;
+    if (!setStatusUrlTemplate) return;
     if ((currentDetail?.receipt?.source || "pos") !== "pos") {
       window.alert("Only sales receipts can change status here.");
       return;
-    }
-    const status = statusSelect?.value || statusKeyForUi(currentDetail.receipt.status);
-    const body = new URLSearchParams();
-    body.set("status", status);
-    if (status === "confirmed") {
-      if (!appendConfirmFields(body)) return;
-      const receipt = currentDetail.receipt || {};
-      if (receipt.is_credit || receipt.kind === "credit") {
-        const amount = Number(body.get("amount") || 0);
-        const due = Number(receipt.credit_due);
-        const dueValue =
-          Number.isFinite(due) && due > 0
-            ? due
-            : Math.max(
-                0,
-                Number(receipt.total || 0) - Number(receipt.amount_paid || 0)
-              );
-        const full = !(dueValue > 0) || amount >= dueValue - 0.0001;
-        const notice = full
-          ? "This will clear the credit fully and convert it to a confirmed sale."
-          : "This will record a partial confirmation for the amount entered.";
-        if (!window.confirm(`${notice}\n\nContinue?`)) {
-          return;
-        }
-      }
     }
     if (status === "cancelled") {
       const number = currentDetail?.receipt?.receipt_number || "this receipt";
@@ -1541,6 +1803,8 @@
     }
     setActionBusy(true);
     try {
+      const body = new URLSearchParams();
+      body.set("status", status);
       const res = await fetch(
         urlFor(setStatusUrlTemplate, currentShopId, currentDetail.receipt.id),
         {
@@ -1560,13 +1824,21 @@
         setActionBusy(false);
         return;
       }
-      closeModal();
-      window.location.reload();
+      renderDetail(data);
+      loadRows();
     } catch (_err) {
       window.alert("Could not update receipt status.");
-      setActionBusy(false);
     }
-  });
+    setActionBusy(false);
+  };
+
+  startConfirmBtn?.addEventListener("click", () => setConfirmMode(true));
+  cancelConfirmBtn?.addEventListener("click", () => setConfirmMode(false));
+  submitConfirmBtn?.addEventListener("click", submitConfirm);
+  setPendingBtn?.addEventListener("click", () => submitModalStatus("pending"));
+  setCancelledBtn?.addEventListener("click", () =>
+    submitModalStatus("cancelled")
+  );
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;

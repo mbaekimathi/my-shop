@@ -2274,8 +2274,14 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
 @active_employee_required
 @require_POST
 def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
-    """Confirm a pending receipt from the confirm-receipts page."""
+    """Confirm a pending receipt from confirm-receipts (staff 6-digit ID required)."""
+    import json
+
     from .module_permissions import require_module_permission
+    from .services import (
+        invalid_staff_code_message,
+        verify_active_employee_code,
+    )
     from shops.services import confirm_shop_receipt
 
     profile, err = _analytics_role_or_error(request, role_segment, as_json=True)
@@ -2292,23 +2298,45 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
     if shop is None:
         return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
 
-    mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
-    payment_at = (request.POST.get("payment_at") or "").strip()
-    amount = (request.POST.get("amount") or "").strip()
-    payment_method = (request.POST.get("payment_method") or "").strip()
-    cash_amount = (request.POST.get("cash_amount") or "").strip()
-    mpesa_amount = (request.POST.get("mpesa_amount") or "").strip()
+    try:
+        if request.content_type and "application/json" in request.content_type:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        else:
+            payload = request.POST
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse(
+            {"ok": False, "error": "Invalid confirm payload."}, status=400
+        )
+
+    login_code = (payload.get("login_code") or "").strip()
+    authorising = verify_active_employee_code(login_code)
+    if authorising is None:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": invalid_staff_code_message(login_code, shop=shop),
+            },
+            status=400,
+        )
+    denied = require_module_permission(
+        request, authorising, "my-shop", "receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
     try:
         result = confirm_shop_receipt(
             shop=shop,
             receipt_id=receipt_id,
-            actor=profile,
-            mpesa_receipt_number=mpesa_receipt_number,
-            payment_at=payment_at or None,
-            amount=amount or None,
-            payment_method=payment_method,
-            cash_amount=cash_amount or None,
-            mpesa_amount=mpesa_amount or None,
+            actor=authorising,
+            mpesa_receipt_number=(
+                payload.get("mpesa_receipt_number") or ""
+            ).strip(),
+            payment_at=(payload.get("payment_at") or "").strip() or None,
+            amount=payload.get("amount") or None,
+            payment_method=(payload.get("payment_method") or "").strip(),
+            cash_amount=payload.get("cash_amount") or None,
+            mpesa_amount=payload.get("mpesa_amount") or None,
         )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

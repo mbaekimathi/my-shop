@@ -4122,6 +4122,10 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
         "employees:analytics_confirm_receipts_print",
         kwargs={"role_segment": segment},
     )
+    verify_url = reverse(
+        "employees:analytics_receipt_verify_login",
+        kwargs={"role_segment": segment},
+    )
 
     return {
         **context,
@@ -4143,6 +4147,7 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
             "set_status_url_template": set_status_template,
             "rows_url": rows_url,
             "print_url": print_url,
+            "verify_login_url": verify_url,
         },
     }
 
