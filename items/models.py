@@ -85,13 +85,12 @@ class Item(models.Model):
     def resolve_list_price(self, shop_price_override=None):
         """Selling price for catalog/POS.
 
-        Uses the per-shop override when individual pricing is on and the
-        override is positive; otherwise the global shop_price when positive.
-        Missing or zero prices fall back to the minimum selling price so
-        shops never surface a 0 list price.
+        An existing per-shop row always wins — including 0.00, which means the
+        item is deliberately free at that shop. With no row, the global
+        shop_price applies when positive, else the minimum selling price.
         """
         if self.use_individual_shop_prices:
-            if shop_price_override is not None and shop_price_override > 0:
+            if shop_price_override is not None:
                 return shop_price_override
             if self.shop_price is not None and self.shop_price > 0:
                 return self.shop_price

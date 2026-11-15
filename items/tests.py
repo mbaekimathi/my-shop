@@ -1941,6 +1941,253 @@ class ShopPriceIsolationTests(TestCase):
             )
         self.assertIn("not sold at", str(ctx.exception.messages))
 
+    def test_zero_prices_make_item_free_and_sellable(self):
+        from items.models import ShopItemPrice
+        from items.services import create_item
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "FREE SAMPLE 500ML",
+                "description": "",
+                "minimum_selling_price": "0",
+                "shop_price": "0",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        item.refresh_from_db()
+        self.assertEqual(item.minimum_selling_price, Decimal("0.00"))
+        self.assertEqual(item.shop_price, Decimal("0.00"))
+        rows = {
+            row.shop_id: row
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(rows[self.shop_a.pk].is_sold, True)
+        self.assertEqual(rows[self.shop_a.pk].price, Decimal("0.00"))
+        self.assertEqual(rows[self.shop_b.pk].is_sold, True)
+        self.assertEqual(item.price_for_shop(self.shop_a), Decimal("0.00"))
+
+    def test_dash_prices_make_item_free_and_sellable(self):
+        from items.models import ShopItemPrice
+        from items.services import create_item
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "FREE BONUS",
+                "description": "",
+                "minimum_selling_price": "-",
+                "shop_price": "-",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        rows = {
+            row.shop_id: row
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(rows[self.shop_a.pk].is_sold, True)
+        self.assertEqual(rows[self.shop_a.pk].price, Decimal("0.00"))
+        self.assertEqual(rows[self.shop_b.pk].is_sold, True)
+
+    def test_zero_price_item_appears_on_shop_floor(self):
+        from items.services import create_item
+        from shops.views import build_shop_catalog_page
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "GIFT VOUCHER",
+                "description": "",
+                "minimum_selling_price": "0",
+                "shop_price": "0",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        page = build_shop_catalog_page(self.shop_a, q="GIFT VOUCHER")
+        self.assertIn(item.pk, {row["id"] for row in page["items"]})
+
+    def test_individual_dash_prices_that_shop_free(self):
+        from items.models import ShopItemPrice
+        from items.services import create_item
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "REGIONAL SODA",
+                "description": "",
+                "minimum_selling_price": "80",
+                "pricing_mode": "individual",
+                f"shop_price_{self.shop_a.pk}": "-",
+                f"shop_price_{self.shop_b.pk}": "150",
+            },
+            {},
+        )
+        rows = {
+            row.shop_id: row
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(rows[self.shop_a.pk].is_sold, True)
+        self.assertEqual(rows[self.shop_a.pk].price, Decimal("0.00"))
+        self.assertEqual(rows[self.shop_b.pk].is_sold, True)
+        self.assertEqual(item.price_for_shop(self.shop_a), Decimal("0.00"))
+        self.assertEqual(item.price_for_shop(self.shop_b), Decimal("150.00"))
+
+    def test_edit_dash_price_makes_item_free(self):
+        from items.models import Item, ShopItemPrice
+        from items.services import update_item
+
+        item = Item.objects.create(
+            category="DRINKS",
+            name="SEASONAL 500ML",
+            minimum_selling_price=Decimal("80.00"),
+            shop_price=Decimal("120.00"),
+            use_individual_shop_prices=True,
+            created_by=self.profile,
+        )
+        ShopItemPrice.objects.create(
+            shop=self.shop_a, item=item, price=Decimal("120.00"), is_sold=True
+        )
+        ShopItemPrice.objects.create(
+            shop=self.shop_b, item=item, price=Decimal("120.00"), is_sold=True
+        )
+
+        update_item(
+            item,
+            {
+                "category": "DRINKS",
+                "name": "SEASONAL 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "-",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        rows = {
+            row.shop_id: row
+            for row in ShopItemPrice.objects.filter(item=item)
+        }
+        self.assertEqual(rows[self.shop_a.pk].is_sold, True)
+        self.assertEqual(rows[self.shop_a.pk].price, Decimal("0.00"))
+        self.assertEqual(rows[self.shop_b.pk].is_sold, True)
+        self.assertEqual(rows[self.shop_b.pk].price, Decimal("0.00"))
+        self.assertEqual(item.price_for_shop(self.shop_a), Decimal("0.00"))
+
+    def test_free_item_sells_at_zero_and_counts_in_analytics(self):
+        from django.test import RequestFactory
+        from django.utils import timezone
+        from employees.analytics_services import build_analytics_page
+        from items.models import ShopStock
+        from items.services import create_item
+        from shops.models import ShopDaySession
+        from shops.services import complete_shop_checkout
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "FREE GIFT",
+                "description": "",
+                "minimum_selling_price": "0",
+                "shop_price": "0",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        ShopDaySession.objects.create(shop=self.shop_a, opened_by=self.profile)
+        ShopStock.objects.create(
+            shop=self.shop_a, item=item, quantity=10, average_cost=Decimal("50.00")
+        )
+
+        # A zero-price sale is allowed even when the stock has a cost.
+        complete_shop_checkout(
+            shop=self.shop_a,
+            profile=self.profile,
+            payload={
+                "kind": "sale",
+                "login_code": "840031",
+                "payment_method": "cash",
+                "lines": [{"id": item.pk, "qty": 1, "price": "0"}],
+            },
+        )
+
+        request = RequestFactory().get(
+            "/it-support/analytics/items/",
+            {"range": "day", "date": timezone.localdate().isoformat()},
+        )
+        request.user = self.user
+        context = build_analytics_page(
+            profile=self.profile, request=request, section_slug="items"
+        )
+        names = {
+            row[0]
+            for table in context["page"]["tables"]
+            for row in table["rows"]
+        }
+        self.assertIn("FREE GIFT", names)
+
+    def test_sold_item_counts_in_analytics_after_flag_off(self):
+        from django.test import RequestFactory
+        from django.utils import timezone
+        from employees.analytics_services import build_analytics_page
+        from items.models import ShopItemPrice, ShopStock
+        from items.services import create_item
+        from shops.models import ShopDaySession
+        from shops.services import complete_shop_checkout
+
+        item = create_item(
+            self.profile,
+            {
+                "category": "DRINKS",
+                "name": "COUNTED 500ML",
+                "description": "",
+                "minimum_selling_price": "80",
+                "shop_price": "120",
+                "pricing_mode": "single",
+            },
+            {},
+        )
+        ShopDaySession.objects.create(shop=self.shop_a, opened_by=self.profile)
+        ShopStock.objects.create(shop=self.shop_a, item=item, quantity=10)
+
+        complete_shop_checkout(
+            shop=self.shop_a,
+            profile=self.profile,
+            payload={
+                "kind": "sale",
+                "login_code": "840031",
+                "payment_method": "cash",
+                "lines": [{"id": item.pk, "qty": 2, "price": "120"}],
+            },
+        )
+
+        # Flagging the item not-sold afterwards must not erase the recorded sale.
+        ShopItemPrice.objects.filter(item=item, shop=self.shop_a).update(
+            is_sold=False
+        )
+
+        request = RequestFactory().get(
+            "/it-support/analytics/items/",
+            {"range": "day", "date": timezone.localdate().isoformat()},
+        )
+        request.user = self.user
+        context = build_analytics_page(
+            profile=self.profile, request=request, section_slug="items"
+        )
+        names = {
+            row[0]
+            for table in context["page"]["tables"]
+            for row in table["rows"]
+        }
+        self.assertIn("COUNTED 500ML", names)
+
 
 class ItemPriceListTests(TestCase):
     def setUp(self):

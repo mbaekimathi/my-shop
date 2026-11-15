@@ -6119,7 +6119,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     continue
             elif not pos_settings.enable_discount:
                 unit_price = list_price
-            elif unit_price < item.minimum_selling_price:
+            elif unit_price < item.minimum_selling_price and (
+                unit_price > 0 or list_price > 0
+            ):
+                # A typed 0 on a deliberately free item (list price 0) is
+                # allowed; any other price below the floor is not.
                 errors.append(
                     f"“{item.name}” is below the minimum selling price "
                     f"(KSh {item.minimum_selling_price})."
@@ -6207,7 +6211,9 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     sell_ceiling=list_price,
                 )
                 line_cogs = (unit_cost * qty).quantize(Decimal("0.01"))
-                if unit_cost > 0 and unit_price < unit_cost:
+                # Free sales (price 0, e.g. items listed as '-' / 0) skip the
+                # below-cost guard; positive prices are still floored at cost.
+                if unit_cost > 0 and 0 < unit_price < unit_cost:
                     extra = ""
                     try:
                         last_dec = _money(last_buy) if last_buy is not None else Decimal("0.00")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from datetime import timedelta
 from unittest import mock
 
@@ -90,7 +91,9 @@ class PrintAgentFlowTests(TestCase):
 
     def test_relay_queues_off_lan_when_token_set(self):
         client = self._portal_client()
-        with self._off_lan():
+        with self._off_lan(), mock.patch(
+            "socket.create_connection", side_effect=OSError("unreachable")
+        ):
             response = self._post_relay(client)
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -101,11 +104,32 @@ class PrintAgentFlowTests(TestCase):
         self.assertEqual(job.status, PrintAgentJob.Status.PENDING)
         self.assertEqual(bytes(job.data), b"\x1b@hi")
 
+    def test_relay_off_lan_prints_directly_when_reachable(self):
+        # Off the detected /24s but routable — send directly, no agent job.
+        client = self._portal_client()
+        sock = mock.MagicMock()
+        sock.__enter__.return_value = sock
+        with self._off_lan(), mock.patch(
+            "socket.create_connection", return_value=sock
+        ) as connect:
+            response = self._post_relay(client)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload.get("queued"))
+        connect.assert_called_once()
+        sock.sendall.assert_called_once_with(b"\x1b@hi")
+        self.assertFalse(
+            PrintAgentJob.objects.filter(shop=self.shop).exists()
+        )
+
     def test_relay_off_lan_without_token_errors(self):
         self.shop.print_agent_token = ""
         self.shop.save(update_fields=["print_agent_token"])
         client = self._portal_client()
-        with self._off_lan():
+        with self._off_lan(), mock.patch(
+            "socket.create_connection", side_effect=OSError("unreachable")
+        ):
             response = self._post_relay(client)
         self.assertEqual(response.status_code, 502)
         payload = response.json()
@@ -153,6 +177,34 @@ class PrintAgentFlowTests(TestCase):
             self._poll_url(), HTTP_X_PRINT_AGENT_TOKEN=AGENT_TOKEN
         ).json()
         self.assertEqual(again["jobs"], [])
+
+    def test_poll_stamps_liveness_and_returns_scan_request(self):
+        self.shop.print_agent_scan_request = {
+            "at": time.time(),
+            "hosts": ["192.168.100.171"],
+            "subnets": [],
+        }
+        self.shop.save(update_fields=["print_agent_scan_request"])
+        client = Client()
+        payload = client.get(
+            self._poll_url(), HTTP_X_PRINT_AGENT_TOKEN=AGENT_TOKEN
+        ).json()
+        req = payload["scan_request"]
+        self.assertEqual(req["hosts"], ["192.168.100.171"])
+        self.assertTrue(req["at"])
+        self.shop.refresh_from_db()
+        self.assertIsNotNone(self.shop.print_agent_seen_at)
+
+    def test_poll_drops_expired_scan_request(self):
+        self.shop.print_agent_scan_request = {
+            "at": time.time() - 700,
+            "hosts": ["192.168.100.171"],
+        }
+        self.shop.save(update_fields=["print_agent_scan_request"])
+        payload = Client().get(
+            self._poll_url(), HTTP_X_PRINT_AGENT_TOKEN=AGENT_TOKEN
+        ).json()
+        self.assertIsNone(payload["scan_request"])
 
     def test_poll_requeues_stale_claims(self):
         job = PrintAgentJob.objects.create(
@@ -327,6 +379,97 @@ class PrintAgentFlowTests(TestCase):
         self.shop.save(update_fields=["print_agent_scan", "print_agent_scan_at"])
         payload = self._hosted_scan(self._portal_client()).json()
         self.assertEqual(payload["printers"], [])
+
+    # --- on-LAN scan merges the agent report + typed host probe ------------
+
+    def _agent_row(self, host="192.168.100.171", port=9100):
+        return {
+            "id": f"wifi-{host}:{port}",
+            "host": host,
+            "port": port,
+            "name": f"POS-80 · {host}",
+            "detail": f"Raw :{port}",
+            "kind": "printer",
+            "connect_mode": "raw",
+        }
+
+    def _onlan_scan(self, client, body=None):
+        with mock.patch(
+            "shops.printer_discovery.discover_lan_printers",
+            return_value={
+                "ok": True,
+                "printers": [],
+                "networks": ["192.168.0.0/24"],
+                "local_ips": ["192.168.0.102"],
+                "hint": "",
+                "cached": False,
+            },
+        ) as disco:
+            response = client.post(
+                reverse(
+                    "employees:my_shop_wifi_printer_scan",
+                    kwargs={"shop_id": self.shop.pk},
+                ),
+                data=json.dumps(body or {}),
+                content_type="application/json",
+            )
+        return response, disco
+
+    def test_onlan_scan_merges_agent_report(self):
+        self.shop.print_agent_scan = [self._agent_row()]
+        self.shop.print_agent_scan_at = timezone.now()
+        self.shop.save(update_fields=["print_agent_scan", "print_agent_scan_at"])
+
+        response, _ = self._onlan_scan(self._portal_client())
+        payload = response.json()
+        self.assertFalse(payload["hosted"])
+        self.assertTrue(payload["from_agent"])
+        self.assertTrue(payload["agent_alive"])
+        self.assertEqual(len(payload["printers"]), 1)
+        self.assertEqual(payload["printers"][0]["host"], "192.168.100.171")
+        self.assertTrue(payload["printers"][0]["via_agent"])
+
+    def test_onlan_scan_ignores_stale_agent_report(self):
+        self.shop.print_agent_scan = [self._agent_row()]
+        self.shop.print_agent_scan_at = timezone.now() - timedelta(minutes=10)
+        self.shop.save(update_fields=["print_agent_scan", "print_agent_scan_at"])
+
+        response, _ = self._onlan_scan(self._portal_client())
+        payload = response.json()
+        self.assertEqual(payload["printers"], [])
+        self.assertFalse(payload["from_agent"])
+        self.assertFalse(payload["agent_alive"])
+
+    def test_onlan_scan_passes_typed_and_saved_host(self):
+        self.shop.wifi_printer_host = "192.168.100.171"
+        self.shop.save(update_fields=["wifi_printer_host"])
+
+        _, disco = self._onlan_scan(
+            self._portal_client(), body={"host": "192.168.0.55"}
+        )
+        extra = disco.call_args.kwargs.get("extra_hosts") or []
+        self.assertIn("192.168.0.55", extra)
+        self.assertIn("192.168.100.171", extra)
+
+    def test_scan_writes_agent_scan_request_with_typed_host(self):
+        response, _ = self._onlan_scan(
+            self._portal_client(), body={"host": "192.168.100.171"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.shop.refresh_from_db()
+        req = self.shop.print_agent_scan_request
+        self.assertEqual(req["hosts"], ["192.168.100.171"])
+        self.assertTrue(req["at"])
+
+    def test_scan_retry_keeps_existing_scan_request(self):
+        self.shop.print_agent_scan_request = {"at": 111.0, "hosts": []}
+        self.shop.save(update_fields=["print_agent_scan_request"])
+        response, _ = self._onlan_scan(
+            self._portal_client(), body={"retry": True}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.shop.refresh_from_db()
+        self.assertEqual(self.shop.print_agent_scan_request["at"], 111.0)
 
     # --- token management --------------------------------------------------
 

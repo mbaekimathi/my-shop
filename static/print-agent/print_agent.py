@@ -3,10 +3,10 @@
 
 Polls the hosted MY-SHOP server for queued receipt jobs and prints them to
 the shop's LAN Wi-Fi printer (raw TCP, usually port 9100). It also scans the
-local network for printers about once a minute and reports them, so the shop
-floor's Wi-Fi "Scan" can list them even though the hosted server cannot see
-the shop LAN. Run this on any computer in the shop that can reach the
-printer — e.g. the till PC.
+local network for printers about once a minute — and immediately when the
+shop floor presses Scan — and reports them, so the Wi-Fi printer picker can
+list them even though the server cannot see the shop LAN. Run this on any
+computer in the shop that can reach the printer — e.g. the till PC.
 
 Setup:
     1. Put this file anywhere and create print_agent.json next to it:
@@ -25,6 +25,11 @@ Options:
                     next to this script)
     --once          poll once, print anything queued, then exit
     --interval SEC  seconds between polls (default: 2)
+
+Extra config keys (optional):
+    "report_url": override the derived .../report/ endpoint
+    "extra_subnets": ["192.168.100.0/24"] — also scan subnets the PC can
+                     route to but isn't directly on (e.g. a second SSID)
 """
 
 from __future__ import annotations
@@ -45,6 +50,13 @@ import urllib.request
 CONNECT_TIMEOUT = 5.0
 WRITE_TIMEOUT = 10.0
 MAX_BACKOFF = 30.0
+
+# Windows consoles default to cp1252 which cannot print → or Wi‑Fi names.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass
 
 # LAN printer discovery: probe each host's first open printer port.
 PRINTER_PORTS = (9100, 9101, 9102, 9112, 9200, 10001, 631, 515)
@@ -160,10 +172,10 @@ def _reverse_name(host: str) -> str:
         socket.setdefaulttimeout(None)
 
 
-def probe_host(host: str) -> dict | None:
+def probe_host(host: str, timeout: float = PROBE_TIMEOUT) -> dict | None:
     for port in PRINTER_PORTS:
         try:
-            with socket.create_connection((host, port), timeout=PROBE_TIMEOUT):
+            with socket.create_connection((host, port), timeout=timeout):
                 pass
         except OSError:
             continue
@@ -177,11 +189,21 @@ def probe_host(host: str) -> dict | None:
     return None
 
 
-def scan_lan() -> tuple[list, int]:
-    """TCP-probe every host on this PC's private /24s for printer ports."""
+def scan_lan(extra_subnets=None) -> tuple[list, int]:
+    """TCP-probe this PC's private /24s (plus any extra_subnets) for printers."""
+    nets = list(private_networks(local_ipv4_addresses()))
+    for raw in extra_subnets or []:
+        try:
+            nets.append(ipaddress.ip_network(str(raw), strict=False))
+        except ValueError:
+            log(f"Ignoring invalid extra_subnet: {raw}")
     hosts: list[str] = []
-    for net in private_networks(local_ipv4_addresses()):
-        hosts.extend(str(h) for h in net.hosts())
+    seen: set[str] = set()
+    for net in nets:
+        for h in net.hosts():
+            if str(h) not in seen:
+                seen.add(str(h))
+                hosts.append(str(h))
     printers: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
         for result in pool.map(probe_host, hosts):
@@ -191,25 +213,68 @@ def scan_lan() -> tuple[list, int]:
     return printers, len(hosts)
 
 
+def report_scan(cfg: dict, printers: list, scanned: int) -> None:
+    status, data = request(
+        report_url(cfg),
+        token=cfg["token"],
+        method="POST",
+        payload={"printers": printers, "scanned": scanned},
+    )
+    if status == 200 and data.get("ok"):
+        log(f"Reported {len(printers)} LAN printer(s) ({scanned} hosts scanned)")
+    else:
+        log(f"Printer report failed: {data.get('error') or f'HTTP {status}'}")
+
+
+def run_scan_request(cfg: dict, req: dict) -> None:
+    """On-demand scan asked for via the shop floor's Scan button.
+
+    Probes the requested hosts directly (they may be on a routed subnet
+    outside this PC's /24s) and sweeps this PC's LAN, then reports.
+    """
+    hosts = []
+    for raw in (req.get("hosts") or [])[:8]:
+        host = str(raw or "").strip()
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            hosts.append(str(ip))
+    subnets = list(cfg.get("extra_subnets") or [])
+    for raw in (req.get("subnets") or [])[:8]:
+        if raw not in subnets:
+            subnets.append(raw)
+
+    found: dict[str, dict] = {}
+    if hosts:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            for row in pool.map(lambda h: probe_host(h, timeout=0.6), hosts):
+                if row:
+                    found[row["host"]] = row
+    try:
+        printers, scanned = scan_lan(subnets)
+    except Exception as exc:
+        log(f"Requested LAN scan failed: {exc}")
+        printers, scanned = [], 0
+    for row in printers:
+        found.setdefault(row["host"], row)
+    log(
+        f"On-demand scan: {len(found)} printer(s) "
+        f"({scanned + len(hosts)} hosts probed)"
+    )
+    report_scan(cfg, list(found.values()), scanned + len(hosts))
+
+
 def scanner_loop(cfg: dict, stop: threading.Event) -> None:
     """Periodically scan the shop LAN and report printers to the server."""
-    url = report_url(cfg)
     while not stop.is_set():
         try:
-            printers, scanned = scan_lan()
+            printers, scanned = scan_lan(cfg.get("extra_subnets"))
         except Exception as exc:
             log(f"Printer scan failed: {exc}")
             printers, scanned = [], 0
-        status, data = request(
-            url,
-            token=cfg["token"],
-            method="POST",
-            payload={"printers": printers, "scanned": scanned},
-        )
-        if status == 200 and data.get("ok"):
-            log(f"Reported {len(printers)} LAN printer(s) ({scanned} hosts scanned)")
-        else:
-            log(f"Printer report failed: {data.get('error') or f'HTTP {status}'}")
+        report_scan(cfg, printers, scanned)
         stop.wait(SCAN_INTERVAL)
 
 
@@ -256,7 +321,24 @@ def run_once(cfg: dict) -> bool:
             payload={"status": "done"},
         )
         log(f"Printed job {job_id} → {job.get('host')}:{job.get('port')}")
+
+    # On-demand scan requested from the shop floor — run it off the poll
+    # thread so printing isn't delayed; dedupe by request timestamp.
+    req = data.get("scan_request") or {}
+    req_at = req.get("at")
+    if req_at and req_at != cfg.get("_last_scan_request"):
+        cfg["_last_scan_request"] = req_at
+        threading.Thread(
+            target=lambda: _run_scan_request_safe(cfg, req), daemon=True
+        ).start()
     return True
+
+
+def _run_scan_request_safe(cfg: dict, req: dict) -> None:
+    try:
+        run_scan_request(cfg, req)
+    except Exception as exc:
+        log(f"Requested scan failed: {exc}")
 
 
 def main() -> None:
@@ -274,17 +356,8 @@ def main() -> None:
     if args.once:
         run_once(cfg)
         try:
-            printers, scanned = scan_lan()
-            status, data = request(
-                report_url(cfg),
-                token=cfg["token"],
-                method="POST",
-                payload={"printers": printers, "scanned": scanned},
-            )
-            if status == 200 and data.get("ok"):
-                log(f"Reported {len(printers)} LAN printer(s) ({scanned} hosts scanned)")
-            else:
-                log(f"Printer report failed: {data.get('error') or f'HTTP {status}'}")
+            printers, scanned = scan_lan(cfg.get("extra_subnets"))
+            report_scan(cfg, printers, scanned)
         except Exception as exc:
             log(f"Printer scan failed: {exc}")
         return

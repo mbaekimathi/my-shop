@@ -38,7 +38,9 @@ def _agent_shop(request, shop_id: int) -> Shop | None:
         return None
     shop = Shop.objects.filter(pk=shop_id).only("pk", "print_agent_token",
                                               "wifi_printer_host",
-                                              "wifi_printer_port").first()
+                                              "wifi_printer_port",
+                                              "print_agent_seen_at",
+                                              "print_agent_scan_request").first()
     if shop is None or not shop.print_agent_token:
         return None
     if not hmac.compare_digest(shop.print_agent_token, token):
@@ -102,6 +104,34 @@ def print_agent_poll(request, shop_id: int):
         if won:
             claimed.append(job)
 
+    # Track liveness (throttled) so the UI can tell a running agent apart
+    # from one that stopped reporting.
+    if (
+        not shop.print_agent_seen_at
+        or (now - shop.print_agent_seen_at).total_seconds() > 30
+    ):
+        Shop.objects.filter(pk=shop.pk).update(print_agent_seen_at=now)
+
+    # Pending on-demand scan — the agent probes the requested hosts + its own
+    # LAN and posts results to /report/. Expire stale requests so an agent
+    # that was offline doesn't fire an ancient scan.
+    scan_request = None
+    req = (
+        shop.print_agent_scan_request
+        if isinstance(shop.print_agent_scan_request, dict)
+        else {}
+    )
+    try:
+        req_at = float(req.get("at") or 0)
+    except (TypeError, ValueError):
+        req_at = 0
+    if req_at and now.timestamp() - req_at <= 600:
+        scan_request = {
+            "at": req_at,
+            "hosts": [str(h) for h in (req.get("hosts") or [])][:8],
+            "subnets": [str(s) for s in (req.get("subnets") or [])][:8],
+        }
+
     return JsonResponse(
         {
             "ok": True,
@@ -119,6 +149,7 @@ def print_agent_poll(request, shop_id: int):
                 "host": shop.wifi_printer_host or "",
                 "port": int(shop.wifi_printer_port or 9100),
             },
+            "scan_request": scan_request,
         }
     )
 

@@ -1084,15 +1084,17 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
             line["serials"] = line["serial_rows"]
         price = line["buying_price"]
         if price is None or price <= 0:
-            price = _money(
-                (pr.price if pr and pr.price else 0)
-                or item.shop_price
-                or item.minimum_selling_price
-            )
-        if item.minimum_selling_price and price < item.minimum_selling_price:
+            # An existing per-shop row is authoritative — including 0.00, which
+            # means the item is deliberately free at this shop.
+            if pr is not None:
+                price = _money(pr.price)
+            else:
+                price = _money(item.shop_price or item.minimum_selling_price)
+        if item.minimum_selling_price and 0 < price < item.minimum_selling_price:
             price = _money(item.minimum_selling_price)
         unit_cost = _money(line["shop_stock"].average_cost if line.get("shop_stock") else 0)
-        if unit_cost > 0 and price < unit_cost:
+        # Free sales (price 0) skip the below-cost guard.
+        if price > 0 and unit_cost > 0 and price < unit_cost:
             raise StockError(
                 f'"{item.name}" is below unit cost '
                 f"(sell {price}, cost {unit_cost})."

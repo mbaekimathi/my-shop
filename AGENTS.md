@@ -27,6 +27,20 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
   sellable items only; shelf-only mode returns an empty catalog.
 
+## Item pricing
+- Prices are stored per shop on `ShopItemPrice` (`price` + `is_sold` flag);
+  `Item.shop_price` is just the lowest/display fallback. `is_sold=False`
+  (the "Sold in shops" checkboxes) removes the item from the shop floor
+  catalog and blocks checkout.
+- A `-`, `0`, or negative entry in a price field means **free**: it stores
+  `0.00` and the item stays listed and sellable at KSh 0.00. Explicit 0
+  prices bypass the minimum-price floor (`_clamp_price` never raises 0) and
+  the checkout below-cost guard (only `0 < unit_price < unit_cost` blocks).
+  `resolve_list_price` honours a per-shop 0 row as free. `-`/`0` in
+  "Minimum selling price" stores `0.00` (no floor). See `_is_free_price` /
+  `validate_item_payload` in `items/services.py`; tests in
+  `ShopPriceIsolationTests`.
+
 ## Wi‑Fi printing
 - Channels (Bluetooth/USB/Wi‑Fi) → `enable_print_*` flags; "Connect to printer"
   lives in the shop floor workspace sidebar, gated by `my-shop/print` permission.
@@ -36,6 +50,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - USB + Bluetooth print **client-side** (WebUSB/Web Serial/Web Bluetooth +
   hidden-iframe `win.print()`); Wi‑Fi prints **server-side** via
   `my_shop_print_relay` (server opens TCP to `host:9100`).
+- The Windows-print fallback (`browserPrint` in `shop-printer.js`) renders the
+  receipt into a **`srcdoc` iframe** and calls `win.print()` on iframe `load`
+  (capped at ~900ms — receipt CSS is inline, fonts.css is only the Manrope
+  face). Do not switch back to `doc.write()` + `contentWindow.onload`: that
+  load hook can miss, and checkout/delivery/goods-received callers race the
+  print against a page navigation, so a late `win.print()` is destroyed
+  before the dialog opens.
 - **Hosted (cPanel) mode**: the server can't reach shop LAN printers, so the
   relay queues a `PrintAgentJob` when the target is off the server's LAN and
   `shop.print_agent_token` is set (else 502 `agent_required`). A local agent
@@ -43,8 +64,17 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   the `X-Print-Agent-Token` header and acks `…/jobs/<id>/` (done/failed).
   The agent also TCP-probes its own /24s for printer ports ~every 45s and
   POSTs results to `print-agent/<shop>/report/` → stored on
-  `shop.print_agent_scan`/`_scan_at`; hosted Wi‑Fi "Scan" returns those
-  (fresh within 5 min) so discovery still works server-side-off-LAN.
+  `shop.print_agent_scan`/`_scan_at`; Wi‑Fi "Scan" merges those (fresh within
+  5 min) into results on hosted *and* on-LAN servers (rows flagged
+  `via_agent`). Polls stamp `shop.print_agent_seen_at` (30s throttle) →
+  `agent_alive` in scan/config responses. Pressing Scan writes
+  `shop.print_agent_scan_request` (`{at, hosts, subnets}`); the poll response
+  carries it (<10 min old) and the agent probes the requested hosts + its LAN
+  and reports — the JS retries once ~7s later to collect the results.
+  The scan view also sends the typed host + `shop.wifi_printer_host` as
+  `extra_hosts` to `discover_lan_printers` (direct probes off the detected
+  /24s), and the relay tries a direct socket for off-/24 hosts before
+  queueing a `PrintAgentJob`.
   Views: `shops/agent_views.py`; token (re)generation: action `print_agent_token`
   on the shop receipt settings page (gated by `shop_settings`). Tests:
   `shops/tests/test_print_agent.py`.

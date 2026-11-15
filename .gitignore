@@ -26,3 +26,6 @@ local_settings.py
 passenger_wsgi.pyc
 *.pem
 *.key
+
+# Local print agent config (contains shop token — never commit)
+print_agent.json

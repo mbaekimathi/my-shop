@@ -884,39 +884,62 @@
         }
         const frame = document.createElement("iframe");
         frame.setAttribute("aria-hidden", "true");
+        frame.title = `${label} print`;
         frame.style.cssText =
-          "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
-        document.body.appendChild(frame);
-        const doc = frame.contentDocument || frame.contentWindow?.document;
-        if (!doc) {
-          frame.remove();
-          reject(new Error("Could not open the Windows print dialog."));
-          return;
-        }
+          "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;";
+        let settled = false;
+        const settle = (fn, arg) => {
+          if (settled) return;
+          settled = true;
+          fn(arg);
+        };
         const cleanup = () => {
           window.setTimeout(() => frame.remove(), 1500);
         };
-        const win = frame.contentWindow;
-        doc.open();
-        doc.write(`<!doctype html><html><head><title>Receipt · ${escapeHtml(label)}</title>
+        // Resolve on iframe "load", but never wait longer than ~900ms: the
+        // receipt layout is the inline <style> — fonts.css only adds the
+        // Manrope face and may not be cached. Some callers race this print
+        // against a page refresh, so the dialog must open promptly.
+        const loaded = new Promise((done) => {
+          const timer = window.setTimeout(done, 900);
+          frame.addEventListener(
+            "load",
+            () => {
+              window.clearTimeout(timer);
+              done();
+            },
+            { once: true }
+          );
+        });
+        document.body.appendChild(frame);
+        // srcdoc keeps the document same-origin (X-Frame-Options: DENY safe)
+        // and gives a reliable iframe "load" event — unlike doc.write(), where
+        // contentWindow.onload can race the initial about:blank load and never
+        // fire, silently suppressing the Windows print dialog.
+        frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt · ${escapeHtml(label)}</title>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20261019-assets">
 <style>${ticketCss(style)}</style></head><body>
 ${bodyHtml}
-</body></html>`);
-        doc.close();
-        const runPrint = () => {
-          try {
+</body></html>`;
+        loaded
+          .then(() => new Promise((done) => window.setTimeout(done, 60)))
+          .then(() => {
+            const win = frame.contentWindow;
+            if (!win) throw new Error("Could not open the Windows print dialog.");
             win.focus();
             win.print();
             cleanup();
-            resolve(true);
-          } catch (err) {
+            settle(resolve, true);
+          })
+          .catch((err) => {
             cleanup();
-            reject(err);
-          }
-        };
-        if (doc.readyState === "complete") runPrint();
-        else win.onload = runPrint;
+            settle(
+              reject,
+              err instanceof Error
+                ? err
+                : new Error("Could not open the Windows print dialog.")
+            );
+          });
       } catch (err) {
         reject(err);
       }
@@ -1495,7 +1518,16 @@ ${bodyHtml}
       },
       async restore(saved) {
         const usb = saved || loadStore().usb || {};
-        const printMode = usb.printMode === "raw" ? "raw" : "system";
+        // restorePlan passes {kind:"serial"|"usb"} for raw sessions without a
+        // printMode field — treat those kinds as raw so a raw session never
+        // restores as "Windows printer" mode (which would route raw ESC/POS
+        // jobs through the Windows print dialog).
+        const printMode =
+          usb.printMode === "raw" ||
+          usb.kind === "serial" ||
+          usb.kind === "usb"
+            ? "raw"
+            : "system";
         if (printMode === "system") {
           mode = "system";
           windowsPrinterName = String(
@@ -1595,6 +1627,7 @@ ${bodyHtml}
       networks: [],
       hosted: false,
       agent: false,
+      agentAlive: false,
       fromAgent: false,
     };
     // True when the hosted server queued the job for the shop's local agent.
@@ -1633,6 +1666,7 @@ ${bodyHtml}
           networks: [...localNet.networks],
           hosted: localNet.hosted,
           agent: localNet.agent,
+          agentAlive: localNet.agentAlive,
           fromAgent: localNet.fromAgent,
         };
       },
@@ -1652,6 +1686,7 @@ ${bodyHtml}
             networks: Array.isArray(data.networks) ? data.networks : [],
             hosted: Boolean(data.hosted),
             agent: Boolean(data.agent),
+            agentAlive: Boolean(data.agent_alive),
             fromAgent: Boolean(data.from_agent),
           };
           return data;
@@ -1701,7 +1736,15 @@ ${bodyHtml}
             },
             credentials: "same-origin",
             signal: controller.signal,
-            body: JSON.stringify({ thorough: Boolean(options?.thorough) }),
+            body: JSON.stringify({
+              thorough: Boolean(options?.thorough),
+              // Also probe the typed IP directly — it may be on a routed
+              // subnet outside the server's detected /24s.
+              host: String(inputHost?.value || "").trim(),
+              // Automatic second pass after asking the print agent to scan —
+              // tells the server not to queue another agent request.
+              retry: Boolean(options?.retry),
+            }),
           });
         } catch (err) {
           if (err?.name === "AbortError") {
@@ -1720,11 +1763,13 @@ ${bodyHtml}
           // card can switch to the print-agent guidance.
           if (data.hosted != null) localNet.hosted = Boolean(data.hosted);
           if (data.agent != null) localNet.agent = Boolean(data.agent);
+          if (data.agent_alive != null) localNet.agentAlive = Boolean(data.agent_alive);
           throw new Error(data.error || "Wi‑Fi printer scan failed.");
         }
 
         localNet.hosted = Boolean(data.hosted ?? localNet.hosted);
         if (data.agent != null) localNet.agent = Boolean(data.agent);
+        if (data.agent_alive != null) localNet.agentAlive = Boolean(data.agent_alive);
         localNet.fromAgent = Boolean(data.from_agent);
         if (Array.isArray(data.local_ips) && data.local_ips.length) {
           localNet.ips = data.local_ips;
@@ -1732,6 +1777,13 @@ ${bodyHtml}
         }
 
         const printers = Array.isArray(data.printers) ? data.printers : [];
+
+        if (!printers.length && data.agent_scan_pending && !options?.retried) {
+          // A live print agent picks the scan request up on its next poll
+          // (~2s) and reports back — wait for its report, then retry once.
+          await new Promise((resolve) => window.setTimeout(resolve, 7000));
+          return this.scan(card, { ...options, retried: true, retry: true });
+        }
 
         if (!printers.length) {
           const hint = String(data.hint || "").trim();
@@ -1747,11 +1799,14 @@ ${bodyHtml}
         return printers.map((row) => {
           const nextHost = String(row.host || "").trim();
           const nextPort = Number(row.port || 9100);
+          const viaTag = row.via_agent ? " · via agent" : "";
           return {
             id: row.id || `wifi-${nextHost}:${nextPort}`,
-            name: row.detail
-              ? `${row.name || nextHost} · ${row.detail}`
-              : row.name || `Printer ${nextHost}:${nextPort}`,
+            name: `${
+              row.detail
+                ? `${row.name || nextHost} · ${row.detail}`
+                : row.name || `Printer ${nextHost}:${nextPort}`
+            }${viaTag}`,
             host: nextHost,
             port: Number.isFinite(nextPort) && nextPort > 0 ? nextPort : 9100,
             kind: "printer",
@@ -2533,7 +2588,9 @@ ${bodyHtml}
           ? "Hosted server — Wi‑Fi printing goes through the shop's print agent. Set it up under Shop settings → Receipt → Cloud print agent, then enter the printer's LAN IP and Connect."
           : net.fromAgent
             ? "Hosted server — listed printers were found on the shop's Wi‑Fi by your print agent. Tap one to connect."
-            : "Hosted server — Scan shows printers your print agent reports from the shop's Wi‑Fi. You can also enter the printer IP and Connect directly.";
+            : net.agentAlive
+              ? "Print agent online — no Wi‑Fi printers found on the shop network yet. Enter the printer IP and Connect."
+              : "Print agent not reporting — start the latest print_agent.py on the shop PC (it scans about once a minute), or enter the printer IP and Connect.";
         netEl.hidden = false;
         return;
       }
@@ -2545,7 +2602,11 @@ ${bodyHtml}
       const parts = [];
       if (net.ips.length) parts.push(`this PC ${net.ips.join(" / ")}`);
       if (net.networks.length) parts.push(`network ${net.networks.join(", ")}`);
-      netEl.textContent = `Same Wi‑Fi check — ${parts.join(" · ")}. Join the printer to this network.`;
+      netEl.textContent =
+        `Same Wi‑Fi check — ${parts.join(" · ")}. Join the printer to this network.` +
+        (net.agent
+          ? " Printers your print agent finds on other shop networks are listed too (“via agent”)."
+          : "");
       netEl.hidden = false;
     };
 
