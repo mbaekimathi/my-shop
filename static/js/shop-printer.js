@@ -1590,7 +1590,7 @@ ${bodyHtml}
     let scanUrl = "";
     let configUrl = "";
     let defaults = { host: "", port: 9100 };
-    let localNet = { ips: [], networks: [] };
+    let localNet = { ips: [], networks: [], hosted: false, agent: false };
     // True when the hosted server queued the job for the shop's local agent.
     let viaAgent = false;
     const displayName = () =>
@@ -1622,7 +1622,12 @@ ${bodyHtml}
         return { ...defaults };
       },
       getLocalNet() {
-        return { ips: [...localNet.ips], networks: [...localNet.networks] };
+        return {
+          ips: [...localNet.ips],
+          networks: [...localNet.networks],
+          hosted: localNet.hosted,
+          agent: localNet.agent,
+        };
       },
       async fetchConfig() {
         if (!configUrl) return null;
@@ -1638,6 +1643,8 @@ ${bodyHtml}
           localNet = {
             ips: Array.isArray(data.local_ips) ? data.local_ips : [],
             networks: Array.isArray(data.networks) ? data.networks : [],
+            hosted: Boolean(data.hosted),
+            agent: Boolean(data.agent),
           };
           return data;
         } catch (_) {
@@ -1701,6 +1708,10 @@ ${bodyHtml}
 
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) {
+          // A hosted server reports hosted/agent flags even on failure so the
+          // card can switch to the print-agent guidance.
+          if (data.hosted != null) localNet.hosted = Boolean(data.hosted);
+          if (data.agent != null) localNet.agent = Boolean(data.agent);
           throw new Error(data.error || "Wi‑Fi printer scan failed.");
         }
 
@@ -1708,6 +1719,8 @@ ${bodyHtml}
           localNet = {
             ips: data.local_ips,
             networks: Array.isArray(data.networks) ? data.networks : [],
+            hosted: Boolean(data.hosted),
+            agent: localNet.agent,
           };
         }
 
@@ -2508,6 +2521,13 @@ ${bodyHtml}
       const netEl = card?.querySelector("[data-printer-wifi-network]");
       if (!netEl) return;
       const net = drivers.wifi.getLocalNet();
+      if (net.hosted) {
+        netEl.textContent = net.agent
+          ? "Hosted server — Scan can't see your shop's Wi‑Fi. Enter the printer's LAN IP (e.g. 192.168.x.x) and Connect; the job prints through your print agent."
+          : "Hosted server — Wi‑Fi printing goes through the shop's print agent. Set it up under Shop settings → Receipt → Cloud print agent, then enter the printer's LAN IP and Connect.";
+        netEl.hidden = false;
+        return;
+      }
       if (!net.ips.length && !net.networks.length) {
         netEl.hidden = true;
         netEl.textContent = "";
@@ -2619,6 +2639,19 @@ ${bodyHtml}
 
       const runScan = async (thorough = false) => {
         const deepBtn = card.querySelector("[data-printer-scan-deep]");
+        if (channel === "wifi" && drivers.wifi.getLocalNet().hosted) {
+          if (deepBtn) deepBtn.hidden = true;
+          const net = drivers.wifi.getLocalNet();
+          setCardState(card, {
+            badge: "Idle",
+            status: "Not connected",
+            hint: net.agent
+              ? "This MY-SHOP server is hosted — Scan can't see your shop's Wi‑Fi. Enter the printer IP and press Connect; the job prints through your print agent."
+              : "This MY-SHOP server is hosted — Scan can't see your shop's Wi‑Fi. Set up the print agent under Shop settings → Receipt → Cloud print agent, then enter the printer IP and press Connect.",
+            connected: false,
+          });
+          return;
+        }
         try {
           if (deepBtn) deepBtn.hidden = true;
           setCardState(card, {

@@ -3762,6 +3762,8 @@ def my_shop_wifi_printer_scan(request, shop_id):
         )
 
     result = discover_lan_printers(thorough=thorough)
+    result["hosted"] = not result.get("networks")
+    result["agent"] = bool(shop.print_agent_token)
     if not result.get("ok"):
         return JsonResponse(result, status=400)
     return JsonResponse(result)
@@ -3801,6 +3803,10 @@ def my_shop_wifi_printer_config(request, shop_id):
                 "port": int(shop.wifi_printer_port or 9100),
                 "local_ips": local_ips,
                 "networks": [str(net) for net in networks],
+                # Hosted server (no LAN) — Wi‑Fi printing goes through the
+                # shop's local print agent instead of a direct connection.
+                "hosted": not networks,
+                "agent": bool(shop.print_agent_token),
             }
         )
 

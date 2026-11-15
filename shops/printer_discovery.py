@@ -440,7 +440,11 @@ def discover_lan_printers(*, thorough: bool = False, use_cache: bool = True) -> 
     if not networks:
         return {
             "ok": False,
-            "error": "Could not detect a private Wi‑Fi/LAN address on this server.",
+            "error": (
+                "Could not detect a private Wi‑Fi/LAN address on this server. "
+                "If MY-SHOP is hosted, enter the printer IP and Connect instead — "
+                "the job prints through the shop's local print agent."
+            ),
             "printers": [],
             "scanned_hosts": 0,
             "networks": [],
