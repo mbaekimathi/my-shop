@@ -615,7 +615,7 @@
     hasMore = false;
     activeSort = sort;
     syncSortUi();
-    fetchPage({ page: 1, q, sort, append: false });
+    return fetchPage({ page: 1, q, sort, append: false });
   };
 
   moreBtn?.addEventListener("click", () => {
@@ -648,6 +648,77 @@
     event.preventDefault();
     shopColumnsOpen = !shopColumnsOpen;
     syncShopColumnsUi();
+  });
+
+  // After picking a searched item (Edit), restore the full list but keep
+  // the row at the same viewport spot — clear the box, don't lose the place.
+  const findRowByItemId = (itemId) => {
+    if (itemId === "") return null;
+    const btn = [...root.querySelectorAll("[data-edit-item]")].find(
+      (el) => el.dataset.itemId === itemId
+    );
+    return btn ? btn.closest("[data-item-row]") : null;
+  };
+
+  const placeRowWhenUnlocked = (itemId, keepTop) => {
+    const row = findRowByItemId(itemId);
+    if (!row || keepTop == null) return;
+    const place = () => {
+      const searchBar = panel.querySelector(".item-search");
+      const minTop =
+        (searchBar ? searchBar.getBoundingClientRect().bottom : 0) + 6;
+      const delta =
+        row.getBoundingClientRect().top - Math.max(keepTop, minTop);
+      if (Math.abs(delta) <= 2) return;
+      const rootEl = document.documentElement;
+      const prev = rootEl.style.scrollBehavior;
+      rootEl.style.scrollBehavior = "auto";
+      window.scrollBy(0, delta);
+      rootEl.style.scrollBehavior = prev;
+    };
+    // The edit modal locks body scroll — re-anchor once it closes.
+    if (!document.body.classList.contains("workspace-modal-open")) {
+      place();
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains("workspace-modal-open")) return;
+      observer.disconnect();
+      place();
+    });
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    window.setTimeout(() => observer.disconnect(), 60000);
+  };
+
+  const restoreFullList = async (itemId, keepTop) => {
+    await reload("", activeSort);
+    let seq = inFlight;
+    let guard = 0;
+    while (!findRowByItemId(itemId) && hasMore && nextPage && guard < 40) {
+      guard += 1;
+      // Stop if the user started a fresh search in the meantime.
+      if (seq !== inFlight || String(searchInput?.value || "").trim()) return;
+      await fetchPage({ page: nextPage, q: "", sort: activeSort, append: true });
+      seq = inFlight;
+    }
+    placeRowWhenUnlocked(itemId, keepTop);
+  };
+
+  panel.addEventListener("click", (event) => {
+    const editBtn = event.target.closest("[data-edit-item]");
+    if (!editBtn || !panel.contains(editBtn)) return;
+    if (!searchInput) return;
+    const filtering = Boolean(String(activeQuery || "").trim());
+    window.clearTimeout(searchTimer);
+    searchInput.value = "";
+    if (!filtering) return;
+    const itemId = String(editBtn.dataset.itemId ?? "");
+    const row = editBtn.closest("[data-item-row]");
+    const keepTop = row ? row.getBoundingClientRect().top : null;
+    restoreFullList(itemId, keepTop).catch(() => {});
   });
 
   syncSortUi();

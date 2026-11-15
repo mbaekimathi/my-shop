@@ -5,7 +5,7 @@
 
 {% block workspace_content %}
 <section
-  class="item-panel item-panel--dense"
+  class="item-panel item-panel--dense item-panel--sticky-search"
   data-animate="rise"
   data-item-total="{{ item_count }}"
   data-can-edit="{% if module_permissions.edit|default:True %}1{% else %}0{% endif %}"
@@ -66,39 +66,39 @@
         <p class="item-count" data-item-visible-count>{{ item_count }} item{{ item_count|pluralize }}</p>
       </div>
     </div>
-    <div class="item-search">
-      <label class="item-search-field">
-        <i data-lucide="search" aria-hidden="true"></i>
-        <input
-          type="search"
-          placeholder="Search by name, category, or description…"
-          autocomplete="off"
-          data-item-search
-          aria-label="Search items"
-        >
-      </label>
-      <div class="item-sort-toggle" role="group" aria-label="List items by">
-        <button
-          type="button"
-          class="item-sort-btn is-active"
-          data-item-sort="category"
-          aria-pressed="true"
-          title="Group by category"
-        >
-          <i data-lucide="folders" aria-hidden="true"></i>
-          <span>Category</span>
-        </button>
-        <button
-          type="button"
-          class="item-sort-btn"
-          data-item-sort="name"
-          aria-pressed="false"
-          title="Sort A to Z"
-        >
-          <i data-lucide="arrow-down-a-z" aria-hidden="true"></i>
-          <span>A–Z</span>
-        </button>
-      </div>
+  </div>
+  <div class="item-search">
+    <label class="item-search-field">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search by name, category, or description…"
+        autocomplete="off"
+        data-item-search
+        aria-label="Search items"
+      >
+    </label>
+    <div class="item-sort-toggle" role="group" aria-label="List items by">
+      <button
+        type="button"
+        class="item-sort-btn is-active"
+        data-item-sort="category"
+        aria-pressed="true"
+        title="Group by category"
+      >
+        <i data-lucide="folders" aria-hidden="true"></i>
+        <span>Category</span>
+      </button>
+      <button
+        type="button"
+        class="item-sort-btn"
+        data-item-sort="name"
+        aria-pressed="false"
+        title="Sort A to Z"
+      >
+        <i data-lucide="arrow-down-a-z" aria-hidden="true"></i>
+        <span>A–Z</span>
+      </button>
     </div>
   </div>
 
@@ -237,7 +237,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/item-catalog.js' %}?v=21"></script>
+<script defer src="{% static 'js/item-catalog.js' %}?v=22"></script>
 <script defer src="{% static 'js/item-management.js' %}?v=19"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=2"></script>
 {% endblock %}

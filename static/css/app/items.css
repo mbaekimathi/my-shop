@@ -92,6 +92,33 @@
   min-width: 0;
 }
 
+/* Sticky live-search bar — floats under the workspace header while the
+   item list scrolls. The panel clip must be dropped so the sticky row
+   has a scrollable ancestor. */
+.item-panel--sticky-search {
+  overflow: visible;
+}
+
+.item-panel--sticky-search .item-panel-head {
+  padding-bottom: 0.65rem;
+  border-bottom: 0;
+}
+
+.item-panel--sticky-search .item-search {
+  position: sticky;
+  top: calc(var(--workspace-header-h, 4.35rem) + 0.5rem);
+  z-index: 24;
+  padding: 0 1rem 0.7rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.item-panel--sticky-search .item-list,
+.item-panel--sticky-search .item-search-empty {
+  border-radius: 0 0 calc(var(--radius) + 3px) calc(var(--radius) + 3px);
+  overflow: hidden;
+}
+
 .item-sort-toggle {
   display: inline-flex;
   align-items: stretch;

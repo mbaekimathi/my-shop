@@ -395,9 +395,16 @@
 }
 
 .shop-floor {
-  display: grid;
+  /* Column flex (not grid) so the sticky toolbar's containing block is the
+     whole section — a grid item can only stick within its own row. */
+  display: flex;
+  flex-direction: column;
   gap: 1.25rem;
   padding-bottom: 5.5rem;
+}
+
+.shop-floor > * {
+  min-width: 0;
 }
 
 .shop-floor-notice {
@@ -2026,11 +2033,21 @@
   height: 2.4rem;
 }
 
+/* Sticky live-search toolbar — floats under the workspace header while
+   the catalog scrolls. */
 .shop-floor-toolbar {
+  position: sticky;
+  top: calc(var(--workspace-header-h, 4.35rem) + 0.5rem);
+  z-index: 24;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--mist) 4%, var(--surface));
+  box-shadow: 0 12px 26px -14px rgba(8, 28, 34, 0.35);
 }
 
 .shop-floor-search {
