@@ -851,6 +851,102 @@ def register_expense_action(profile):
     )
 
 
+def _buy_stock_sidebar_flag(profile):
+    """Company/shop POS 'Buy stock items' sidebar toggle (link-only)."""
+    from items.services import actionable_shops_for_profile
+    from shops.services import get_company_pos_settings, get_effective_pos_settings
+
+    shops = actionable_shops_for_profile(profile) if profile is not None else []
+    pos = (
+        get_effective_pos_settings(shops[0])
+        if len(shops) == 1
+        else get_company_pos_settings()
+    )
+    return bool(getattr(pos, "enable_sidebar_buy_stock", True))
+
+
+def buy_stock_modal_context(request, profile):
+    """
+    Context for the buy-stock popup on non-floor pages.
+
+    Only rendered when the employee has exactly one actionable shop —
+    multi-shop staff still follow the action's data-href to MY-SHOP.
+    """
+    import json as _json
+
+    from django.core.cache import cache
+
+    from items.models import Item
+    from items.services import actionable_shops_for_profile
+    from shops.services import (
+        ITEM_ACTIVE_COUNT_CACHE_KEY,
+        ITEM_ACTIVE_COUNT_CACHE_TTL,
+        get_company_stock_settings,
+        get_effective_pos_settings,
+    )
+
+    from .countries import COUNTRY_DIAL_CODES
+    from .module_permissions import employee_may
+
+    if profile is None or not employee_may(profile, "my-shop", "buy_stock"):
+        return {}
+    shops = actionable_shops_for_profile(profile)
+    if len(shops) != 1:
+        return {}
+    shop = shops[0]
+    if not getattr(
+        get_effective_pos_settings(shop), "enable_sidebar_buy_stock", True
+    ):
+        return {}
+    item_count = cache.get(ITEM_ACTIVE_COUNT_CACHE_KEY)
+    if item_count is None:
+        item_count = Item.objects.filter(is_suspended=False).count()
+        cache.set(
+            ITEM_ACTIVE_COUNT_CACHE_KEY, item_count, ITEM_ACTIVE_COUNT_CACHE_TTL
+        )
+    return {
+        "buy_stock_modal": True,
+        "shop": shop,
+        "buy_stock_next": request.get_full_path(),
+        "buy_stock_item_count": item_count,
+        "countries": COUNTRY_DIAL_CODES,
+        "supplier_search_url": reverse(
+            "employees:my_shop_supplier_search", kwargs={"shop_id": shop.pk}
+        ),
+        "serial_check_url": reverse("employees:serial_in_stock_check"),
+        "verify_login_code_url": reverse(
+            "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
+        ),
+        "stock_requirements_json": _json.dumps(
+            get_company_stock_settings().as_requirements_dict()
+        ),
+        "stock_catalog_url": reverse(
+            "employees:my_shop_buy_stock_catalog", kwargs={"shop_id": shop.pk}
+        ),
+    }
+
+
+def buy_stock_action(profile):
+    """Buy-stock sidebar action — popup when the modal exists, else href."""
+    from items.services import actionable_shops_for_profile
+
+    shops = actionable_shops_for_profile(profile) if profile is not None else []
+    href = (
+        reverse(
+            "employees:my_shop_buy_stock",
+            kwargs={"shop_id": shops[0].pk},
+        )
+        if len(shops) == 1
+        else my_shop_url()
+    )
+    return _action(
+        "Buy stock",
+        "package-plus",
+        action="buy-stock",
+        href=href,
+    )
+
+
 def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
     """Shop cashier dashboard sidebar."""
     from .module_permissions import employee_may, employee_may_any
@@ -920,13 +1016,21 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 active=active_slug == "analytics",
             )
         )
-    if profile is None or employee_may_any(profile, "stock-management"):
+    if profile is None or (
+        employee_may(profile, "my-shop", "buy_stock")
+        and _buy_stock_sidebar_flag(profile)
+    ):
+        links.append(buy_stock_action(profile))
+    if profile is None or (
+        employee_may(profile, "analytics", "suppliers")
+        and company_pos_analytics_section_visible("suppliers")
+    ):
         links.append(
             _link(
-                "Stock Management",
-                "package",
-                href=stock_management_url(role, "in"),
-                active=active_slug == "stock-management",
+                "Suppliers",
+                "truck",
+                href=analytics_section_url(role, "suppliers"),
+                active=active_slug == "suppliers",
             )
         )
     return links

@@ -2265,7 +2265,7 @@ def my_shop_buy_stock_catalog(request, shop_id):
 @require_http_methods(["GET", "POST"])
 def my_shop_buy_stock(request, shop_id):
     """Buy stock from an outside supplier and stock it into the active shop."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         if _wants_json_response(request):
             from shops.session import session_expired_response
@@ -2761,7 +2761,7 @@ def my_shop_register_expense(request, shop_id):
 @require_http_methods(["GET"])
 def my_shop_supplier_search(request, shop_id):
     """Live stock-supplier suggestions for Buy stock on the shop floor."""
-    profile, shop, denied = _require_active_shop_session(request, shop_id)
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         return denied
     denied = _require_my_shop_permission(
