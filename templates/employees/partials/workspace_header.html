@@ -31,6 +31,15 @@
       >{{ sidebar_pending_request_count|default:0 }}</span>
     </a>
     {% endif %}
+    <button
+      class="workspace-icon-btn"
+      type="button"
+      data-workspace-refresh
+      aria-label="Refresh page"
+      title="Refresh"
+    >
+      <i data-lucide="refresh-cw" aria-hidden="true"></i>
+    </button>
     {% include "partials/connectivity_indicator.html" %}
     {% include "partials/theme_toggle.html" %}
 

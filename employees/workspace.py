@@ -1973,13 +1973,12 @@ def sidebar_for_stock_management(
                             active=active_mode == "settings",
                         )
                     )
-                if settings_stock != "shelf":
+                if active_mode == "settings" and settings_stock != "shelf":
                     primary.append(
                         _link(
                             "Item sale stock tracking",
                             "shopping-cart",
                             href=stock_management_url(role, "sale-tracking"),
-                            active=active_mode == "sale-tracking",
                         )
                     )
             shelf_links = (
@@ -2197,21 +2196,11 @@ def sidebar_for_stock_management(
                         ),
                     ),
                 ),
-                (
-                    "sale-tracking",
-                    _link(
-                        "Item sale stock tracking",
-                        "shopping-cart",
-                        href=stock_management_url(role, "sale-tracking"),
-                        active=active_mode == "sale-tracking",
-                    ),
-                ),
             ]
             primary.extend(
                 link
                 for mode, link in candidates
-                if _allowed(mode)
-                and not (shelf_scope and mode in ("serials", "sale-tracking"))
+                if _allowed(mode) and not (shelf_scope and mode == "serials")
             )
             if _allowed("view"):
                 primary.append(
@@ -2271,13 +2260,12 @@ def sidebar_for_stock_management(
                         active=active_mode == "settings",
                     )
                 )
-                if settings_stock != "shelf":
+                if active_mode == "settings" and settings_stock != "shelf":
                     primary.append(
                         _link(
                             "Item sale stock tracking",
                             "shopping-cart",
                             href=stock_management_url(role, "sale-tracking"),
-                            active=active_mode == "sale-tracking",
                         )
                     )
             if _allowed("low-stock"):

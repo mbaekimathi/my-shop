@@ -10,7 +10,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/app/settings.css' %}?v=20261115-settings-modern">
-<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261115-toast-dismiss">
+<link rel="stylesheet" href="{% static 'css/app/shell.css' %}?v=20261116-refresh-btn">
 <link rel="stylesheet" href="{% static 'css/app/items.css' %}?v=20261115-shelf-tabs">
 <link rel="stylesheet" href="{% static 'css/app/hr.css' %}?v=20261113-mobile-cards">
 <link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261116-shelf-matrix">
@@ -171,6 +171,13 @@
     );
     closers.forEach((btn) => btn.addEventListener("click", () => setOpen(false)));
     overlay?.addEventListener("click", () => setOpen(false));
+
+    document.querySelectorAll("[data-workspace-refresh]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        btn.classList.add("is-spinning");
+        window.location.reload();
+      })
+    );
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") setOpen(false);
     });

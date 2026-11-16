@@ -32,15 +32,19 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   Management / the shop's Shelf stock page.
 - The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
   sellable items only; shelf-only mode returns an empty catalog.
-- Per-item sale deduction: `Item.deduct_stock_on_sale` (default on) — when off,
+- Per-item sale deduction: `Item.deduct_stock_on_sale` — when off,
   sales/credit/trade-out don't decrement `ShopStock`/`Item.stock`, returns and
   trade-ins don't move them either, insufficient-stock checks are skipped, and
-  the item sells past zero. Toggle page: Stock Management → Settings → "Sale
+  the item sells past zero. New items default it to
+  `CompanyPosSettings.enable_stock_tracking` (off while the company is in
+  shelf/no-item-stock mode). Toggle page: Stock Management → Settings → "Sale
   stock tracking" (`?mode=sale-tracking`, shares the `settings` permission).
   Manual Stock In/Out and transfers still move counts; serial tracking and the
   central-store mirror flag (`stock_count_enabled`) are separate. Floor JS
   reads `sale_stock_tracked` from the catalog payload (`data-item-sale-tracked`
-  on cards). Tests: `shops/tests/test_sale_stock_tracking.py`.
+  on cards) — untracked items show no stock number on the floor card, product
+  popup, serial modal, or trade search. Tests:
+  `shops/tests/test_sale_stock_tracking.py`.
 
 ## Compulsory stock fields (Stock Management → Settings)
 - `CompanyStockSettings` (singleton, cached via `get_company_stock_settings`)

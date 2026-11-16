@@ -220,6 +220,34 @@ class SaleStockTrackingTests(TestCase):
         self.assertFalse(rows[self.untracked.pk]["sale_stock_tracked"])
         self.assertTrue(rows[self.item.pk]["sale_stock_tracked"])
 
+    def test_new_item_defaults_sale_tracking_from_stock_mode(self):
+        from items.services import create_item
+
+        payload = {
+            "category": "GROCERY",
+            "name": "MODE DEFAULT ITEM",
+            "description": "",
+            "minimum_selling_price": "10",
+            "shop_price": "20",
+            "pricing_mode": "single",
+        }
+        item = create_item(self.profile, payload, {})
+        self.assertTrue(item.deduct_stock_on_sale)
+
+        pos = get_company_pos_settings()
+        pos.enable_stock_tracking = False
+        pos.save(update_fields=["enable_stock_tracking", "updated_at"])
+        _invalidate_pos_settings_cache()
+        try:
+            off_item = create_item(
+                self.profile, {**payload, "name": "MODE OFF ITEM"}, {}
+            )
+            self.assertFalse(off_item.deduct_stock_on_sale)
+        finally:
+            pos.enable_stock_tracking = True
+            pos.save(update_fields=["enable_stock_tracking", "updated_at"])
+            _invalidate_pos_settings_cache()
+
     def test_cancel_and_reopen_untracked_item_keeps_stock(self):
         result = self._checkout(self.untracked, qty="2", price="20.00")
         receipt = result["receipt"]

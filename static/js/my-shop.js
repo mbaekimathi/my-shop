@@ -2903,7 +2903,12 @@
           if (hidden) stockWrap.hidden = true;
           stockWrap.classList.toggle("is-empty", qty <= 0);
         }
-        card.classList.toggle("is-out", stockTrackingEnabled && qty <= 0);
+        card.classList.toggle(
+          "is-out",
+          stockTrackingEnabled &&
+            (card.getAttribute("data-item-sale-tracked") || "1") !== "0" &&
+            qty <= 0
+        );
       });
       syncCardControls();
       syncProductControls();
@@ -2934,7 +2939,11 @@
         if (productModal?.dataset.itemId === id) {
           productModal.dataset.itemStock = String(qty);
           if (productStock) {
-            if (stockTrackingEnabled && productModal.dataset.stockHidden !== "1") {
+            if (
+              stockTrackingEnabled &&
+              productModal.dataset.itemSaleTracked !== "0" &&
+              productModal.dataset.stockHidden !== "1"
+            ) {
               productStock.hidden = false;
               productStock.textContent = stockCountLabel(qty, false);
               productStock.classList.toggle("is-empty", qty <= 0);
@@ -5396,6 +5405,7 @@
             qty: trackSerial && serials.length ? serials.length : qty,
             trackSerial,
             serials,
+            saleTracked: line.saleTracked !== false,
           });
         });
       } catch (_error) {
@@ -5789,7 +5799,11 @@
       }
       syncPriceHint(item.minPrice, salePrice, item.listPrice);
       if (productStock) {
-        if (stockTrackingEnabled && !item.stockHidden) {
+        if (
+          stockTrackingEnabled &&
+          item.saleTracked !== false &&
+          !item.stockHidden
+        ) {
           productStock.hidden = false;
           productStock.textContent = stockCountLabel(item.stock, false);
           productStock.classList.toggle(
@@ -5823,6 +5837,11 @@
       proxy.setAttribute("data-item-list-price", String(line.listPrice || line.price || 0));
       proxy.setAttribute("data-item-min-price", String(line.minPrice || 0));
       proxy.setAttribute("data-item-stock", String(line.stock || 0));
+      proxy.setAttribute(
+        "data-item-sale-tracked",
+        line.saleTracked === false ? "0" : "1"
+      );
+      if (line.stockHidden) proxy.setAttribute("data-stock-hidden", "1");
       proxy.setAttribute(
         "data-item-track-serial",
         line.trackSerial || (line.serials && line.serials.length) ? "1" : "0"
@@ -5981,7 +6000,12 @@
         qtyInput.className = "shop-cart-qty-input";
         qtyInput.min = "0.001";
         qtyInput.step = "0.001";
-        if (stockTrackingEnabled && selectedKind() !== "trade_in" && line.stock > 0) {
+        if (
+          stockTrackingEnabled &&
+          line.saleTracked !== false &&
+          selectedKind() !== "trade_in" &&
+          line.stock > 0
+        ) {
           qtyInput.max = String(line.stock);
         }
         qtyInput.value = String(line.qty);
@@ -5996,6 +6020,7 @@
         inc.innerHTML = '<i data-lucide="plus" aria-hidden="true"></i>';
         if (
           stockTrackingEnabled &&
+          line.saleTracked !== false &&
           selectedKind() !== "trade_in" &&
           line.stock > 0 &&
           line.qty >= line.stock
@@ -6597,8 +6622,11 @@
       }
       if (serialSaleStock) {
         const stock = Math.max(0, roundQty(serialSaleItem.stock));
-        serialSaleStock.hidden = Boolean(serialSaleItem.stockHidden);
-        if (!serialSaleItem.stockHidden) {
+        const hideStock =
+          Boolean(serialSaleItem.stockHidden) ||
+          serialSaleItem.saleTracked === false;
+        serialSaleStock.hidden = hideStock;
+        if (!hideStock) {
           serialSaleStock.textContent = stockCountLabel(stock, false);
           serialSaleStock.classList.toggle(
             "is-empty",
@@ -7403,7 +7431,7 @@
         meta.textContent = [
           item.category,
           item.trackSerial ? "Serial tracked" : "",
-          stockTrackingEnabled
+          stockTrackingEnabled && item.saleTracked !== false
             ? item.stockHidden
               ? ""
               : out
@@ -7520,7 +7548,12 @@
           qtyInput.className = "shop-cart-qty-input";
           qtyInput.min = "0.001";
           qtyInput.step = "0.001";
-          if (!isIn && stockTrackingEnabled && line.stock > 0) {
+          if (
+            !isIn &&
+            stockTrackingEnabled &&
+            line.saleTracked !== false &&
+            line.stock > 0
+          ) {
             qtyInput.max = String(line.stock);
           }
           qtyInput.value = String(line.qty);
@@ -7536,6 +7569,7 @@
           if (
             !isIn &&
             stockTrackingEnabled &&
+            line.saleTracked !== false &&
             line.stock > 0 &&
             line.qty >= line.stock
           ) {
