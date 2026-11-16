@@ -14,6 +14,8 @@
   data-cancel-url="{{ cancel_url }}"
   data-return-url="{{ return_url }}"
   data-chat-url="{{ chat_url }}"
+  data-confirm-requires-details="{{ confirm_requires_details|yesno:'1,0' }}"
+  data-confirm-methods="{{ confirm_methods_json }}"
 >
   {% csrf_token %}
 
@@ -136,6 +138,46 @@
       <div class="rcpt-modal__icon" aria-hidden="true"><i data-lucide="shield-check"></i></div>
       <strong data-rcpt-code-title>Staff code</strong>
       <p class="rcpt-modal__hint" data-rcpt-code-hint>Enter a shop member’s 6-digit staff code to continue.</p>
+      <div data-rcpt-confirm-details hidden>
+        <div class="rcpt-fields2">
+          <label class="rcpt-field">
+            <span>Payment date</span>
+            <input type="date" data-rcpt-conf-date aria-label="Payment date">
+          </label>
+          <label class="rcpt-field">
+            <span>Payment time</span>
+            <input type="time" data-rcpt-conf-time aria-label="Payment time">
+          </label>
+        </div>
+        <label class="rcpt-field">
+          <span data-rcpt-conf-reflabel>M-Pesa reference</span>
+          <input type="text" data-rcpt-conf-ref maxlength="40" autocomplete="off"
+                 placeholder="e.g. QK7H2X9P1A" aria-label="M-Pesa reference">
+        </label>
+        <label class="rcpt-field" data-rcpt-conf-amount-wrap hidden>
+          <span>Amount to confirm</span>
+          <input type="number" data-rcpt-conf-amount min="0" step="any"
+                 placeholder="Full balance" aria-label="Confirm amount">
+        </label>
+        <label class="rcpt-field" data-rcpt-conf-method-wrap hidden>
+          <span>Payment method</span>
+          <select data-rcpt-conf-method aria-label="Payment method"></select>
+        </label>
+        <div class="rcpt-fields2" data-rcpt-conf-channels hidden>
+          <label class="rcpt-field" data-rcpt-conf-cash-wrap hidden>
+            <span>Cash amount</span>
+            <input type="number" data-rcpt-conf-cash min="0" step="any" placeholder="0.00">
+          </label>
+          <label class="rcpt-field" data-rcpt-conf-mpesa-wrap hidden>
+            <span>M-Pesa amount</span>
+            <input type="number" data-rcpt-conf-mpesa min="0" step="any" placeholder="0.00">
+          </label>
+          <label class="rcpt-field" data-rcpt-conf-card-wrap hidden>
+            <span>Card amount</span>
+            <input type="number" data-rcpt-conf-card min="0" step="any" placeholder="0.00">
+          </label>
+        </div>
+      </div>
       <label class="rcpt-field">
         <span>Staff code</span>
         <input type="password" inputmode="numeric" maxlength="6" autocomplete="one-time-code"
@@ -183,5 +225,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script defer src="{% static 'js/receipts.js' %}?v=3"></script>
+<script defer src="{% static 'js/receipts.js' %}?v=4"></script>
 {% endblock %}

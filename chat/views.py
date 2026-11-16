@@ -851,6 +851,20 @@ def app_view(request):
 def receipts_view(request):
     """Shop receipts browser — confirm, cancel, and return."""
     me = request.chat_shop
+    pos = stock_ops.effective_pos_settings(me)
+    confirm_methods = [
+        {"value": m, "label": l}
+        for m, l in (
+            ("cash", "Cash"),
+            ("mpesa", "M-Pesa"),
+            ("card", "Card"),
+            ("both", "Cash + M-Pesa"),
+            ("cash_card", "Cash + Card"),
+            ("mpesa_card", "M-Pesa + Card"),
+            ("cash_mpesa_card", "Cash + M-Pesa + Card"),
+        )
+        if stock_ops.payment_method_enabled(pos, m)
+    ]
     return render(
         request,
         "chat/receipts.html",
@@ -871,6 +885,10 @@ def receipts_view(request):
             "cancel_url": reverse("chat:api_receipts_cancel"),
             "return_url": reverse("chat:api_receipts_return"),
             "chat_url": reverse("chat:app"),
+            "confirm_requires_details": bool(
+                pos.get("require_mpesa_reference_on_confirm")
+            ),
+            "confirm_methods_json": json.dumps(confirm_methods),
         },
     )
 

@@ -44,12 +44,43 @@
     codeInput: root.querySelector("[data-rcpt-code]"),
     codeOk: root.querySelector("[data-rcpt-code-ok]"),
     codeCancel: root.querySelector("[data-rcpt-code-cancel]"),
+    confDetails: root.querySelector("[data-rcpt-confirm-details]"),
+    confDate: root.querySelector("[data-rcpt-conf-date]"),
+    confTime: root.querySelector("[data-rcpt-conf-time]"),
+    confRefLabel: root.querySelector("[data-rcpt-conf-reflabel]"),
+    confRef: root.querySelector("[data-rcpt-conf-ref]"),
+    confAmountWrap: root.querySelector("[data-rcpt-conf-amount-wrap]"),
+    confAmount: root.querySelector("[data-rcpt-conf-amount]"),
+    confMethodWrap: root.querySelector("[data-rcpt-conf-method-wrap]"),
+    confMethod: root.querySelector("[data-rcpt-conf-method]"),
+    confChannels: root.querySelector("[data-rcpt-conf-channels]"),
+    confCashWrap: root.querySelector("[data-rcpt-conf-cash-wrap]"),
+    confMpesaWrap: root.querySelector("[data-rcpt-conf-mpesa-wrap]"),
+    confCardWrap: root.querySelector("[data-rcpt-conf-card-wrap]"),
+    confCash: root.querySelector("[data-rcpt-conf-cash]"),
+    confMpesa: root.querySelector("[data-rcpt-conf-mpesa]"),
+    confCard: root.querySelector("[data-rcpt-conf-card]"),
     returnModal: root.querySelector("[data-rcpt-return-modal]"),
     returnBody: root.querySelector("[data-rcpt-return-body]"),
     returnReason: root.querySelector("[data-rcpt-return-reason]"),
     returnCode: root.querySelector("[data-rcpt-return-code]"),
     returnSubmit: root.querySelector("[data-rcpt-return-submit]"),
     toast: root.querySelector("[data-wa-toast]"),
+  };
+
+  var REQUIRE_DETAILS = root.dataset.confirmRequiresDetails === "1";
+  var CONFIRM_METHODS = [];
+  try {
+    CONFIRM_METHODS = JSON.parse(root.dataset.confirmMethods || "[]");
+  } catch (e) {}
+  var METHOD_CHANNELS = {
+    cash: ["cash"],
+    mpesa: ["mpesa"],
+    card: ["card"],
+    both: ["cash", "mpesa"],
+    cash_card: ["cash", "card"],
+    mpesa_card: ["mpesa", "card"],
+    cash_mpesa_card: ["cash", "mpesa", "card"],
   };
 
   var state = {
@@ -374,15 +405,60 @@
     });
   }
 
+  function syncConfirmChannels() {
+    if (!els.confChannels) return;
+    var method = els.confMethod ? els.confMethod.value : "";
+    var channels = METHOD_CHANNELS[method] || [];
+    var multi = channels.length > 1;
+    els.confChannels.hidden = !multi;
+    els.confCashWrap.hidden = channels.indexOf("cash") < 0;
+    els.confMpesaWrap.hidden = channels.indexOf("mpesa") < 0;
+    els.confCardWrap.hidden = channels.indexOf("card") < 0;
+  }
+
   function openCodeModal(action) {
     state.pendingAction = action;
     els.codeTitle.textContent =
       action === "confirm" ? "Confirm receipts" : "Cancel receipts";
     els.codeHint.textContent =
       action === "confirm"
-        ? "Enter a shop member’s staff code to confirm the selected pending sales."
+        ? "Enter a shop member’s staff code to confirm the selected receipts."
         : "Enter a shop member’s staff code to cancel and restock the selected pending sales.";
     els.codeInput.value = "";
+    if (els.confDetails) {
+      els.confDetails.hidden = action !== "confirm";
+      if (action === "confirm") {
+        var rows = selectedRows();
+        var credits = rows.filter(function (r) {
+          return r.kind === "credit" && parseFloat(r.credit_due) > 0;
+        });
+        els.confDate.value = todayISO();
+        els.confTime.value = "";
+        var ref = "";
+        rows.some(function (r) {
+          ref = (r.mpesa_receipt_number || "").trim();
+          return !!ref;
+        });
+        els.confRef.value = ref;
+        els.confRefLabel.textContent = REQUIRE_DETAILS
+          ? "M-Pesa reference (required)"
+          : "M-Pesa reference";
+        els.confAmountWrap.hidden = !credits.length;
+        var due = credits.reduce(function (m, r) {
+          return Math.max(m, parseFloat(r.credit_due) || 0);
+        }, 0);
+        els.confAmount.value = due > 0 ? String(due) : "";
+        els.confMethodWrap.hidden = !credits.length;
+        if (credits.length && !els.confMethod.options.length) {
+          els.confMethod.innerHTML = CONFIRM_METHODS.map(function (m) {
+            return (
+              '<option value="' + m.value + '">' + escapeHtml(m.label) + "</option>"
+            );
+          }).join("");
+        }
+        syncConfirmChannels();
+      }
+    }
     els.codeModal.hidden = false;
     refreshIcons();
     els.codeInput.focus();
@@ -393,7 +469,35 @@
     var ids = selectedIds();
     if (!action || !ids.length) return;
     var url = action === "confirm" ? urls.confirm : urls.cancel;
-    postJSON(url, { ids: ids, staff_code: code })
+    var payload = { ids: ids, staff_code: code };
+    if (action === "confirm" && els.confDetails && !els.confDetails.hidden) {
+      var date = (els.confDate.value || "").trim();
+      var time = (els.confTime.value || "").trim();
+      if (REQUIRE_DETAILS && !(els.confRef.value || "").trim()) {
+        showToast("Enter the M-Pesa reference number.");
+        els.confRef.focus();
+        return;
+      }
+      if (REQUIRE_DETAILS && (!date || !time)) {
+        showToast("Enter the payment date and time.");
+        (date ? els.confTime : els.confDate).focus();
+        return;
+      }
+      payload.mpesa_receipt_number = (els.confRef.value || "").trim();
+      payload.payment_at = date ? date + "T" + (time || "00:00") : "";
+      if (!els.confAmountWrap.hidden && (els.confAmount.value || "").trim()) {
+        payload.amount = els.confAmount.value.trim();
+      }
+      if (!els.confMethodWrap.hidden && els.confMethod.value) {
+        payload.payment_method = els.confMethod.value;
+        if (!els.confChannels.hidden) {
+          payload.cash_amount = els.confCash.value || "";
+          payload.mpesa_amount = els.confMpesa.value || "";
+          payload.card_amount = els.confCard.value || "";
+        }
+      }
+    }
+    postJSON(url, payload)
       .then(function (data) {
         showToast(data.message || "Done");
         state.selected = {};
@@ -629,6 +733,9 @@
     openReturnModal();
   });
 
+  if (els.confMethod) {
+    els.confMethod.addEventListener("change", syncConfirmChannels);
+  }
   els.codeCancel.addEventListener("click", function () {
     els.codeModal.hidden = true;
   });

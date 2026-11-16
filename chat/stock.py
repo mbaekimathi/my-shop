@@ -1539,7 +1539,12 @@ def _receipt_list_row(receipt) -> dict:
     created = timezone.localtime(receipt.created_at)
     status = receipt.status or STATUS_ACTIVE
     kind = receipt.kind or "sale"
-    can_confirm = kind == "sale" and status == STATUS_ACTIVE
+    credit_due = Decimal("0.00")
+    if kind == "credit" and status != STATUS_CANCELLED:
+        _paid, credit_due = _credit_paid_and_due(receipt)
+    can_confirm = (kind == "sale" and status == STATUS_ACTIVE) or (
+        kind == "credit" and status != STATUS_CANCELLED and credit_due > 0
+    )
     can_cancel = kind == "sale" and status == STATUS_ACTIVE
     can_return = kind in RETURNABLE_KINDS and status != STATUS_CANCELLED
     return {
@@ -1557,6 +1562,8 @@ def _receipt_list_row(receipt) -> dict:
         "client_phone": receipt.client_phone or "",
         "total": str(receipt.total),
         "amount_paid": str(receipt.amount_paid),
+        "credit_due": str(credit_due),
+        "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
         "created_at": created.isoformat(),
         "created_label": created.strftime("%d %b %Y · %H:%M"),
         "cashier": employee_label(receipt.created_by_id),
