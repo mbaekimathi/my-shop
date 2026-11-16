@@ -1,3 +1,5 @@
+import json
+
 from django.contrib.auth.models import User
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
@@ -39,13 +41,26 @@ from shops.models import (
 
 
 class SupplierSidebarTests(TestCase):
-    def test_suppliers_sidebar_only_has_all_suppliers(self):
+    def test_suppliers_sidebar_lists_view_tabs(self):
         sidebar = sidebar_for_suppliers(EmployeeRole.IT_SUPPORT)
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(labels, ["Dashboard", "All suppliers"])
+        self.assertEqual(
+            labels,
+            ["Dashboard", "All suppliers", "Item suppliers", "Shelf suppliers"],
+        )
         self.assertTrue(sidebar["primary"][1]["active"])
         self.assertIn("/analytics/suppliers/", sidebar["primary"][1]["href"])
+        self.assertIn("view=items", sidebar["primary"][2]["href"])
+        self.assertIn("view=shelf", sidebar["primary"][3]["href"])
         self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
+
+    def test_suppliers_sidebar_view_tab_marks_active(self):
+        sidebar = sidebar_for_suppliers(
+            EmployeeRole.IT_SUPPORT, view="shelf"
+        )
+        self.assertFalse(sidebar["primary"][1]["active"])
+        self.assertFalse(sidebar["primary"][2]["active"])
+        self.assertTrue(sidebar["primary"][3]["active"])
 
 
 class AnalyticsSidebarTests(TestCase):
@@ -953,7 +968,20 @@ class AnalyticsReceiptsBrowseTests(TestCase):
         self.assertEqual(rows[0]["cells"][0], "SL-PRINT")
         self.assertEqual(rows[0]["cells"][2], "Ada Client")
         self.assertEqual(rows[0]["cells"][3], "0700111222")
-        self.assertEqual(rows[0]["cells"][4], "Keyboard ×1")
+        items_cell = rows[0]["cells"][4]
+        self.assertEqual(items_cell["kind"], "items")
+        self.assertEqual(items_cell["label"], "Keyboard ×1")
+        self.assertEqual(
+            json.loads(items_cell["items_json"]),
+            [
+                {
+                    "name": "Keyboard",
+                    "qty": "1",
+                    "unit": "KSh 100.00",
+                    "total": "KSh 100.00",
+                }
+            ],
+        )
         self.assertEqual(rows[0]["cells"][7], "")
 
         document = build_receipts_print_document(filters=context)
@@ -1309,6 +1337,47 @@ class DashboardSidebarLinkTests(TestCase):
         chatbot = next(item for item in sidebar["primary"] if item["label"] == "Chatbot")
         self.assertEqual(chatbot["href"], reverse("chat:home"))
         self.assertNotIn("WhatsApp", labels)
+
+    def test_it_support_dashboard_splits_stock_links(self):
+        sidebar = sidebar_for_role_dashboard(EmployeeRole.IT_SUPPORT)
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Stock Management", labels)
+        self.assertIn("Item stock management", labels)
+        self.assertNotIn("Shelf stock management", labels)
+        item = next(
+            item
+            for item in sidebar["primary"]
+            if item["label"] == "Item stock management"
+        )
+        self.assertIn("/it-support/stock-management/", item["href"])
+        self.assertIn("mode=view", item["href"])
+
+        from shops.models import Shop
+        from shops.services import set_company_pos_setting
+
+        shop = Shop.objects.create(
+            name="SHELF LINK SHOP",
+            location="NAIROBI",
+            email="shelf-link@test.local",
+            phone_number="0700000961",
+            login_code="860161",
+            password_hash="x",
+        )
+        set_company_pos_setting(field="enable_shelf_mode", enabled=True)
+        self.addCleanup(
+            set_company_pos_setting, field="enable_shelf_mode", enabled=False
+        )
+        self.assertTrue(shop)
+
+        sidebar = sidebar_for_role_dashboard(EmployeeRole.IT_SUPPORT)
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertIn("Shelf stock management", labels)
+        shelf = next(
+            item
+            for item in sidebar["primary"]
+            if item["label"] == "Shelf stock management"
+        )
+        self.assertIn("tab=shelf", shelf["href"])
 
     def test_whatsapp_link_lives_in_marketing_sidebar(self):
         sidebar = sidebar_for_marketing_links(EmployeeRole.IT_SUPPORT)
@@ -3054,7 +3123,7 @@ class MarketingLinksPageTests(TestCase):
         self.assertEqual(
             home_labels,
             [
-                "Stock Management",
+                "Item stock management",
                 "Analytics",
                 "Credits",
                 "Suppliers",
@@ -3353,7 +3422,7 @@ class StoreManagerRoleTests(TestCase):
             EmployeeRole.STORE_MANAGER, profile=self.manager
         )
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(labels, ["Item stock"])
+        self.assertEqual(labels, ["Item stock", "Suppliers"])
         self.assertNotIn("Item Management", labels)
         self.assertNotIn("Stock Management", labels)
         self.assertNotIn("Analytics", labels)
@@ -3362,7 +3431,6 @@ class StoreManagerRoleTests(TestCase):
         self.assertNotIn("Communications", labels)
         self.assertNotIn("Credits", labels)
         self.assertNotIn("Clients", labels)
-        self.assertNotIn("Suppliers", labels)
 
     def test_store_stock_in_out_separate_from_shop_stock(self):
         from decimal import Decimal
@@ -3437,6 +3505,7 @@ class StoreManagerRoleTests(TestCase):
             "/store-manager/store-stock-in/",
             {
                 f"qty_{item.pk}": "1",
+                f"price_{item.pk}": "12.00",
                 "received_by_id": receiver.pk,
                 "supplier_name": "Brookside",
                 "supplier_phone": "0722000000",
@@ -3570,7 +3639,7 @@ class StoreManagerRoleTests(TestCase):
             StoreStock.objects.get(item=item).quantity, Decimal("2.000")
         )
 
-    def test_analytics_sections_limited_to_items_stock_trading(self):
+    def test_analytics_sections_limited_to_store_ops(self):
         may = self.employee_may
         self.assertFalse(may(self.manager, "analytics", "view"))
         self.assertTrue(may(self.manager, "analytics", "items"))
@@ -3579,7 +3648,7 @@ class StoreManagerRoleTests(TestCase):
         self.assertFalse(may(self.manager, "analytics", "credits"))
         self.assertFalse(may(self.manager, "analytics", "clients"))
         self.assertFalse(may(self.manager, "analytics", "sales"))
-        self.assertFalse(may(self.manager, "analytics", "suppliers"))
+        self.assertTrue(may(self.manager, "analytics", "suppliers"))
 
         from employees.workspace import sidebar_for_analytics
 

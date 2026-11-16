@@ -14,6 +14,7 @@
 
     <form class="stock-report-filters" method="get" data-stock-report-filters>
       <input type="hidden" name="mode" value="{{ stock_mode }}">
+      {% if shelf_tab %}<input type="hidden" name="tab" value="shelf">{% endif %}
       <label class="stock-report-field">
         <span>Shop</span>
         <select name="shop_id" aria-label="Shop">

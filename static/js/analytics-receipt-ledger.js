@@ -157,6 +157,7 @@
     const mpesaRefInput = payModal.querySelector("[data-ax-pay-mpesa-ref]");
     const stkIdInput = payModal.querySelector("[data-ax-stk-id]");
     const receiptIdInput = payModal.querySelector("[data-ax-pay-receipt-id]");
+    const receiptKindInput = payModal.querySelector("[data-ax-pay-receipt-kind]");
     const receiptIdsWrap = payModal.querySelector("[data-ax-pay-receipt-ids]");
     const payTitleEl = payModal.querySelector("[data-ax-pay-title]");
     const payHintEl = payModal.querySelector("[data-ax-pay-hint]");
@@ -273,6 +274,12 @@
       }
 
       setPayReceiptIds(receiptIds);
+      if (receiptKindInput) {
+        receiptKindInput.value =
+          !multi && !payAll
+            ? (source?.getAttribute?.("data-pay-kind") || "").trim()
+            : "";
+      }
       if (payTitleEl) payTitleEl.textContent = title;
       const dueNumber = Number.parseFloat(String(dueRaw || "0").replace(/,/g, "")) || 0;
       if (payHintEl) {
@@ -323,6 +330,7 @@
       payModal.hidden = true;
       if (payAmount) payAmount.value = "";
       if (stkIdInput) stkIdInput.value = "";
+      if (receiptKindInput) receiptKindInput.value = "";
       setPayReceiptIds([]);
       if (paySubmit) paySubmit.disabled = false;
       setPayStatus("");

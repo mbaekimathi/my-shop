@@ -36,7 +36,10 @@
       <form class="ax-pay-form" data-ax-pay-form>
         {% csrf_token %}
         <input type="hidden" name="kind" value="{{ account_kind }}">
+        <input type="hidden" name="receipt_kind" value="" data-ax-pay-receipt-kind>
         <input type="hidden" name="account_id" value="{{ account_id }}">
+        <input type="hidden" name="supplier_name" value="{{ supplier_name|default:'' }}">
+        <input type="hidden" name="supplier_phone" value="{{ supplier_phone|default:'' }}">
         <input type="hidden" name="receipt_id" value="" data-ax-pay-receipt-id>
         <div data-ax-pay-receipt-ids hidden></div>
         <input type="hidden" name="stk_payment_id" value="" data-ax-stk-id>

@@ -3155,6 +3155,558 @@ class StockActivityAnalyticsTests(TestCase):
         self.assertContains(response, "STOCK ACT SHOP")
 
 
+class ItSupportItemStockPagesTests(TestCase):
+    """IT support stock pages are item-stock only — shelf stock lives on the
+    Shelf stock management tab (mode=view&tab=shelf)."""
+
+    def setUp(self):
+        from items.models import Item
+        from shops.models import CompanyPosSettings, ShopPosSettings
+        from shops.services import _invalidate_pos_settings_cache
+
+        self.password = "it-stock-pass"
+        self.user = User.objects.create_user(
+            username="840061",
+            password=self.password,
+            email="it-stock@test.local",
+            first_name="IT",
+            last_name="STOCK",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840061",
+            phone_country_code="+254",
+            phone_number="700000982",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="IT STOCK SHOP",
+            location="NAIROBI",
+            email="it-stock-shop@test.local",
+            phone_number="0700000982",
+            login_code="840161",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="IT STOCK SHOP B",
+            location="MOMBASA",
+            email="it-stock-shop-b@test.local",
+            phone_number="0700000983",
+            login_code="840162",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="TOOLS",
+            name="IT STOCK ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        CompanyPosSettings.objects.update_or_create(
+            pk=1, defaults={"enable_shelf_mode": False}
+        )
+        ShopPosSettings.objects.filter(shop=self.shop).delete()
+        _invalidate_pos_settings_cache()
+        self.url = "/it-support/stock-management/"
+        self.client.force_login(self.user)
+
+    def _labels(self, response):
+        return [
+            item["label"] for item in response.context["page_sidebar"]["primary"]
+        ]
+
+    def _shelf_item(self):
+        from items.models import ShelfItem
+
+        return ShelfItem.objects.create(
+            shop=self.shop,
+            name="IT SHELF WIDGET",
+            unit="BAGS",
+            quantity=Decimal("8"),
+            created_by=self.profile,
+        )
+
+    def test_view_sidebar_labels_are_item_stock_specific(self):
+        page = self.client.get(self.url, {"mode": "view"})
+        self.assertEqual(page.status_code, 200)
+        labels = self._labels(page)
+        self.assertIn("Item stock", labels)
+        self.assertIn("Item stock in", labels)
+        self.assertIn("Item stock out", labels)
+        self.assertIn("Item stock transfer", labels)
+        self.assertIn("Item stock movement", labels)
+        self.assertIn("Item stock report", labels)
+        self.assertNotIn("Current Stock", labels)
+        self.assertNotIn("Stock In", labels)
+        self.assertNotIn("Stock Out", labels)
+        self.assertNotIn("Shelf stock", labels)
+
+    def test_view_page_hides_shelf_panel_but_shelf_tab_still_works(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+
+        item_page = self.client.get(
+            self.url, {"mode": "view", "shop_id": self.shop.pk}
+        )
+        self.assertEqual(item_page.status_code, 200)
+        self.assertNotContains(item_page, "IT SHELF WIDGET")
+
+        shelf_page = self.client.get(
+            self.url,
+            {"mode": "view", "shop_id": self.shop.pk, "tab": "shelf"},
+        )
+        self.assertEqual(shelf_page.status_code, 200)
+        self.assertContains(shelf_page, "IT SHELF WIDGET")
+
+    def test_shelf_only_shop_shows_placeholder_not_shelf_panel(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self._shelf_item()
+
+        page = self.client.get(
+            self.url, {"mode": "in", "shop_id": self.shop.pk}
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(
+            page, "This shop tracks shelf stock instead of item stock."
+        )
+        self.assertNotContains(page, "IT SHELF WIDGET")
+
+    def test_movements_page_skips_shelf_report(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self._shelf_item()
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "movements",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+                "shop_id": self.shop.pk,
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, "Shelf stock movement")
+        self.assertNotContains(page, "IT SHELF WIDGET")
+
+    def test_shelf_tab_sidebar_uses_shelf_labels(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+
+        page = self.client.get(self.url, {"mode": "view", "tab": "shelf"})
+        self.assertEqual(page.status_code, 200)
+        labels = self._labels(page)
+        self.assertIn("Shelf stock", labels)
+        self.assertIn("Shelf stock in", labels)
+        self.assertIn("Shelf stock out", labels)
+        self.assertIn("Shelf stock transfer", labels)
+        self.assertIn("Shelf stock movement", labels)
+        self.assertIn("Shelf stock report", labels)
+        self.assertNotIn("Serials", labels)
+        self.assertNotIn("Item stock", labels)
+        self.assertNotIn("Item stock in", labels)
+        self.assertNotIn("Item stock out", labels)
+        self.assertNotIn("Item stock transfer", labels)
+        self.assertNotIn("Item stock movement", labels)
+        self.assertNotIn("Item stock report", labels)
+
+    def test_shelf_tab_sidebar_links_carry_tab_param(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+
+        page = self.client.get(self.url, {"mode": "view", "tab": "shelf"})
+        self.assertEqual(page.status_code, 200)
+        hrefs = {
+            item["label"]: item.get("href", "")
+            for item in page.context["page_sidebar"]["primary"]
+        }
+        self.assertIn("tab=shelf", hrefs["Shelf stock in"])
+        self.assertIn("tab=shelf", hrefs["Shelf stock out"])
+        self.assertIn("tab=shelf", hrefs["Shelf stock transfer"])
+        self.assertIn("tab=shelf", hrefs["Shelf stock movement"])
+        self.assertIn("tab=shelf", hrefs["Shelf stock report"])
+
+    def test_shelf_tab_stock_in_shows_shelf_panel_only(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+
+        # No shop picked: prompt to pick a shelf shop, no item catalog.
+        page = self.client.get(self.url, {"mode": "in", "tab": "shelf"})
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Pick a shelf-mode shop")
+        self.assertNotContains(page, "data-stock-catalog-api")
+
+        # Shelf-mode shop picked: the shelf panel renders its shelf items.
+        page = self.client.get(
+            self.url,
+            {"mode": "in", "tab": "shelf", "shop_id": self.shop.pk},
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "IT SHELF WIDGET")
+        self.assertContains(page, "Shelf stock in")
+
+    def test_shelf_tab_view_lists_shop_column_matrix(self):
+        from items.models import ShelfItem
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+        ShelfItem.objects.create(
+            shop=self.shop_b,
+            name="IT SHELF WIDGET",
+            unit="BAGS",
+            quantity=Decimal("4"),
+            created_by=self.profile,
+        )
+        ShelfItem.objects.create(
+            shop=self.shop_b,
+            name="IT SHELF GADGET",
+            unit="PCS",
+            quantity=Decimal("2"),
+            created_by=self.profile,
+        )
+
+        page = self.client.get(self.url, {"mode": "view", "tab": "shelf"})
+        self.assertEqual(page.status_code, 200)
+        # Shop columns + total, same shape as the item stock matrix.
+        self.assertContains(page, 'class="stock-matrix')
+        self.assertContains(page, "IT STOCK SHOP")
+        self.assertContains(page, "IT STOCK SHOP B")
+        self.assertContains(page, "IT SHELF WIDGET")
+        self.assertContains(page, "IT SHELF GADGET")
+        self.assertContains(page, ">Total<")
+        # No item-catalog surface on the shelf tab.
+        self.assertNotContains(page, "data-stock-catalog-api")
+        self.assertNotContains(page, "IT STOCK ITEM")
+
+        groups = page.context["shelf_matrix_groups"]
+        rows = [row for group in groups for row in group["items"]]
+        widget = next(row for row in rows if row["name"] == "IT SHELF WIDGET")
+        self.assertEqual(widget["total"], Decimal("12"))
+        self.assertEqual(len(widget["cells"]), 2)
+
+        # A picked shop narrows the matrix to one column.
+        page = self.client.get(
+            self.url,
+            {"mode": "view", "tab": "shelf", "shop_id": self.shop_b.pk},
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(len(page.context["shelf_matrix_shops"]), 1)
+        self.assertContains(page, "IT SHELF GADGET")
+
+    def test_shelf_tab_movements_uses_shelf_report(self):
+        from items.models import ShelfStockMovement, ShelfStockMovementType
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        shelf_item = self._shelf_item()
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=Decimal("8"),
+            balance_after=Decimal("8"),
+            created_by=self.profile,
+        )
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "movements",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+                "shop_id": self.shop.pk,
+                "tab": "shelf",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Shelf stock movement")
+        self.assertContains(page, "IT SHELF WIDGET")
+        labels = self._labels(page)
+        self.assertIn("Shelf stock movement", labels)
+
+    def test_settings_sidebar_splits_item_and_shelf_links(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+
+        page = self.client.get(self.url, {"mode": "settings"})
+        self.assertEqual(page.status_code, 200)
+        labels = self._labels(page)
+        self.assertIn("Item stock settings", labels)
+        self.assertIn("Shelf stock settings", labels)
+        self.assertIn("Item low stock alerts", labels)
+        self.assertIn("Item stock take", labels)
+        self.assertIn("Item online stock take", labels)
+        self.assertIn("Print item stock", labels)
+        self.assertNotIn("Stock Settings", labels)
+        self.assertNotIn("Low Stock Alerts", labels)
+        self.assertNotIn("Stock Take", labels)
+        self.assertNotIn("Online stock take", labels)
+        self.assertNotIn("Print stock", labels)
+
+        hrefs = {
+            item["label"]: item.get("href", "")
+            for item in page.context["page_sidebar"]["primary"]
+        }
+        self.assertIn("stock=item", hrefs["Item stock settings"])
+        self.assertIn("stock=shelf", hrefs["Shelf stock settings"])
+
+        # Each filtered settings page keeps only its own settings link.
+        item_page = self.client.get(
+            self.url, {"mode": "settings", "stock": "item"}
+        )
+        labels = self._labels(item_page)
+        self.assertIn("Item stock settings", labels)
+        self.assertNotIn("Shelf stock settings", labels)
+
+        shelf_page = self.client.get(
+            self.url, {"mode": "settings", "stock": "shelf"}
+        )
+        labels = self._labels(shelf_page)
+        self.assertIn("Shelf stock settings", labels)
+        self.assertNotIn("Item stock settings", labels)
+
+    def test_settings_stock_param_filters_sections(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+
+        item_page = self.client.get(
+            self.url, {"mode": "settings", "stock": "item"}
+        )
+        self.assertEqual(item_page.status_code, 200)
+        self.assertContains(item_page, ">Item stock<")
+        self.assertNotContains(item_page, ">Shelf stock<")
+
+        shelf_page = self.client.get(
+            self.url, {"mode": "settings", "stock": "shelf"}
+        )
+        self.assertEqual(shelf_page.status_code, 200)
+        self.assertContains(shelf_page, ">Shelf stock<")
+        self.assertNotContains(shelf_page, ">Item stock<")
+        sidebar = {
+            item["label"]: item.get("active")
+            for item in shelf_page.context["page_sidebar"]["primary"]
+        }
+        self.assertTrue(sidebar["Shelf stock settings"])
+        self.assertNotIn("Item stock settings", sidebar)
+
+        # Unfiltered keeps the previous behaviour — both sections render.
+        both_page = self.client.get(self.url, {"mode": "settings"})
+        self.assertContains(both_page, ">Item stock<")
+        self.assertContains(both_page, ">Shelf stock<")
+
+    def test_shelf_settings_sidebar_shows_shelf_links(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+
+        page = self.client.get(
+            self.url, {"mode": "settings", "stock": "shelf"}
+        )
+        self.assertEqual(page.status_code, 200)
+        hrefs = {
+            item["label"]: item.get("href", "")
+            for item in page.context["page_sidebar"]["primary"]
+        }
+        for label in (
+            "Shelf low stock alerts",
+            "Shelf stock take",
+            "Shelf online stock take",
+            "Print shelf stock",
+        ):
+            self.assertIn(label, hrefs)
+        self.assertIn("mode=low-stock", hrefs["Shelf low stock alerts"])
+        self.assertIn("stock=shelf", hrefs["Shelf low stock alerts"])
+        self.assertIn("mode=stock-take", hrefs["Shelf stock take"])
+        self.assertIn("stock=shelf", hrefs["Shelf stock take"])
+        self.assertIn("mode=online-stock-take", hrefs["Shelf online stock take"])
+        self.assertIn("stock=shelf", hrefs["Shelf online stock take"])
+        self.assertIn("layout=shelf", hrefs["Print shelf stock"])
+        for label in (
+            "Item stock settings",
+            "Item low stock alerts",
+            "Item stock take",
+            "Item online stock take",
+            "Print item stock",
+        ):
+            self.assertNotIn(label, hrefs)
+
+        # The item settings page keeps the item link set only.
+        item_page = self.client.get(
+            self.url, {"mode": "settings", "stock": "item"}
+        )
+        item_labels = self._labels(item_page)
+        self.assertIn("Item low stock alerts", item_labels)
+        self.assertNotIn("Shelf low stock alerts", item_labels)
+        self.assertNotIn("Shelf stock take", item_labels)
+
+    def test_shelf_low_stock_page_lists_items_and_saves_threshold(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        shelf_item = self._shelf_item()
+
+        page = self.client.get(
+            self.url, {"mode": "low-stock", "stock": "shelf"}
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "IT SHELF WIDGET")
+        self.assertNotContains(page, "IT STOCK ITEM")
+
+        page = self.client.post(
+            f"{self.url}?mode=low-stock&stock=shelf",
+            {
+                "action": "save_shelf_low_stock",
+                "shop_id": str(self.shop.pk),
+                "shelf_item_id": str(shelf_item.pk),
+                "threshold": "10",
+            },
+        )
+        self.assertEqual(page.status_code, 302)
+        shelf_item.refresh_from_db()
+        self.assertEqual(shelf_item.low_stock_threshold, Decimal("10"))
+
+        # qty 8 <= alert 10 → flagged low on the next render.
+        page = self.client.get(
+            self.url, {"mode": "low-stock", "stock": "shelf"}
+        )
+        self.assertContains(page, "is-low")
+
+        # The item page is unchanged — no shelf rows.
+        page = self.client.get(self.url, {"mode": "low-stock"})
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, "IT SHELF WIDGET")
+
+    def test_shelf_stock_take_create_count_close_adjust(self):
+        from shops.services import set_company_pos_setting
+        from items.models import ShelfStockTake, StockTakeStatus
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        shelf_item = self._shelf_item()  # system qty 8
+
+        page = self.client.post(
+            f"{self.url}?mode=stock-take&stock=shelf",
+            {
+                "action": "create_shelf_take",
+                "shop_id": str(self.shop.pk),
+                "note": "count test",
+            },
+        )
+        self.assertEqual(page.status_code, 302)
+        take = ShelfStockTake.objects.get()
+        entry = take.entries.get()
+        self.assertEqual(entry.system_qty, Decimal("8"))
+
+        page = self.client.get(
+            self.url,
+            {"mode": "stock-take", "stock": "shelf", "take_id": take.pk},
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "IT SHELF WIDGET")
+
+        page = self.client.post(
+            f"{self.url}?mode=stock-take&stock=shelf",
+            {
+                "action": "submit_shelf_take",
+                "take_id": str(take.pk),
+                f"count_{entry.pk}": "5",
+            },
+        )
+        self.assertEqual(page.status_code, 302)
+        take.refresh_from_db()
+        self.assertEqual(take.status, StockTakeStatus.CLOSED)
+        entry.refresh_from_db()
+        self.assertEqual(entry.counted_qty, Decimal("5"))
+        # Book qty is untouched until adjustments are applied.
+        shelf_item.refresh_from_db()
+        self.assertEqual(shelf_item.quantity, Decimal("8"))
+
+        page = self.client.post(
+            f"{self.url}?mode=stock-take&stock=shelf",
+            {"action": "apply_shelf_take", "take_id": str(take.pk)},
+        )
+        self.assertEqual(page.status_code, 302)
+        shelf_item.refresh_from_db()
+        self.assertEqual(shelf_item.quantity, Decimal("5"))
+
+    def test_shelf_online_stock_take_save_and_sync(self):
+        from shops.services import set_company_pos_setting
+        from items.models import ShelfOnlineStockTakeEntry
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        shelf_item = self._shelf_item()
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "stock": "shelf",
+                "shop_id": self.shop.pk,
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "IT SHELF WIDGET")
+
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take&stock=shelf",
+            {
+                "mode": "online-stock-take",
+                "shop_id": str(self.shop.pk),
+                "item_id": str(shelf_item.pk),
+                "qty": "6",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        data = page.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["line"]["physical_qty"], "6")
+        entry = ShelfOnlineStockTakeEntry.objects.get()
+        self.assertEqual(entry.shelf_item_id, shelf_item.pk)
+        self.assertEqual(entry.physical_qty, Decimal("6"))
+
+        page = self.client.get(
+            f"{self.url}?mode=online-stock-take&stock=shelf"
+            f"&shop_id={self.shop.pk}&sync=1",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        data = page.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["filled_count"], 1)
+        self.assertEqual(data["lines"][0]["item_id"], shelf_item.pk)
+
+    def test_shelf_print_page_lists_shelf_items_only(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self._shelf_item()
+
+        page = self.client.get(
+            "/it-support/stock-management/print/", {"layout": "shelf"}
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Shelf stock list")
+        self.assertContains(page, "IT SHELF WIDGET")
+        self.assertNotContains(page, "IT STOCK ITEM")
+
+
 class StockSerialMovementsShopFilterTests(TestCase):
     def setUp(self):
         self.password = "serial-mov-pass"
@@ -3647,6 +4199,10 @@ class DecimalStockQuantityTests(TestCase):
         settings_row.require_reason_on_out = False
         settings_row.require_refund_on_out = False
         settings_row.save()
+        from shops.services import _invalidate_stock_settings_cache
+
+        _invalidate_stock_settings_cache()
+        self.addCleanup(_invalidate_stock_settings_cache)
 
         self.item = Item.objects.create(
             category="BULK",

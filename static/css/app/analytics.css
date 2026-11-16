@@ -9331,3 +9331,86 @@ body.ax-credit-due-open {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Receipt items popup (eye icon in the Items column) ── */
+.ax-items-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+}
+
+.ax-items-label {
+  min-width: 0;
+}
+
+.ax-items-eye {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--chip-bg);
+  color: var(--text-strong);
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.ax-items-eye:hover {
+  background: var(--chip-bg-hover);
+  transform: translateY(-1px);
+}
+
+.ax-items-eye i,
+.ax-items-eye svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.ax-items-dialog {
+  width: min(460px, 100%);
+}
+
+.ax-items-body {
+  padding: 0.85rem 1.1rem 1.1rem;
+  max-height: min(60vh, 28rem);
+  overflow: auto;
+}
+
+.ax-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.ax-items-table th,
+.ax-items-table td {
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.ax-items-table thead th {
+  color: var(--mist-dim);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ax-items-table th:nth-child(2),
+.ax-items-table td:nth-child(2),
+.ax-items-table th:nth-child(3),
+.ax-items-table td:nth-child(3),
+.ax-items-table th:nth-child(4),
+.ax-items-table td:nth-child(4) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ax-items-table tbody tr:last-child td {
+  border-bottom: none;
+}

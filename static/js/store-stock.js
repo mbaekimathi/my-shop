@@ -2,6 +2,7 @@
   function initStoreStock(root) {
   const employeeSearchUrl = root.getAttribute("data-employee-search-url") || "";
   const mode = (root.getAttribute("data-mode") || "").trim().toLowerCase();
+  const requirePrice = root.getAttribute("data-require-price") || "";
   const personLabel = mode === "in" ? "who delivered" : "employee who received";
   const form = root.matches("[data-store-stock-form]")
     ? root
@@ -280,6 +281,32 @@
       if (!hasQty) {
         event.preventDefault();
         window.alert("Enter a quantity for at least one item.");
+        return;
+      }
+      if (requirePrice) {
+        const kind =
+          tradeKinds.find((radio) => radio.checked)?.value || "";
+        const priceNeeded =
+          requirePrice === "always" ||
+          (requirePrice === "trade_in" && kind === "trade_in");
+        const missingPrice = priceNeeded
+          ? [...form.querySelectorAll("[data-store-item-row]")].some((row) => {
+              const qty = row.querySelector("[data-store-qty-input]");
+              const price = row.querySelector("[data-store-price-input]");
+              return (
+                qty &&
+                !qty.disabled &&
+                qtyValue(qty) > 0 &&
+                price &&
+                !price.disabled &&
+                !String(price.value || "").trim()
+              );
+            })
+          : false;
+        if (missingPrice) {
+          event.preventDefault();
+          window.alert("Enter a buying price on every filled line.");
+        }
       }
     });
   }

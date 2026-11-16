@@ -5335,6 +5335,10 @@
           (el?.getAttribute?.("data-item-track-serial") ||
             el?.dataset?.itemTrackSerial ||
             "") === "1",
+        saleTracked:
+          (el?.getAttribute?.("data-item-sale-tracked") ||
+            el?.dataset?.itemSaleTracked ||
+            "1") !== "0",
       };
     };
 
@@ -5410,11 +5414,12 @@
       }
     };
 
-    const clampQty = (qty, stock) => {
+    const clampQty = (qty, stock, tracked = true) => {
       let next = roundQty(qty);
       if (!Number.isFinite(next) || next <= 0) next = 0;
       if (
         stockTrackingEnabled &&
+        tracked &&
         selectedKind() !== "trade_in" &&
         stock > 0 &&
         next > stock
@@ -5426,8 +5431,8 @@
 
     // Quantity typed into a stepper before the item is in the cart yet —
     // decimals allowed, kept positive, and capped at tracked stock.
-    const pendingQty = (input, stock) => {
-      const qty = clampQty(input?.value, stock);
+    const pendingQty = (input, stock, tracked = true) => {
+      const qty = clampQty(input?.value, stock, tracked);
       return qty > 0 ? qty : 1;
     };
 
@@ -5445,7 +5450,8 @@
       if (!id) return;
       const existing = cart.get(id);
       const stock = meta?.stock ?? existing?.stock ?? 0;
-      const nextQty = clampQty(qty, stock);
+      const tracked = (meta?.saleTracked ?? existing?.saleTracked) !== false;
+      const nextQty = clampQty(qty, stock, tracked);
       if (nextQty <= 0) {
         cart.delete(id);
         return;
@@ -5523,6 +5529,7 @@
         qty: trackSerial && serials.length ? serials.length : nextQty,
         trackSerial,
         serials,
+        saleTracked: tracked,
       });
     };
 
@@ -5594,12 +5601,15 @@
         const qtyWrap = card.querySelector("[data-cart-qty-wrap]");
         const qtyInput = card.querySelector("[data-cart-qty-input]");
         const stock = Math.max(0, roundQty(card.getAttribute("data-item-stock")));
+        const trackedQty =
+          stockTrackingEnabled &&
+          (card.getAttribute("data-item-sale-tracked") || "1") !== "0";
 
         card.classList.toggle("is-in-cart", inCart);
         if (addBtn) {
           const label = addBtn.querySelector(".shop-floor-add-label");
           const short = addBtn.querySelector(".shop-floor-add-short");
-          if (stockTrackingEnabled && selectedKind() !== "trade_in" && stock <= 0) {
+          if (trackedQty && selectedKind() !== "trade_in" && stock <= 0) {
             addBtn.hidden = false;
             addBtn.disabled = true;
             if (label) label.textContent = "Out of stock";
@@ -5613,13 +5623,13 @@
         }
         if (qtyWrap) qtyWrap.hidden = !inCart;
         if (qtyInput && line) {
-          if (stockTrackingEnabled && stock > 0) qtyInput.max = String(stock);
+          if (trackedQty && stock > 0) qtyInput.max = String(stock);
           else qtyInput.removeAttribute("max");
           qtyInput.value = String(line.qty);
         }
         const inc = card.querySelector('[data-cart-qty="inc"]');
         if (inc && line) {
-          inc.disabled = stockTrackingEnabled && stock > 0 && line.qty >= stock;
+          inc.disabled = trackedQty && stock > 0 && line.qty >= stock;
         }
       });
     };
@@ -5632,8 +5642,12 @@
         roundQty(productModal.dataset.itemStock || line?.stock || 0)
       );
       const inCart = Boolean(line);
+      const trackedQty =
+        stockTrackingEnabled &&
+        productModal.dataset.itemSaleTracked !== "0" &&
+        line?.saleTracked !== false;
       const outOfStock =
-        stockTrackingEnabled && selectedKind() !== "trade_in" && stock <= 0;
+        trackedQty && selectedKind() !== "trade_in" && stock <= 0;
       const trackSerial =
         productModal.dataset.itemTrackSerial === "1" || Boolean(line?.trackSerial);
       if (productAdd) {
@@ -5646,7 +5660,7 @@
         productQtyWrap.hidden = outOfStock || (trackSerial && !inCart);
       }
       if (productQtyInput) {
-        if (stockTrackingEnabled && stock > 0) productQtyInput.max = String(stock);
+        if (trackedQty && stock > 0) productQtyInput.max = String(stock);
         else productQtyInput.removeAttribute("max");
         if (line) {
           productQtyInput.value = String(line.qty);
@@ -5657,7 +5671,7 @@
       const inc = productModal.querySelector('[data-product-qty="inc"]');
       if (inc) {
         const current = line ? line.qty : roundQty(productQtyInput?.value);
-        inc.disabled = stockTrackingEnabled && stock > 0 && current >= stock;
+        inc.disabled = trackedQty && stock > 0 && current >= stock;
       }
 
       const listPrice = roundMoney(
@@ -5752,6 +5766,7 @@
       productModal.dataset.itemMinPrice = String(item.minPrice);
       productModal.dataset.itemImage = item.image;
       productModal.dataset.itemTrackSerial = item.trackSerial ? "1" : "0";
+      productModal.dataset.itemSaleTracked = item.saleTracked === false ? "0" : "1";
 
       if (productCategory) productCategory.textContent = item.category || "";
       if (productName) productName.textContent = item.name;
@@ -5777,7 +5792,10 @@
         if (stockTrackingEnabled && !item.stockHidden) {
           productStock.hidden = false;
           productStock.textContent = stockCountLabel(item.stock, false);
-          productStock.classList.toggle("is-empty", item.stock <= 0);
+          productStock.classList.toggle(
+            "is-empty",
+            item.saleTracked !== false && item.stock <= 0
+          );
         } else {
           productStock.hidden = true;
         }
@@ -6582,7 +6600,10 @@
         serialSaleStock.hidden = Boolean(serialSaleItem.stockHidden);
         if (!serialSaleItem.stockHidden) {
           serialSaleStock.textContent = stockCountLabel(stock, false);
-          serialSaleStock.classList.toggle("is-empty", stock <= 0);
+          serialSaleStock.classList.toggle(
+            "is-empty",
+            serialSaleItem.saleTracked !== false && stock <= 0
+          );
         }
       }
       if (serialSaleMedia) {
@@ -6647,6 +6668,7 @@
       }
       if (
         stockTrackingEnabled &&
+        serialSaleItem.saleTracked !== false &&
         serialSaleItem.stock > 0 &&
         serials.length > serialSaleItem.stock
       ) {
@@ -6691,7 +6713,12 @@
       if (!checkoutEnabled) return;
       const item = readItemFromEl(sourceEl);
       if (!item.id) return;
-      if (stockTrackingEnabled && selectedKind() !== "trade_in" && item.stock <= 0) {
+      if (
+        stockTrackingEnabled &&
+        item.saleTracked !== false &&
+        selectedKind() !== "trade_in" &&
+        item.stock <= 0
+      ) {
         return;
       }
       if (item.trackSerial || cart.get(item.id)?.trackSerial) {
@@ -6727,7 +6754,9 @@
         if (productPriceInput) productPriceInput.value = salePrice.toFixed(2);
       }
       const qtyToAdd =
-        sourceEl === productModal ? pendingQty(productQtyInput, item.stock) : 1;
+        sourceEl === productModal
+          ? pendingQty(productQtyInput, item.stock, item.saleTracked !== false)
+          : 1;
       setQty(item.id, (existing?.qty || 0) + qtyToAdd, {
         ...item,
         price: existing ? existing.price : salePrice,
@@ -7222,10 +7251,11 @@
           0,
           roundQty(productModal.dataset.itemStock || 0)
         );
-        const current = pendingQty(productQtyInput, stock);
+        const tracked = productModal.dataset.itemSaleTracked !== "0";
+        const current = pendingQty(productQtyInput, stock, tracked);
         let next =
           action === "inc" ? current + 1 : Math.max(0.001, current - 1);
-        next = clampQty(next, stock);
+        next = clampQty(next, stock, tracked);
         if (!(next > 0)) next = 0.001;
         productQtyInput.value = String(next);
         syncProductControls();
@@ -7350,6 +7380,7 @@
       stockHidden: Boolean(item?.stock_hidden),
       image: String(item?.image_url || ""),
       trackSerial: Boolean(item?.track_serial),
+      saleTracked: item?.sale_stock_tracked !== false,
     });
 
     const renderTradeSuggest = (items, query) => {
@@ -7361,7 +7392,10 @@
         option.type = "button";
         option.className = "shop-cart-client-suggest-option";
         const out =
-          stockTrackingEnabled && kind !== "trade_in" && item.stock <= 0;
+          stockTrackingEnabled &&
+          item.saleTracked !== false &&
+          kind !== "trade_in" &&
+          item.stock <= 0;
         option.disabled = out;
         const name = document.createElement("strong");
         name.textContent = item.name;
@@ -7597,7 +7631,12 @@
       hideTradeSuggest();
       if (tradeSearch) tradeSearch.value = "";
       const kind = tradeKind();
-      if (stockTrackingEnabled && kind !== "trade_in" && item.stock <= 0) {
+      if (
+        stockTrackingEnabled &&
+        item.saleTracked !== false &&
+        kind !== "trade_in" &&
+        item.stock <= 0
+      ) {
         setTradeStatus(`“${item.name}” is out of stock.`, { error: true });
         return;
       }

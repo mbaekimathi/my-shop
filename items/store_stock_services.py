@@ -18,6 +18,9 @@ from items.models import (
     StoreStockMovementType,
 )
 
+# StoreStockMovement.source value for rows that mirror shop-floor receipts.
+STORE_SOURCE_POS = "pos"
+
 
 def _parse_qty(raw) -> Decimal:
     try:
@@ -40,7 +43,7 @@ def list_store_stock_items(*, query: str = "") -> list[dict]:
     items = (
         Item.objects.filter(is_suspended=False)
         .order_by("category", "name")
-        .only("id", "name", "category")
+        .only("id", "name", "category", "stock_count_enabled")
     )
     if q:
         filt = Q(name__icontains=q) | Q(category__icontains=q)
@@ -78,6 +81,7 @@ def list_store_stock_items(*, query: str = "") -> list[dict]:
                 "last_buying_price_display": (
                     str(price) if price is not None else ""
                 ),
+                "stock_count_enabled": bool(item.stock_count_enabled),
                 "search_text": f"{item.name} {item.category} {item.pk}".lower(),
             }
         )
@@ -99,22 +103,25 @@ def search_store_items(*, query: str, limit: int = 12) -> list[dict]:
     ]
 
 
-def parse_supplier_payment_details(post_data, *, stock_req) -> dict:
+def parse_supplier_payment_details(
+    post_data, *, stock_req, field_prefix: str = ""
+) -> dict:
     """Read supplier name/phone + payment status from a stock-in payload.
 
     Honours CompanyStockSettings: when require_supplier_on_in /
     require_payment_status_on_in are off the fields are optional.
+    field_prefix="shelf_" reads the shelf-mode rules instead.
     """
     name = str(post_data.get("supplier_name") or "").strip().upper()
     phone = str(post_data.get("supplier_phone") or "").strip()
     payment = str(post_data.get("payment_status") or "").strip().lower()
-    if getattr(stock_req, "require_supplier_on_in", False):
+    if getattr(stock_req, f"{field_prefix}require_supplier_on_in", False):
         if not name:
             raise ValidationError("Enter the supplier name.")
         if not phone:
             raise ValidationError("Enter the supplier phone number.")
     valid = {choice.value for choice in StockPaymentStatus}
-    if getattr(stock_req, "require_payment_status_on_in", False):
+    if getattr(stock_req, f"{field_prefix}require_payment_status_on_in", False):
         if payment not in valid:
             raise ValidationError(
                 "Choose a payment status (unpaid, paid, or partial)."
@@ -128,20 +135,23 @@ def parse_supplier_payment_details(post_data, *, stock_req) -> dict:
     }
 
 
-def parse_stock_out_details(post_data, *, stock_req) -> dict:
+def parse_stock_out_details(
+    post_data, *, stock_req, field_prefix: str = ""
+) -> dict:
     """Read reason / refund from a stock-out payload.
 
     Same rules as the per-shop stock-out panel: the reason is one of
     StockOutReason (custom needs a note), refund is yes/no (yes needs an
     amount), and CompanyStockSettings.require_reason_on_out /
     require_refund_on_out decide whether the fields are compulsory.
+    field_prefix="shelf_" reads the shelf-mode rules instead.
     """
     from items.services import _parse_price
 
     reason = str(post_data.get("reason") or "").strip().lower()
     note = str(post_data.get("note") or "").strip()
     valid_reasons = {choice.value for choice in StockOutReason}
-    if getattr(stock_req, "require_reason_on_out", False):
+    if getattr(stock_req, f"{field_prefix}require_reason_on_out", False):
         if reason not in valid_reasons:
             raise ValidationError(
                 "Choose a reason (waste, transfer, display, supplier return, "
@@ -162,7 +172,7 @@ def parse_stock_out_details(post_data, *, stock_req) -> dict:
 
     refund = str(post_data.get("refund") or "").strip().lower()
     refund_amount = None
-    if getattr(stock_req, "require_refund_on_out", False):
+    if getattr(stock_req, f"{field_prefix}require_refund_on_out", False):
         if refund not in ("yes", "no"):
             raise ValidationError(
                 "Choose whether a refund applies (yes or no)."
@@ -201,7 +211,7 @@ def _parse_buying_price(raw, item_raw) -> Decimal | None:
 
 
 def parse_store_stock_qty_lines(
-    post_data,
+    post_data, *, require_price: bool = False
 ) -> list[tuple[int, Decimal, Decimal | None]]:
     """Read qty_<item_id> (+ optional price_<item_id>) fields; skip blanks/zeros."""
     lines = []
@@ -218,13 +228,12 @@ def parse_store_stock_qty_lines(
             qty = _parse_qty(text)
         except ValidationError:
             raise ValidationError(f"Invalid quantity for item {item_raw}.")
-        lines.append(
-            (
-                int(item_raw),
-                qty,
-                _parse_buying_price(post_data.get(f"price_{item_raw}"), item_raw),
+        price = _parse_buying_price(post_data.get(f"price_{item_raw}"), item_raw)
+        if require_price and price is None:
+            raise ValidationError(
+                f"Enter a buying price for item {item_raw}."
             )
-        )
+        lines.append((int(item_raw), qty, price))
     if not lines:
         raise ValidationError("Enter a quantity for at least one item.")
     return lines
@@ -318,6 +327,14 @@ def _resolve_item(item_id) -> Item:
         item = Item.objects.get(pk=int(item_id), is_suspended=False)
     except (TypeError, ValueError, Item.DoesNotExist) as exc:
         raise ValidationError("Select a valid item.") from exc
+    return item
+
+
+def set_item_stock_count_enabled(*, item_id, enabled: bool) -> Item:
+    """Toggle whether POS sales/returns move this item's StoreStock count."""
+    item = _resolve_item(item_id)
+    item.stock_count_enabled = bool(enabled)
+    item.save(update_fields=["stock_count_enabled", "updated_at"])
     return item
 
 
@@ -434,8 +451,62 @@ def record_store_stock_out(
     )
 
 
+def record_store_receipt_movement(
+    *,
+    actor: EmployeeProfile,
+    item: Item,
+    quantity,
+    movement_type: str,
+    note: str = "",
+    reason: str = "",
+) -> StoreStockMovement:
+    """Mirror a shop-floor receipt line into the central store ledger.
+
+    Called while POS item stock tracking is on: sales / trade outs / trade-in
+    returns deduct (OUT); trade ins, trade exchanges and customer returns add
+    back (IN). Unlike record_store_stock_out this never blocks on the store
+    balance — the shop floor stock check is authoritative — so the store
+    quantity can go negative when the item was never stocked into the
+    central store.
+    """
+    if item is None or not getattr(item, "stock_count_enabled", True) or not getattr(
+        item, "deduct_stock_on_sale", True
+    ):
+        # Item opted out of stock counting on the item-stock page (or of sale
+        # deduction on the stock tracking page) — its counts are manual only;
+        # POS receipts don't move them.
+        return None
+    if actor is None or not getattr(actor, "pk", None):
+        raise ValidationError("Sign in to update store stock.")
+    qty = _parse_qty(quantity)
+    movement_type = (movement_type or "").strip().lower()
+    if movement_type not in {
+        StoreStockMovementType.IN,
+        StoreStockMovementType.OUT,
+    }:
+        raise ValidationError("Unknown store stock mode.")
+    reason = (reason or "").strip().lower()
+    if reason not in {choice.value for choice in StockOutReason}:
+        reason = ""
+    stock, _ = StoreStock.objects.select_for_update().get_or_create(item=item)
+    delta = qty if movement_type == StoreStockMovementType.IN else -qty
+    stock.quantity = (stock.quantity or Decimal("0")) + delta
+    stock.save(update_fields=["quantity", "updated_at"])
+    return StoreStockMovement.objects.create(
+        movement_type=movement_type,
+        item=item,
+        quantity=qty,
+        balance_after=stock.quantity,
+        created_by=actor,
+        received_by=actor,
+        reason=reason,
+        source=STORE_SOURCE_POS,
+        note=(note or "").strip()[:255],
+    )
+
+
 def parse_store_trade_lines(
-    post_data,
+    post_data, *, require_price: bool = False
 ) -> tuple[str, list[tuple[int, Decimal, Decimal | None]]]:
     """Read a one-way store trade: trade_kind plus qty_<id>/price_<id> rows."""
     kind = str((post_data or {}).get("trade_kind") or "").strip().lower()
@@ -443,7 +514,10 @@ def parse_store_trade_lines(
         raise ValidationError(
             "Choose the trade direction — trade out or trade in."
         )
-    return kind, parse_store_stock_qty_lines(post_data)
+    return kind, parse_store_stock_qty_lines(
+        post_data,
+        require_price=require_price and kind == StockOutReason.TRADE_IN,
+    )
 
 
 @transaction.atomic

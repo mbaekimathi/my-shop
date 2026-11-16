@@ -58,6 +58,8 @@ from items.models import (  # noqa: E402
     StockEntrySource,
     StockMovement,
     StockMovementType,
+    StoreStock,
+    StoreStockMovement,
 )
 from pos.models import Sale, SaleLine  # noqa: E402
 from shops.models import (  # noqa: E402
@@ -109,6 +111,29 @@ def _destock(shop_id, item_id, qty):
     stock.save(update_fields=["quantity", "updated_at"])
 
 
+def _store_restock(item_id, qty):
+    """Add qty back to central StoreStock (mirrors _restock for ShopStock)."""
+    if item_id is None or qty <= 0:
+        return
+    stock, _ = StoreStock.objects.get_or_create(
+        item_id=item_id, defaults={"quantity": 0}
+    )
+    stock.quantity = Decimal(stock.quantity or 0) + qty
+    stock.save(update_fields=["quantity", "updated_at"])
+
+
+def _store_destock(item_id, qty):
+    """Remove qty a deleted POS stock-in had added to StoreStock."""
+    if item_id is None or qty <= 0:
+        return
+    try:
+        stock = StoreStock.objects.get(item_id=item_id)
+    except StoreStock.DoesNotExist:
+        return
+    stock.quantity = Decimal(stock.quantity or 0) - qty
+    stock.save(update_fields=["quantity", "updated_at"])
+
+
 def collect_counts():
     return {
         "ShopReceiptLine": ShopReceiptLine.objects.count(),
@@ -123,6 +148,9 @@ def collect_counts():
         "pos Sale": Sale.objects.count(),
         "StockMovement (sale-adjacent)": StockMovement.objects.filter(
             entry_source__in=SALE_MOVEMENT_SOURCES
+        ).count(),
+        "StoreStockMovement (POS)": StoreStockMovement.objects.filter(
+            source="pos"
         ).count(),
         "ShopDaySession": ShopDaySession.objects.count(),
     }
@@ -155,6 +183,12 @@ def wipe(apply: bool):
                     remaining,
                     line.unit_cost,
                 )
+                # Mirror the central store ledger: sale-like kinds had
+                # deducted StoreStock, trade-ins had added to it.
+                if line.receipt.kind == "trade_in":
+                    _store_destock(line.item_id, remaining)
+                elif line.receipt.kind in ("sale", "credit", "trade_out"):
+                    _store_restock(line.item_id, remaining)
                 # serials that left with the sale become available again
                 returned = {
                     str(s).strip()
@@ -183,6 +217,9 @@ def wipe(apply: bool):
                             # already netted via remaining_quantity restore
                             continue
                         _destock(mv.shop_id, ml.item_id, qty)
+                        if mv.entry_source == StockEntrySource.TRADE_EXCHANGE:
+                            # Exchange stock-ins also added to StoreStock.
+                            _store_destock(ml.item_id, qty)
                         serials = [s for s in (ml.serial_numbers or []) if str(s).strip()]
                         if serials:
                             ItemSerial.objects.filter(
@@ -223,6 +260,9 @@ def wipe(apply: bool):
 
         print("Deleting sale-adjacent stock movements…")
         StockMovement.objects.filter(entry_source__in=SALE_MOVEMENT_SOURCES).delete()
+
+        print("Deleting POS store-stock movements…")
+        StoreStockMovement.objects.filter(source="pos").delete()
 
         if WIPE_DAY_SESSIONS:
             print("Deleting shop day sessions…")

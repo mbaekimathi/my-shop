@@ -662,8 +662,28 @@
                 </span>
                 {% elif cell.kind == "money" or cell.kind == "pct" %}
                 <span class="ax-money{% if cell.tone and cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+                {% elif cell.kind == "items" %}
+                <span class="ax-items-cell"{% if cell.title %} title="{{ cell.title }}"{% endif %}>
+                  <span class="ax-items-label">{{ cell.label }}</span>
+                  {% if cell.items_json %}
+                  <button
+                    type="button"
+                    class="ax-items-eye"
+                    data-ax-items-open
+                    data-doc="{{ cell.doc }}"
+                    data-items="{{ cell.items_json }}"
+                    aria-label="View items"
+                    title="View items"
+                  ><i data-lucide="eye" aria-hidden="true"></i></button>
+                  {% endif %}
+                </span>
                 {% elif cell.tone %}
                 <span class="ax-trend{% if cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+                {% elif cell.label and cell.sub %}
+                <span class="ax-entity-link">
+                  <span class="ax-entity-name"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+                  <span class="ax-entity-meta">{{ cell.sub }}</span>
+                </span>
                 {% elif cell.label %}
                 <span{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
                 {% else %}
@@ -813,6 +833,47 @@
   </div>
 </div>
 {% endif %}
+{% if page.receipt_items_modal %}
+<div class="workspace-modal ax-items-modal" data-ax-items-modal hidden aria-hidden="true">
+  <div class="workspace-modal-backdrop" data-ax-items-close></div>
+  <div
+    class="workspace-modal-dialog ax-items-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ax-items-modal-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <p class="shop-receipt-modal-kicker">Receipt items</p>
+        <h2 id="ax-items-modal-title" data-ax-items-doc>Items</h2>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-ax-items-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="ax-items-body">
+      <table class="ax-items-table" data-ax-items-table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Qty</th>
+            <th>Price</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody data-ax-items-list></tbody>
+      </table>
+      <p class="ax-empty" data-ax-items-empty hidden>No items on this receipt.</p>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% include "employees/partials/analytics_credit_due_followup_modal.html" %}
 {% include "shops/partials/register_expense_modal.html" %}
 {% endblock %}
@@ -821,6 +882,9 @@
 {{ block.super }}
 {% if page.receipts_print_modal %}
 <script defer src="{% static 'js/analytics-receipts-print.js' %}?v=1"></script>
+{% endif %}
+{% if page.receipt_items_modal %}
+<script defer src="{% static 'js/analytics-receipt-items.js' %}?v=1"></script>
 {% endif %}
 {% if page.receipt_modal %}
 <script defer src="{% static 'js/analytics-receipts-return.js' %}?v=20261024-decimal-inputs"></script>

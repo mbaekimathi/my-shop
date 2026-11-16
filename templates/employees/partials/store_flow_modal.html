@@ -34,6 +34,7 @@
       action="{{ post_url }}"
       data-store-stock
       data-mode="{{ flow }}"
+      {% if flow == "in" and stock_req.require_buying_price_on_in %}data-require-price="always"{% endif %}
       data-employee-search-url="{{ employee_search_url }}"
       data-store-stock-form
     >
@@ -93,9 +94,10 @@
                 min="0"
                 step="any"
                 inputmode="decimal"
-                placeholder="Buy price"
-                title="Buying price"
+                placeholder="Buy price{% if stock_req.require_buying_price_on_in %}*{% endif %}"
+                title="Buying price{% if stock_req.require_buying_price_on_in %} (required){% endif %}"
                 aria-label="Buying price for {{ item.name }}"
+                data-store-price-input
               >
               {% endif %}
               <button

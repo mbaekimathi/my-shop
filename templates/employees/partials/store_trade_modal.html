@@ -35,6 +35,7 @@
       method="post"
       action="{{ post_url }}"
       data-store-stock
+      {% if stock_req.require_buying_price_on_in %}data-require-price="trade_in"{% endif %}
       data-store-stock-form
     >
       {% csrf_token %}
@@ -109,10 +110,11 @@
                 min="0"
                 step="any"
                 inputmode="decimal"
-                placeholder="Value"
-                title="Unit value"
+                placeholder="Value{% if stock_req.require_buying_price_on_in %}*{% endif %}"
+                title="Unit value{% if stock_req.require_buying_price_on_in %} (required for trade in){% endif %}"
                 aria-label="Unit value for {{ item.name }}"
                 data-trade-price
+                data-store-price-input
               >
               <button
                 type="button"

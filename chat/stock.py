@@ -34,6 +34,8 @@ from .myshop_models import (
     ShopStock,
     StockMovement,
     StockMovementLine,
+    StoreStock,
+    StoreStockMovement,
     Supplier,
 )
 
@@ -52,6 +54,43 @@ DEFAULT_DIAL = "+254"
 
 class StockError(Exception):
     """Raised with a user-facing message; caught by the API views."""
+
+
+def _mirror_store_movement(
+    *, item, qty, mode, employee_id, note: str = ""
+) -> None:
+    """Mirror a POS receipt line into the central store ledger.
+
+    Decrements (out) / increments (in) items_storestock and writes an
+    items_storestockmovement row tagged source='pos'. Never blocks — the
+    shop floor stock check is authoritative — so the store balance can go
+    negative when the item was never stocked into the central store.
+    """
+    if (
+        not employee_id
+        or not getattr(item, "stock_count_enabled", True)
+        or not getattr(item, "deduct_stock_on_sale", True)
+    ):
+        # Movements need an actor; items with stock counting switched off on
+        # the item-stock page (or sale deduction off on the stock tracking
+        # page) are manual-only and don't move on sales.
+        return
+    stock, _ = StoreStock.objects.select_for_update().get_or_create(
+        item_id=item.pk, defaults={"quantity": ZERO_QTY}
+    )
+    delta = qty if mode == MOVEMENT_IN else -qty
+    stock.quantity = _quantize_qty((stock.quantity or ZERO_QTY) + delta)
+    stock.save(update_fields=["quantity", "updated_at"])
+    StoreStockMovement.objects.create(
+        movement_type=mode,
+        item_id=item.pk,
+        quantity=qty,
+        balance_after=stock.quantity,
+        created_by_id=employee_id,
+        received_by_id=employee_id,
+        source="pos",
+        note=(note or "")[:255],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +359,7 @@ def _normalize_serials(values) -> list:
     return serials
 
 
-def _parse_lines(raw_lines, shop, *, need_stock: bool):
+def _parse_lines(raw_lines, shop, *, need_stock: bool, sale_flow: bool = False):
     if not isinstance(raw_lines, list) or not raw_lines:
         raise StockError("Add at least one item with a quantity.")
     if len(raw_lines) > 20:
@@ -387,7 +426,8 @@ def _parse_lines(raw_lines, shop, *, need_stock: bool):
         if need_stock:
             stock = stocks.get(item.pk)
             available = stock.quantity if stock else ZERO_QTY
-            if available < line["quantity"]:
+            tracks_sale = getattr(item, "deduct_stock_on_sale", True)
+            if (tracks_sale or not sale_flow) and available < line["quantity"]:
                 raise StockError(
                     f'Not enough "{item.name}" at {shop.name} '
                     f"(have {available}, sending {line['quantity']})."
@@ -1075,8 +1115,10 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
         if method not in _PAYMENT_CHANNELS:
             raise StockError("Choose a valid payment method.")
 
+    track_store = bool(effective_pos_settings(me)["enable_stock_tracking"])
+
     # Sale needs stock like a transfer — same line parsing.
-    lines = _parse_lines(raw_lines, me, need_stock=True)
+    lines = _parse_lines(raw_lines, me, need_stock=True, sale_flow=True)
 
     price_rows = {
         r.item_id: r
@@ -1187,11 +1229,22 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
         if kind == "quotation":
             # Quotations never touch stock or serials.
             continue
-        stock = line["shop_stock"]
-        stock.quantity = _quantize_qty(stock.quantity) - line["quantity"]
-        stock.save(update_fields=["quantity", "updated_at"])
-        item.stock = max(ZERO_QTY, _quantize_qty(item.stock) - line["quantity"])
-        item.save(update_fields=["stock"])
+        if getattr(item, "deduct_stock_on_sale", True):
+            stock = line["shop_stock"]
+            stock.quantity = _quantize_qty(stock.quantity) - line["quantity"]
+            stock.save(update_fields=["quantity", "updated_at"])
+            item.stock = max(ZERO_QTY, _quantize_qty(item.stock) - line["quantity"])
+            item.save(update_fields=["stock"])
+            if track_store:
+                _mirror_store_movement(
+                    item=item,
+                    qty=line["quantity"],
+                    mode="out",
+                    employee_id=employee_id,
+                    note=(
+                        f"{receipt.receipt_number} · {receipt_label(kind)} · {me.name}"
+                    ),
+                )
         if item.track_serial_number:
             for s in ItemSerial.objects.select_for_update().filter(
                 item_id=item.pk,
@@ -1850,25 +1903,26 @@ def return_receipt_items(
         stock = stock_by_item.get(item.pk)
         if stock is None:
             continue
-        return_unit_cost = _money(line.unit_cost)
-        stock.average_cost = weighted_average_cost(
-            old_qty=stock.quantity,
-            old_avg=stock.average_cost,
-            in_qty=qty,
-            in_price=return_unit_cost,
-        )
-        stock.quantity = _quantize_qty(stock.quantity) + qty
-        stock.save(update_fields=["quantity", "average_cost", "updated_at"])
-        item.stock = _quantize_qty(item.stock) + qty
-        item.save(update_fields=["stock"])
-        movement_lines.append(
-            {
-                "item": item,
-                "qty": qty,
-                "unit_cost": return_unit_cost,
-                "serial_numbers": serials,
-            }
-        )
+        if getattr(item, "deduct_stock_on_sale", True):
+            return_unit_cost = _money(line.unit_cost)
+            stock.average_cost = weighted_average_cost(
+                old_qty=stock.quantity,
+                old_avg=stock.average_cost,
+                in_qty=qty,
+                in_price=return_unit_cost,
+            )
+            stock.quantity = _quantize_qty(stock.quantity) + qty
+            stock.save(update_fields=["quantity", "average_cost", "updated_at"])
+            item.stock = _quantize_qty(item.stock) + qty
+            item.save(update_fields=["stock"])
+            movement_lines.append(
+                {
+                    "item": item,
+                    "qty": qty,
+                    "unit_cost": return_unit_cost,
+                    "serial_numbers": serials,
+                }
+            )
         if serials:
             for serial_no in serials:
                 obj = row["serial_objects"].get(serial_no)
@@ -2231,8 +2285,9 @@ def effective_pos_settings(shop) -> dict:
     """Company POS defaults merged with the shop's overrides.
 
     Mirrors MY-SHOP's get_effective_pos_settings for the fields the trade
-    flow uses: enable_* flags sit under the shop's `override_pos` switch and
-    the receipt number formats under `override_receipt`.
+    flow uses: a shop column applies only while its section override flag is
+    on AND the field is listed in the matching custom_*_fields set —
+    everything else keeps following the company value.
     """
     company = CompanyPosSettings.objects.filter(pk=1).first()
     shop_row = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
@@ -2242,11 +2297,15 @@ def effective_pos_settings(shop) -> dict:
             merged[name] = getattr(company, name, merged[name])
     if shop_row is not None:
         if shop_row.override_pos:
+            custom = set(shop_row.custom_pos_fields or [])
             for name in _POS_BOOL_FIELDS:
-                merged[name] = getattr(shop_row, name, merged[name])
+                if name in custom:
+                    merged[name] = getattr(shop_row, name, merged[name])
         if shop_row.override_receipt:
+            custom = set(shop_row.custom_receipt_fields or [])
             for name in _POS_FORMAT_FIELDS:
-                merged[name] = getattr(shop_row, name, merged[name])
+                if name in custom:
+                    merged[name] = getattr(shop_row, name, merged[name])
     for name in _POS_FORMAT_FIELDS:
         merged[name] = (
             (merged[name] or _POS_DEFAULTS[name]).strip().upper()
@@ -2290,7 +2349,10 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
 
     track_stock = bool(pos["enable_stock_tracking"])
     lines = _parse_lines(
-        raw_lines, me, need_stock=kind == "trade_out" and track_stock
+        raw_lines,
+        me,
+        need_stock=kind == "trade_out" and track_stock,
+        sale_flow=True,
     )
 
     if kind == "trade_out":
@@ -2390,7 +2452,9 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
     )
 
     movement = None
-    if track_stock:
+    if track_stock and any(
+        getattr(line["item"], "deduct_stock_on_sale", True) for line in lines
+    ):
         if kind == "trade_out":
             movement_notes = f"Trade out {receipt.receipt_number}"
         else:
@@ -2421,7 +2485,7 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
         if not track_stock:
             continue
         qty = _quantize_qty(line["quantity"])
-        if movement is not None:
+        if movement is not None and getattr(item, "deduct_stock_on_sale", True):
             StockMovementLine.objects.create(
                 movement_id=movement.pk,
                 item_id=item.pk,
@@ -2436,11 +2500,19 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
                 serial_numbers=line.get("serials") or [],
             )
         if kind == "trade_out":
-            stock = line["shop_stock"]
-            stock.quantity = _quantize_qty(stock.quantity) - qty
-            stock.save(update_fields=["quantity", "updated_at"])
-            item.stock = max(ZERO_QTY, _quantize_qty(item.stock) - qty)
-            item.save(update_fields=["stock"])
+            if getattr(item, "deduct_stock_on_sale", True):
+                stock = line["shop_stock"]
+                stock.quantity = _quantize_qty(stock.quantity) - qty
+                stock.save(update_fields=["quantity", "updated_at"])
+                item.stock = max(ZERO_QTY, _quantize_qty(item.stock) - qty)
+                item.save(update_fields=["stock"])
+                _mirror_store_movement(
+                    item=item,
+                    qty=qty,
+                    mode="out",
+                    employee_id=employee_id,
+                    note=f"{receipt.receipt_number} · Trade out · {me.name}",
+                )
             if item.track_serial_number:
                 for s in ItemSerial.objects.select_for_update().filter(
                     item_id=item.pk,
@@ -2451,13 +2523,6 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
                     s.is_available = False
                     s.save(update_fields=["is_available", "updated_at"])
         else:
-            stock = line.get("shop_stock")
-            if stock is None:
-                stock, _ = ShopStock.objects.select_for_update().get_or_create(
-                    shop_id=me.pk,
-                    item_id=item.pk,
-                    defaults={"quantity": ZERO_QTY},
-                )
             existing = {
                 s.serial_number: s
                 for s in ItemSerial.objects.filter(
@@ -2484,16 +2549,31 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
                     )
             if to_create:
                 ItemSerial.objects.bulk_create(to_create)
-            stock.average_cost = weighted_average_cost(
-                old_qty=stock.quantity,
-                old_avg=stock.average_cost,
-                in_qty=qty,
-                in_price=line["unit_cost"],
-            )
-            stock.quantity = _quantize_qty(stock.quantity) + qty
-            stock.save(update_fields=["quantity", "average_cost", "updated_at"])
-            item.stock = _quantize_qty(item.stock) + qty
-            item.save(update_fields=["stock"])
+            if getattr(item, "deduct_stock_on_sale", True):
+                stock = line.get("shop_stock")
+                if stock is None:
+                    stock, _ = ShopStock.objects.select_for_update().get_or_create(
+                        shop_id=me.pk,
+                        item_id=item.pk,
+                        defaults={"quantity": ZERO_QTY},
+                    )
+                stock.average_cost = weighted_average_cost(
+                    old_qty=stock.quantity,
+                    old_avg=stock.average_cost,
+                    in_qty=qty,
+                    in_price=line["unit_cost"],
+                )
+                stock.quantity = _quantize_qty(stock.quantity) + qty
+                stock.save(update_fields=["quantity", "average_cost", "updated_at"])
+                item.stock = _quantize_qty(item.stock) + qty
+                item.save(update_fields=["stock"])
+                _mirror_store_movement(
+                    item=item,
+                    qty=qty,
+                    mode=MOVEMENT_IN,
+                    employee_id=employee_id,
+                    note=f"{receipt.receipt_number} · Trade in · {me.name}",
+                )
     return receipt, lines
 
 

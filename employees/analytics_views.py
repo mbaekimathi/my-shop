@@ -259,7 +259,12 @@ def _render_analytics(
                 else ""
             ),
             "page_sidebar": (
-                sidebar_for_suppliers(profile.role, profile=profile)
+                sidebar_for_suppliers(
+                    profile.role,
+                    profile=profile,
+                    request=request,
+                    view=request.GET.get("view") or "",
+                )
                 if section["slug"] == "suppliers"
                 else sidebar_for_credits(profile.role, profile=profile)
                 if section["slug"] == "credits"
@@ -1845,12 +1850,68 @@ def analytics_credit_follow_ups(request, role_segment):
     )
 
 
+def _render_supplier_account(request, profile, module, *, kind, supplier_id):
+    """Shared supplier-account page for stock / expense / shelf kinds."""
+    from .workspace import _with_request_query, analytics_section_url
+
+    account = build_supplier_account(
+        profile=profile, kind=kind, supplier_id=supplier_id, request=request
+    )
+    from_section = (request.GET.get("from") or "").strip().lower()
+    from_expenses = "/analytics/expenses" in (request.META.get("HTTP_REFERER") or "")
+    if from_section in ("expenses", "suppliers"):
+        back_section = from_section
+    elif (kind or "").strip().lower() == "expense" or from_expenses:
+        back_section = "expenses"
+    else:
+        back_section = "suppliers"
+
+    back_href = _with_request_query(
+        analytics_section_url(profile.role, back_section),
+        request,
+        drop=("from", "name", "phone"),
+    )
+
+    return render(
+        request,
+        "employees/analytics_supplier_account.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": f"{account['supplier_name']} · Supplier account",
+                "headline": "Supplier account",
+                "summary": "Purchases or expenses and outstanding balance for this supplier.",
+                "icon": "truck",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": (
+                sidebar_for_suppliers(
+                    profile.role,
+                    profile=profile,
+                    request=request,
+                    view=request.GET.get("view") or "",
+                )
+                if back_section == "suppliers"
+                else sidebar_for_analytics_section(
+                    profile.role, active_view=back_section, profile=profile
+                )
+            ),
+            "back_href": back_href,
+            "back_label": (
+                "Back to expenses" if back_section == "expenses" else "Back to suppliers"
+            ),
+            "pay_url": _pay_url_for(profile),
+            **account,
+        },
+    )
+
+
 @active_employee_required
 @require_GET
 def analytics_supplier_account(request, role_segment, kind, supplier_id):
     """Supplier account ledger (/…/analytics/suppliers/<kind>/<id>/)."""
-    from .workspace import _with_request_query, analytics_section_url
-
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
         from django.http import Http404
@@ -1878,52 +1939,46 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
     if denied is not None:
         return denied
 
-    account = build_supplier_account(
-        profile=profile, kind=kind, supplier_id=supplier_id, request=request
-    )
-    from_section = (request.GET.get("from") or "").strip().lower()
-    from_expenses = "/analytics/expenses" in (request.META.get("HTTP_REFERER") or "")
-    if from_section in ("expenses", "suppliers"):
-        back_section = from_section
-    elif (kind or "").strip().lower() == "expense" or from_expenses:
-        back_section = "expenses"
-    else:
-        back_section = "suppliers"
-
-    back_href = _with_request_query(
-        analytics_section_url(profile.role, back_section),
-        request,
-        drop=("from",),
+    return _render_supplier_account(
+        request, profile, module, kind=kind, supplier_id=supplier_id
     )
 
-    return render(
-        request,
-        "employees/analytics_supplier_account.html",
-        {
-            "profile": profile,
-            "meta": {
-                "title": f"{account['supplier_name']} · Supplier account",
-                "headline": "Supplier account",
-                "summary": "Purchases or expenses and outstanding balance for this supplier.",
-                "icon": "truck",
-            },
-            "module": module,
-            "role_label": profile.get_role_display(),
-            "status_label": profile.get_status_display(),
-            "page_sidebar": (
-                sidebar_for_suppliers(profile.role, profile=profile)
-                if back_section == "suppliers"
-                else sidebar_for_analytics_section(
-                    profile.role, active_view=back_section, profile=profile
-                )
-            ),
-            "back_href": back_href,
-            "back_label": (
-                "Back to expenses" if back_section == "expenses" else "Back to suppliers"
-            ),
-            "pay_url": _pay_url_for(profile),
-            **account,
-        },
+
+@active_employee_required
+@require_GET
+def analytics_shelf_supplier_account(request, role_segment):
+    """Shelf supplier ledger (/…/analytics/suppliers/shelf/?name=…&phone=…)."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        from django.urls import reverse
+
+        target = reverse(
+            "employees:analytics_shelf_supplier_account",
+            kwargs={"role_segment": expected},
+        )
+        query = request.GET.urlencode()
+        return redirect(f"{target}?{query}" if query else target)
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "suppliers")
+    if denied is not None:
+        return denied
+
+    return _render_supplier_account(
+        request, profile, module, kind="shelf", supplier_id=None
     )
 
 
@@ -1950,6 +2005,9 @@ def analytics_account_pay(request, role_segment):
         return denied
 
     kind = (request.POST.get("kind") or "").strip().lower()
+    receipt_kind = (
+        (request.POST.get("receipt_kind") or "").strip().lower() or kind
+    )
     try:
         account_id = int(request.POST.get("account_id") or 0)
     except (TypeError, ValueError):
@@ -1982,14 +2040,20 @@ def analytics_account_pay(request, role_segment):
                 stk_payment_id=stk_payment_id,
                 mpesa_receipt_number=mpesa_receipt_number,
             )
-        elif len(receipt_ids) == 1 and kind in ("expense", "stock"):
+        elif len(receipt_ids) == 1 and receipt_kind in (
+            "expense",
+            "stock",
+            "shelf",
+        ):
             result = apply_supplier_receipt_payment(
                 profile=profile,
-                kind=kind,
+                kind=receipt_kind,
                 account_id=account_id,
                 receipt_id=receipt_ids[0],
                 amount=request.POST.get("amount"),
                 shop_ids=request.POST.getlist("shop_id"),
+                supplier_name=request.POST.get("supplier_name") or "",
+                supplier_phone=request.POST.get("supplier_phone") or "",
             )
         elif len(receipt_ids) > 1 and kind == "credit":
             date_filter = _date_filter_context(request, allow_all_time=True)
@@ -2006,7 +2070,7 @@ def analytics_account_pay(request, role_segment):
                 end=date_filter.get("end"),
                 receipt_ids=receipt_ids,
             )
-        elif receipt_ids and kind in ("expense", "stock"):
+        elif receipt_ids and kind in ("expense", "stock", "shelf"):
             return JsonResponse(
                 {
                     "ok": False,
@@ -2027,6 +2091,8 @@ def analytics_account_pay(request, role_segment):
                 shop_ids=request.POST.getlist("shop_id"),
                 start=date_filter.get("start"),
                 end=date_filter.get("end"),
+                supplier_name=request.POST.get("supplier_name") or "",
+                supplier_phone=request.POST.get("supplier_phone") or "",
             )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)

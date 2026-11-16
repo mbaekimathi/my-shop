@@ -34,6 +34,7 @@
       action="{{ post_url }}"
       data-store-stock
       data-mode="{{ flow }}"
+      {% if flow == "in" and stock_req.shelf_require_buying_price_on_in %}data-require-price="always"{% endif %}
       data-store-stock-form
     >
       {% csrf_token %}
@@ -96,9 +97,10 @@
                 min="0"
                 step="any"
                 inputmode="decimal"
-                placeholder="Buy price"
-                title="Buying price"
+                placeholder="Buy price{% if stock_req.shelf_require_buying_price_on_in %}*{% endif %}"
+                title="Buying price{% if stock_req.shelf_require_buying_price_on_in %} (required){% endif %}"
                 aria-label="Buying price for {{ row.name }}"
+                data-store-price-input
               >
               {% endif %}
               <button
@@ -141,17 +143,17 @@
           <div class="buy-stock-simple-supplier stock-flow-meta">
             {% if flow == "in" %}
             <label class="stock-float-field">
-              <span>Supplier phone{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+              <span>Supplier phone{% if not stock_req.shelf_require_supplier_on_in %} <em>optional</em>{% endif %}</span>
               <input
                 type="tel"
                 name="supplier_phone"
                 maxlength="40"
                 placeholder="e.g. 0722 000 000"
-                {% if stock_req.require_supplier_on_in %}required{% endif %}
+                {% if stock_req.shelf_require_supplier_on_in %}required{% endif %}
               >
             </label>
             <label class="stock-float-field">
-              <span>Supplier name{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+              <span>Supplier name{% if not stock_req.shelf_require_supplier_on_in %} <em>optional</em>{% endif %}</span>
               <input
                 type="text"
                 name="supplier_name"
@@ -159,12 +161,12 @@
                 placeholder="e.g. Brookside Distributors"
                 autocomplete="organization"
                 data-uppercase
-                {% if stock_req.require_supplier_on_in %}required{% endif %}
+                {% if stock_req.shelf_require_supplier_on_in %}required{% endif %}
               >
             </label>
             <label class="stock-float-field">
-              <span>Payment{% if not stock_req.require_payment_status_on_in %} <em>optional</em>{% endif %}</span>
-              <select name="payment_status"{% if stock_req.require_payment_status_on_in %} required{% endif %}>
+              <span>Payment{% if not stock_req.shelf_require_payment_status_on_in %} <em>optional</em>{% endif %}</span>
+              <select name="payment_status"{% if stock_req.shelf_require_payment_status_on_in %} required{% endif %}>
                 <option value="">Select</option>
                 <option value="unpaid">Not paid</option>
                 <option value="paid">Paid</option>
@@ -173,8 +175,8 @@
             </label>
             {% else %}
             <label class="stock-float-field">
-              <span>Reason{% if not stock_req.require_reason_on_out %} <em>optional</em>{% endif %}</span>
-              <select name="reason" data-stock-reason{% if stock_req.require_reason_on_out %} required{% endif %}>
+              <span>Reason{% if not stock_req.shelf_require_reason_on_out %} <em>optional</em>{% endif %}</span>
+              <select name="reason" data-stock-reason{% if stock_req.shelf_require_reason_on_out %} required{% endif %}>
                 <option value="">Select</option>
                 {% for value, label in stock_out_reasons %}
                 <option value="{{ value }}"{% if value == "custom" %} selected{% endif %}>{{ label }}</option>
@@ -186,8 +188,8 @@
               <input type="text" name="note" maxlength="200" placeholder="Enter reason">
             </label>
             <label class="stock-float-field">
-              <span>Refund{% if not stock_req.require_refund_on_out %} <em>optional</em>{% endif %}</span>
-              <select name="refund" data-stock-refund{% if stock_req.require_refund_on_out %} required{% endif %}>
+              <span>Refund{% if not stock_req.shelf_require_refund_on_out %} <em>optional</em>{% endif %}</span>
+              <select name="refund" data-stock-refund{% if stock_req.shelf_require_refund_on_out %} required{% endif %}>
                 <option value="">Select</option>
                 <option value="yes">Yes</option>
                 <option value="no">No</option>

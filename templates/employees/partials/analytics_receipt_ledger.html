@@ -140,6 +140,7 @@
                 type="button"
                 class="ax-receipt-pay{% if not row.can_pay %} is-settled{% endif %}"
                 data-ax-pay-open
+                data-pay-kind="{{ row.pay_kind }}"
                 data-receipt-id="{{ row.pay_id }}"
                 data-receipt-number="{{ row.number }}"
                 data-receipt-due="{{ row.due }}"

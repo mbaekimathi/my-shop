@@ -27,6 +27,160 @@
   );
   const pageShopSelect = document.querySelector("[data-stock-shop-nav]");
 
+  /* --- Category: live suggestions from registered shelf categories ------- */
+  const catInput = modal.querySelector("[data-shelf-category-input]");
+  const catList = modal.querySelector("[data-shelf-category-list]");
+  const catCategories = Array.from(
+    modal.querySelectorAll("[data-shelf-category-source] option")
+  ).map((opt) => opt.value);
+  let catActive = -1;
+
+  const catHide = () => {
+    if (!catList) return;
+    catList.hidden = true;
+    catActive = -1;
+    catInput?.setAttribute("aria-expanded", "false");
+  };
+
+  const catShow = () => {
+    if (!catInput || !catList) return;
+    const needle = catInput.value.trim().toLowerCase();
+    const matches = catCategories
+      .filter((cat) => !needle || cat.toLowerCase().includes(needle))
+      .slice(0, 8);
+    catList.replaceChildren();
+    if (!matches.length) {
+      catHide();
+      return;
+    }
+    matches.forEach((cat) => {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "shelf-cat-option";
+      btn.setAttribute("role", "option");
+      btn.textContent = cat;
+      btn.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        catInput.value = cat;
+        catHide();
+        catInput.focus();
+      });
+      li.appendChild(btn);
+      catList.appendChild(li);
+    });
+    catList.hidden = false;
+    catActive = -1;
+    catInput.setAttribute("aria-expanded", "true");
+  };
+
+  const catMove = (step) => {
+    if (!catList || catList.hidden) return;
+    const options = Array.from(catList.querySelectorAll(".shelf-cat-option"));
+    if (!options.length) return;
+    catActive = (catActive + step + options.length) % options.length;
+    options.forEach((btn, index) => {
+      btn.classList.toggle("is-active", index === catActive);
+      if (index === catActive) btn.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  if (catInput && catList) {
+    catInput.addEventListener("focus", catShow);
+    catInput.addEventListener("input", catShow);
+    catInput.addEventListener("blur", () => window.setTimeout(catHide, 120));
+    catInput.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (catList.hidden) catShow();
+        catMove(1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        catMove(-1);
+      } else if (event.key === "Enter" && !catList.hidden && catActive >= 0) {
+        event.preventDefault();
+        const active = catList.querySelectorAll(".shelf-cat-option")[catActive];
+        if (active) {
+          catInput.value = active.textContent;
+          catHide();
+        }
+      } else if (event.key === "Escape" && !catList.hidden) {
+        event.stopPropagation();
+        catHide();
+      }
+    });
+    modal.querySelectorAll("[data-shelf-category-chip]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        catInput.value = chip.getAttribute("data-shelf-category-chip") || "";
+        catHide();
+        catInput.focus();
+      });
+    });
+  }
+
+  /* --- Image: drop zone with preview ------------------------------------- */
+  const fileDrop = modal.querySelector("[data-shelf-file-drop]");
+  const fileInput = modal.querySelector("[data-shelf-file-input]");
+  const fileEmpty = modal.querySelector("[data-shelf-file-empty]");
+  const filePicked = modal.querySelector("[data-shelf-file-picked]");
+  const fileThumb = modal.querySelector("[data-shelf-file-thumb]");
+  const fileName = modal.querySelector("[data-shelf-file-name]");
+  const fileClear = modal.querySelector("[data-shelf-file-clear]");
+
+  const fileRender = () => {
+    if (!fileInput || !fileEmpty || !filePicked) return;
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) {
+      fileEmpty.hidden = false;
+      filePicked.hidden = true;
+      return;
+    }
+    if (fileName) fileName.textContent = file.name;
+    if (fileThumb) {
+      if (file.type.startsWith("image/")) {
+        fileThumb.src = URL.createObjectURL(file);
+      } else {
+        fileThumb.removeAttribute("src");
+      }
+    }
+    fileEmpty.hidden = true;
+    filePicked.hidden = false;
+  };
+
+  if (fileDrop && fileInput) {
+    fileDrop.addEventListener("click", (event) => {
+      if (event.target.closest("[data-shelf-file-clear]")) return;
+      fileInput.click();
+    });
+    fileInput.addEventListener("change", fileRender);
+    ["dragenter", "dragover"].forEach((type) => {
+      fileDrop.addEventListener(type, (event) => {
+        event.preventDefault();
+        fileDrop.classList.add("is-drag");
+      });
+    });
+    ["dragleave", "drop"].forEach((type) => {
+      fileDrop.addEventListener(type, (event) => {
+        event.preventDefault();
+        fileDrop.classList.remove("is-drag");
+      });
+    });
+    fileDrop.addEventListener("drop", (event) => {
+      const files = event.dataTransfer && event.dataTransfer.files;
+      if (files && files.length) {
+        fileInput.files = files;
+        fileRender();
+      }
+    });
+    fileClear?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      fileInput.value = "";
+      fileRender();
+      fileInput.focus();
+    });
+  }
+
   const openModal = () => {
     modal.hidden = false;
     modal.setAttribute("aria-hidden", "false");
@@ -47,11 +201,12 @@
       /* ignore */
     }
     window.setTimeout(() => {
-      modal.querySelector('input[name="name"]')?.focus();
+      (catInput || modal.querySelector('input[name="name"]'))?.focus();
     }, 40);
   };
 
   const closeModal = () => {
+    catHide();
     modal.hidden = true;
     modal.setAttribute("aria-hidden", "true");
     const anyOpen = document.querySelector(".workspace-modal:not([hidden])");

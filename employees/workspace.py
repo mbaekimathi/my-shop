@@ -280,6 +280,13 @@ def _workspace_parent_url(request, role):
             drop=("from",),
         )
 
+    if view_name == "employees:analytics_shelf_supplier_account":
+        return _with_request_query(
+            analytics_section_url(role, "suppliers"),
+            request,
+            drop=("from", "name", "phone"),
+        )
+
     if view_name in {
         "employees:analytics_client_account",
         "employees:analytics_client_credit",
@@ -799,7 +806,7 @@ def _store_shelf_nav_links(profile, *, active=None):
             active=active == "shelf-report",
         ),
         _action(
-            "Register shelf stock",
+            "Register shelf stock item",
             "package-plus",
             action="shelf-stock",
             href=f"{base}?shelf=1",
@@ -858,12 +865,55 @@ def _stock_management_shelf_links(role, profile):
     sep = "&" if "?" in base else "?"
     return [
         _action(
-            "Shelf stock",
-            "layers",
+            "Register shelf stock item",
+            "package-plus",
             action="shelf-stock",
-            href=f"{base}{sep}shelf=1",
+            href=f"{base}{sep}tab=shelf&shelf=1",
         )
     ]
+
+
+def _it_support_shelf_stock_available(profile):
+    """Whether IT support should see shelf-stock links (permission + shop)."""
+    from .module_permissions import employee_may
+
+    if profile is not None and not employee_may(profile, "my-shop", "shelf_stock"):
+        return False
+    from .store_stock_views import shelf_mode_shops
+
+    if profile is None:
+        return bool(shelf_mode_shops())
+    from items.services import actionable_shops_for_profile
+
+    actionable_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    return any(shop.pk in actionable_ids for shop in shelf_mode_shops())
+
+
+def _it_support_stock_links(role, *, active_slug=None, profile=None):
+    """Item / shelf stock dashboard links — replace the Stock Management entry."""
+    from .module_permissions import employee_may_any
+
+    if profile is not None and not employee_may_any(profile, "stock-management"):
+        return []
+    base = stock_management_url(role, "view")
+    links = [
+        _link(
+            "Item stock management",
+            "boxes",
+            href=base,
+            active=active_slug == "item-stock",
+        )
+    ]
+    if _it_support_shelf_stock_available(profile):
+        links.append(
+            _link(
+                "Shelf stock management",
+                "layers",
+                href=f"{base}&tab=shelf",
+                active=active_slug == "shelf-stock",
+            )
+        )
+    return links
 
 
 def sidebar_for_store_stock(role, *, profile=None, active="in"):
@@ -1161,6 +1211,9 @@ def sidebar_for_role_dashboard(
     dashboard_url = reverse(role_home_url_name(role))
     comms_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
     skip_slugs = ("whatsapp",) if role in comms_roles else ()
+    if role == EmployeeRole.IT_SUPPORT:
+        # "Stock Management" splits into direct item / shelf stock links below.
+        skip_slugs = (*skip_slugs, "stock-management")
     if role == EmployeeRole.SHOP_CASHIER:
         primary = _cashier_dashboard_links(
             role, active_slug=active_slug, profile=profile
@@ -1169,6 +1222,13 @@ def sidebar_for_role_dashboard(
         primary = _module_sidebar_links(
             role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
         )
+    if role == EmployeeRole.IT_SUPPORT:
+        primary = [
+            *_it_support_stock_links(
+                role, active_slug=active_slug, profile=profile
+            ),
+            *primary,
+        ]
     if role == EmployeeRole.STORE_MANAGER:
         # Dashboard keeps entry links only — the five sub-links live in the
         # stock pages' sidebar (sidebar_for_store_stock).
@@ -1180,6 +1240,21 @@ def sidebar_for_role_dashboard(
                 *_store_shelf_stock_link(profile, active=active_slug == "shelf-stock"),
             ]
         )
+        from .module_permissions import employee_may
+        from shops.services import company_pos_analytics_section_visible
+
+        if profile is None or (
+            employee_may(profile, "analytics", "suppliers")
+            and company_pos_analytics_section_visible("suppliers")
+        ):
+            primary.append(
+                _link(
+                    "Suppliers",
+                    "truck",
+                    href=analytics_section_url(role, "suppliers"),
+                    active=active_slug == "suppliers",
+                )
+            )
     if role in comms_roles:
         primary.append(
             _link(
@@ -1515,7 +1590,7 @@ def sidebar_for_my_shop(
             )
             primary.append(
                 _action(
-                    "Register shelf stock",
+                    "Register shelf stock item",
                     "package-plus",
                     action="shelf-stock",
                     href=f"{reverse('employees:my_shop_shelf_stock', kwargs={'shop_id': shop.pk})}?shelf=1",
@@ -1740,6 +1815,8 @@ def sidebar_for_stock_management(
     requested_from_shop_id="",
     report_params=None,
     profile=None,
+    shelf_tab=False,
+    settings_stock="",
 ):
     """Sidebar for stock-management. Full workflow links for shop/store manager and IT support."""
     from .module_permissions import employee_may
@@ -1778,8 +1855,24 @@ def sidebar_for_stock_management(
 
     if role in full_workflow_roles:
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-        # Focused sub-workflows: only that page's links (not the full stock menu).
-        if active_mode in ("serials", "serial-movements", "return-clients"):
+        # IT support runs the split stock nav — item links only; shelf stock
+        # lives on the Shelf stock management tab linked from the dashboard.
+        item_only = role == EmployeeRole.IT_SUPPORT
+
+        def _tabbed(url):
+            """Keep sidebar links inside the Shelf stock tab when it is on."""
+            if not shelf_tab:
+                return url
+            sep = "&" if "?" in url else "?"
+            return f"{url}{sep}tab=shelf"
+
+        # Focused sub-workflows: only that page's links (not the full stock
+        # menu). The Shelf stock tab always shows the full shelf menu instead.
+        if not shelf_tab and active_mode in (
+            "serials",
+            "serial-movements",
+            "return-clients",
+        ):
             if _allowed("serials"):
                 primary.extend(
                     [
@@ -1803,11 +1896,15 @@ def sidebar_for_stock_management(
                         ),
                     ]
                 )
-        elif active_mode in ("request", "request-audits") and _allowed("request"):
+        elif (
+            not shelf_tab
+            and active_mode in ("request", "request-audits")
+            and _allowed("request")
+        ):
             primary.extend(
                 [
                     _link(
-                        "Transfer stock",
+                        "Item stock transfer" if item_only else "Transfer stock",
                         "clipboard-list",
                         href=stock_management_url(role, "request", **shop_kwargs),
                         active=active_mode == "request",
@@ -1819,97 +1916,195 @@ def sidebar_for_stock_management(
                         active=active_mode == "request-audits",
                     ),
                     _link(
-                        "Activity analytics",
+                        "Item activity analytics"
+                        if item_only
+                        else "Activity analytics",
                         "activity",
                         href=stock_management_url(role, "activity-audits"),
                         active=False,
                     ),
-                    *_stock_management_shelf_links(role, profile),
+                    *(
+                        []
+                        if item_only
+                        else _stock_management_shelf_links(role, profile)
+                    ),
                 ]
             )
-        elif active_mode in (
+        elif not shelf_tab and active_mode in (
             "settings",
+            "sale-tracking",
             "low-stock",
             "stock-take",
             "online-stock-take",
         ):
             if _allowed("settings"):
-                primary.append(
-                    _link(
-                        "Stock Settings",
-                        "sliders-horizontal",
-                        href=stock_management_url(role, "settings"),
-                        active=active_mode == "settings",
+                if item_only:
+                    settings_base = stock_management_url(role, "settings")
+                    # Each filtered settings page shows only its own link.
+                    if settings_stock != "shelf":
+                        primary.append(
+                            _link(
+                                "Item stock settings",
+                                "sliders-horizontal",
+                                href=f"{settings_base}&stock=item",
+                                active=active_mode == "settings"
+                                and settings_stock != "shelf",
+                            )
+                        )
+                    if (
+                        settings_stock != "item"
+                        and _it_support_shelf_stock_available(profile)
+                    ):
+                        primary.append(
+                            _link(
+                                "Shelf stock settings",
+                                "sliders-horizontal",
+                                href=f"{settings_base}&stock=shelf",
+                                active=active_mode == "settings"
+                                and settings_stock == "shelf",
+                            )
+                        )
+                else:
+                    primary.append(
+                        _link(
+                            "Stock Settings",
+                            "sliders-horizontal",
+                            href=stock_management_url(role, "settings"),
+                            active=active_mode == "settings",
+                        )
                     )
-                )
+                if settings_stock != "shelf":
+                    primary.append(
+                        _link(
+                            "Item sale stock tracking",
+                            "shopping-cart",
+                            href=stock_management_url(role, "sale-tracking"),
+                            active=active_mode == "sale-tracking",
+                        )
+                    )
+            shelf_links = (
+                item_only
+                and settings_stock == "shelf"
+                and _it_support_shelf_stock_available(profile)
+            )
             if _allowed("low-stock"):
                 primary.append(
                     _link(
-                        "Low Stock Alerts",
+                        "Shelf low stock alerts"
+                        if shelf_links
+                        else (
+                            "Item low stock alerts"
+                            if item_only
+                            else "Low Stock Alerts"
+                        ),
                         "bell-ring",
-                        href=stock_management_url(role, "low-stock"),
+                        href=stock_management_url(role, "low-stock")
+                        + ("&stock=shelf" if shelf_links else ""),
                         active=active_mode == "low-stock",
                     )
                 )
             if _allowed("stock-take"):
                 primary.append(
                     _link(
-                        "Stock Take",
+                        "Shelf stock take"
+                        if shelf_links
+                        else (
+                            "Item stock take" if item_only else "Stock Take"
+                        ),
                         "clipboard-check",
-                        href=stock_management_url(role, "stock-take"),
+                        href=stock_management_url(role, "stock-take")
+                        + ("&stock=shelf" if shelf_links else ""),
                         active=active_mode == "stock-take",
                     )
                 )
             if _allowed("print") or _allowed("stock-take"):
                 primary.append(
                     _link(
-                        "Online stock take",
+                        "Shelf online stock take"
+                        if shelf_links
+                        else (
+                            "Item online stock take"
+                            if item_only
+                            else "Online stock take"
+                        ),
                         "smartphone",
-                        href=stock_management_url(role, "online-stock-take"),
+                        href=stock_management_url(role, "online-stock-take")
+                        + ("&stock=shelf" if shelf_links else ""),
                         active=active_mode == "online-stock-take",
                     )
                 )
             if _allowed("print"):
-                # Modal lives on Current Stock; open via ?print=1 from settings pages.
-                _print_shop = (
-                    resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
-                )
-                print_href = stock_management_url(
-                    role, "view", shop_id=_print_shop
-                )
-                sep = "&" if "?" in print_href else "?"
-                primary.append(
-                    _action(
-                        "Print stock",
-                        "printer",
-                        action="print-stock",
-                        href=f"{print_href}{sep}print=1",
+                if shelf_links:
+                    shelf_print_href = reverse(
+                        "employees:stock_management_print",
+                        kwargs={"role_segment": role_url_segment(role)},
                     )
-                )
+                    primary.append(
+                        _link(
+                            "Print shelf stock",
+                            "printer",
+                            href=f"{shelf_print_href}?layout=shelf",
+                        )
+                    )
+                else:
+                    # Modal lives on Current Stock; open via ?print=1 from settings pages.
+                    _print_shop = (
+                        resolved_shop_ids[0]
+                        if len(resolved_shop_ids) == 1
+                        else ""
+                    )
+                    print_href = stock_management_url(
+                        role, "view", shop_id=_print_shop
+                    )
+                    sep = "&" if "?" in print_href else "?"
+                    primary.append(
+                        _action(
+                            "Print item stock" if item_only else "Print stock",
+                            "printer",
+                            action="print-stock",
+                            href=f"{print_href}{sep}print=1",
+                        )
+                    )
         else:
             view_shop_id = (
                 resolved_shop_ids[0] if len(resolved_shop_ids) == 1 else ""
             )
             # Shelf-only scope: the in/out/movement/report pages run on shelf
             # stock — label the links accordingly (no serials on the shelf).
-            shelf_scope = _sidebar_shelf_scope(resolved_shop_ids, profile)
+            # IT support keeps item-stock labels — shelf stock has its own
+            # tab; shelf_tab flips the whole menu to shelf links.
+            shelf_scope = shelf_tab or (
+                _sidebar_shelf_scope(resolved_shop_ids, profile)
+                if not item_only
+                else False
+            )
             candidates = [
                 (
                     "view",
                     _link(
-                        "Current Stock",
+                        "Shelf stock"
+                        if shelf_tab
+                        else "Item stock" if item_only else "Current Stock",
                         "boxes",
-                        href=stock_management_url(role, "view", shop_id=view_shop_id),
+                        href=_tabbed(
+                            stock_management_url(
+                                role, "view", shop_id=view_shop_id
+                            )
+                        ),
                         active=active_mode == "view",
                     ),
                 ),
                 (
                     "in",
                     _link(
-                        "Shelf stock in" if shelf_scope else "Stock In",
+                        "Shelf stock in"
+                        if shelf_scope
+                        else "Item stock in" if item_only else "Stock In",
                         "package-plus",
-                        href=stock_management_url(
-                            role, "in", shop_ids=resolved_shop_ids
+                        href=_tabbed(
+                            stock_management_url(
+                                role, "in", shop_ids=resolved_shop_ids
+                            )
                         ),
                         active=active_mode == "in",
                     ),
@@ -1917,10 +2112,14 @@ def sidebar_for_stock_management(
                 (
                     "out",
                     _link(
-                        "Shelf stock out" if shelf_scope else "Stock Out",
+                        "Shelf stock out"
+                        if shelf_scope
+                        else "Item stock out" if item_only else "Stock Out",
                         "package-minus",
-                        href=stock_management_url(
-                            role, "out", shop_ids=resolved_shop_ids
+                        href=_tabbed(
+                            stock_management_url(
+                                role, "out", shop_ids=resolved_shop_ids
+                            )
                         ),
                         active=active_mode == "out",
                     ),
@@ -1928,9 +2127,13 @@ def sidebar_for_stock_management(
                 (
                     "request",
                     _link(
-                        "Transfer Stock",
+                        "Shelf stock transfer"
+                        if shelf_tab
+                        else "Item stock transfer" if item_only else "Transfer Stock",
                         "clipboard-list",
-                        href=stock_management_url(role, "request", **shop_kwargs),
+                        href=_tabbed(
+                            stock_management_url(role, "request", **shop_kwargs)
+                        ),
                         active=active_mode == "request",
                     ),
                 ),
@@ -1946,46 +2149,83 @@ def sidebar_for_stock_management(
                 (
                     "movements",
                     _link(
-                        "Shelf movement" if shelf_scope else "Stock Movement",
+                        "Shelf stock movement"
+                        if shelf_tab
+                        else "Shelf movement"
+                        if shelf_scope
+                        else "Item stock movement" if item_only else "Stock Movement",
                         "arrow-down-up",
-                        href=movements_href,
+                        href=_tabbed(movements_href),
                         active=active_mode == "movements",
                     ),
                 ),
                 (
                     "report",
                     _link(
-                        "Shelf report" if shelf_scope else "Stock Report",
+                        "Shelf stock report"
+                        if shelf_tab
+                        else "Shelf report"
+                        if shelf_scope
+                        else "Item stock report" if item_only else "Stock Report",
                         "bar-chart-3",
-                        href=report_href,
+                        href=_tabbed(report_href),
                         active=active_mode == "report",
                     ),
                 ),
                 (
                     "settings",
                     _link(
-                        "Stock Settings",
+                        "Shelf stock settings"
+                        if shelf_tab
+                        else "Item stock settings"
+                        if item_only
+                        else "Stock Settings",
                         "sliders-horizontal",
-                        href=stock_management_url(role, "settings"),
-                        active=active_mode == "settings",
+                        href=(
+                            f"{stock_management_url(role, 'settings')}"
+                            f"&stock={'shelf' if shelf_tab else 'item'}"
+                            if shelf_tab or item_only
+                            else stock_management_url(role, "settings")
+                        ),
+                        active=active_mode == "settings"
+                        and (
+                            (settings_stock == "shelf")
+                            if shelf_tab
+                            else (settings_stock != "shelf")
+                            if item_only
+                            else True
+                        ),
+                    ),
+                ),
+                (
+                    "sale-tracking",
+                    _link(
+                        "Item sale stock tracking",
+                        "shopping-cart",
+                        href=stock_management_url(role, "sale-tracking"),
+                        active=active_mode == "sale-tracking",
                     ),
                 ),
             ]
             primary.extend(
                 link
                 for mode, link in candidates
-                if _allowed(mode) and not (shelf_scope and mode == "serials")
+                if _allowed(mode)
+                and not (shelf_scope and mode in ("serials", "sale-tracking"))
             )
             if _allowed("view"):
                 primary.append(
                     _link(
-                        "Activity analytics",
+                        "Item activity analytics"
+                        if item_only
+                        else "Activity analytics",
                         "activity",
                         href=stock_management_url(role, "activity-audits"),
                         active=active_mode == "activity-audits",
                     )
                 )
-            primary.extend(_stock_management_shelf_links(role, profile))
+            if not item_only or shelf_tab:
+                primary.extend(_stock_management_shelf_links(role, profile))
     elif role == EmployeeRole.SHOP_CASHIER:
         # Cashier stock page is focused: Stock In + supplier accounts only.
         from shops.services import company_pos_analytics_section_visible
@@ -2017,6 +2257,7 @@ def sidebar_for_stock_management(
         primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
         if active_mode in (
             "settings",
+            "sale-tracking",
             "low-stock",
             "stock-take",
             "online-stock-take",
@@ -2030,6 +2271,15 @@ def sidebar_for_stock_management(
                         active=active_mode == "settings",
                     )
                 )
+                if settings_stock != "shelf":
+                    primary.append(
+                        _link(
+                            "Item sale stock tracking",
+                            "shopping-cart",
+                            href=stock_management_url(role, "sale-tracking"),
+                            active=active_mode == "sale-tracking",
+                        )
+                    )
             if _allowed("low-stock"):
                 primary.append(
                     _link(
@@ -2658,9 +2908,28 @@ def sidebar_for_stock(role, *, profile=None, active="stock"):
     )
 
 
-def sidebar_for_suppliers(role, *, profile=None):
-    """Focused sidebar for the suppliers workspace."""
+def sidebar_for_suppliers(role, *, profile=None, request=None, view: str = ""):
+    """Focused sidebar for the suppliers workspace — All / Items / Shelf tabs."""
+    from urllib.parse import urlencode
+
     dashboard_url = reverse(role_home_url_name(role))
+    base = analytics_section_url(role, "suppliers")
+
+    def _view_href(view_key: str) -> str:
+        params = {}
+        if request is not None:
+            for key, value in request.GET.items():
+                if key == "view":
+                    continue
+                params[key] = value
+        if view_key:
+            params["view"] = view_key
+        encoded = urlencode(params)
+        return f"{base}?{encoded}" if encoded else base
+
+    view = (view or "").strip().lower()
+    if view not in ("items", "shelf"):
+        view = ""
     return resolve_sidebar_hrefs(
         {
             "page": "analytics",
@@ -2669,8 +2938,20 @@ def sidebar_for_suppliers(role, *, profile=None):
                 _link(
                     "All suppliers",
                     "truck",
-                    href=analytics_section_url(role, "suppliers"),
-                    active=True,
+                    href=_view_href(""),
+                    active=view == "",
+                ),
+                _link(
+                    "Item suppliers",
+                    "package",
+                    href=_view_href("items"),
+                    active=view == "items",
+                ),
+                _link(
+                    "Shelf suppliers",
+                    "layers",
+                    href=_view_href("shelf"),
+                    active=view == "shelf",
                 ),
             ],
             "footer": _footer_site_links(

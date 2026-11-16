@@ -629,6 +629,30 @@
   color: var(--mist-dim);
 }
 
+.stock-settings-scope + .stock-settings-scope {
+  margin-top: 1.5rem;
+}
+
+.stock-settings-scope-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0.9rem 0 0.2rem;
+}
+
+.stock-settings-scope-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink, inherit);
+}
+
+.stock-settings-scope-head p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--mist-dim);
+}
+
 .stock-settings-grid {
   position: relative;
   z-index: 1;
@@ -1335,6 +1359,26 @@
 
 .stock-band-legend .is-total::before {
   background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.stock-band-legend .is-low::before {
+  background: color-mix(in srgb, #d97706 55%, transparent);
+}
+
+/* Shelf stock view matrix: low cells read as a small amber badge. */
+.stock-panel--view .stock-matrix--view .stock-matrix-qty[data-shelf-low] {
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, #d97706 16%, transparent);
+  color: #92400e;
+}
+
+.stock-panel--view .stock-matrix--view .stock-matrix-item .item-thumb {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.45rem;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .stock-scroll-hint {
@@ -10294,5 +10338,66 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 
   .online-take-cart-panel {
     width: min(20.5rem, calc(100vw - 1.4rem));
+  }
+}
+
+.sale-tracking-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.15rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sale-tracking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 11px;
+  background: var(--surface);
+  border: 1px solid transparent;
+}
+
+.sale-tracking-row.is-saving {
+  opacity: 0.6;
+}
+
+.sale-tracking-item {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.sale-tracking-item strong {
+  font-size: 0.9rem;
+  color: var(--text-strong);
+}
+
+.sale-tracking-item span {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--mist-dim);
+}
+
+.sale-tracking-row .low-stock-badge {
+  flex: 0 0 auto;
+}
+
+.sale-tracking-row .perm-switch {
+  flex: 0 0 auto;
+}
+
+.sale-tracking-row .perm-switch.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .sale-tracking-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 }

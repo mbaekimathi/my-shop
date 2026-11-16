@@ -285,6 +285,11 @@ urlpatterns = [
         name="store_stock_items",
     ),
     path(
+        "store-manager/item-stock/toggle/",
+        store_stock_views.store_stock_item_count_toggle,
+        name="store_stock_item_count_toggle",
+    ),
+    path(
         "store-manager/store-stock-in/",
         store_stock_views.store_stock_in,
         name="store_stock_in",
@@ -492,6 +497,11 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/credits/follow-ups/",
         analytics_views.analytics_credit_follow_ups,
         name="analytics_credit_follow_ups",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/suppliers/shelf/",
+        analytics_views.analytics_shelf_supplier_account,
+        name="analytics_shelf_supplier_account",
     ),
     path(
         "<role_segment:role_segment>/analytics/suppliers/<slug:kind>/<int:supplier_id>/",

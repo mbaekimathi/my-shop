@@ -40,6 +40,7 @@
       method="post"
       action="{% url 'employees:store_shelf_stock' %}"
       data-store-stock
+      {% if stock_req.shelf_require_buying_price_on_in %}data-require-price="trade_in"{% endif %}
       data-store-stock-form
     >
       {% csrf_token %}
@@ -110,6 +111,19 @@
                 aria-label="Quantity for {{ row.name }}"
                 data-store-qty-input
               >
+              <input
+                class="store-stock-qty-input stock-flow-price"
+                type="number"
+                name="price_{{ row.id }}"
+                min="0"
+                step="any"
+                inputmode="decimal"
+                placeholder="Value{% if stock_req.shelf_require_buying_price_on_in %}*{% endif %}"
+                title="Unit value{% if stock_req.shelf_require_buying_price_on_in %} (required for trade in){% endif %}"
+                aria-label="Unit value for {{ row.name }}"
+                data-trade-price
+                data-store-price-input
+              >
               <button
                 type="button"
                 class="stock-flow-remove"
@@ -149,7 +163,7 @@
         <div class="buy-stock-simple-confirm-card">
           <div class="buy-stock-simple-supplier stock-flow-meta">
             <label class="stock-float-field">
-              <span>Other person's name{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+              <span>Other person's name{% if stock_req.shelf_require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
               <input
                 type="text"
                 name="person_name"
@@ -159,7 +173,7 @@
               >
             </label>
             <label class="stock-float-field">
-              <span>Other person's phone{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+              <span>Other person's phone{% if stock_req.shelf_require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
               <input
                 type="tel"
                 name="person_phone"

@@ -802,6 +802,116 @@ class PosToggleEnforcementTests(TestCase):
         shop_row.refresh_from_db()
         self.assertFalse(shop_row.require_mpesa_reference_on_confirm)
 
+    # -- per-field inheritance -----------------------------------------------
+
+    def test_company_changes_reach_uncustomised_fields(self):
+        set_shop_pos_override(shop=self.shop, section="pos", enabled=True)
+        # The shop customises only credit; every other field tracks company.
+        set_shop_pos_setting(shop=self.shop, field="enable_credit", enabled=False)
+        set_company_pos_setting(field="enable_quotation", enabled=False)
+        effective = get_effective_pos_settings(self.shop)
+        self.assertFalse(effective.enable_credit)
+        self.assertFalse(effective.enable_quotation)
+        set_company_pos_setting(field="enable_quotation", enabled=True)
+        self.assertTrue(get_effective_pos_settings(self.shop).enable_quotation)
+        # The custom value still sticks.
+        self.assertFalse(get_effective_pos_settings(self.shop).enable_credit)
+
+    def test_shop_field_matching_company_reinherits(self):
+        set_shop_pos_override(shop=self.shop, section="pos", enabled=True)
+        set_shop_pos_setting(shop=self.shop, field="enable_credit", enabled=False)
+        shop_row = ShopPosSettings.objects.get(shop=self.shop)
+        self.assertIn("enable_credit", shop_row.custom_pos_fields)
+        # Writing the company value back re-inherits the company default.
+        set_shop_pos_setting(shop=self.shop, field="enable_credit", enabled=True)
+        shop_row.refresh_from_db()
+        self.assertNotIn("enable_credit", shop_row.custom_pos_fields)
+        set_company_pos_setting(field="enable_credit", enabled=False)
+        self.assertFalse(get_effective_pos_settings(self.shop).enable_credit)
+        set_company_pos_setting(field="enable_credit", enabled=True)
+
+    def test_company_detail_input_is_default_until_shop_writes(self):
+        set_company_delivery_amount(amount="120")
+        set_shop_pos_override(shop=self.shop, section="pos", enabled=True)
+        # Untouched detail inputs follow company changes live.
+        self.assertEqual(
+            get_effective_pos_settings(self.shop).delivery_amount,
+            Decimal("120.00"),
+        )
+        set_company_delivery_amount(amount="150")
+        self.assertEqual(
+            get_effective_pos_settings(self.shop).delivery_amount,
+            Decimal("150.00"),
+        )
+        # Once the shop writes its own, later company changes leave it alone.
+        set_shop_delivery_amount(shop=self.shop, amount="40")
+        set_company_delivery_amount(amount="200")
+        self.assertEqual(
+            get_effective_pos_settings(self.shop).delivery_amount,
+            Decimal("40.00"),
+        )
+        set_shop_pos_override(shop=self.shop, section="pos", enabled=False)
+        set_company_delivery_amount(amount="0")
+
+    def test_disabling_override_clears_custom_fields(self):
+        set_shop_pos_override(shop=self.shop, section="pos", enabled=True)
+        set_shop_pos_setting(shop=self.shop, field="enable_credit", enabled=False)
+        set_shop_delivery_amount(shop=self.shop, amount="40")
+        shop_row = ShopPosSettings.objects.get(shop=self.shop)
+        self.assertIn("enable_credit", shop_row.custom_pos_fields)
+        self.assertIn("delivery_amount", shop_row.custom_pos_fields)
+        set_shop_pos_override(shop=self.shop, section="pos", enabled=False)
+        shop_row.refresh_from_db()
+        self.assertEqual(shop_row.custom_pos_fields, [])
+        effective = get_effective_pos_settings(self.shop)
+        self.assertTrue(effective.enable_credit)
+        self.assertEqual(effective.delivery_amount, Decimal("0.00"))
+
+    def test_receipt_fields_track_company_until_customised(self):
+        set_company_pos_setting(field="print_staff_receipt", enabled=True)
+        set_shop_pos_override(shop=self.shop, section="receipt", enabled=True)
+        self.assertTrue(
+            get_effective_pos_settings(self.shop).print_staff_receipt
+        )
+        set_company_pos_setting(field="print_staff_receipt", enabled=False)
+        self.assertFalse(
+            get_effective_pos_settings(self.shop).print_staff_receipt
+        )
+        # A shop write diverges and then sticks.
+        set_shop_pos_setting(
+            shop=self.shop, field="print_staff_receipt", enabled=True
+        )
+        self.assertTrue(
+            get_effective_pos_settings(self.shop).print_staff_receipt
+        )
+        # Receipt overrides do not stop POS fields tracking the company.
+        set_company_pos_setting(field="enable_sale", enabled=False)
+        self.assertFalse(get_effective_pos_settings(self.shop).enable_sale)
+        set_company_pos_setting(field="enable_sale", enabled=True)
+
+    def test_bundled_detail_save_marks_only_differing_fields(self):
+        from shops.services import set_shop_receipt_number_formats
+
+        set_shop_pos_override(shop=self.shop, section="receipt", enabled=True)
+        # Sale differs from the company default ("S"); the rest match.
+        set_shop_receipt_number_formats(
+            shop=self.shop, sale="SX", credit="C", quotation="Q",
+            trade_out="T", trade_in="TI",
+        )
+        shop_row = ShopPosSettings.objects.get(shop=self.shop)
+        self.assertEqual(
+            shop_row.custom_receipt_fields, ["receipt_format_sale"]
+        )
+        # Company changes to the untouched formats still reach the shop.
+        set_company_pos_setting(field="enable_credit", enabled=True)
+        company = get_company_pos_settings()
+        company.receipt_format_credit = "CR"
+        company.save(update_fields=["receipt_format_credit", "updated_at"])
+        _invalidate_pos_settings_cache()
+        effective = get_effective_pos_settings(self.shop)
+        self.assertEqual(effective.receipt_format_sale, "SX")
+        self.assertEqual(effective.receipt_format_credit, "CR")
+
     # -- hardening -----------------------------------------------------------
 
     def test_raw_stock_flags_cannot_leave_no_mode(self):

@@ -97,10 +97,10 @@
                   min="0"
                   step="any"
                   inputmode="decimal"
-                  placeholder="Buy price"
+                  placeholder="Buy price{% if stock_req.shelf_require_buying_price_on_in %}*{% endif %}"
                   aria-label="Buying price for {{ row.name }}"
                 >
-                <input type="text" name="note" maxlength="255" placeholder="Note (optional)" class="store-stock-qty-input shelf-stock-note" aria-label="Note for {{ row.name }}">
+                <input type="text" name="note" maxlength="255" placeholder="Note{% if stock_req.shelf_require_note_on_request %}*{% else %} (optional){% endif %}" class="store-stock-qty-input shelf-stock-note" aria-label="Note for {{ row.name }}">
                 <button type="submit" name="action" value="in" class="store-stock-btn store-stock-btn--primary">Add</button>
                 <button type="submit" name="action" value="out" class="store-stock-btn store-stock-btn--ghost">Remove</button>
               </form>
@@ -187,15 +187,20 @@
   >
     <div class="workspace-modal-backdrop" data-modal-close></div>
     <div
-      class="workspace-modal-dialog stock-print-dialog"
+      class="workspace-modal-dialog stock-print-dialog shelf-register-dialog"
       role="dialog"
       aria-modal="true"
       aria-labelledby="shelf-register-title"
     >
-      <div class="workspace-modal-head">
-        <div>
-          <h2 id="shelf-register-title">Register shelf stock</h2>
-          <p class="stock-print-lead">Add something you keep on the shelf. Shelf items are never sold, so they don't show on the shop page.</p>
+      <div class="workspace-modal-head shelf-register-head">
+        <div class="shelf-register-head-copy">
+          <span class="shelf-register-icon" aria-hidden="true">
+            <i data-lucide="package-plus"></i>
+          </span>
+          <div>
+            <h2 id="shelf-register-title">Register shelf stock item</h2>
+            <p class="stock-print-lead">Add something you keep on the shelf. Shelf items are never sold, so they don't show on the shop page.</p>
+          </div>
         </div>
         <button
           type="button"
@@ -210,23 +215,45 @@
       <form method="post" enctype="multipart/form-data" class="store-stock-meta-grid shelf-stock-register" data-shelf-register-form>
         {% csrf_token %}{% if shelf_shop_field %}<input type="hidden" name="shop" value="{{ shop.pk }}">{% endif %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
         <input type="hidden" name="action" value="register">
-        <label class="store-stock-field store-stock-field--full">
+        <div class="store-stock-field store-stock-field--full shelf-cat-field" data-shelf-category-field>
+          <span>Category <em>optional · type or pick below</em></span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="tag" aria-hidden="true"></i>
+            <input
+              type="text"
+              name="category"
+              maxlength="120"
+              placeholder="e.g. Groceries"
+              autocomplete="off"
+              aria-label="Category"
+              role="combobox"
+              aria-expanded="false"
+              aria-autocomplete="list"
+              aria-controls="shelf-category-suggest"
+              data-shelf-category-input
+            >
+          </div>
+          <ul class="shelf-cat-suggest" id="shelf-category-suggest" role="listbox" data-shelf-category-list hidden></ul>
+          <datalist data-shelf-category-source>
+            {% for cat in shelf_categories %}<option value="{{ cat }}">{% endfor %}
+          </datalist>
+          {% if shelf_categories %}
+          <div class="shelf-cat-chips" aria-label="Registered shelf categories">
+            {% for cat in shelf_categories %}
+            <button type="button" class="shelf-cat-chip" data-shelf-category-chip="{{ cat }}">
+              <i data-lucide="tag" aria-hidden="true"></i>{{ cat }}
+            </button>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        <label class="store-stock-field">
           <span>Name</span>
           <div class="store-stock-input-wrap">
             <i data-lucide="package" aria-hidden="true"></i>
             <input type="text" name="name" maxlength="200" required placeholder="e.g. Sugar 50kg bag">
           </div>
         </label>
-        <label class="store-stock-field">
-          <span>Category <em>optional</em></span>
-          <div class="store-stock-input-wrap">
-            <i data-lucide="tag" aria-hidden="true"></i>
-            <input type="text" name="category" maxlength="120" list="shelf-category-list" placeholder="e.g. Groceries">
-          </div>
-        </label>
-        <datalist id="shelf-category-list">
-          {% for cat in shelf_categories %}<option value="{{ cat }}">{% endfor %}
-        </datalist>
         <label class="store-stock-field">
           <span>Unit</span>
           <div class="store-stock-input-wrap">
@@ -238,16 +265,39 @@
             </select>
           </div>
         </label>
-        <label class="store-stock-field store-stock-field--full">
+        <div class="store-stock-field store-stock-field--full shelf-file-field">
           <span>Upload image <em>optional</em></span>
-          <div class="store-stock-input-wrap">
-            <i data-lucide="image-plus" aria-hidden="true"></i>
-            <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif">
+          <div class="shelf-file-drop" data-shelf-file-drop>
+            <input
+              class="shelf-file-input"
+              type="file"
+              name="image"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              aria-label="Shelf item image"
+              data-shelf-file-input
+            >
+            <span class="shelf-file-empty" data-shelf-file-empty>
+              <i data-lucide="image-plus" aria-hidden="true"></i>
+              <span class="shelf-file-empty-copy">
+                <strong>Choose an image</strong> or drop it here
+                <small>JPG, PNG, WebP or GIF</small>
+              </span>
+            </span>
+            <span class="shelf-file-picked" data-shelf-file-picked hidden>
+              <img class="shelf-file-thumb" data-shelf-file-thumb alt="">
+              <span class="shelf-file-name" data-shelf-file-name></span>
+              <button type="button" class="shelf-file-clear" data-shelf-file-clear aria-label="Remove image">
+                <i data-lucide="x" aria-hidden="true"></i>
+              </button>
+            </span>
           </div>
-        </label>
+        </div>
         <div class="workspace-modal-actions">
           <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
-          <button type="submit" class="store-stock-btn store-stock-btn--primary">Register</button>
+          <button type="submit" class="store-stock-btn store-stock-btn--primary shelf-register-submit">
+            <i data-lucide="package-plus" aria-hidden="true"></i>
+            Register item
+          </button>
         </div>
       </form>
     </div>

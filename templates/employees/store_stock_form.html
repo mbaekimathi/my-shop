@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=19">
 {% endblock %}
 
 {% block workspace_content %}
@@ -14,6 +14,7 @@
   data-animate="rise"
   data-store-stock
   data-mode="{{ mode }}"
+  {% if mode == "in" and stock_req.require_buying_price_on_in %}data-require-price="always"{% endif %}
   data-employee-search-url="{{ employee_search_url }}"
 >
   <header class="store-stock-hero">
@@ -62,7 +63,7 @@
 
       <div class="store-stock-meta-grid">
         {% if mode == "out" %}
-        {% include "employees/partials/stock_out_details.html" %}
+        {% include "employees/partials/stock_out_details.html" with out_reason_req=stock_req.require_reason_on_out out_refund_req=stock_req.require_refund_on_out %}
         {% else %}
         <label class="store-stock-field">
           <span>Note <em>optional</em></span>
@@ -145,7 +146,7 @@
               <th scope="col" class="store-stock-col-qty">In store</th>
               <th scope="col" class="store-stock-col-input">{{ mode|upper }} qty</th>
               {% if mode == "in" %}
-              <th scope="col" class="store-stock-col-input">Buying price</th>
+              <th scope="col" class="store-stock-col-input">Buying price{% if stock_req.require_buying_price_on_in %} <em>required</em>{% else %} <em>optional</em>{% endif %}</th>
               {% endif %}
             </tr>
           </thead>
@@ -190,6 +191,7 @@
                   inputmode="decimal"
                   placeholder="0.00"
                   aria-label="Buying price for {{ item.name }}"
+                  data-store-price-input
                 >
               </td>
               {% endif %}

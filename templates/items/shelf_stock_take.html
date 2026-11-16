@@ -1,0 +1,221 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Shelf stock take — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="stock-panel stock-panel--settings stock-panel--stock-take"
+  data-animate="rise"
+  data-stock-mode="stock-take"
+>
+  <header class="stock-panel-head stock-settings-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Shelf stock</p>
+        <h2>
+          {% if selected_take %}
+          Shelf stock take #{{ selected_take.pk }} — {{ selected_take.shop.name }}
+          {% else %}
+          Shelf stock take
+          {% endif %}
+        </h2>
+        <p>
+          {% if selected_take %}
+            {% if selected_take.status == "open" %}
+            Enter the counted quantity for each shelf item, then submit. The take closes once every item is counted.
+            {% else %}
+            Counted vs system quantities. Apply adjustments to post stock in/out movements for the differences.
+            {% endif %}
+          {% else %}
+          Count one shop's shelf items against the system quantity, then compare the variance.
+          {% endif %}
+        </p>
+      </div>
+      <div class="stock-settings-head-actions">
+        {% if selected_take %}
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ stock_take_list_url }}">
+          <i data-lucide="arrow-left" aria-hidden="true"></i>
+          <span>All shelf stock takes</span>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  {% if not selected_take %}
+
+  {% if can_edit_stock_take %}
+  <form method="post" class="stock-report-filters shelf-take-create">
+    {% csrf_token %}
+    <input type="hidden" name="mode" value="stock-take">
+    <input type="hidden" name="stock" value="shelf">
+    <input type="hidden" name="action" value="create_shelf_take">
+    <label class="stock-report-field">
+      <span>Shop</span>
+      <select name="shop_id" required>
+        {% for shop in shelf_take_shops %}
+        <option value="{{ shop.pk }}">{{ shop.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="stock-report-field">
+      <span>Note</span>
+      <input type="text" name="note" maxlength="240" placeholder="Optional note">
+    </label>
+    <button type="submit" class="low-stock-sync-all">New shelf stock take</button>
+  </form>
+  {% endif %}
+
+  <div class="low-stock-table-wrap">
+    <table class="low-stock-table">
+      <thead>
+        <tr>
+          <th scope="col">Take</th>
+          <th scope="col">Shop</th>
+          <th scope="col">Created</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="low-stock-num">Counted</th>
+          <th scope="col" class="low-stock-num">Differences</th>
+          <th scope="col">Adjustments</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in shelf_takes %}
+        <tr class="low-stock-row">
+          <td><a href="{{ stock_take_list_url }}&take_id={{ row.take.pk }}"><strong>#{{ row.take.pk }}</strong></a></td>
+          <td>{{ row.take.shop.name }}</td>
+          <td>
+            {{ row.take.created_at|date:"d M Y H:i" }}
+            {% if row.take.created_by %}<em> · {{ row.take.created_by.user.get_full_name|default:row.take.created_by.user.username }}</em>{% endif %}
+          </td>
+          <td>
+            <span class="low-stock-badge{% if row.take.status == "open" %} is-low{% else %} is-ok{% endif %}">
+              {{ row.take.get_status_display }}
+            </span>
+          </td>
+          <td class="low-stock-num">{{ row.filled_count }}/{{ row.entry_count }}</td>
+          <td class="low-stock-num">{{ row.variance_count }}</td>
+          <td>{% if row.take.applied_at %}Applied{% else %}—{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7">No shelf stock takes yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+
+  {% if selected_take.status == "open" and can_edit_stock_take %}
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="mode" value="stock-take">
+    <input type="hidden" name="stock" value="shelf">
+    <input type="hidden" name="action" value="submit_shelf_take">
+    <input type="hidden" name="take_id" value="{{ selected_take.pk }}">
+    <div class="low-stock-table-wrap">
+      <table class="low-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Unit</th>
+            <th scope="col" class="low-stock-num">System qty</th>
+            <th scope="col" class="low-stock-num">Counted qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in shelf_take_rows %}
+          <tr class="low-stock-row">
+            <td class="low-stock-item">
+              <strong>{{ row.name }}</strong>
+              {% if row.category %}<em>{{ row.category }}</em>{% endif %}
+            </td>
+            <td class="low-stock-num">{{ row.unit|default:"—" }}</td>
+            <td class="low-stock-num">{{ row.system_qty }}</td>
+            <td class="low-stock-threshold low-stock-num">
+              <label class="low-stock-threshold-field is-manual">
+                <span class="visually-hidden">Counted qty for {{ row.name }}</span>
+                <input
+                  type="number"
+                  name="count_{{ row.entry_id }}"
+                  inputmode="decimal"
+                  step="any"
+                  min="0"
+                  placeholder="—"
+                  value="{{ row.counted_qty }}"
+                >
+              </label>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4">This take has no shelf items.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if shelf_take_rows %}
+    <p>
+      <button type="submit" class="low-stock-sync-all">Submit counts</button>
+    </p>
+    {% endif %}
+  </form>
+  {% else %}
+  <div class="low-stock-table-wrap">
+    <table class="low-stock-table">
+      <thead>
+        <tr>
+          <th scope="col">Shelf item</th>
+          <th scope="col">Unit</th>
+          <th scope="col" class="low-stock-num">System qty</th>
+          <th scope="col" class="low-stock-num">Counted qty</th>
+          <th scope="col">Variance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in shelf_take_rows %}
+        <tr class="low-stock-row{% if row.variance_kind == "short" or row.variance_kind == "excess" %} is-low{% endif %}">
+          <td class="low-stock-item">
+            <strong>{{ row.name }}</strong>
+            {% if row.category %}<em>{{ row.category }}</em>{% endif %}
+          </td>
+          <td class="low-stock-num">{{ row.unit|default:"—" }}</td>
+          <td class="low-stock-num">{{ row.system_qty }}</td>
+          <td class="low-stock-num">{{ row.counted_qty|default:"—" }}</td>
+          <td>
+            {% if row.variance_label %}
+            <span class="low-stock-badge{% if row.variance_kind == "match" %} is-ok{% else %} is-low{% endif %}">
+              {{ row.variance_label }}
+            </span>
+            {% else %}
+            —
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5">This take has no shelf items.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if selected_take.status == "closed" and can_edit_stock_take and not selected_take.applied_at %}
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="mode" value="stock-take">
+    <input type="hidden" name="stock" value="shelf">
+    <input type="hidden" name="action" value="apply_shelf_take">
+    <input type="hidden" name="take_id" value="{{ selected_take.pk }}">
+    <p>
+      <button type="submit" class="low-stock-sync-all">Apply adjustments to shelf stock</button>
+      <span class="low-stock-chip">Posts stock in/out movements for each difference.</span>
+    </p>
+  </form>
+  {% elif selected_take.applied_at %}
+  <p class="stock-settings-footnote">Adjustments applied {{ selected_take.applied_at|date:"d M Y H:i" }}.</p>
+  {% endif %}
+  {% endif %}
+
+  {% endif %}
+</section>
+{% endblock %}

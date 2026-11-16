@@ -69,6 +69,10 @@ class ShelfStockTests(TestCase):
         ShopPosSettings.objects.filter(shop=self.shop).delete()
         _invalidate_pos_settings_cache()
         self.addCleanup(_invalidate_pos_settings_cache)
+        from shops.services import _invalidate_stock_settings_cache
+
+        _invalidate_stock_settings_cache()
+        self.addCleanup(_invalidate_stock_settings_cache)
         self.staff = {"login_code": self.profile.employee_id}
         self.url = reverse(
             "employees:my_shop_shelf_stock", kwargs={"shop_id": self.shop.pk}
@@ -132,7 +136,7 @@ class ShelfStockTests(TestCase):
         shelf = ShelfItem.objects.get(shop=self.shop, name="SUGAR BAG")
         self.assertEqual(shelf.quantity, Decimal("5"))
 
-        client.post(self.url, {"action": "in", "shelf_item_id": shelf.pk, "qty": "3", **self.staff})
+        client.post(self.url, {"action": "in", "shelf_item_id": shelf.pk, "qty": "3", "price": "7.50", **self.staff})
         client.post(self.url, {"action": "out", "shelf_item_id": shelf.pk, "qty": "2", **self.staff})
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("6"))
@@ -263,6 +267,7 @@ class ShelfStockTests(TestCase):
                 "action": "in",
                 "shelf_item_id": ShelfItem.objects.get(shop=self.shop).pk,
                 "qty": "1",
+                "price": "4.00",
                 **self.staff,
             },
         )
@@ -373,6 +378,10 @@ class StoreManagerShelfStockTests(TestCase):
         )
         _invalidate_pos_settings_cache()
         self.addCleanup(_invalidate_pos_settings_cache)
+        from shops.services import _invalidate_stock_settings_cache
+
+        _invalidate_stock_settings_cache()
+        self.addCleanup(_invalidate_stock_settings_cache)
         self.client.login(username="830041", password="store-pass")
         self.url = reverse("employees:store_shelf_stock")
 
@@ -571,6 +580,7 @@ class StoreManagerShelfStockTests(TestCase):
             reverse("employees:store_stock_in"),
             {
                 f"qty_{item.pk}": "25",
+                f"price_{item.pk}": "18.00",
                 "received_by_id": self.manager.pk,
                 "supplier_name": "Brookside",
                 "supplier_phone": "0722000000",
@@ -609,6 +619,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "mode": "in",
                 "shop": self.shop.pk,
                 f"qty_{shelf.pk}": "7",
+                f"price_{shelf.pk}": "12.00",
                 "supplier_name": "Kenafric",
                 "supplier_phone": "0733111222",
                 "payment_status": "unpaid",
@@ -694,7 +705,8 @@ class StoreManagerShelfStockTests(TestCase):
         self.assertEqual(trade_out.supplier_phone, "0722000000")
         self.assertEqual(trade_out.note, "swap deal")
 
-        # Trade in: the person brings items onto the shelf.
+        # Trade in: the person brings items onto the shelf (unit value is
+        # required while shelf_require_buying_price_on_in is on).
         self.client.post(
             self.url,
             {
@@ -702,6 +714,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "shop": self.shop.pk,
                 "trade_kind": "trade_in",
                 f"qty_{shelf.pk}": "3",
+                f"price_{shelf.pk}": "15.00",
                 "person_name": "Jane Trader",
                 "person_phone": "0722000000",
             },
@@ -848,7 +861,11 @@ class StoreManagerShelfStockTests(TestCase):
         # Supplier + payment are required on stock in by default.
         denied = self.client.post(
             reverse("employees:store_stock_in"),
-            {f"qty_{item.pk}": "1", "received_by_id": self.manager.pk},
+            {
+                f"qty_{item.pk}": "1",
+                f"price_{item.pk}": "10.00",
+                "received_by_id": self.manager.pk,
+            },
         )
         self.assertContains(denied, "supplier name", status_code=200)
         self.assertEqual(item.store_stock_movements.count(), 1)
@@ -859,6 +876,7 @@ class StoreManagerShelfStockTests(TestCase):
             reverse("employees:store_stock_in"),
             {
                 f"qty_{item.pk}": "3",
+                f"price_{item.pk}": "30.00",
                 "supplier_name": "Brookside",
                 "supplier_phone": "0722000000",
                 "payment_status": "paid",
@@ -944,6 +962,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "mode": "in",
                 "shop": self.shop.pk,
                 f"qty_{shelf.pk}": "7",
+                f"price_{shelf.pk}": "14.00",
                 "supplier_name": "Kenafric",
                 "supplier_phone": "0733111222",
                 "payment_status": "unpaid",
@@ -957,3 +976,149 @@ class StoreManagerShelfStockTests(TestCase):
         self.assertEqual(in_move.supplier_name, "KENAFRIC")
         self.assertEqual(in_move.supplier_phone, "0733111222")
         self.assertEqual(in_move.payment_status, "unpaid")
+
+    def test_buying_price_toggle_applies_to_store_manager(self):
+        """Stock Settings → Unit buying price also gates the store pages."""
+        from shops.services import set_company_stock_setting
+
+        item = Item.objects.create(
+            category="GEN",
+            name="Rice 5kg",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("20"),
+            created_by=self.manager,
+        )
+        in_url = reverse("employees:store_stock_in")
+
+        # On by default: a filled line with no buying price is rejected.
+        denied = self.client.post(
+            in_url,
+            {
+                f"qty_{item.pk}": "5",
+                "received_by_id": self.manager.pk,
+                "supplier_name": "Brookside",
+                "supplier_phone": "0722000000",
+                "payment_status": "paid",
+            },
+        )
+        self.assertContains(denied, "buying price", status_code=200)
+        self.assertFalse(StoreStock.objects.exists())
+        page = self.client.get(in_url)
+        self.assertContains(page, "Buying price <em>required</em>")
+
+        # With a price the line records.
+        ok = self.client.post(
+            in_url,
+            {
+                f"qty_{item.pk}": "5",
+                f"price_{item.pk}": "18.00",
+                "received_by_id": self.manager.pk,
+                "supplier_name": "Brookside",
+                "supplier_phone": "0722000000",
+                "payment_status": "paid",
+            },
+        )
+        self.assertRedirects(ok, reverse("employees:store_stock_items"))
+        movement = item.store_stock_movements.get()
+        self.assertEqual(movement.buying_price, Decimal("18.00"))
+
+        # Trade in applies the same rule to the unit value column; trade
+        # out never collects a value.
+        denied_trade = self.client.post(
+            reverse("employees:store_stock_trade"),
+            {"trade_kind": "trade_in", f"qty_{item.pk}": "2"},
+        )
+        self.assertContains(denied_trade, "buying price", status_code=200)
+        self.assertEqual(item.store_stock_movements.count(), 1)
+
+        # Turning the toggle off makes the price optional again.
+        set_company_stock_setting(
+            field="require_buying_price_on_in", enabled=False
+        )
+        ok_free = self.client.post(
+            in_url,
+            {
+                f"qty_{item.pk}": "1",
+                "received_by_id": self.manager.pk,
+                "supplier_name": "Brookside",
+                "supplier_phone": "0722000000",
+                "payment_status": "paid",
+            },
+        )
+        self.assertRedirects(ok_free, reverse("employees:store_stock_items"))
+        self.assertEqual(item.store_stock_movements.count(), 2)
+
+    def test_shelf_settings_are_independent_of_item_settings(self):
+        """Shelf stock follows the shelf_require_* flags, not the item ones."""
+        from shops.services import set_company_stock_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Gunny bags",
+                "opening_qty": "20",
+                "shop": self.shop.pk,
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        payload = {
+            "mode": "in",
+            "shop": self.shop.pk,
+            f"qty_{shelf.pk}": "5",
+            "supplier_name": "Kenafric",
+            "supplier_phone": "0733111222",
+            "payment_status": "unpaid",
+        }
+
+        # The item flag being off does not relax the shelf rule.
+        set_company_stock_setting(
+            field="require_buying_price_on_in", enabled=False
+        )
+        denied = self.client.post(self.url, payload, follow=True)
+        self.assertContains(denied, "buying price", status_code=200)
+        self.assertFalse(
+            ShelfStockMovement.objects.filter(movement_type="in").exists()
+        )
+
+        # The shelf flag is what unlocks the price-free stock in.
+        set_company_stock_setting(
+            field="shelf_require_buying_price_on_in", enabled=False
+        )
+        ok = self.client.post(self.url, payload)
+        self.assertRedirects(ok, f"{self.url}?shop={self.shop.pk}")
+        self.assertEqual(
+            ShelfStockMovement.objects.filter(movement_type="in").count(), 1
+        )
+
+        # Supplier rules are independent too: item supplier off, shelf
+        # supplier on → shelf stock in still needs the supplier.
+        set_company_stock_setting(field="require_supplier_on_in", enabled=False)
+        denied_supplier = self.client.post(
+            self.url,
+            {
+                "mode": "in",
+                "shop": self.shop.pk,
+                f"qty_{shelf.pk}": "1",
+                "payment_status": "unpaid",
+            },
+            follow=True,
+        )
+        self.assertContains(denied_supplier, "supplier name", status_code=200)
+        set_company_stock_setting(
+            field="shelf_require_supplier_on_in", enabled=False
+        )
+        ok_supplier = self.client.post(
+            self.url,
+            {
+                "mode": "in",
+                "shop": self.shop.pk,
+                f"qty_{shelf.pk}": "1",
+                "payment_status": "unpaid",
+            },
+        )
+        self.assertRedirects(ok_supplier, f"{self.url}?shop={self.shop.pk}")
+        self.assertEqual(
+            ShelfStockMovement.objects.filter(movement_type="in").count(), 2
+        )

@@ -41,8 +41,14 @@
   </p>
   {% endif %}
 
-  <div class="stock-settings-grid">
-    {% for group in stock_setting_groups %}
+  {% for section in stock_setting_sections %}
+  <div class="stock-settings-scope">
+    <header class="stock-settings-scope-head">
+      <h3>{{ section.title }}</h3>
+      <p>{{ section.summary }}</p>
+    </header>
+    <div class="stock-settings-grid">
+    {% for group in section.groups %}
     <article class="stock-settings-card stock-settings-card--{{ group.key }}">
       <header class="stock-settings-card-head">
         <span class="stock-settings-card-icon" aria-hidden="true">
@@ -117,12 +123,33 @@
       </div>
     </article>
     {% endfor %}
+    {% for card in section.link_cards %}
+    <article class="stock-settings-card stock-settings-card--link">
+      <header class="stock-settings-card-head">
+        <span class="stock-settings-card-icon" aria-hidden="true">
+          <i data-lucide="{{ card.icon }}"></i>
+        </span>
+        <div class="stock-settings-card-titles">
+          <h3>{{ card.title }}</h3>
+          <p>{{ card.summary }}</p>
+        </div>
+        {% if card.open_url %}
+        <a class="stock-settings-card-link" href="{{ card.open_url }}">
+          <span>{{ card.open_label }}</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
+        {% endif %}
+      </header>
+    </article>
+    {% endfor %}
+    </div>
   </div>
+  {% endfor %}
 
   <p class="stock-settings-footnote">
     <i data-lucide="zap" aria-hidden="true"></i>
     <span>
-      Changes apply immediately to Stock In, Stock Out, Transfer Stock, and shop-floor buy stock.
+      Changes apply immediately to Stock In, Stock Out, Transfer Stock, shop-floor buy stock, and the Store Manager stock pages.
     </span>
   </p>
 </section>

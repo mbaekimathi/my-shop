@@ -1,9 +1,9 @@
 {# Stock-out details — reason / custom reason / refund, applied to every line in the batch. #}
 <label class="store-stock-field">
-  <span>Reason{% if not stock_req.require_reason_on_out %} <em>optional</em>{% endif %}</span>
+  <span>Reason{% if not out_reason_req %} <em>optional</em>{% endif %}</span>
   <div class="store-stock-input-wrap">
     <i data-lucide="list-checks" aria-hidden="true"></i>
-    <select name="reason" data-stock-reason{% if stock_req.require_reason_on_out %} required{% endif %}>
+    <select name="reason" data-stock-reason{% if out_reason_req %} required{% endif %}>
       <option value="">Select</option>
       {% for value, label in stock_out_reasons %}
       <option value="{{ value }}"{% if value == "custom" %} selected{% endif %}>{{ label }}</option>
@@ -19,10 +19,10 @@
   </div>
 </label>
 <label class="store-stock-field">
-  <span>Refund{% if not stock_req.require_refund_on_out %} <em>optional</em>{% endif %}</span>
+  <span>Refund{% if not out_refund_req %} <em>optional</em>{% endif %}</span>
   <div class="store-stock-input-wrap">
     <i data-lucide="banknote" aria-hidden="true"></i>
-    <select name="refund" data-stock-refund{% if stock_req.require_refund_on_out %} required{% endif %}>
+    <select name="refund" data-stock-refund{% if out_refund_req %} required{% endif %}>
       <option value="">Select</option>
       <option value="yes">Yes</option>
       <option value="no">No</option>
