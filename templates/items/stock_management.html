@@ -3,11 +3,6 @@
 
 {% block title %}Stock Management — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
-{% block extra_css %}
-{{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=19">
-{% endblock %}
-
 {% block workspace_content %}
 <form
   class="stock-layout{% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %} stock-layout--action{% endif %}"

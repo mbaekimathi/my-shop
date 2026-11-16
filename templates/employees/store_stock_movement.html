@@ -3,11 +3,6 @@
 
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
-{% block extra_css %}
-{{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=19">
-{% endblock %}
-
 {% block workspace_content %}
 <section class="store-stock store-stock--report" data-animate="rise">
   <header class="store-stock-hero">

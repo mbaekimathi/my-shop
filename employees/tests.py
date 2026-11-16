@@ -1379,6 +1379,28 @@ class DashboardSidebarLinkTests(TestCase):
         )
         self.assertIn("tab=shelf", shelf["href"])
 
+    def test_it_support_dashboard_hides_item_link_in_shelf_only_mode(self):
+        from shops.models import Shop
+        from shops.services import set_company_pos_setting
+
+        Shop.objects.create(
+            name="SHELF ONLY SHOP",
+            location="NAIROBI",
+            email="shelf-only@test.local",
+            phone_number="0700000962",
+            login_code="860162",
+            password_hash="x",
+        )
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self.addCleanup(
+            set_company_pos_setting, field="stock_mode_items", enabled=True
+        )
+
+        sidebar = sidebar_for_role_dashboard(EmployeeRole.IT_SUPPORT)
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Item stock management", labels)
+        self.assertIn("Shelf stock management", labels)
+
     def test_whatsapp_link_lives_in_marketing_sidebar(self):
         sidebar = sidebar_for_marketing_links(EmployeeRole.IT_SUPPORT)
         inbox = next(
