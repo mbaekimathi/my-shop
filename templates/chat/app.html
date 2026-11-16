@@ -38,7 +38,7 @@
   <script type="application/json" id="chat-init-contacts">{{ contacts_json|safe }}</script>
   <script type="application/json" id="chat-init-suggestions">{{ suggestions_json|safe }}</script>
   <script type="application/json" id="chat-init-receipt-status">{{ receipt_status_default_json|safe }}</script>
-  <script type="application/json" id="chat-init-me">{"id": {{ me.id }}, "name": "{{ me.name|escapejs }}", "code": "{{ me.code }}", "location": "{{ me.location|escapejs }}", "initials": "{{ me.initials }}", "tone": {{ me.tone }}, "needs_member_confirm": {{ me.needs_member_confirm|yesno:"true,false" }}, "staff_view": {{ me.staff_view|yesno:"true,false" }}, "trade_out": {{ me.trade_out|yesno:"true,false" }}, "trade_in": {{ me.trade_in|yesno:"true,false" }}}</script>
+  <script type="application/json" id="chat-init-me">{"id": {{ me.id }}, "name": "{{ me.name|escapejs }}", "code": "{{ me.code }}", "location": "{{ me.location|escapejs }}", "initials": "{{ me.initials }}", "tone": {{ me.tone }}, "needs_member_confirm": {{ me.needs_member_confirm|yesno:"true,false" }}, "staff_view": {{ me.staff_view|yesno:"true,false" }}, "trade_out": {{ me.trade_out|yesno:"true,false" }}, "trade_in": {{ me.trade_in|yesno:"true,false" }}, "stock_req": {{ stock_req_json|default:"{}" }}}</script>
 
   <header class="wa-app__bar">
     <div class="wa-app__brand">
@@ -371,6 +371,12 @@
                  data-stock-supname aria-label="Supplier name">
           <div class="wa-stock__suggest" data-stock-name-suggest hidden></div>
         </div>
+        <select data-stock-inpaystatus hidden aria-label="Payment status">
+          <option value="">Payment status…</option>
+          <option value="paid">Paid</option>
+          <option value="partial">Partial</option>
+          <option value="unpaid">Unpaid</option>
+        </select>
       </div>
       <div class="wa-stock__fields" data-stock-payment hidden>
         <p class="wa-stock__label">Payment <em>(required)</em></p>

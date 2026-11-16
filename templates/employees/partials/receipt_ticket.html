@@ -137,6 +137,36 @@
       <span>Total</span>
       <strong>KSh {{ p.total }}</strong>
     </div>
+    {% if p.payment_method_label %}
+    <div>
+      <span>Paid via</span>
+      <strong>{{ p.payment_method_label }}</strong>
+    </div>
+    {% endif %}
+    {% for part in p.payment_split %}
+    <div>
+      <span>{{ part.label }}</span>
+      <strong>KSh {{ part.amount }}</strong>
+    </div>
+    {% endfor %}
+    {% if p.show_amount_paid %}
+    <div>
+      <span>Paid</span>
+      <strong>KSh {{ p.amount_paid }}</strong>
+    </div>
+    {% endif %}
+    {% if p.balance_due %}
+    <div>
+      <span>Balance</span>
+      <strong>KSh {{ p.balance_due }}</strong>
+    </div>
+    {% endif %}
+    {% if p.payment_reference %}
+    <div>
+      <span>M-Pesa ref</span>
+      <strong>{{ p.payment_reference }}</strong>
+    </div>
+    {% endif %}
     {% endif %}
   </div>
 

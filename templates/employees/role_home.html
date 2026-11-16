@@ -48,6 +48,83 @@
   </section>
   {% endif %}
 
+  {% if cashier_day_summaries %}
+  <section class="home-section" aria-labelledby="home-money-title">
+    <div class="home-money-head">
+      <h3 class="home-section-title" id="home-money-title">Day summary</h3>
+      <nav class="home-money-filters" aria-label="Filter sales by status">
+        {% for option in cashier_status_options %}
+        <a
+          class="home-filter-pill{% if option.active %} is-active{% endif %}"
+          href="?status={{ option.key }}"
+          {% if option.active %}aria-current="true"{% endif %}
+        >{{ option.label }}</a>
+        {% endfor %}
+      </nav>
+    </div>
+    {% for row in cashier_day_summaries %}
+    <article class="home-money-shop">
+      <h4 class="home-money-shop-name">
+        {{ row.shop.name }}
+        {% if row.session %}
+        <small>day opened {{ row.session.opened_at|date:"M j, H:i" }}</small>
+        {% endif %}
+      </h4>
+      {% if row.display %}
+      <div class="home-money-stats">
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="receipt"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">
+              {% if cashier_sales_status == "pending" %}Pending sales{% elif cashier_sales_status == "confirmed" %}Confirmed sales{% else %}Total sales{% endif %}
+            </span>
+            <strong class="home-stat-value">KSh {{ row.display.sales_total }}</strong>
+            <small>{{ row.display.sales_count }} sale{{ row.display.sales_count|pluralize }}</small>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="wallet"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Expenses paid</span>
+            <strong class="home-stat-value">KSh {{ row.display.expenses_paid }}</strong>
+          </span>
+        </div>
+        <div class="home-stat home-stat--revenue">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="trending-up"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Total revenue</span>
+            <strong class="home-stat-value">KSh {{ row.display.revenue }}</strong>
+            <small>sales − expenses</small>
+          </span>
+        </div>
+      </div>
+      <table class="home-money-table">
+        <thead>
+          <tr>
+            <th scope="col">Payment method</th>
+            <th scope="col">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for method in row.display.methods %}
+          <tr>
+            <th scope="row">{{ method.label }}</th>
+            <td><strong>KSh {{ method.amount }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="home-empty">
+        <i data-lucide="door-open" aria-hidden="true"></i>
+        <p><strong>Day not open.</strong> Open the shop day to start tracking sales money.</p>
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+  {% endif %}
+
   <section class="home-section" aria-labelledby="home-activity-title">
     <h3 class="home-section-title" id="home-activity-title">Recent activity</h3>
     <div class="home-empty">

@@ -117,6 +117,7 @@ class ShopReceipt(models.Model):
     return_payment_events = models.JSONField(default=list)
     source_shop_id = models.BigIntegerField(null=True, blank=True)
     credit_due_date = models.DateField(null=True, blank=True)
+    confirmed_payment_at = models.DateTimeField(null=True, blank=True)
     last_returned_at = models.DateTimeField(null=True, blank=True)
     last_returned_by_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -170,6 +171,28 @@ class ShopDaySession(models.Model):
     closed_at = models.DateTimeField(null=True, blank=True)
     opening_cash = models.DecimalField(max_digits=12, decimal_places=2)
     opening_mpesa = models.DecimalField(max_digits=12, decimal_places=2)
+    opening_card = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0
+    )
+    opening_credit = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0
+    )
+    closing_cash = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    closing_mpesa = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    closing_card = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    closing_credit = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    stock_confirmed_open = models.BooleanField(default=False)
+    stock_confirmed_close = models.BooleanField(default=False)
+    opened_by_id = models.BigIntegerField()
+    closed_by_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -263,9 +286,29 @@ class CompanyPosSettings(models.Model):
     """
 
     id = models.BigAutoField(primary_key=True)
+    enable_sale = models.BooleanField(default=True)
+    enable_credit = models.BooleanField(default=True)
+    enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
+    enable_cash = models.BooleanField(default=True)
+    enable_mpesa = models.BooleanField(default=True)
+    enable_card = models.BooleanField(default=False)
+    enable_cash_mpesa = models.BooleanField(default=True)
+    enable_cash_card = models.BooleanField(default=False)
+    enable_mpesa_card = models.BooleanField(default=False)
+    enable_cash_mpesa_card = models.BooleanField(default=False)
+    enable_discount = models.BooleanField(default=True)
     enable_stock_tracking = models.BooleanField(default=True)
+    enable_shelf_mode = models.BooleanField(default=False)
+    enable_open_close = models.BooleanField(default=True)
+    enable_client_data = models.BooleanField(default=True)
+    require_client_phone = models.BooleanField(default=False)
+    require_client_name = models.BooleanField(default=False)
+    require_mpesa_reference_on_confirm = models.BooleanField(default=False)
+    receipt_format_sale = models.CharField(max_length=8, default="S")
+    receipt_format_credit = models.CharField(max_length=8, default="C")
+    receipt_format_quotation = models.CharField(max_length=8, default="Q")
     receipt_format_trade_out = models.CharField(max_length=8, default="T")
     receipt_format_trade_in = models.CharField(max_length=8, default="TI")
 
@@ -284,15 +327,80 @@ class ShopPosSettings(models.Model):
     override_receipt = models.BooleanField(default=False)
     custom_pos_fields = models.JSONField(default=list, blank=True)
     custom_receipt_fields = models.JSONField(default=list, blank=True)
+    enable_sale = models.BooleanField(default=True)
+    enable_credit = models.BooleanField(default=True)
+    enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
+    enable_cash = models.BooleanField(default=True)
+    enable_mpesa = models.BooleanField(default=True)
+    enable_card = models.BooleanField(default=False)
+    enable_cash_mpesa = models.BooleanField(default=True)
+    enable_cash_card = models.BooleanField(default=False)
+    enable_mpesa_card = models.BooleanField(default=False)
+    enable_cash_mpesa_card = models.BooleanField(default=False)
+    enable_discount = models.BooleanField(default=True)
     enable_stock_tracking = models.BooleanField(default=True)
+    enable_shelf_mode = models.BooleanField(default=False)
+    enable_open_close = models.BooleanField(default=True)
+    enable_client_data = models.BooleanField(default=True)
+    require_client_phone = models.BooleanField(default=False)
+    require_client_name = models.BooleanField(default=False)
+    require_mpesa_reference_on_confirm = models.BooleanField(default=False)
+    receipt_format_sale = models.CharField(max_length=8, default="S")
+    receipt_format_credit = models.CharField(max_length=8, default="C")
+    receipt_format_quotation = models.CharField(max_length=8, default="Q")
     receipt_format_trade_out = models.CharField(max_length=8, default="T")
     receipt_format_trade_in = models.CharField(max_length=8, default="TI")
 
     class Meta:
         managed = False
         db_table = "shops_shoppossettings"
+
+
+class CompanyStockSettings(models.Model):
+    """Company-wide compulsory fields for stock in/out/request (singleton row,
+    pk=1). Mirrors `shops_companystocksettings` — only the item-stock flags the
+    chatbot needs; the shelf_* flags belong to the shelf pages."""
+
+    id = models.BigAutoField(primary_key=True)
+    require_buying_price_on_in = models.BooleanField(default=True)
+    require_supplier_on_in = models.BooleanField(default=True)
+    require_payment_status_on_in = models.BooleanField(default=True)
+    require_reason_on_out = models.BooleanField(default=True)
+    require_refund_on_out = models.BooleanField(default=True)
+    require_note_on_request = models.BooleanField(default=False)
+    shelf_require_buying_price_on_in = models.BooleanField(default=True)
+    shelf_require_supplier_on_in = models.BooleanField(default=True)
+    shelf_require_payment_status_on_in = models.BooleanField(default=True)
+    shelf_require_reason_on_out = models.BooleanField(default=True)
+    shelf_require_refund_on_out = models.BooleanField(default=True)
+    shelf_require_note_on_request = models.BooleanField(default=False)
+    enable_supplier_last4_search = models.BooleanField(default=False)
+    hide_stock_mode = models.CharField(max_length=16, default="show")
+    hide_stock_categories = models.JSONField(default=list, blank=True)
+    hide_stock_item_ids = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = "shops_companystocksettings"
+
+    def as_requirements_dict(self) -> dict:
+        return {
+            "in": {
+                "buying_price": bool(self.require_buying_price_on_in),
+                "supplier": bool(self.require_supplier_on_in),
+                "payment_status": bool(self.require_payment_status_on_in),
+            },
+            "out": {
+                "reason": bool(self.require_reason_on_out),
+                "refund": bool(self.require_refund_on_out),
+            },
+            "request": {
+                "note": bool(self.require_note_on_request),
+            },
+        }
 
 
 class ItemSerial(models.Model):

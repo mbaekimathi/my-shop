@@ -4929,6 +4929,54 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         receipt_accepted_payment_methods_label(pos) if show_payment_methods else ""
     )
 
+    # How this document was actually paid: method label, tender split, and the
+    # amount received (credit tracks partial payments on amount_paid).
+    payment_method_label = ""
+    payment_split = []
+    amount_paid_value = Decimal("0.00")
+    balance_due = ""
+    show_amount_paid = False
+    if receipt.kind == ShopReceiptKind.SALE:
+        tender = {
+            "cash": Decimal(receipt.cash_amount or 0),
+            "mpesa": Decimal(receipt.mpesa_amount or 0),
+            "card": Decimal(getattr(receipt, "card_amount", 0) or 0),
+        }
+        amount_paid_value = sum(tender.values(), Decimal("0.00"))
+        if amount_paid_value <= 0:
+            amount_paid_value = Decimal(
+                getattr(receipt, "amount_paid", 0) or 0
+            )
+        if (
+            receipt.payment_method
+            and receipt.payment_method != ShopPaymentMethod.NONE
+        ):
+            payment_method_label = receipt.get_payment_method_display()
+        else:
+            payment_method_label = " · ".join(
+                CHANNEL_LABELS[channel]
+                for channel in ("cash", "mpesa", "card")
+                if tender[channel] > 0
+            )
+        nonzero_tenders = [c for c in ("cash", "mpesa", "card") if tender[c] > 0]
+        if len(nonzero_tenders) > 1:
+            payment_split = [
+                {
+                    "label": CHANNEL_LABELS[channel],
+                    "amount": _receipt_money(tender[channel]),
+                }
+                for channel in nonzero_tenders
+            ]
+        show_amount_paid = True
+    elif receipt.kind == ShopReceiptKind.CREDIT:
+        payment_method_label = "Credit"
+        amount_paid_value = Decimal(receipt.amount_paid or 0)
+        show_amount_paid = True
+        due = Decimal(receipt.total or 0) - amount_paid_value
+        if due > 0:
+            balance_due = _receipt_money(due)
+    payment_reference = (receipt.mpesa_receipt_number or "").strip()
+
     credit_due_label = ""
     if receipt.kind == ShopReceiptKind.CREDIT and receipt.credit_due_date:
         credit_due_label = receipt.credit_due_date.strftime("%d %b %Y")
@@ -4988,6 +5036,12 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         "show_tax": show_tax,
         "total": _receipt_money(receipt.total),
         "payment": payment,
+        "payment_method_label": payment_method_label,
+        "payment_split": payment_split,
+        "amount_paid": _receipt_money(amount_paid_value),
+        "show_amount_paid": show_amount_paid,
+        "balance_due": balance_due,
+        "payment_reference": payment_reference,
         "credit_due_date": credit_due_label,
         "payment_details": {
             "label": payment_details.get("label") or "",
@@ -5184,6 +5238,32 @@ def _render_receipt_text(ticket: dict, *, paper_width: str | None = None) -> str
         rows.append(
             _receipt_pad_line("TOTAL", f"KSh {ticket.get('total') or '0'}", width)
         )
+        paid_label = (ticket.get("payment_method_label") or "").strip()
+        if paid_label:
+            rows.append(_receipt_pad_line("Paid via", paid_label, width))
+        for part in ticket.get("payment_split") or []:
+            rows.append(
+                _receipt_pad_line(
+                    str(part.get("label") or ""),
+                    f"KSh {part.get('amount') or '0'}",
+                    width,
+                )
+            )
+        if ticket.get("show_amount_paid"):
+            rows.append(
+                _receipt_pad_line(
+                    "Paid", f"KSh {ticket.get('amount_paid') or '0'}", width
+                )
+            )
+        if ticket.get("balance_due"):
+            rows.append(
+                _receipt_pad_line(
+                    "Balance", f"KSh {ticket.get('balance_due')}", width
+                )
+            )
+        payment_ref = (ticket.get("payment_reference") or "").strip()
+        if payment_ref:
+            rows.append(_receipt_pad_line("M-Pesa ref", payment_ref, width))
 
     payment_details = ticket.get("payment_details") or {}
     if payment_details.get("lines"):
@@ -7444,6 +7524,88 @@ def day_session_balance_summary(session) -> dict:
     )
 
 
+def day_sales_status_summary(session) -> dict:
+    """Pending vs confirmed sale money + paid expenses inside a day session.
+
+    Pending = sale receipts awaiting confirmation; confirmed = confirmed or
+    partially returned sales (cancelled receipts are excluded). The method
+    rows use the receipt tender split (cash/mpesa/card amounts). Revenue is
+    all counted sales minus expenses paid; owner drawings are equity and are
+    not counted as expenses.
+    """
+    if session is None:
+        return {}
+    from .models import ShopReceipt
+
+    zero = Decimal("0.00")
+    closed = session.closed_at or timezone.now()
+    status_bucket = {
+        ShopReceiptStatus.ACTIVE: "pending",
+        ShopReceiptStatus.CONFIRMED: "confirmed",
+        ShopReceiptStatus.PARTIAL_RETURN: "confirmed",
+    }
+    methods = [
+        {
+            "key": key,
+            "label": CHANNEL_LABELS[key],
+            "pending": zero,
+            "confirmed": zero,
+            "total": zero,
+        }
+        for key in ("cash", "mpesa", "card")
+    ]
+    method_by_key = {row["key"]: row for row in methods}
+    totals = {"pending": zero, "confirmed": zero}
+    counts = {"pending": 0, "confirmed": 0}
+    sales = (
+        ShopReceipt.objects.filter(
+            shop_id=session.shop_id,
+            kind=ShopReceiptKind.SALE,
+            created_at__gte=session.opened_at,
+            created_at__lt=closed,
+        )
+        .values("status", "total", "cash_amount", "mpesa_amount", "card_amount")
+    )
+    for sale in sales:
+        bucket = status_bucket.get(sale["status"])
+        if bucket is None:
+            continue
+        totals[bucket] += _money_or_zero(sale.get("total"))
+        counts[bucket] += 1
+        for key, field in (
+            ("cash", "cash_amount"),
+            ("mpesa", "mpesa_amount"),
+            ("card", "card_amount"),
+        ):
+            amount = _money_or_zero(sale.get(field))
+            method_by_key[key][bucket] += amount
+            method_by_key[key]["total"] += amount
+
+    expenses_paid = zero
+    for expense in (
+        Expense.objects.filter(
+            shop_id=session.shop_id,
+            created_at__gte=session.opened_at,
+            created_at__lt=closed,
+        )
+        .exclude(category=ExpenseCategory.OWNER_DRAWINGS)
+        .values("amount_paid")
+    ):
+        expenses_paid += _money_or_zero(expense.get("amount_paid"))
+
+    sales_total = totals["pending"] + totals["confirmed"]
+    return {
+        "pending_total": totals["pending"],
+        "confirmed_total": totals["confirmed"],
+        "pending_count": counts["pending"],
+        "confirmed_count": counts["confirmed"],
+        "sales_total": sales_total,
+        "methods": methods,
+        "expenses_paid": expenses_paid,
+        "revenue": sales_total - expenses_paid,
+    }
+
+
 def shop_day_balance_channels(*, shop: Shop | None = None, pos=None) -> dict:
     """Which till channels to show on open/close, from activated POS methods.
 
@@ -7852,6 +8014,12 @@ def _parse_expense_lines(payload) -> list[dict]:
     if count == 0:
         raise ValidationError("Add at least one expense.")
     valid_categories = {choice.value for choice in ExpenseCategory}
+    label_categories = {}
+    for choice in ExpenseCategory:
+        label_categories[choice.label.lower()] = choice.value
+        label_categories[re.sub(r"[\s\-]+", "_", choice.label.lower())] = (
+            choice.value
+        )
     lines = []
     for index in range(count):
         category = (
@@ -7859,14 +8027,25 @@ def _parse_expense_lines(payload) -> list[dict]:
         )
         name = names[index] if index < len(names) else ""
         amount_raw = amounts[index] if index < len(amounts) else ""
-        category = str(category or "").strip().lower()
+        raw_category = str(category or "").strip()
+        slug = re.sub(r"[\s\-]+", "_", raw_category).lower()
+        if slug in valid_categories:
+            category = slug
+        elif slug in label_categories:
+            category = label_categories[slug]
+        else:
+            category = re.sub(r"\s+", " ", raw_category).upper()
         name = str(name or "").strip().upper()
         label = f"Expense {index + 1}"
-        if category not in valid_categories:
+        if not category or not re.search(r"[a-z0-9]", category, re.I):
             raise ValidationError(f"{label}: choose a category.")
         if category == ExpenseCategory.OWNER_DRAWINGS:
             raise ValidationError(
                 f"{label}: owner drawings are recorded on the Day page."
+            )
+        if len(category) > 32:
+            raise ValidationError(
+                f"{label}: category is too long (32 characters max)."
             )
         if not name:
             raise ValidationError(f"{label}: name is required.")

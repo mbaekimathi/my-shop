@@ -1093,6 +1093,87 @@ def buy_stock_modal_context(request, profile):
     }
 
 
+CASHIER_SALES_STATUSES = ("pending", "confirmed", "all")
+
+_CASHIER_STATUS_LABELS = {
+    "pending": "Pending",
+    "confirmed": "Confirmed",
+    "all": "All",
+}
+
+
+def _summary_display_for_status(summary: dict, status: str) -> dict:
+    """Sales/revenue figures for one status bucket (pending|confirmed|all)."""
+    if status == "pending":
+        sales_total = summary["pending_total"]
+        sales_count = summary["pending_count"]
+    elif status == "confirmed":
+        sales_total = summary["confirmed_total"]
+        sales_count = summary["confirmed_count"]
+    else:
+        sales_total = summary["sales_total"]
+        sales_count = summary["pending_count"] + summary["confirmed_count"]
+    return {
+        "sales_total": sales_total,
+        "sales_count": sales_count,
+        "methods": [
+            {
+                "key": row["key"],
+                "label": row["label"],
+                "amount": row["total"] if status == "all" else row[status],
+            }
+            for row in summary["methods"]
+        ],
+        "expenses_paid": summary["expenses_paid"],
+        "revenue": sales_total - summary["expenses_paid"],
+    }
+
+
+def cashier_day_summaries_context(request, profile):
+    """Per-shop open-day money summary rows for the cashier dashboard.
+
+    The ?status=pending|confirmed|all filter picks which bucket the figures
+    and payment-method breakdown display.
+    """
+    from items.services import actionable_shops_for_profile
+    from shops.services import day_sales_status_summary, get_open_shop_day
+
+    shops = actionable_shops_for_profile(profile) if profile is not None else []
+    if not shops:
+        return {}
+    status = (request.GET.get("status") or "all").strip().lower()
+    if status not in CASHIER_SALES_STATUSES:
+        status = "all"
+    rows = []
+    for shop in shops:
+        session = get_open_shop_day(shop)
+        summary = day_sales_status_summary(session) if session else {}
+        rows.append(
+            {
+                "shop": shop,
+                "session": session,
+                "summary": summary,
+                "display": (
+                    _summary_display_for_status(summary, status)
+                    if summary
+                    else {}
+                ),
+            }
+        )
+    return {
+        "cashier_day_summaries": rows,
+        "cashier_sales_status": status,
+        "cashier_status_options": [
+            {
+                "key": key,
+                "label": _CASHIER_STATUS_LABELS[key],
+                "active": status == key,
+            }
+            for key in CASHIER_SALES_STATUSES
+        ],
+    }
+
+
 def buy_stock_action(profile):
     """Buy-stock sidebar action — popup when the modal exists, else href."""
     from items.services import actionable_shops_for_profile
@@ -1170,7 +1251,7 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
             _link(
                 "Receipts",
                 "receipt",
-                href=analytics_section_url(role, "receipts"),
+                href=analytics_receipts_url(role),
                 active=active_slug == "receipts",
             )
         )
@@ -2523,6 +2604,11 @@ def analytics_confirm_receipts_url(role):
     )
 
 
+def analytics_receipts_url(role):
+    """Receipts nav landing — confirm-receipts (defaults to today's sales)."""
+    return f"{analytics_confirm_receipts_url(role)}?kind=sale"
+
+
 def analytics_return_receipts_url(role):
     return reverse(
         "employees:analytics_return_receipts",
@@ -2581,7 +2667,11 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
             _link(
                 section["label"],
                 section["icon"],
-                href=analytics_section_url(role, section["slug"]),
+                href=(
+                    analytics_receipts_url(role)
+                    if section["slug"] == "receipts"
+                    else analytics_section_url(role, section["slug"])
+                ),
                 active=section["slug"] == active_view,
             )
         )
@@ -2717,7 +2807,7 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                     _link(
                         "Receipts",
                         "receipt",
-                        href=analytics_section_url(role, "receipts"),
+                        href=analytics_receipts_url(role),
                         active=False,
                     )
                 )
@@ -2747,6 +2837,18 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                 if profile is None or employee_may(profile, "analytics", perm):
                     href = analytics_confirm_receipts_url(role)
                     primary.append(_link(label, icon, href=href, active=True))
+                if active_view == "confirm-receipts" and (
+                    profile is None
+                    or employee_may(profile, "analytics", "return-receipts")
+                ):
+                    primary.append(
+                        _link(
+                            "Return receipt",
+                            "undo-2",
+                            href=analytics_return_receipts_url(role),
+                            active=False,
+                        )
+                    )
     else:
         section_slug = "items" if active_view == "item-report" else section_slug
         section = ANALYTICS_SECTION_BY_SLUG.get(section_slug)

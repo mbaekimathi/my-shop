@@ -1,0 +1,17 @@
+{% extends "items/movement_report.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block movement_overlays %}
+{% if shop %}
+{% include "employees/partials/shelf_flow_modal.html" with flow="in" %}
+{% include "employees/partials/shelf_flow_modal.html" with flow="out" %}
+{% include "employees/partials/shelf_trade_modal.html" %}
+{% endif %}
+{% endblock %}
+
+{% block movement_extra_js %}
+<script defer src="{% static 'js/stock-shelf.js' %}?v=3"></script>
+<script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
+{% endblock %}

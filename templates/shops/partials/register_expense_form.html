@@ -48,12 +48,21 @@
       <div class="shop-expense-composer">
         <label class="shop-cart-input">
           <span>Category</span>
-          <select data-expense-category-draft aria-label="Category">
-            <option value="">Select</option>
+          <input
+            type="text"
+            list="expense-category-options"
+            placeholder="Pick or type"
+            autocomplete="off"
+            maxlength="32"
+            data-uppercase
+            data-expense-category-draft
+            aria-label="Category"
+          >
+          <datalist id="expense-category-options" data-expense-category-list>
             {% for value, label in expense_categories %}
-            <option value="{{ value }}">{{ label }}</option>
+            <option value="{{ label }}" data-slug="{{ value }}"></option>
             {% endfor %}
-          </select>
+          </datalist>
         </label>
         <label class="shop-cart-input shop-expense-composer-name">
           <span>Expense name</span>

@@ -26,6 +26,11 @@ urlpatterns = [
         views.api_store_stock_out,
         name="api_store_stock_out",
     ),
+    path(
+        "api/store/trade/",
+        views.api_store_trade,
+        name="api_store_trade",
+    ),
     path("api/store/feed/", views.api_store_feed, name="api_store_feed"),
     path("api/store/report/", views.api_store_report, name="api_store_report"),
     path("api/rider/board/", views.api_rider_board, name="api_rider_board"),

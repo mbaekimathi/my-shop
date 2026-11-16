@@ -677,6 +677,24 @@
                   ><i data-lucide="eye" aria-hidden="true"></i></button>
                   {% endif %}
                 </span>
+                {% elif cell.kind == "status" %}
+                <span class="ax-status is-{{ cell.tone|default:'neutral' }}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+                {% elif cell.kind == "pay" %}
+                <button
+                  type="button"
+                  class="ax-receipt-pay{% if not cell.can_pay %} is-settled{% endif %}"
+                  data-ax-pay-open
+                  data-pay-kind="{{ cell.pay_kind }}"
+                  data-account-id="{{ cell.account_id }}"
+                  data-supplier-name="{{ cell.supplier_name }}"
+                  data-supplier-phone="{{ cell.supplier_phone }}"
+                  data-receipt-id="{{ cell.pay_id }}"
+                  data-receipt-number="{{ cell.number }}"
+                  data-receipt-due="{{ cell.due }}"
+                  data-receipt-due-raw="{{ cell.due_raw }}"
+                  data-receipt-shop="{{ cell.shop }}"
+                  {% if not cell.can_pay %}disabled{% endif %}
+                >{{ cell.label|default:"Pay" }}</button>
                 {% elif cell.tone %}
                 <span class="ax-trend{% if cell.tone != 'neutral' %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
                 {% elif cell.label and cell.sub %}
@@ -876,6 +894,9 @@
 {% endif %}
 {% include "employees/partials/analytics_credit_due_followup_modal.html" %}
 {% include "shops/partials/register_expense_modal.html" %}
+{% if page.expense_pay %}
+{% include "employees/partials/analytics_account_pay_modal.html" with pay_url=page.expense_pay_url account_kind="expense" account_id="" balance=page.expense_balance balance_raw=page.expense_balance_raw %}
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -893,7 +914,10 @@
 <script defer src="{% static 'js/analytics-credit-due-followup.js' %}?v=1"></script>
 {% endif %}
 {% if register_expense_modal %}
-<script defer src="{% static 'js/my-shop-expense.js' %}?v=20261024-decimal-inputs"></script>
+<script defer src="{% static 'js/my-shop-expense.js' %}?v=20261116-supplier-autofill"></script>
+{% endif %}
+{% if page.expense_pay %}
+<script defer src="{% static 'js/analytics-receipt-ledger.js' %}?v=21"></script>
 {% endif %}
 <script>
   (() => {

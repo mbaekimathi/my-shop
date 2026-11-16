@@ -17,7 +17,12 @@ from items.models import (
     StockPaymentStatus,
     Supplier,
 )
-from shops.models import CompanyPosSettings, Shop
+from shops.models import (
+    CompanyPosSettings,
+    Expense,
+    ExpenseSupplier,
+    Shop,
+)
 
 
 class SuppliersAnalyticsShelfTests(TestCase):
@@ -620,3 +625,162 @@ class MergedSupplierAccountTests(TestCase):
         self.item_movement.refresh_from_db()
         self.assertEqual(self.item_movement.amount_paid, Decimal("40.00"))
         self.assertEqual(self.item_movement.payment_status, "partial")
+
+
+class ExpenseReceiptPayTests(TestCase):
+    """Per-expense Pay on the analytics expenses category page."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="870705", password="x", is_active=True
+        )
+        self.staff = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="870705",
+            phone_country_code="+254",
+            phone_number="700001181",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="EXP SHOP",
+            location="NAIROBI",
+            email="exp@test.local",
+            phone_number="0700001181",
+            login_code="870181",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        self.staff.assigned_shops.add(self.shop)
+        self.supplier = ExpenseSupplier.objects.create(
+            name="PACKCO",
+            phone_country_code="+254",
+            phone_number="722111222",
+        )
+        self.expense = Expense.objects.create(
+            shop=self.shop,
+            category="packaging",
+            name="BOXES",
+            amount=Decimal("100.00"),
+            amount_paid=Decimal("0"),
+            payment_status="unpaid",
+            supplier=self.supplier,
+            supplier_name="PACKCO",
+            supplier_phone_country_code="+254",
+            supplier_phone_number="722111222",
+            created_by=self.staff,
+        )
+        self.client.force_login(self.user)
+
+    def _pay(self, **data):
+        payload = {
+            "kind": "expense",
+            "account_id": str(self.supplier.pk),
+            "amount": "0",
+            "payment_method": "cash",
+            "shop_id": [str(self.shop.pk)],
+        }
+        payload.update(data)
+        return self.client.post("/shop-cashier/analytics/account-pay/", payload)
+
+    def test_partial_receipt_payment(self):
+        response = self._pay(receipt_id=str(self.expense.pk), amount="40")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["receipt_status"], "Partial")
+        self.assertEqual(data["receipt_due_raw"], "60.00")
+        self.assertEqual(data["account_balance_raw"], "60.00")
+        self.expense.refresh_from_db()
+        self.assertEqual(self.expense.amount_paid, Decimal("40.00"))
+        self.assertEqual(self.expense.payment_status, "partial")
+
+    def test_full_receipt_payment(self):
+        response = self._pay(receipt_id=str(self.expense.pk), amount="100")
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["receipt_status"], "Paid")
+        self.assertEqual(data["receipt_due_raw"], "0.00")
+        self.assertEqual(data["account_balance_raw"], "0.00")
+        self.expense.refresh_from_db()
+        self.assertEqual(self.expense.payment_status, "paid")
+        # A second pay attempt on a settled expense is rejected.
+        again = self._pay(receipt_id=str(self.expense.pk), amount="1")
+        self.assertEqual(again.status_code, 400)
+
+    def test_overpayment_rejected(self):
+        response = self._pay(receipt_id=str(self.expense.pk), amount="100.01")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("exceeds", response.json()["error"])
+        self.expense.refresh_from_db()
+        self.assertEqual(self.expense.amount_paid, Decimal("0"))
+
+    def test_wrong_supplier_rejected(self):
+        other = ExpenseSupplier.objects.create(
+            name="OTHERCO",
+            phone_country_code="+254",
+            phone_number="733000111",
+        )
+        response = self._pay(
+            account_id=str(other.pk),
+            receipt_id=str(self.expense.pk),
+            amount="10",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_unlinked_expense_payable(self):
+        loose = Expense.objects.create(
+            shop=self.shop,
+            category="packaging",
+            name="TAPE",
+            amount=Decimal("25.00"),
+            amount_paid=Decimal("0"),
+            payment_status="unpaid",
+            supplier=None,
+            supplier_name="WALK-IN",
+            supplier_phone_country_code="+254",
+            supplier_phone_number="700000000",
+            created_by=self.staff,
+        )
+        response = self._pay(
+            account_id="0",
+            receipt_id=str(loose.pk),
+            amount="25",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["receipt_status"], "Paid")
+        loose.refresh_from_db()
+        self.assertEqual(loose.payment_status, "paid")
+
+    def test_category_page_shows_pay_controls(self):
+        response = self.client.get(
+            "/shop-cashier/analytics/expenses/?category=packaging"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-ax-pay-open')
+        self.assertContains(response, 'data-ax-pay-modal')
+        self.assertContains(
+            response, f'data-receipt-id="{self.expense.pk}"'
+        )
+        self.assertContains(
+            response, f'data-account-id="{self.supplier.pk}"'
+        )
+        self.assertContains(response, "analytics-receipt-ledger.js")
+
+    def test_category_page_hides_pay_without_permission(self):
+        from employees.models import EmployeeModulePermission
+
+        EmployeeModulePermission.objects.create(
+            employee=self.staff,
+            module_slug="analytics",
+            submodule_slug="account_pay",
+            allowed=False,
+        )
+        response = self.client.get(
+            "/shop-cashier/analytics/expenses/?category=packaging"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'data-ax-pay-open')
+        self.assertNotContains(response, 'data-ax-pay-modal')

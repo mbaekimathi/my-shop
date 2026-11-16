@@ -1586,18 +1586,18 @@ def apply_supplier_receipt_payment(
 
     with transaction.atomic():
         if kind == "expense":
-            supplier = ExpenseSupplier.objects.filter(pk=account_id).first()
-            if supplier is None:
-                raise ValidationError("Supplier not found.")
-            expense = (
-                Expense.objects.select_for_update()
-                .filter(
-                    pk=receipt_id,
-                    supplier_id=supplier.pk,
-                    shop_id__in=active_shop_ids,
-                )
-                .first()
+            supplier = None
+            if account_id:
+                supplier = ExpenseSupplier.objects.filter(pk=account_id).first()
+                if supplier is None:
+                    raise ValidationError("Supplier not found.")
+            expense_qs = Expense.objects.select_for_update().filter(
+                pk=receipt_id,
+                shop_id__in=active_shop_ids,
             )
+            if supplier is not None:
+                expense_qs = expense_qs.filter(supplier_id=supplier.pk)
+            expense = expense_qs.first()
             if expense is None:
                 raise ValidationError("Expense receipt not found.")
             due = _due_amount(expense.amount, expense.amount_paid)
@@ -1620,31 +1620,49 @@ def apply_supplier_receipt_payment(
             expense.amount_paid = paid
             expense.payment_status = status
             expense.save(update_fields=["amount_paid", "payment_status"])
+            if expense.supplier_id is not None:
+                balance_scope = Expense.objects.filter(
+                    shop_id__in=active_shop_ids,
+                    supplier_id=expense.supplier_id,
+                )
+            else:
+                balance_scope = Expense.objects.filter(
+                    shop_id__in=active_shop_ids,
+                    supplier__isnull=True,
+                    supplier_name__iexact=(
+                        expense.supplier_name or ""
+                    ).strip(),
+                    supplier_phone_country_code=(
+                        expense.supplier_phone_country_code or ""
+                    ),
+                    supplier_phone_number=(
+                        expense.supplier_phone_number or ""
+                    ),
+                )
             balance_after = sum(
                 (
                     _due_amount(row.amount, row.amount_paid)
-                    for row in Expense.objects.filter(
-                        shop_id__in=active_shop_ids, supplier_id=supplier.pk
-                    )
+                    for row in balance_scope.only("amount", "amount_paid")
                 ),
                 _zero(),
             )
             number = format_simple_doc_number("E", expense.pk)
-            transaction.on_commit(
-                lambda: _notify_supplier_after_payment(
-                    kind="expense",
-                    account_id=supplier.pk,
-                    amount=pay_amount,
-                    balance_after=balance_after,
-                    receipt_ref=number,
-                    shop=expense.shop,
+            if supplier is not None:
+                transaction.on_commit(
+                    lambda: _notify_supplier_after_payment(
+                        kind="expense",
+                        account_id=supplier.pk,
+                        amount=pay_amount,
+                        balance_after=balance_after,
+                        receipt_ref=number,
+                        shop=expense.shop,
+                    )
                 )
-            )
             return {
                 "ok": True,
                 "kind": kind,
                 "receipt_id": expense.pk,
-                "account_id": supplier.pk,
+                "account_id": supplier.pk if supplier else 0,
                 "receipt_due": _money_ksh(due_after),
                 "receipt_due_raw": str(due_after),
                 "receipt_status": _payment_status_for_due(due_after, paid),
@@ -3195,6 +3213,11 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         ),
     )
     filters["role"] = profile.role
+    from .module_permissions import employee_may
+
+    filters["can_pay_accounts"] = employee_may(
+        profile, "analytics", "account_pay"
+    )
     filters["query"] = request.GET.urlencode()
     filters["search_query"] = (request.GET.get("q") or "").strip()
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
@@ -3800,6 +3823,14 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
     }
 
 
+CONFIRM_RECEIPT_STATUS_FILTERS = (
+    ("", "All statuses"),
+    ("pending", "Pending"),
+    ("partial_return", "Partial return"),
+    ("cancelled", "Cancelled"),
+    ("confirmed", "Confirmed"),
+)
+
 CONFIRM_RECEIPT_KIND_FILTERS = (
     ("sale", "Sales"),
     ("credit", "Credits"),
@@ -3826,7 +3857,18 @@ CONFIRM_RECEIPT_STATUS_RANK = {
 
 
 def _confirm_receipt_status_key(raw: str | None) -> str:
-    """Confirm-receipts always lists every status (filter UI removed)."""
+    """Normalize the status query param to a CONFIRM_RECEIPT_STATUS_FILTERS key."""
+    key = (raw or "").strip().lower()
+    aliases = {
+        "active": "pending",
+        "cancel": "cancelled",
+        "partial": "partial_return",
+        "partial-returns": "partial_return",
+        "partially_paid": "partial_return",
+    }
+    key = aliases.get(key, key)
+    if key in dict(CONFIRM_RECEIPT_STATUS_FILTERS):
+        return key
     return ""
 
 
@@ -3859,7 +3901,7 @@ def _confirm_receipt_sale_rows(
 
     qs = (
         ShopReceipt.objects.filter(shop_id__in=shop_ids, kind__in=kind_list)
-        .select_related("shop")
+        .select_related("shop", "created_by", "created_by__user")
         .annotate(
             has_customer_delivery=Exists(
                 ShopDelivery.objects.filter(receipt_id=OuterRef("pk"))
@@ -3880,6 +3922,10 @@ def _confirm_receipt_sale_rows(
             "created_at",
             "shop__id",
             "shop__name",
+            "created_by__employee_id",
+            "created_by__user__first_name",
+            "created_by__user__last_name",
+            "created_by__user__username",
         )
     )
     if start is not None:
@@ -3925,6 +3971,7 @@ def _confirm_receipt_sale_rows(
             shop_name = row.shop.name if row.shop else "—"
             client = row.client_name or "Walk-in"
             client_phone = row.client_phone or ""
+            sold_by = _cashier_label(getattr(row, "created_by", None)) or "—"
             reference = (row.mpesa_receipt_number or "").strip()
             amount = Decimal(row.total or 0)
             amount_label = _money_ksh(amount)
@@ -3994,6 +4041,7 @@ def _confirm_receipt_sale_rows(
                     "shop": shop_name,
                     "client": client,
                     "client_phone": client_phone,
+                    "sold_by": sold_by,
                     "reference": reference,
                     "amount": amount,
                     "amount_label": amount_label,
@@ -4023,6 +4071,7 @@ def _confirm_receipt_sale_rows(
                             row.receipt_number or "",
                             client,
                             client_phone,
+                            sold_by,
                             reference,
                             amount_label,
                             shop_name,
@@ -4080,7 +4129,7 @@ def _confirm_receipt_transfer_rows(
     qs = (
         StockMovement.objects.filter(movement_type=StockMovementType.REQUEST)
         .filter(Q(shop_id__in=shop_ids) | Q(requested_from_shop_id__in=shop_ids))
-        .select_related("shop", "requested_from_shop")
+        .select_related("shop", "requested_from_shop", "created_by", "created_by__user")
         .only(
             "id",
             "shop_id",
@@ -4093,6 +4142,10 @@ def _confirm_receipt_transfer_rows(
             "shop__name",
             "requested_from_shop__id",
             "requested_from_shop__name",
+            "created_by__employee_id",
+            "created_by__user__first_name",
+            "created_by__user__last_name",
+            "created_by__user__username",
         )
     )
     if kind_key == "delivery":
@@ -4131,6 +4184,7 @@ def _confirm_receipt_transfer_rows(
         from_name = from_shop.name if from_shop else "—"
         to_name = to_shop.name if to_shop else "—"
         route = f"{from_name} → {to_name}"
+        sold_by = _cashier_label(getattr(movement, "created_by", None)) or "—"
         if is_fulfilled:
             kind = "goods_received"
             kind_label = "Goods received"
@@ -4173,6 +4227,7 @@ def _confirm_receipt_transfer_rows(
                 to_name,
                 route,
                 shop_name,
+                sold_by,
                 kind_label,
                 status_label,
                 (movement.notes or ""),
@@ -4190,6 +4245,7 @@ def _confirm_receipt_transfer_rows(
                 "shop": shop_name,
                 "client": route,
                 "client_phone": "",
+                "sold_by": sold_by,
                 "reference": "",
                 "amount": None,
                 "amount_label": "—",
@@ -4281,6 +4337,7 @@ def _confirm_receipts_query_context(*, profile, request) -> dict:
         **filters,
         "search": "",
         "status_filter": status_key,
+        "status_options": CONFIRM_RECEIPT_STATUS_FILTERS,
         "kind_filter": kind_key,
         "kind_options": kind_options,
         "count_label": _confirm_receipts_count_label(kind_key),
@@ -4377,6 +4434,7 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                 "number": row.get("number") or "",
                 "client": row.get("client") or "",
                 "client_phone": row.get("client_phone") or "",
+                "sold_by": row.get("sold_by") or "—",
                 "reference": reference,
                 "amount": (
                     float(amount)
@@ -4411,6 +4469,7 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                         str(row.get("number") or ""),
                         str(row.get("client") or ""),
                         str(row.get("client_phone") or ""),
+                        str(row.get("sold_by") or ""),
                         reference,
                         str(amount_label or ""),
                         str(row.get("shop") or ""),
@@ -4567,6 +4626,7 @@ def build_confirm_receipts_print_document(*, profile, request) -> dict:
                 "client_name": row.get("client") or "—",
                 "phone": row.get("client_phone") or "—",
                 "shop": row.get("shop") or "—",
+                "sold_by": row.get("sold_by") or "—",
                 "sold_as": row.get("sold_as_label") or "—",
                 "total": row.get("amount_label")
                 or (_money_ksh(amount) if amount is not None else "—"),
@@ -7056,6 +7116,17 @@ def build_receipts_print_document(*, filters) -> dict:
         "a4_page_estimate": a4_page_estimate,
         "rows": rows,
     }
+
+
+def _account_pay_url(role) -> str:
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    return reverse(
+        "employees:analytics_account_pay",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
 
 
 def supplier_account_url(role, kind: str, supplier_id, *, query: str = "") -> str:
@@ -16389,7 +16460,6 @@ def _build_expenses(filters):
     period_label = filters.get("report_period_label") or "All time"
     category_slug = (filters.get("expense_category") or "").strip().lower()
     category_labels = dict(ExpenseCategory.choices)
-    valid_categories = set(category_labels)
 
     params = parse_qs(query, keep_blank_values=True) if query else {}
     base_params = {k: v for k, v in params.items() if k != "category"}
@@ -16412,13 +16482,18 @@ def _build_expenses(filters):
         end,
     )
 
-    if category_slug and category_slug in valid_categories:
+    if category_slug:
+        category_label = category_labels.get(
+            category_slug
+        ) or category_slug.replace("_", " ").title()
         return _build_expense_category_suppliers(
             filters,
             category_slug=category_slug,
-            category_label=category_labels[category_slug],
+            category_label=category_label,
             shops=shops,
-            period_expenses=period_expenses.filter(category=category_slug),
+            period_expenses=period_expenses.filter(
+                category__iexact=category_slug
+            ),
             period_label=period_label,
             back_href=_expenses_index_href(),
         )
@@ -16623,20 +16698,34 @@ def _build_expense_category_suppliers(
         for supplier in ExpenseSupplier.objects.filter(pk__in=supplier_ids)
     }
 
+    can_pay = bool(filters.get("can_pay_accounts"))
     columns = [
         {"label": "Date", "title": "Date purchased"},
         {"label": "Supplier", "title": "Expense supplier"},
         {"label": "Shop", "title": "Shop"},
         {"label": "Detail", "title": "Expense name"},
         {"label": "Price", "title": "Expense amount"},
+        {"label": "Paid", "title": "Amount paid so far"},
+        {"label": "Due", "title": "Balance still owed"},
+        {"label": "Status", "title": "Payment status"},
     ]
+    if can_pay:
+        columns.append({"label": "Pay", "title": "Record a payment"})
 
     table_rows = []
     grand_amount = _zero()
+    grand_paid = _zero()
+    grand_due = _zero()
     supplier_keys: set[str] = set()
     for expense in expenses:
         amount = Decimal(expense.amount or 0)
+        paid = Decimal(expense.amount_paid or 0)
+        due = _due_amount(amount, paid)
+        status = _payment_status_for_due(due, paid)
+        status_tone = _status_tone(status)
         grand_amount += amount
+        grand_paid += paid
+        grand_due += due
         when = timezone.localtime(expense.created_at) if expense.created_at else None
         date_label = when.strftime("%d %b %Y") if when else "—"
         date_title = when.strftime("%d %b %Y · %H:%M") if when else "—"
@@ -16673,47 +16762,112 @@ def _build_expense_category_suppliers(
 
         shop_name = expense.shop.name if expense.shop_id else "—"
         detail = (expense.name or "").strip() or category_label
+        cells = [
+            {"label": date_label, "title": date_title},
+            supplier_cell,
+            shop_name,
+            detail,
+            _money_cell(
+                amount,
+                tone="warn" if amount > 0 else "neutral",
+                title=f"Price {_money_ksh(amount)}",
+            ),
+            _money_cell(
+                paid,
+                tone="good" if paid > 0 else "neutral",
+                title=f"Paid {_money_ksh(paid)}",
+            ),
+            _money_cell(
+                due,
+                tone="bad" if due > 0 else "neutral",
+                title=f"Due {_money_ksh(due)}",
+            ),
+            {
+                "kind": "status",
+                "label": status,
+                "tone": status_tone,
+                "title": f"Paid {_money_ksh(paid)} · Due {_money_ksh(due)}",
+            },
+        ]
+        if can_pay:
+            cells.append(
+                {
+                    "kind": "pay",
+                    "label": "Pay",
+                    "pay_kind": "expense",
+                    "pay_id": expense.pk,
+                    "account_id": expense.supplier_id or "",
+                    "supplier_name": supplier_name,
+                    "supplier_phone": supplier_phone,
+                    "number": format_simple_doc_number("E", expense.pk),
+                    "due": _money_ksh(due),
+                    "due_raw": str(due),
+                    "shop": shop_name,
+                    "can_pay": due > 0,
+                }
+            )
         table_rows.append(
-            [
-                {"label": date_label, "title": date_title},
-                supplier_cell,
-                shop_name,
-                detail,
-                _money_cell(
-                    amount,
-                    tone="warn" if amount > 0 else "neutral",
-                    title=f"Price {_money_ksh(amount)}",
+            {
+                "cells": cells,
+                "search_text": " ".join(
+                    part
+                    for part in (
+                        date_label,
+                        supplier_name,
+                        supplier_phone,
+                        shop_name,
+                        detail,
+                        status,
+                    )
+                    if part
                 ),
-            ]
+            }
         )
 
     if table_rows:
-        table_rows.append(
-            [
-                "Total",
-                f"{len(supplier_keys)} supplier"
-                f"{'' if len(supplier_keys) == 1 else 's'}",
-                f"{len(expenses)} purchase"
-                f"{'' if len(expenses) == 1 else 's'}",
-                "",
-                _money_cell(
-                    grand_amount,
-                    tone="warn" if grand_amount > 0 else "neutral",
-                    title=f"Total {_money_ksh(grand_amount)}",
-                ),
-            ]
-        )
+        total_cells = [
+            "Total",
+            f"{len(supplier_keys)} supplier"
+            f"{'' if len(supplier_keys) == 1 else 's'}",
+            f"{len(expenses)} purchase"
+            f"{'' if len(expenses) == 1 else 's'}",
+            "",
+            _money_cell(
+                grand_amount,
+                tone="warn" if grand_amount > 0 else "neutral",
+                title=f"Total {_money_ksh(grand_amount)}",
+            ),
+            _money_cell(
+                grand_paid,
+                tone="good" if grand_paid > 0 else "neutral",
+                title=f"Paid {_money_ksh(grand_paid)}",
+            ),
+            _money_cell(
+                grand_due,
+                tone="bad" if grand_due > 0 else "neutral",
+                title=f"Due {_money_ksh(grand_due)}",
+            ),
+            "",
+        ]
+        if can_pay:
+            total_cells.append("")
+        table_rows.append(total_cells)
 
     return {
         "headline": category_label,
         "period_label": period_label,
         "lead": (
             f"Purchases for {category_label.lower()} in {period_label}. "
-            "Each row shows the supplier, price, and date purchased."
+            "Each row shows the supplier, price, paid and due amounts, "
+            "and payment status."
         ),
         "back_href": back_href,
         "back_label": "Back to expenses",
         "expense_category": category_slug,
+        "expense_pay": can_pay,
+        "expense_pay_url": _account_pay_url(role) if can_pay else "",
+        "expense_balance": _money_ksh(grand_due),
+        "expense_balance_raw": str(grand_due),
         "show_search": True,
         "search_placeholder": "Search suppliers or details…",
         "search_empty": "No purchases match that search.",
@@ -16726,6 +16880,12 @@ def _build_expense_category_suppliers(
                 _money_ksh(grand_amount),
                 hint=period_label,
                 tone="warn" if grand_amount > 0 else "neutral",
+            ),
+            _metric(
+                "Balance",
+                _money_ksh(grand_due),
+                hint="Unpaid + partial",
+                tone="bad" if grand_due > 0 else "good",
             ),
         ],
         "insights": [],
@@ -16741,7 +16901,12 @@ def _build_expense_category_suppliers(
                 footnote=(
                     f"Showing {period_label}, newest first. "
                     "Price is the expense amount; date is when it was purchased. "
-                    "Click a supplier to open their expense account."
+                    "Click a supplier to open their expense account"
+                    + (
+                        ", or use Pay to clear an expense fully or in part."
+                        if can_pay
+                        else "."
+                    )
                 ),
                 shop_grid=False,
                 searchable=True,
@@ -16793,6 +16958,33 @@ _BROWSE_KIND_FLAG = {
 def _browse_kind_enabled(slug: str, flags: dict) -> bool:
     key = _BROWSE_KIND_FLAG.get(slug)
     return key is None or bool(flags.get(key, True))
+
+
+# Type pill tones for the receipts browse table (ax-status.is-*).
+_RECEIPT_KIND_CELL_TONE = {
+    ShopReceiptKind.SALE: "good",
+    ShopReceiptKind.CREDIT: "warn",
+    ShopReceiptKind.QUOTATION: "info",
+    ShopReceiptKind.TRADE_OUT: "violet",
+    ShopReceiptKind.TRADE_IN: "violet",
+    "stock": "shops",
+    "expense": "cost",
+}
+
+# Status pill tones keyed by ShopReceiptStatus value.
+_RECEIPT_STATUS_CELL_TONE = {
+    ShopReceiptStatus.CONFIRMED: "good",
+    ShopReceiptStatus.ACTIVE: "info",
+    ShopReceiptStatus.PARTIAL_RETURN: "warn",
+    ShopReceiptStatus.CANCELLED: "bad",
+}
+
+# Supplier payment-status labels (stock in / expense receipts) → pill tone.
+_SUPPLIER_STATUS_CELL_TONE = {
+    "paid": "good",
+    "partial": "warn",
+    "unpaid": "bad",
+}
 
 
 def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool = False):
@@ -16853,17 +17045,26 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             kind_specs = filtered_specs
 
     columns = ["Type"]
-    for shop in shops:
-        columns.append(
-            _shop_col(shop, pair=True, pair_qty="Docs", pair_amt="Amt")
-        )
-    columns.append(_pair_total_col(pair_qty="Docs", pair_amt="Amt"))
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop, pair=True, pair_qty="Docs", pair_amt="Amt")
+        col["band"] = "flow"
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    total_col = _pair_total_col(pair_qty="Docs", pair_amt="Amt")
+    total_col["band"] = "result"
+    total_col["band_start"] = True
+    columns.append(total_col)
 
     table_rows = []
+    shop_totals: dict[int, list] = {shop.pk: [0, _zero()] for shop in shops}
     grand_docs = 0
     grand_amount = _zero()
     active_kinds = 0
     for kind_slug, label in kind_specs:
+        kind_tone = {"cancelled": "bad", "partial-returns": "warn"}.get(
+            kind_slug, "good"
+        )
         by_shop: dict[int, tuple[int, Decimal]] = {}
         if kind_slug == "stock":
             by_shop = stock_by_shop
@@ -16890,11 +17091,14 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             docs, amount = by_shop.get(shop.pk, (0, _zero()))
             total_docs += docs
             total_amount += amount
+            shop_totals[shop.pk][0] += docs
+            shop_totals[shop.pk][1] += amount
             cells.append(
                 _qty_amount_cell(
                     docs,
                     amount,
                     title=f"{docs} docs · {_money_ksh(amount)}",
+                    tone=kind_tone if docs else "neutral",
                 )
             )
         cells.append(
@@ -16902,6 +17106,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                 total_docs,
                 total_amount,
                 title=f"{total_docs} docs · {_money_ksh(total_amount)}",
+                tone=kind_tone if total_docs else "neutral",
             )
         )
         table_rows.append(cells)
@@ -16909,6 +17114,27 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         grand_amount += total_amount
         if total_docs > 0:
             active_kinds += 1
+    if kind_specs:
+        total_cells = ["Total"]
+        for shop in shops:
+            docs, amount = shop_totals[shop.pk]
+            total_cells.append(
+                _qty_amount_cell(
+                    docs,
+                    amount,
+                    title=f"{docs} docs · {_money_ksh(amount)}",
+                    tone="good" if docs else "neutral",
+                )
+            )
+        total_cells.append(
+            _qty_amount_cell(
+                grand_docs,
+                grand_amount,
+                title=f"{grand_docs} docs · {_money_ksh(grand_amount)}",
+                tone="good" if grand_docs else "neutral",
+            )
+        )
+        table_rows.append(total_cells)
 
     merged = []
     include_pos = receipt_kind in (
@@ -16935,6 +17161,11 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         when,
         when_dt,
         sort_id,
+        shop="",
+        kind_slug="",
+        status_slug="",
+        status_label="",
+        total_raw=None,
         receipt_id=None,
         shop_id=None,
         items_detail=None,
@@ -16948,15 +17179,37 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         }
         if items_detail:
             items_cell["items_json"] = json.dumps(items_detail)
+        shop_label = (shop or "").strip()
+        phone_label = (phone or "").strip()
+        client_sub = "" if phone_label in {"", "—"} else phone_label
+        kind_tone = _RECEIPT_KIND_CELL_TONE.get(
+            (kind_slug or "").strip().lower()
+        ) or _RECEIPT_KIND_CELL_TONE.get(
+            (kind_label or "").strip().lower().replace(" ", "_"), "neutral"
+        )
+        status_text = (status_label or "").strip() or "—"
+        status_tone = _RECEIPT_STATUS_CELL_TONE.get(
+            (status_slug or "").strip().lower()
+        ) or _SUPPLIER_STATUS_CELL_TONE.get(status_text.lower(), "neutral")
+        if (status_slug or "").strip().lower() == ShopReceiptStatus.CANCELLED:
+            money_tone = "bad"
+        elif total_raw is not None and Decimal(total_raw or 0) <= 0:
+            money_tone = "neutral"
+        else:
+            money_tone = "good"
         cells = [
-            number,
-            kind_label,
-            client_name,
-            phone,
+            {"label": number, "sub": shop_label},
+            {"kind": "status", "label": kind_label, "tone": kind_tone},
+            {"label": client_name, "sub": client_sub},
             items_cell,
-            total,
+            {
+                "kind": "money",
+                "label": total,
+                "tone": money_tone,
+                "title": total,
+            },
+            {"kind": "status", "label": status_text, "tone": status_tone},
             when,
-            "",
         ]
         payload = {
             "number": number,
@@ -16971,9 +17224,16 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             "sort_id": sort_id,
             "cells": cells,
             "search_text": " ".join(
-                str(cell.get("label") if isinstance(cell, dict) else cell)
-                for cell in cells
-                if cell
+                str(part)
+                for part in (
+                    *(
+                        cell.get("label") if isinstance(cell, dict) else cell
+                        for cell in cells
+                    ),
+                    shop_label,
+                    client_sub,
+                )
+                if part
             ),
         }
         if include_receipt_actions and receipt_id is not None:
@@ -17043,6 +17303,11 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                     ),
                     when_dt=row.created_at,
                     sort_id=row.pk,
+                    shop=row.shop.name if row.shop_id else "",
+                    kind_slug=row.kind,
+                    status_slug=row.status,
+                    status_label=row.get_status_display(),
+                    total_raw=row.total,
                     receipt_id=row.pk,
                     shop_id=row.shop_id,
                 )
@@ -17063,6 +17328,10 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                     when=row["when"],
                     when_dt=row["when_dt"],
                     sort_id=row["sort_id"],
+                    shop=row.get("shop") or "",
+                    kind_slug="stock",
+                    status_label=row.get("status") or "",
+                    total_raw=row.get("total_raw"),
                 )
             )
     if include_expense:
@@ -17081,6 +17350,10 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                     when=row["when"],
                     when_dt=row["when_dt"],
                     sort_id=row["sort_id"],
+                    shop=row.get("shop") or "",
+                    kind_slug="expense",
+                    status_label=row.get("status") or "",
+                    total_raw=row.get("total_raw"),
                 )
             )
     merged.sort(
@@ -17188,11 +17461,10 @@ def _build_receipts(filters):
                     "Receipt",
                     "Type",
                     "Client",
-                    "Phone",
                     "Items",
                     "Total",
+                    "Status",
                     "Date & time",
-                    "Reference",
                 ],
                 browse["receipt_rows"],
                 empty="No receipts for selected shops and period.",
@@ -17658,11 +17930,10 @@ def _build_return_receipts(filters):
                     "Receipt",
                     "Type",
                     "Client",
-                    "Phone",
                     "Items",
                     "Total",
+                    "Status",
                     "Date & time",
-                    "Reference",
                 ],
                 browse["receipt_rows"],
                 empty="No receipts for selected shops and period.",

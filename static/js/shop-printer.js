@@ -784,12 +784,33 @@
       ? `<p data-receipt-ticket-phone>${escapeHtml(t.shop_phone)}</p>`
       : `<p data-receipt-ticket-phone hidden></p>`;
 
+    const paymentMethodLabel = String(t.payment_method_label || "").trim();
+    const paymentSplit = Array.isArray(t.payment_split) ? t.payment_split : [];
+    const paymentRef = String(t.payment_reference || "").trim();
+    const paidRows =
+      `${paymentMethodLabel
+        ? `<div><span>Paid via</span><strong>${escapeHtml(paymentMethodLabel)}</strong></div>`
+        : ""}${paymentSplit
+        .map(
+          (part) =>
+            `<div><span>${escapeHtml(part?.label || "")}</span><strong>KSh ${escapeHtml(
+              part?.amount || "0"
+            )}</strong></div>`
+        )
+        .join("")}${t.show_amount_paid
+        ? `<div><span>Paid</span><strong>KSh ${escapeHtml(t.amount_paid || "0")}</strong></div>`
+        : ""}${t.balance_due
+        ? `<div><span>Balance</span><strong>KSh ${escapeHtml(t.balance_due)}</strong></div>`
+        : ""}${paymentRef
+        ? `<div><span>M-Pesa ref</span><strong>${escapeHtml(paymentRef)}</strong></div>`
+        : ""}`;
+
     const totalsWithPaid = qtyOnly
       ? totalsBlock
       : `${taxBlock}
     <div class="receipt-ticket-grand">
       <span>Total</span><strong>KSh ${escapeHtml(t.total || "0")}</strong>
-    </div>`;
+    </div>${paidRows}`;
 
     const paymentDetailsBlock = `<div class="receipt-ticket-payment" data-receipt-payment-block${
       paymentLines.length ? "" : " hidden"

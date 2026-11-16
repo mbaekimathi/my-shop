@@ -22,11 +22,13 @@ from django.utils import timezone
 from .myshop_models import (
     Client,
     CompanyPosSettings,
+    CompanyStockSettings,
     Expense,
     ExpenseSupplier,
     Item,
     ItemSerial,
     Shop,
+    ShopDaySession,
     ShopItemPrice,
     ShopPosSettings,
     ShopReceipt,
@@ -483,7 +485,8 @@ def _resolve_transfer_serials(item: Item, shop, line: dict):
 
 @transaction.atomic
 def create_transfer(me, destination, raw_lines, staff_code="",
-                    require_member: bool = False, employee_id=None):
+                    note: str = "", require_member: bool = False,
+                    employee_id=None):
     """Returns (movement, parsed_lines)."""
     if employee_id is None:
         employee_id = verify_employee_code(
@@ -493,6 +496,12 @@ def create_transfer(me, destination, raw_lines, staff_code="",
         raise StockError("Select a shop to transfer to.")
     if destination.pk == me.pk:
         raise StockError("You cannot transfer stock to your own shop.")
+    note = (note or "").strip()
+    if (
+        getattr(get_stock_requirements(), "require_note_on_request", False)
+        and not note
+    ):
+        raise StockError("Enter a note for this transfer request.")
 
     lines = _parse_lines(raw_lines, me, need_stock=True)
     for line in lines:
@@ -512,7 +521,7 @@ def create_transfer(me, destination, raw_lines, staff_code="",
         supplier_notified=False,  # the receiving shop's pending notification
         requester_notified=True,
         created_by_id=(employee_id or None),
-        notes=SOURCE_NOTE,
+        notes=(f"{note} · {SOURCE_NOTE}" if note else SOURCE_NOTE),
     )
     for line in lines:
         StockMovementLine.objects.create(
@@ -533,36 +542,64 @@ def create_transfer(me, destination, raw_lines, staff_code="",
 # ---------------------------------------------------------------------------
 
 
+STOCK_PAYMENT_STATUSES = ("unpaid", "paid", "partial")
+
+
+def get_stock_requirements() -> CompanyStockSettings:
+    """Company-wide compulsory-field flags (singleton row, pk=1)."""
+    row = CompanyStockSettings.objects.filter(pk=1).first()
+    if row is None:
+        row = CompanyStockSettings(pk=1)
+    return row
+
+
 @transaction.atomic
 def create_stock_in(me, raw_lines, *, supplier_name: str, supplier_phone: str,
-                    staff_code: str = "", require_member: bool = False,
-                    employee_id=None):
+                    payment_status: str = "", staff_code: str = "",
+                    require_member: bool = False, employee_id=None):
     """Returns (movement, parsed_lines)."""
     if employee_id is None:
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    stock_req = get_stock_requirements()
     name = (supplier_name or "").strip()
     dial, national = parse_supplier_phone(supplier_phone)
-    if not name:
-        raise StockError("Enter the supplier's name.")
-    if not national:
-        raise StockError("Enter the supplier's phone number.")
+    if getattr(stock_req, "require_supplier_on_in", False):
+        if not name:
+            raise StockError("Enter the supplier's name.")
+        if not national:
+            raise StockError("Enter the supplier's phone number.")
+    status = (payment_status or "").strip().lower()
+    if getattr(stock_req, "require_payment_status_on_in", False):
+        if status not in STOCK_PAYMENT_STATUSES:
+            raise StockError(
+                "Choose a payment status (unpaid, paid, or partial)."
+            )
+    elif status not in STOCK_PAYMENT_STATUSES:
+        status = ""
 
     lines = _parse_lines(raw_lines, me, need_stock=False)
-    serials_all = {
-        s
-        for line in lines for s in line["serials"]
-    }
-    if serials_all:
+    if getattr(stock_req, "require_buying_price_on_in", False):
+        for line in lines:
+            if line["buying_price"] is None:
+                raise StockError(
+                    f'Enter a buying price for "{line["item"].name}".'
+                )
+    for line in lines:
+        if not line["serials"]:
+            continue
+        item = line["item"]
         taken = set(
             ItemSerial.objects.filter(
-                serial_number__in=serials_all, is_available=True
+                item_id=item.pk,
+                serial_number__in=line["serials"],
+                is_available=True,
             ).values_list("serial_number", flat=True)
         )
         if taken:
             raise StockError(
-                "Serial already in stock ("
+                f'"{item.name}": serial already in stock ('
                 + ", ".join(sorted(taken)[:5])
                 + ")."
             )
@@ -572,6 +609,7 @@ def create_stock_in(me, raw_lines, *, supplier_name: str, supplier_phone: str,
         entry_source=ENTRY_BUY_ITEMS,
         shop_id=me.pk,
         request_status="",
+        payment_status=status,
         created_by_id=(employee_id or None),
         notes=SOURCE_NOTE,
     )
@@ -622,7 +660,7 @@ def create_stock_in(me, raw_lines, *, supplier_name: str, supplier_phone: str,
             quantity=qty,
             buying_price=price,
             unit_cost=Decimal("0"),
-            payment_status="",
+            payment_status=status,
             serial_numbers=line["serials"],
             supplier_name=name.upper(),
             supplier_phone_country_code=dial,
@@ -643,7 +681,11 @@ def create_stock_in(me, raw_lines, *, supplier_name: str, supplier_phone: str,
         item.stock = _quantize_qty(item.stock) + qty
         item.save(update_fields=["stock"])
 
-    upsert_supplier(name=name, dial=dial, phone=national)
+    if status == "paid" and paid_total > 0:
+        movement.amount_paid = paid_total
+        movement.save(update_fields=["amount_paid"])
+    if name:
+        upsert_supplier(name=name, dial=dial, phone=national)
     return movement, lines
 
 
@@ -1070,6 +1112,17 @@ def _next_receipt_number(shop, prefix="S", kind=None):
 
 KIND_PREFIX = {"sale": "S", "credit": "C", "quotation": "Q"}
 
+# Payment method -> POS settings toggle (mirrors shops PAYMENT_METHOD_TOGGLES).
+_PAYMENT_METHOD_TOGGLES = {
+    "cash": "enable_cash",
+    "mpesa": "enable_mpesa",
+    "card": "enable_card",
+    "both": "enable_cash_mpesa",
+    "cash_card": "enable_cash_card",
+    "mpesa_card": "enable_mpesa_card",
+    "cash_mpesa_card": "enable_cash_mpesa_card",
+}
+
 # Payment method -> tender channels (mirrors shops PAYMENT_METHOD_CHANNELS).
 _PAYMENT_CHANNELS = {
     "cash": ("cash",),
@@ -1092,18 +1145,36 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
     """Returns (receipt, prepared_lines). kind ∈ sale|credit|quotation."""
     if kind not in KIND_PREFIX:
         raise StockError("Choose sale, credit, or quotation.")
+    pos = effective_pos_settings(me)
+    if not kind_enabled(pos, kind):
+        raise StockError(f"{receipt_label(kind)} is disabled for this shop.")
     if employee_id is None:
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    if kind in ("sale", "credit"):
+        require_shop_day_for_sale(me, pos=pos)
 
+    # Client rules mirror MY-SHOP checkout: name/phone fields only exist
+    # while enable_client_data is on; required flags force them.
+    collect_client = bool(pos.get("enable_client_data", True))
+    client_name = (client_name or "").strip()
+    client_phone = (client_phone or "").strip()
+    if collect_client and pos.get("require_client_phone") and not client_phone:
+        raise StockError("Enter the client phone number before completing.")
+    if collect_client and pos.get("require_client_name") and not client_name:
+        raise StockError("Enter the client full name before completing.")
     # Credit + quotation need client info — same rule as MY-SHOP checkout.
-    client_ok = (client_name or "").strip() or (client_phone or "").strip()
-    if kind in ("credit", "quotation") and not client_ok:
+    if (
+        collect_client
+        and kind in ("credit", "quotation")
+        and not client_name
+        and not client_phone
+    ):
         raise StockError(
             f"Enter the client name or phone for a {kind}."
         )
-    if client_ok:
+    if client_name or client_phone:
         upsert_client(client_name, client_phone)
     if kind == "credit" and credit_due_date:
         if credit_due_date < timezone.localdate():
@@ -1114,8 +1185,12 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
         method = (payment_method or "").strip().lower()
         if method not in _PAYMENT_CHANNELS:
             raise StockError("Choose a valid payment method.")
+        if not payment_method_enabled(pos, method):
+            raise StockError(
+                "That payment method is not enabled for this shop."
+            )
 
-    track_store = bool(effective_pos_settings(me)["enable_stock_tracking"])
+    track_store = bool(pos["enable_stock_tracking"])
 
     # Sale needs stock like a transfer — same line parsing.
     lines = _parse_lines(raw_lines, me, need_stock=True, sale_flow=True)
@@ -1137,9 +1212,10 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
             line["serial_rows"] = _resolve_transfer_serials(item, me, line)
             line["serials"] = line["serial_rows"]
         price = line["buying_price"]
-        if price is None or price <= 0:
-            # An existing per-shop row is authoritative — including 0.00, which
-            # means the item is deliberately free at this shop.
+        if not pos.get("enable_discount", True) or price is None or price <= 0:
+            # Discounts off → the list price always applies. An existing
+            # per-shop row is authoritative — including 0.00, which means the
+            # item is deliberately free at this shop.
             if pr is not None:
                 price = _money(pr.price)
             else:
@@ -1192,12 +1268,14 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
 
     receipt = ShopReceipt.objects.create(
         shop_id=me.pk,
-        receipt_number=_next_receipt_number(me, KIND_PREFIX[kind]),
+        receipt_number=_next_receipt_number(
+            me, pos["receipt_format_" + kind], kind=kind
+        ),
         created_by_id=(employee_id or None),
         kind=kind,
         payment_method=method,
-        client_name=(client_name or "").strip().upper(),
-        client_phone=(client_phone or "").strip(),
+        client_name=client_name.upper(),
+        client_phone=client_phone,
         subtotal=total,
         tax_percent=Decimal("0"),
         tax_amount=Decimal("0"),
@@ -1604,8 +1682,396 @@ def receipt_detail(shop, receipt_id: int) -> dict:
     }
 
 
+def _credit_paid_and_due(receipt):
+    total = _money(receipt.total)
+    paid = _money(receipt.amount_paid)
+    due = total - paid
+    if due < 0:
+        due = Decimal("0.00")
+    return paid, due
+
+
+def _payment_method_for_channels(channels) -> str:
+    used = frozenset(str(c) for c in channels if c)
+    for method, chans in _PAYMENT_CHANNELS.items():
+        if frozenset(chans) == used:
+            return method
+    return "none"
+
+
+def _sync_sale_payment_fields(receipt) -> None:
+    """Mirror credit_settlement._sync_sale_payment_fields."""
+    used = [
+        channel
+        for channel in ("cash", "mpesa", "card")
+        if _money(getattr(receipt, f"{channel}_amount", 0)) > 0
+    ]
+    if used:
+        receipt.payment_method = _payment_method_for_channels(used)
+        return
+    paid = _money(receipt.amount_paid)
+    if (receipt.mpesa_receipt_number or "").strip():
+        receipt.payment_method = "mpesa"
+        receipt.mpesa_amount = paid
+        return
+    receipt.payment_method = "cash"
+    receipt.cash_amount = paid
+
+
+def _convert_settled_credit_to_sale(receipt) -> bool:
+    """Mirror credit_settlement.convert_settled_credit_to_sale (no save)."""
+    if getattr(receipt, "kind", None) != "credit":
+        return False
+    if getattr(receipt, "status", None) == STATUS_CANCELLED:
+        return False
+    _paid, due = _credit_paid_and_due(receipt)
+    if due > 0:
+        return False
+    paid = _money(receipt.amount_paid)
+    if paid <= 0 and _money(receipt.total) <= 0:
+        return False
+    receipt.kind = "sale"
+    receipt.credit_due_date = None
+    receipt.settled_from_credit = True
+    _sync_sale_payment_fields(receipt)
+    return True
+
+
+def _record_credit_collection(
+    receipt, *, amount, payment_method: str, mpesa_receipt_number: str = ""
+) -> bool:
+    """Mirror credit_settlement.record_credit_collection — applies a payment
+    and converts the receipt to a sale when fully settled."""
+    apply = _money(amount)
+    method = (payment_method or "cash").strip().lower()
+    receipt.amount_paid = _money(Decimal(receipt.amount_paid or 0) + apply)
+    update_fields = ["amount_paid"]
+    if method == "mpesa":
+        receipt.mpesa_amount = _money(
+            Decimal(receipt.mpesa_amount or 0) + apply
+        )
+        update_fields.append("mpesa_amount")
+        ref = (mpesa_receipt_number or "").strip()
+        if ref and not (receipt.mpesa_receipt_number or "").strip():
+            receipt.mpesa_receipt_number = ref
+            update_fields.append("mpesa_receipt_number")
+    elif method == "card":
+        receipt.card_amount = _money(
+            Decimal(getattr(receipt, "card_amount", 0) or 0) + apply
+        )
+        update_fields.append("card_amount")
+    else:
+        receipt.cash_amount = _money(Decimal(receipt.cash_amount or 0) + apply)
+        update_fields.append("cash_amount")
+
+    converted = _convert_settled_credit_to_sale(receipt)
+    if converted:
+        for field in (
+            "kind",
+            "payment_method",
+            "credit_due_date",
+            "cash_amount",
+            "mpesa_amount",
+            "card_amount",
+            "settled_from_credit",
+        ):
+            if field not in update_fields:
+                update_fields.append(field)
+    receipt.save(update_fields=update_fields)
+    return converted
+
+
+def _parse_payment_at(value):
+    """Accept an ISO datetime string, a date, or None."""
+    if value in (None, ""):
+        return None
+    if hasattr(value, "tzinfo"):
+        parsed = value
+    else:
+        text = str(value).strip()
+        try:
+            parsed = timezone.datetime.fromisoformat(text)
+        except ValueError:
+            raise StockError("Enter a valid payment date and time.")
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def _reopen_cancelled_receipt(shop, receipt, *, pos):
+    """Mirror reopen_cancelled_shop_receipt(target=active): a cancelled sale
+    goes back to pending — the cancel-time restock is reversed."""
+    if receipt.kind != "sale":
+        raise StockError("Only sales receipts can be reopened here.")
+    lines = list(
+        ShopReceiptLine.objects.select_for_update().filter(
+            receipt_id=receipt.pk
+        )
+    )
+    track = bool(pos.get("enable_stock_tracking", True))
+    item_ids = {line.item_id for line in lines if line.item_id}
+    items = {
+        i.pk: i
+        for i in Item.objects.select_for_update().filter(pk__in=item_ids)
+    }
+    stock_map = {
+        s.item_id: s
+        for s in ShopStock.objects.select_for_update().filter(
+            shop_id=shop.pk, item_id__in=item_ids
+        )
+    }
+    for line in lines:
+        returned = _quantize_qty(line.returned_quantity or 0)
+        returned_serials = list(line.returned_serial_numbers or [])
+        if returned <= 0 and not returned_serials:
+            continue
+        item = items.get(line.item_id)
+        if track and item is not None and getattr(
+            item, "deduct_stock_on_sale", True
+        ):
+            qty = returned or _quantize_qty(len(returned_serials))
+            stock = stock_map.get(line.item_id)
+            if stock is None:
+                stock = ShopStock.objects.create(
+                    shop_id=shop.pk, item_id=line.item_id, quantity=0
+                )
+                stock_map[line.item_id] = stock
+            stock.quantity = _quantize_qty(stock.quantity) - qty
+            stock.save(update_fields=["quantity"])
+            item.stock = _quantize_qty(item.stock or 0) - qty
+            item.save(update_fields=["stock"])
+            if returned_serials:
+                ItemSerial.objects.filter(
+                    item_id=line.item_id,
+                    serial_number__in=returned_serials,
+                ).update(is_available=False)
+        line.returned_quantity = Decimal("0")
+        line.returned_serial_numbers = []
+        line.save(
+            update_fields=["returned_quantity", "returned_serial_numbers"]
+        )
+    receipt.status = STATUS_ACTIVE
+    receipt.save(update_fields=["status"])
+
+
+def _confirm_one_receipt(
+    shop,
+    receipt,
+    *,
+    employee_id,
+    pos,
+    mpesa_receipt_number="",
+    payment_at=None,
+    amount=None,
+    payment_method="",
+    cash_amount=None,
+    mpesa_amount=None,
+    card_amount=None,
+) -> dict:
+    """Mirror shops.services.confirm_shop_receipt (sale + credit)."""
+    is_credit = receipt.kind == "credit"
+    if not is_credit and receipt.kind != "sale":
+        raise StockError("Only sales and credits can be confirmed.")
+    if receipt.status == STATUS_CANCELLED:
+        _reopen_cancelled_receipt(shop, receipt, pos=pos)
+    elif receipt.status == STATUS_CONFIRMED and not is_credit:
+        return {
+            "ok": True,
+            "message": f"Receipt {receipt.receipt_number} is already confirmed.",
+            "receipt": receipt_detail(shop, receipt.pk),
+            "receipt_number": receipt.receipt_number,
+        }
+    elif receipt.status != STATUS_ACTIVE:
+        raise StockError(
+            "Only pending or cancelled receipts can be confirmed."
+        )
+
+    ref = (mpesa_receipt_number or "").strip()[:40]
+    existing_ref = (receipt.mpesa_receipt_number or "").strip()
+    require_details = bool(pos.get("require_mpesa_reference_on_confirm"))
+    if require_details and not ref and not existing_ref:
+        raise StockError(
+            "Enter the reference number before confirming this receipt."
+        )
+    paid_at = _parse_payment_at(payment_at)
+    if require_details and paid_at is None:
+        raise StockError(
+            "Enter the payment date and time before confirming this receipt."
+        )
+
+    cleared_credit = False
+    partial_credit = False
+    if is_credit:
+        _paid, due = _credit_paid_and_due(receipt)
+        if due <= 0:
+            apply_amount = Decimal("0.00")
+        elif amount in (None, ""):
+            # The compact chat confirm carries no amount field — a bare
+            # confirm settles the whole balance.
+            apply_amount = due
+        else:
+            apply_amount = _money(amount)
+            if apply_amount <= 0:
+                raise StockError("Confirm amount must be greater than zero.")
+            if apply_amount > due:
+                raise StockError(
+                    f"Confirm amount cannot exceed the balance due "
+                    f"(KSh {due:,.2f})."
+                )
+        method = (payment_method or "").strip().lower()
+        if method not in {"cash", "mpesa", "card"}:
+            method = "mpesa" if ref or existing_ref else "cash"
+        if apply_amount > 0:
+            if not payment_method_enabled(pos, method):
+                raise StockError(
+                    f"{method.capitalize()} payments are disabled for this "
+                    "shop."
+                )
+            cleared_credit = _record_credit_collection(
+                receipt,
+                amount=apply_amount,
+                payment_method=method,
+                mpesa_receipt_number=ref,
+            )
+            receipt = ShopReceipt.objects.select_for_update().get(
+                pk=receipt.pk
+            )
+        else:
+            cleared_credit = _convert_settled_credit_to_sale(receipt)
+            if cleared_credit:
+                receipt.save(
+                    update_fields=[
+                        "kind",
+                        "payment_method",
+                        "credit_due_date",
+                        "cash_amount",
+                        "mpesa_amount",
+                        "card_amount",
+                        "settled_from_credit",
+                    ]
+                )
+
+        if not cleared_credit and receipt.kind == "credit":
+            # Partial confirmation — keep as open credit with updated balance.
+            partial_credit = True
+            if ref and not (receipt.mpesa_receipt_number or "").strip():
+                receipt.mpesa_receipt_number = ref
+                receipt.save(update_fields=["mpesa_receipt_number"])
+            if paid_at is not None:
+                receipt.confirmed_payment_at = paid_at
+                receipt.save(update_fields=["confirmed_payment_at"])
+            _paid_now, due_now = _credit_paid_and_due(receipt)
+            return {
+                "ok": True,
+                "message": (
+                    f"Credit {receipt.receipt_number} partially confirmed "
+                    f"(paid KSh {_paid_now:,.2f}, balance KSh {due_now:,.2f})."
+                ),
+                "receipt": receipt_detail(shop, receipt.pk),
+                "receipt_number": receipt.receipt_number,
+                "partial_credit": True,
+            }
+        if not cleared_credit and receipt.kind != "sale":
+            raise StockError("Could not clear this credit receipt.")
+
+    receipt.status = STATUS_CONFIRMED
+    update_fields = ["status"]
+    if not is_credit:
+        # The confirmer may correct how the sale was paid (incl. card combos).
+        method_key = (payment_method or "").strip().lower()
+        if method_key:
+            if method_key not in _PAYMENT_CHANNELS:
+                raise StockError("Choose an enabled payment method.")
+            if not payment_method_enabled(pos, method_key):
+                raise StockError(
+                    "That payment method is not enabled for this shop."
+                )
+            total = _money(receipt.total)
+            channels = _PAYMENT_CHANNELS[method_key]
+            receipt.cash_amount = Decimal("0.00")
+            receipt.mpesa_amount = Decimal("0.00")
+            receipt.card_amount = Decimal("0.00")
+            if len(channels) == 1:
+                setattr(receipt, f"{channels[0]}_amount", total)
+            else:
+                entered = {
+                    "cash": _money(cash_amount),
+                    "mpesa": _money(mpesa_amount),
+                    "card": _money(card_amount),
+                }
+                paid = sum(entered[ch] for ch in channels)
+                if paid != total:
+                    if abs(paid - total) > Decimal("0.01"):
+                        raise StockError(
+                            "Payment amounts must add up to the sale total."
+                        )
+                    last = channels[-1]
+                    entered[last] = (entered[last] + (total - paid)).quantize(
+                        Decimal("0.01")
+                    )
+                for ch in channels:
+                    if entered[ch] <= 0:
+                        raise StockError(
+                            "For split payment all amounts must be > 0."
+                        )
+                    setattr(receipt, f"{ch}_amount", entered[ch])
+            receipt.payment_method = method_key
+            update_fields += [
+                "payment_method",
+                "cash_amount",
+                "mpesa_amount",
+                "card_amount",
+            ]
+    if cleared_credit:
+        for field in (
+            "kind",
+            "payment_method",
+            "credit_due_date",
+            "cash_amount",
+            "mpesa_amount",
+            "card_amount",
+            "settled_from_credit",
+        ):
+            if field not in update_fields:
+                update_fields.append(field)
+    if ref:
+        receipt.mpesa_receipt_number = ref
+        update_fields.append("mpesa_receipt_number")
+    if paid_at is not None:
+        receipt.confirmed_payment_at = paid_at
+        update_fields.append("confirmed_payment_at")
+    receipt.save(update_fields=update_fields)
+
+    message = f"Receipt {receipt.receipt_number} confirmed."
+    if cleared_credit:
+        message = (
+            f"Credit {receipt.receipt_number} cleared fully and confirmed "
+            "as a sale."
+        )
+    return {
+        "ok": True,
+        "message": message,
+        "receipt": receipt_detail(shop, receipt.pk),
+        "receipt_number": receipt.receipt_number,
+        "cleared_credit": cleared_credit,
+        "partial_credit": partial_credit,
+    }
+
+
 @transaction.atomic
-def confirm_receipt(shop, receipt_id: int, *, staff_code="") -> dict:
+def confirm_receipt(
+    shop,
+    receipt_id: int,
+    *,
+    staff_code="",
+    mpesa_receipt_number="",
+    payment_at=None,
+    amount=None,
+    payment_method="",
+    cash_amount=None,
+    mpesa_amount=None,
+    card_amount=None,
+) -> dict:
     employee_id = verify_employee_code(
         staff_code, shop, require_member=True
     )
@@ -1616,18 +2082,21 @@ def confirm_receipt(shop, receipt_id: int, *, staff_code="") -> dict:
     )
     if receipt is None:
         raise StockError("Receipt not found for this shop.")
-    if receipt.kind != "sale":
-        raise StockError("Only sales receipts can be confirmed.")
-    if receipt.status != STATUS_ACTIVE:
-        raise StockError("Only pending receipts can be confirmed.")
-    receipt.status = STATUS_CONFIRMED
-    receipt.save(update_fields=["status"])
-    return {
-        "ok": True,
-        "message": f"Receipt {receipt.receipt_number} confirmed.",
-        "receipt": receipt_detail(shop, receipt.pk),
-        "by": employee_label(employee_id),
-    }
+    out = _confirm_one_receipt(
+        shop,
+        receipt,
+        employee_id=employee_id,
+        pos=effective_pos_settings(shop),
+        mpesa_receipt_number=mpesa_receipt_number,
+        payment_at=payment_at,
+        amount=amount,
+        payment_method=payment_method,
+        cash_amount=cash_amount,
+        mpesa_amount=mpesa_amount,
+        card_amount=card_amount,
+    )
+    out["by"] = employee_label(employee_id)
+    return out
 
 
 def _append_return_batch(line, *, qty, serials, at, by_id, reason="") -> None:
@@ -2136,11 +2605,25 @@ def cancel_pending_receipt(
 
 
 @transaction.atomic
-def confirm_receipts_bulk(shop, ids, *, staff_code="") -> dict:
+def confirm_receipts_bulk(
+    shop,
+    ids,
+    *,
+    staff_code="",
+    mpesa_receipt_number="",
+    payment_at=None,
+    amount=None,
+    payment_method="",
+    cash_amount=None,
+    mpesa_amount=None,
+    card_amount=None,
+) -> dict:
     employee_id = verify_employee_code(
         staff_code, shop, require_member=True
     )
+    pos = effective_pos_settings(shop)
     results = []
+    messages = []
     errors = []
     for rid in ids or []:
         try:
@@ -2156,24 +2639,33 @@ def confirm_receipts_bulk(shop, ids, *, staff_code="") -> dict:
         if receipt is None:
             errors.append(f"Receipt #{rid_i} not found.")
             continue
-        if receipt.kind != "sale":
-            errors.append(f"{receipt.receipt_number}: only sales can be confirmed.")
-            continue
-        if receipt.status != STATUS_ACTIVE:
-            errors.append(
-                f"{receipt.receipt_number}: only pending can be confirmed."
+        try:
+            out = _confirm_one_receipt(
+                shop,
+                receipt,
+                employee_id=employee_id,
+                pos=pos,
+                mpesa_receipt_number=mpesa_receipt_number,
+                payment_at=payment_at,
+                amount=amount,
+                payment_method=payment_method,
+                cash_amount=cash_amount,
+                mpesa_amount=mpesa_amount,
+                card_amount=card_amount,
             )
+        except StockError as exc:
+            errors.append(str(exc))
             continue
-        receipt.status = STATUS_CONFIRMED
-        receipt.save(update_fields=["status"])
-        results.append(receipt.receipt_number)
+        results.append(out.get("receipt_number") or receipt.receipt_number)
+        messages.append(out.get("message") or "")
     if not results and errors:
         raise StockError(
             errors[0] if len(errors) == 1 else "; ".join(errors[:3])
         )
     return {
         "ok": True,
-        "message": f"Confirmed {len(results)} receipt(s).",
+        "message": messages[0] if len(results) == 1 and messages else
+        f"Confirmed {len(results)} receipt(s).",
         "confirmed": results,
         "errors": errors,
         "by": employee_label(employee_id),
@@ -2264,18 +2756,58 @@ def return_receipts_bulk(shop, receipts_payload, *, reason="", staff_code="") ->
 TRADE_KINDS = ("trade_out", "trade_in")
 
 _POS_BOOL_FIELDS = (
+    "enable_sale",
+    "enable_credit",
+    "enable_quotation",
     "enable_trade_out",
     "enable_trade_in",
+    "enable_cash",
+    "enable_mpesa",
+    "enable_card",
+    "enable_cash_mpesa",
+    "enable_cash_card",
+    "enable_mpesa_card",
+    "enable_cash_mpesa_card",
+    "enable_discount",
     "enable_stock_tracking",
+    "enable_shelf_mode",
+    "enable_open_close",
+    "enable_client_data",
+    "require_client_phone",
+    "require_client_name",
+    "require_mpesa_reference_on_confirm",
 )
 _POS_FORMAT_FIELDS = (
+    "receipt_format_sale",
+    "receipt_format_credit",
+    "receipt_format_quotation",
     "receipt_format_trade_out",
     "receipt_format_trade_in",
 )
 _POS_DEFAULTS = {
+    "enable_sale": True,
+    "enable_credit": True,
+    "enable_quotation": True,
     "enable_trade_out": True,
     "enable_trade_in": True,
+    "enable_cash": True,
+    "enable_mpesa": True,
+    "enable_card": False,
+    "enable_cash_mpesa": True,
+    "enable_cash_card": False,
+    "enable_mpesa_card": False,
+    "enable_cash_mpesa_card": False,
+    "enable_discount": True,
     "enable_stock_tracking": True,
+    "enable_shelf_mode": False,
+    "enable_open_close": True,
+    "enable_client_data": True,
+    "require_client_phone": False,
+    "require_client_name": False,
+    "require_mpesa_reference_on_confirm": False,
+    "receipt_format_sale": "S",
+    "receipt_format_credit": "C",
+    "receipt_format_quotation": "Q",
     "receipt_format_trade_out": "T",
     "receipt_format_trade_in": "TI",
 }
@@ -2284,10 +2816,10 @@ _POS_DEFAULTS = {
 def effective_pos_settings(shop) -> dict:
     """Company POS defaults merged with the shop's overrides.
 
-    Mirrors MY-SHOP's get_effective_pos_settings for the fields the trade
-    flow uses: a shop column applies only while its section override flag is
-    on AND the field is listed in the matching custom_*_fields set —
-    everything else keeps following the company value.
+    Mirrors MY-SHOP's get_effective_pos_settings: a shop column applies while
+    the field is listed in the shop's custom_pos_fields AND override_pos is
+    on, or in custom_receipt_fields AND override_receipt is on — everything
+    else keeps following the company value.
     """
     company = CompanyPosSettings.objects.filter(pk=1).first()
     shop_row = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
@@ -2296,22 +2828,61 @@ def effective_pos_settings(shop) -> dict:
         for name in merged:
             merged[name] = getattr(company, name, merged[name])
     if shop_row is not None:
-        if shop_row.override_pos:
-            custom = set(shop_row.custom_pos_fields or [])
-            for name in _POS_BOOL_FIELDS:
-                if name in custom:
-                    merged[name] = getattr(shop_row, name, merged[name])
-        if shop_row.override_receipt:
-            custom = set(shop_row.custom_receipt_fields or [])
-            for name in _POS_FORMAT_FIELDS:
-                if name in custom:
-                    merged[name] = getattr(shop_row, name, merged[name])
+        custom_pos = (
+            set(shop_row.custom_pos_fields or []) if shop_row.override_pos else set()
+        )
+        custom_receipt = (
+            set(shop_row.custom_receipt_fields or [])
+            if shop_row.override_receipt
+            else set()
+        )
+        for name in merged:
+            if name in custom_pos or name in custom_receipt:
+                merged[name] = getattr(shop_row, name, merged[name])
     for name in _POS_FORMAT_FIELDS:
         merged[name] = (
             (merged[name] or _POS_DEFAULTS[name]).strip().upper()
             or _POS_DEFAULTS[name]
         )
     return merged
+
+
+def kind_enabled(pos: dict, kind: str) -> bool:
+    return bool(pos.get("enable_" + kind, False))
+
+
+def payment_method_enabled(pos: dict, method: str) -> bool:
+    toggle = _PAYMENT_METHOD_TOGGLES.get((method or "").strip().lower())
+    return bool(toggle and pos.get(toggle, False))
+
+
+def get_open_shop_day(shop):
+    return (
+        ShopDaySession.objects.filter(shop_id=shop.pk, closed_at__isnull=True)
+        .order_by("-opened_at")
+        .first()
+    )
+
+
+def require_shop_day_for_sale(shop, pos=None):
+    """Mirror of shops.services.require_shop_day_for_sale.
+
+    Compulsory open/close off → trading allowed. Otherwise an open day
+    session started today is required; a stale session from a previous day
+    must be closed first.
+    """
+    if pos is None:
+        pos = effective_pos_settings(shop)
+    if not pos.get("enable_open_close", True):
+        return
+    open_session = get_open_shop_day(shop)
+    if open_session is None:
+        raise StockError("Open the shop day before selling.")
+    if timezone.localtime(open_session.opened_at).date() < timezone.localdate():
+        raise StockError(
+            "Yesterday’s shop day is still open. Close it, then open "
+            "today’s day before selling."
+        )
 
 
 def trade_flags(shop) -> dict:
@@ -2338,14 +2909,23 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    if kind == "trade_out":
+        require_shop_day_for_sale(me, pos=pos)
 
     client_name = (client_name or "").strip().upper()
     client_phone = (client_phone or "").strip()
-    if not client_name:
-        raise StockError("Enter the client full name.")
-    if not client_phone:
-        raise StockError("Enter the client phone number.")
-    client = upsert_client(client_name, client_phone)
+    # Client fields only exist while enable_client_data is on — MY-SHOP hides
+    # them entirely otherwise.
+    if pos.get("enable_client_data", True):
+        if not client_name:
+            raise StockError("Enter the client full name.")
+        if not client_phone:
+            raise StockError("Enter the client phone number.")
+    client = (
+        upsert_client(client_name, client_phone)
+        if client_name or client_phone
+        else None
+    )
 
     track_stock = bool(pos["enable_stock_tracking"])
     lines = _parse_lines(
@@ -2596,7 +3176,6 @@ EXPENSE_CATEGORIES = (
     ("office", "Office supplies"),
     ("security", "Security"),
     ("food", "Food & refreshments"),
-    ("owner_drawings", "Owner drawings"),
     ("misc", "Miscellaneous"),
 )
 EXPENSE_CATEGORY_LABELS = dict(EXPENSE_CATEGORIES)
@@ -2621,13 +3200,33 @@ def parse_expense_lines(payload) -> list[dict]:
     if not isinstance(raw, (list, tuple)) or not raw:
         raise StockError("Add at least one expense.")
     lines = []
+    label_categories = {}
+    for slug, lbl in EXPENSE_CATEGORIES:
+        label_categories[lbl.lower()] = slug
+        label_categories[re.sub(r"[\s\-]+", "_", lbl.lower())] = slug
     for index, row in enumerate(raw):
         if not isinstance(row, dict):
             raise StockError(f"Expense {index + 1}: invalid line.")
         label = f"Expense {index + 1}"
-        category = (row.get("category") or "").strip().lower()
-        if category not in EXPENSE_CATEGORY_LABELS:
+        raw_category = (row.get("category") or "").strip()
+        slug = re.sub(r"[\s\-]+", "_", raw_category).lower()
+        if slug in EXPENSE_CATEGORY_LABELS:
+            category = slug
+        elif slug in label_categories:
+            category = label_categories[slug]
+        else:
+            # Free-typed categories are allowed — stored uppercase.
+            category = re.sub(r"\s+", " ", raw_category).upper()
+        if not category or not re.search(r"[a-z0-9]", category, re.I):
             raise StockError(f"{label}: choose a category.")
+        if category == "owner_drawings":
+            raise StockError(
+                f"{label}: owner drawings are recorded on the Day page."
+            )
+        if len(category) > 32:
+            raise StockError(
+                f"{label}: category is too long (32 characters max)."
+            )
         name = (row.get("name") or "").strip().upper()
         if not name:
             raise StockError(f"{label}: enter the expense name.")
@@ -2664,13 +3263,13 @@ def create_expenses(me, *, lines=None, category="", name="", amount=None,
         )
     status = (payment_status or "").strip().lower()
     if status not in EXPENSE_STATUSES:
-        raise StockError("Choose paid, partial, or unpaid.")
+        raise StockError("Choose a payment status (unpaid, paid, or partial).")
     sname = (supplier_name or "").strip()
     dial, national = parse_supplier_phone(supplier_phone)
     if not sname:
-        raise StockError("Enter the supplier's name.")
-    if not national:
-        raise StockError("Enter the supplier's phone number.")
+        raise StockError("Supplier name is required.")
+    if not national or len(national) != 9 or not national.isdigit():
+        raise StockError("Enter a valid 9-digit supplier phone number.")
 
     supplier = upsert_expense_supplier(name=sname, dial=dial, phone=national)
     created = []
@@ -2763,6 +3362,7 @@ def _run_action(action: str, me, payload: dict, employee_id):
         destination = _destination_shop(payload.get("destination_shop_id"))
         movement, lines = create_transfer(
             me, destination, payload.get("lines") or [],
+            note=payload.get("note") or "",
             employee_id=employee_id,
         )
         return {
@@ -2783,6 +3383,7 @@ def _run_action(action: str, me, payload: dict, employee_id):
             payload.get("lines") or [],
             supplier_name=supplier_name,
             supplier_phone=payload.get("supplier_phone") or "",
+            payment_status=payload.get("payment_status") or "",
             employee_id=employee_id,
         )
         dial, national = parse_supplier_phone(

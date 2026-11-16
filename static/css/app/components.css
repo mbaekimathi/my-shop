@@ -457,6 +457,26 @@ html[data-theme="dark"] .perm-table-scroll {
   color: var(--mist-dim);
 }
 
+.ax-status.is-info {
+  background: color-mix(in srgb, #2563eb 12%, var(--surface));
+  color: color-mix(in srgb, #2563eb 72%, var(--text-strong));
+}
+
+.ax-status.is-violet {
+  background: color-mix(in srgb, #7c3aed 12%, var(--surface));
+  color: color-mix(in srgb, #7c3aed 72%, var(--text-strong));
+}
+
+.ax-status.is-shops {
+  background: color-mix(in srgb, var(--mist-dim) 12%, var(--surface));
+  color: var(--mist-dim);
+}
+
+.ax-status.is-cost {
+  background: color-mix(in srgb, #c2410c 12%, var(--surface));
+  color: color-mix(in srgb, #c2410c 75%, var(--text-strong));
+}
+
 .ax-empty--search {
   margin: 0.65rem 0.75rem;
 }

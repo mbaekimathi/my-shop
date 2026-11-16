@@ -848,7 +848,7 @@ class AnalyticsReceiptsBrowseTests(TestCase):
         self.assertIn("Confirm receipts", labels)
         self.assertIn("Return receipt", labels)
         list_table = page["tables"][0]
-        numbers = {row["cells"][0] for row in list_table["rows"]}
+        numbers = {row["cells"][0]["label"] for row in list_table["rows"]}
         self.assertEqual(numbers, {"SL-R1", "CR-R1", "QT-R1"})
 
     def test_receipts_section_filters_by_kind(self):
@@ -872,7 +872,7 @@ class AnalyticsReceiptsBrowseTests(TestCase):
         )
         page = context["page"]
         self.assertEqual(page.get("receipt_kind"), "credits")
-        numbers = {row["cells"][0] for row in page["tables"][0]["rows"]}
+        numbers = {row["cells"][0]["label"] for row in page["tables"][0]["rows"]}
         self.assertEqual(numbers, {"CR-R2"})
 
     def test_receipts_list_includes_bought_items(self):
@@ -956,19 +956,20 @@ class AnalyticsReceiptsBrowseTests(TestCase):
                 "Receipt",
                 "Type",
                 "Client",
-                "Phone",
                 "Items",
                 "Total",
+                "Status",
                 "Date & time",
-                "Reference",
             ],
         )
         rows = page["tables"][0]["rows"]
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["cells"][0], "SL-PRINT")
-        self.assertEqual(rows[0]["cells"][2], "Ada Client")
-        self.assertEqual(rows[0]["cells"][3], "0700111222")
-        items_cell = rows[0]["cells"][4]
+        self.assertEqual(rows[0]["cells"][0]["label"], "SL-PRINT")
+        self.assertEqual(rows[0]["cells"][1]["label"], "Sale")
+        self.assertEqual(rows[0]["cells"][1]["tone"], "good")
+        self.assertEqual(rows[0]["cells"][2]["label"], "Ada Client")
+        self.assertEqual(rows[0]["cells"][2]["sub"], "0700111222")
+        items_cell = rows[0]["cells"][3]
         self.assertEqual(items_cell["kind"], "items")
         self.assertEqual(items_cell["label"], "Keyboard ×1")
         self.assertEqual(
@@ -982,7 +983,9 @@ class AnalyticsReceiptsBrowseTests(TestCase):
                 }
             ],
         )
-        self.assertEqual(rows[0]["cells"][7], "")
+        self.assertEqual(rows[0]["cells"][4]["kind"], "money")
+        self.assertEqual(rows[0]["cells"][5]["label"], "Pending")
+        self.assertEqual(len(rows[0]["cells"]), 7)
 
         document = build_receipts_print_document(filters=context)
         self.assertEqual(document["receipt_total"], 1)
@@ -1203,7 +1206,7 @@ class AnalyticsPosFeatureVisibilityTests(TestCase):
         self.assertNotIn("credits", option_values)
         self.assertNotIn("quotations", option_values)
         self.assertIn("sales", option_values)
-        numbers = {row["cells"][0] for row in page["tables"][0]["rows"]}
+        numbers = {row["cells"][0]["label"] for row in page["tables"][0]["rows"]}
         self.assertIn("SL-O", numbers)
         self.assertNotIn("CR-O", numbers)
         # Forcing a disabled kind falls back to "all types".

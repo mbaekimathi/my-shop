@@ -120,14 +120,19 @@ def store_stock_movement(request):
     denied = _shelf_only_redirect(request)
     if denied is not None:
         return denied
+    from items.movement_page import build_movement_ledger_page
+
     profile = get_profile_for_request(request)
-    page = build_store_stock_report(request=request)
-    return render(
+    response, context = build_movement_ledger_page(
         request,
-        "employees/store_stock_movement.html",
+        source="store",
+        page_title="Item stock movement",
+    )
+    if response is not None:
+        return response
+    context.update(
         {
             "profile": profile,
-            "page": page,
             "meta": {
                 "title": "Item Stock Movement",
                 "headline": "Item stock movement",
@@ -150,8 +155,9 @@ def store_stock_movement(request):
             "page_sidebar": sidebar_for_store_stock(
                 EmployeeRole.STORE_MANAGER, profile=profile, active="movement"
             ),
-        },
+        }
     )
+    return render(request, "employees/store_stock_movement.html", context)
 
 
 def _render_store_stock_page(request, *, mode: str):
@@ -519,6 +525,60 @@ def store_shelf_stock(request):
             for message in exc.messages:
                 messages.error(request, message)
         return _back()
+
+    if mode == "movements" and shops:
+        from items.movement_page import build_movement_ledger_page
+
+        response, context = build_movement_ledger_page(
+            request,
+            source="shelf",
+            filter_shops=shops,
+            base_params=[("mode", "movements")],
+            shop_params=("shop_id", "shop"),
+            page_title="Shelf stock movement",
+        )
+        if response is not None:
+            return response
+        selected = context.get("selected_shop_ids") or set()
+        modal_shop = shop
+        if len(selected) == 1:
+            modal_shop = next(
+                (row for row in shops if row.pk in selected), modal_shop
+            )
+        if modal_shop is None:
+            modal_shop = shops[0]
+        modal_items = list_shelf_items(shop=modal_shop)
+        context.update(
+            {
+                "profile": profile,
+                "meta": {
+                    "title": "Shelf stock movement",
+                    "headline": "Shelf stock movement",
+                    "summary": (
+                        "Shelf stock changes per shop. Shelf items are not "
+                        "sold, so they do not show on the shop page."
+                    ),
+                    "icon": "layers",
+                },
+                "shelf_mode": mode,
+                "shops": shops,
+                "shop": modal_shop,
+                "shelf_items": modal_items,
+                "shelf_item_count": len(modal_items),
+                "stock_req": _stock_requirements(),
+                "stock_out_reasons": _stock_out_reasons(),
+                "shelf_needs_staff_id": False,
+                "shelf_shop_field": True,
+                "shelf_unit_choices": SHELF_UNIT_CHOICES,
+                "shelf_categories": shelf_categories(),
+                "page_sidebar": sidebar_for_store_stock(
+                    EmployeeRole.STORE_MANAGER,
+                    profile=profile,
+                    active="shelf-movements",
+                ),
+            }
+        )
+        return render(request, "employees/store_shelf_movement.html", context)
 
     if shop is None and shops:
         shop = shops[0]

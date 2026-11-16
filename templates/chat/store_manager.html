@@ -12,8 +12,10 @@
   data-employees-url="{{ employees_url }}"
   data-stock-in-url="{{ stock_in_url }}"
   data-stock-out-url="{{ stock_out_url }}"
+  data-trade-url="{{ trade_url }}"
   data-report-url="{{ report_url }}"
   data-feed-url="{{ feed_url }}"
+  data-stock-req='{{ stock_req_json }}'
 >
   {% csrf_token %}
 
@@ -80,6 +82,16 @@
           </span>
           <i data-lucide="chevron-right" aria-hidden="true"></i>
         </button>
+        <button type="button" class="wa-chat" data-sm-open="trade" title="Store Trade">
+          <span class="comms-avatar sm-dash__ico sm-dash__ico--report" aria-hidden="true">
+            <i data-lucide="repeat"></i>
+          </span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Store Trade</strong></span>
+            <span class="wa-chat__preview">Trade items with a person</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
         <button type="button" class="wa-chat" data-sm-open="report" title="Store Report">
           <span class="comms-avatar sm-dash__ico sm-dash__ico--report" aria-hidden="true">
             <i data-lucide="clipboard-list"></i>
@@ -117,8 +129,22 @@
     </div>
 
     <div class="wa-stock__body">
-      <label class="wa-stock__field">
-        <span data-sm-counterpart-label>Who delivered</span>
+      <div class="wa-stock__field" data-sm-trade-kind-wrap hidden>
+        <span>Direction</span>
+        <div class="sm-entryrow">
+          <label class="wa-chip">
+            <input type="radio" name="sm_trade_kind" value="trade_out" checked data-sm-trade-kind>
+            Trade out
+          </label>
+          <label class="wa-chip">
+            <input type="radio" name="sm_trade_kind" value="trade_in" data-sm-trade-kind>
+            Trade in
+          </label>
+        </div>
+      </div>
+
+      <label class="wa-stock__field" data-sm-counterpart-wrap>
+        <span data-sm-counterpart-label>Who delivered <em>optional</em></span>
         <div class="wa-stock__typeahead" data-sm-employee-root>
           <input
             type="text"
@@ -132,8 +158,95 @@
         <input type="hidden" data-sm-employee-id value="">
       </label>
 
-      <label class="wa-stock__field">
-        <span>Note <em>optional</em></span>
+      <div data-sm-person-wrap hidden>
+        <label class="wa-stock__field">
+          <span data-sm-person-name-label>Person name <em>optional</em></span>
+          <input
+            type="text"
+            maxlength="160"
+            placeholder="Who you are trading with"
+            data-sm-person-name
+            aria-label="Person name"
+          >
+        </label>
+        <label class="wa-stock__field">
+          <span data-sm-person-phone-label>Person phone <em>optional</em></span>
+          <input
+            type="tel"
+            maxlength="40"
+            placeholder="e.g. 0712 345 678"
+            data-sm-person-phone
+            aria-label="Person phone"
+          >
+        </label>
+      </div>
+
+      <div data-sm-in-details hidden>
+        <label class="wa-stock__field">
+          <span data-sm-supplier-name-label>Supplier name <em>optional</em></span>
+          <input
+            type="text"
+            maxlength="160"
+            placeholder="Supplier or business name"
+            data-sm-supplier-name
+            aria-label="Supplier name"
+          >
+        </label>
+        <label class="wa-stock__field">
+          <span data-sm-supplier-phone-label>Supplier phone <em>optional</em></span>
+          <input
+            type="tel"
+            maxlength="40"
+            placeholder="e.g. 0712 345 678"
+            data-sm-supplier-phone
+            aria-label="Supplier phone"
+          >
+        </label>
+        <label class="wa-stock__field">
+          <span data-sm-payment-label>Payment status <em>optional</em></span>
+          <select data-sm-payment aria-label="Payment status">
+            <option value="">Select</option>
+            {% for value, label in payment_statuses %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      <div data-sm-out-details hidden>
+        <label class="wa-stock__field">
+          <span data-sm-reason-label>Reason <em>optional</em></span>
+          <select data-sm-reason aria-label="Reason">
+            <option value="">Select</option>
+            {% for value, label in stock_out_reasons %}
+            <option value="{{ value }}"{% if value == "custom" %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="wa-stock__field">
+          <span data-sm-refund-label>Refund <em>optional</em></span>
+          <select data-sm-refund aria-label="Refund">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+        <label class="wa-stock__field" data-sm-refund-amount-wrap hidden>
+          <span>Refund amount</span>
+          <input
+            type="number"
+            min="0"
+            step="any"
+            inputmode="decimal"
+            placeholder="0.00"
+            data-sm-refund-amount
+            aria-label="Refund amount"
+          >
+        </label>
+      </div>
+
+      <label class="wa-stock__field" data-sm-note-wrap>
+        <span data-sm-note-label>Note <em>optional</em></span>
         <input
           type="text"
           maxlength="255"
@@ -171,6 +284,16 @@
               inputmode="decimal"
               data-sm-qty
               aria-label="Quantity"
+            >
+            <input
+              type="number"
+              placeholder="Price"
+              min="0"
+              step="any"
+              inputmode="decimal"
+              data-sm-price
+              aria-label="Buying price"
+              hidden
             >
             <input
               type="text"
@@ -279,5 +402,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script defer src="{% static 'js/store-manager.js' %}?v=7"></script>
+<script defer src="{% static 'js/store-manager.js' %}?v=8"></script>
 {% endblock %}
