@@ -137,6 +137,9 @@
       error.payload = data;
       throw error;
     }
+    if (typeof window.myshopSyncCustomTags === "function") {
+      window.myshopSyncCustomTags(data.custom_fields);
+    }
     return data;
   }
 

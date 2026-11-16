@@ -5,11 +5,11 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=19">
 {% endblock %}
 
 {% block workspace_content %}
-<section class="store-stock store-stock--trade" data-animate="rise" data-store-stock>
+<section class="store-stock store-stock--trade" data-animate="rise" data-store-stock{% if stock_req.require_buying_price_on_in %} data-require-price="trade_in"{% endif %}>
   <header class="store-stock-hero">
     <div class="store-stock-hero-copy">
       <p class="store-stock-kicker">
@@ -124,7 +124,7 @@
               <th scope="col">Category</th>
               <th scope="col" class="store-stock-col-qty">In store</th>
               <th scope="col" class="store-stock-col-input">Qty</th>
-              <th scope="col" class="store-stock-col-input" data-trade-price>Unit value</th>
+              <th scope="col" class="store-stock-col-input" data-trade-price>Unit value{% if stock_req.require_buying_price_on_in %} <em>required</em>{% else %} <em>optional</em>{% endif %}</th>
             </tr>
           </thead>
           <tbody>
@@ -167,6 +167,7 @@
                   inputmode="decimal"
                   placeholder="0.00"
                   aria-label="Unit value for {{ item.name }}"
+                  data-store-price-input
                 >
               </td>
             </tr>

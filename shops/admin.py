@@ -126,6 +126,12 @@ class CompanyStockSettingsAdmin(admin.ModelAdmin):
         "require_reason_on_out",
         "require_refund_on_out",
         "require_note_on_request",
+        "shelf_require_buying_price_on_in",
+        "shelf_require_supplier_on_in",
+        "shelf_require_payment_status_on_in",
+        "shelf_require_reason_on_out",
+        "shelf_require_refund_on_out",
+        "shelf_require_note_on_request",
         "updated_at",
     )
     readonly_fields = ("updated_at",)

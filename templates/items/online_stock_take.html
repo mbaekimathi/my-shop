@@ -1,7 +1,7 @@
 {% extends "employees/workspace_base.html" %}
 {% load static %}
 
-{% block title %}Online stock take — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+{% block title %}{{ online_page_label|default:"Online stock take" }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <section
@@ -17,7 +17,7 @@
   <header class="stock-panel-head stock-settings-head">
     <div class="stock-panel-head-top">
       <div>
-        <p class="stock-kicker">Online stock take · daily count</p>
+        <p class="stock-kicker">{{ online_page_label|default:"Online stock take" }} · daily count</p>
         <h2>
           {% if selected_shop %}
           {{ selected_shop.name }}

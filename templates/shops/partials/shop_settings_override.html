@@ -3,9 +3,13 @@
     <h3>Custom for this shop</h3>
     <p>
       {% if shop_settings_section == "pos" %}
-      Off uses company POS defaults. On lets this shop set its own checkout options.
+      Off returns every option here to the company POS defaults. On lets this
+      shop customise individual options — anything it doesn't change keeps
+      following the company.
       {% elif shop_settings_section == "receipt" %}
-      Off uses company receipt defaults. On lets this shop set its own print and receipt look.
+      Off returns every option here to the company receipt defaults. On lets
+      this shop customise individual options — anything it doesn't change
+      keeps following the company.
       {% else %}
       Off uses the company messages. On lets this shop write its own messages.
       {% endif %}

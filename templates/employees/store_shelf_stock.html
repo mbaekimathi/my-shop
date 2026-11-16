@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=19">
 {% endblock %}
 
 {% block workspace_content %}
@@ -60,7 +60,14 @@
   </section>
 
   {% if shelf_mode == "in" or shelf_mode == "out" %}
-  <form class="store-stock-form" method="post">
+  <form
+    class="store-stock-form"
+    method="post"
+    data-store-stock
+    data-mode="{{ shelf_mode }}"
+    {% if shelf_mode == "in" and stock_req.shelf_require_buying_price_on_in %}data-require-price="always"{% endif %}
+    data-store-stock-form
+  >
     {% csrf_token %}
     <input type="hidden" name="shop" value="{{ shop.pk }}">
     <input type="hidden" name="mode" value="{{ shelf_mode }}">
@@ -74,7 +81,7 @@
       </div>
       <div class="store-stock-meta-grid">
         {% if shelf_mode == "out" %}
-        {% include "employees/partials/stock_out_details.html" %}
+        {% include "employees/partials/stock_out_details.html" with out_reason_req=stock_req.shelf_require_reason_on_out out_refund_req=stock_req.shelf_require_refund_on_out %}
         {% else %}
         <label class="store-stock-field">
           <span>Note <em>optional</em></span>
@@ -87,7 +94,7 @@
 
         {% if shelf_mode == "in" %}
         <label class="store-stock-field">
-          <span>Supplier name{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+          <span>Supplier name{% if not stock_req.shelf_require_supplier_on_in %} <em>optional</em>{% endif %}</span>
           <div class="store-stock-input-wrap">
             <i data-lucide="truck" aria-hidden="true"></i>
             <input
@@ -96,12 +103,12 @@
               maxlength="160"
               placeholder="e.g. Brookside Distributors"
               data-uppercase
-              {% if stock_req.require_supplier_on_in %}required{% endif %}
+              {% if stock_req.shelf_require_supplier_on_in %}required{% endif %}
             >
           </div>
         </label>
         <label class="store-stock-field">
-          <span>Supplier phone{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
+          <span>Supplier phone{% if not stock_req.shelf_require_supplier_on_in %} <em>optional</em>{% endif %}</span>
           <div class="store-stock-input-wrap">
             <i data-lucide="phone" aria-hidden="true"></i>
             <input
@@ -109,15 +116,15 @@
               name="supplier_phone"
               maxlength="40"
               placeholder="e.g. 0722 000 000"
-              {% if stock_req.require_supplier_on_in %}required{% endif %}
+              {% if stock_req.shelf_require_supplier_on_in %}required{% endif %}
             >
           </div>
         </label>
         <label class="store-stock-field">
-          <span>Payment{% if not stock_req.require_payment_status_on_in %} <em>optional</em>{% endif %}</span>
+          <span>Payment{% if not stock_req.shelf_require_payment_status_on_in %} <em>optional</em>{% endif %}</span>
           <div class="store-stock-input-wrap">
             <i data-lucide="banknote" aria-hidden="true"></i>
-            <select name="payment_status"{% if stock_req.require_payment_status_on_in %} required{% endif %}>
+            <select name="payment_status"{% if stock_req.shelf_require_payment_status_on_in %} required{% endif %}>
               <option value="">Select</option>
               <option value="unpaid">Not paid</option>
               <option value="paid">Paid</option>
@@ -146,13 +153,13 @@
               <th scope="col" class="store-stock-col-qty">On shelf</th>
               <th scope="col" class="store-stock-col-input">{{ shelf_mode|upper }} qty</th>
               {% if shelf_mode == "in" %}
-              <th scope="col" class="store-stock-col-input">Buying price</th>
+              <th scope="col" class="store-stock-col-input">Buying price{% if stock_req.shelf_require_buying_price_on_in %} <em>required</em>{% else %} <em>optional</em>{% endif %}</th>
               {% endif %}
             </tr>
           </thead>
           <tbody>
             {% for row in shelf_items %}
-            <tr class="store-stock-row">
+            <tr class="store-stock-row" data-store-item-row>
               <td data-label="Item">
                 <div class="store-stock-item-cell">
                   <span class="store-stock-item-head">
@@ -175,6 +182,7 @@
                   inputmode="decimal"
                   placeholder="0"
                   aria-label="Quantity for {{ row.name }}"
+                  data-store-qty-input
                 >
               </td>
               {% if shelf_mode == "in" %}
@@ -188,6 +196,7 @@
                   inputmode="decimal"
                   placeholder="0.00"
                   aria-label="Buying price for {{ row.name }}"
+                  data-store-price-input
                 >
               </td>
               {% endif %}
@@ -215,7 +224,14 @@
     {% endif %}
   </form>
   {% elif shelf_mode == "trade" %}
-  <form class="store-stock-form" method="post" data-store-stock data-store-stock-form>
+  <form
+    class="store-stock-form"
+    method="post"
+    data-store-stock
+    data-mode="trade"
+    {% if stock_req.shelf_require_buying_price_on_in %}data-require-price="trade_in"{% endif %}
+    data-store-stock-form
+  >
     {% csrf_token %}
     <input type="hidden" name="shop" value="{{ shop.pk }}">
     <input type="hidden" name="mode" value="trade">
@@ -250,7 +266,7 @@
           </p>
         </div>
         <label class="store-stock-field">
-          <span>Other person's name{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+          <span>Other person's name{% if stock_req.shelf_require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
           <div class="store-stock-input-wrap">
             <i data-lucide="user" aria-hidden="true"></i>
             <input
@@ -263,7 +279,7 @@
           </div>
         </label>
         <label class="store-stock-field">
-          <span>Other person's phone{% if stock_req.require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+          <span>Other person's phone{% if stock_req.shelf_require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
           <div class="store-stock-input-wrap">
             <i data-lucide="phone" aria-hidden="true"></i>
             <input
@@ -310,6 +326,7 @@
               <th scope="col">Shelf item</th>
               <th scope="col" class="store-stock-col-qty">On shelf</th>
               <th scope="col" class="store-stock-col-input">Qty</th>
+              <th scope="col" class="store-stock-col-input" data-trade-price>Unit value{% if stock_req.shelf_require_buying_price_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</th>
             </tr>
           </thead>
           <tbody>
@@ -338,6 +355,19 @@
                   placeholder="0"
                   aria-label="Quantity for {{ row.name }}"
                   data-store-qty-input
+                >
+              </td>
+              <td class="store-stock-col-input" data-label="Unit value" data-trade-price>
+                <input
+                  class="store-stock-qty-input"
+                  type="number"
+                  name="price_{{ row.id }}"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  placeholder="0.00"
+                  aria-label="Unit value for {{ row.name }}"
+                  data-store-price-input
                 >
               </td>
             </tr>
@@ -500,6 +530,6 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/stock-shelf.js' %}?v=2"></script>
+<script defer src="{% static 'js/stock-shelf.js' %}?v=3"></script>
 <script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
 {% endblock %}

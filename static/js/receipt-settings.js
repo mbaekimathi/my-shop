@@ -71,6 +71,9 @@
     if (!response.ok || !data.ok) {
       throw new Error(data.error || "Could not save setting.");
     }
+    if (typeof window.myshopSyncCustomTags === "function") {
+      window.myshopSyncCustomTags(data.custom_fields);
+    }
     return data;
   }
 

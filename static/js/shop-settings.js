@@ -15,6 +15,21 @@
     readCookie("csrftoken") ||
     "";
 
+  // Shared by pos-settings.js / receipt-settings.js: after a settings save the
+  // response carries `custom_fields` — show/hide the "Custom" tags live.
+  function syncCustomTags(fields) {
+    if (!Array.isArray(fields)) return;
+    const custom = new Set(fields);
+    root.querySelectorAll("[data-custom-tag]").forEach((tag) => {
+      const names = (tag.dataset.customTag || "")
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean);
+      tag.hidden = !names.some((name) => custom.has(name));
+    });
+  }
+  window.myshopSyncCustomTags = syncCustomTags;
+
   const overrideInput = root.querySelector("[data-shop-override]");
   const body = root.querySelector("[data-shop-settings-body]");
   const statusEl = root.querySelector("[data-shop-override-status]");

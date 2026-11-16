@@ -1106,6 +1106,7 @@ def _catalog_base_qs(shop=None):
             "discount_min_qty",
             "discount_amount",
             "track_serial_number",
+            "deduct_stock_on_sale",
             "image",
             "is_suspended",
         )
@@ -1167,6 +1168,9 @@ def _catalog_rows_for_items(shop, items):
                 "stock": _qty_number(stock_by_item.get(item.pk, 0)),
                 "stock_hidden": item_stock_is_hidden(
                     item.pk, item.category, hide_state, shop_id=shop.pk
+                ),
+                "sale_stock_tracked": bool(
+                    getattr(item, "deduct_stock_on_sale", True)
                 ),
                 "sold_quantity": _qty_number(getattr(item, "sold_quantity", 0) or 0),
 
@@ -2020,6 +2024,7 @@ def my_shop_shelf_stock(request, shop_id):
         recent_shelf_movements,
         shelf_categories,
     )
+    from shops.services import get_company_stock_settings
 
     if request.method == "POST":
         actor = profile
@@ -2071,6 +2076,7 @@ def my_shop_shelf_stock(request, shop_id):
             "shelf_needs_staff_id": profile is None,
             "shelf_unit_choices": SHELF_UNIT_CHOICES,
             "shelf_categories": shelf_categories(),
+            "stock_req": get_company_stock_settings(),
         },
     )
 
@@ -4480,6 +4486,10 @@ SHOP_SETTINGS_ACTION_SECTIONS = {
 }
 
 
+def _shop_custom_fields_payload(row):
+    return sorted(set(row.custom_pos_fields or []) | set(row.custom_receipt_fields or []))
+
+
 def _handle_shop_settings_post(request, shop, *, section: str):
     action = (request.POST.get("action") or "").strip()
     wants_json = _shop_settings_wants_json(request)
@@ -4541,6 +4551,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "field": field,
                     "enabled": pos_toggle_enabled(row, field),
                     "stock_mode": stock_mode_of(row),
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Setting updated.")
@@ -4575,6 +4586,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "ok": True,
                     "tax_percent": str(row.tax_percent),
                     "enable_tax": row.enable_tax,
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Tax percentage updated.")
@@ -4594,6 +4606,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "ok": True,
                     "delivery_amount": str(row.delivery_amount),
                     "enable_cart_delivery": row.enable_cart_delivery,
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Delivery amount updated.")
@@ -4609,7 +4622,11 @@ def _handle_shop_settings_post(request, shop, *, section: str):
             return _shop_settings_error(request, message)
         if wants_json:
             return JsonResponse(
-                {"ok": True, "receipt_paper_width": row.receipt_paper_width}
+                {
+                    "ok": True,
+                    "receipt_paper_width": row.receipt_paper_width,
+                    "custom_fields": _shop_custom_fields_payload(row),
+                }
             )
         messages.success(request, "Receipt paper size updated.")
         return redirect(request.path)
@@ -4652,6 +4669,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "preview_trade_in": preview_receipt_number(
                         kind="trade_in", settings_row=effective
                     ),
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Receipt number formats updated.")
@@ -4681,6 +4699,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "mpesa_till_number": row.mpesa_till_number,
                     "mpesa_phone_number": row.mpesa_phone_number,
                     "mpesa_payment_details": details,
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Payment details updated.")
@@ -4725,7 +4744,13 @@ def _handle_shop_settings_post(request, shop, *, section: str):
             return _shop_settings_error(request, message)
         font = receipt_font_style(get_effective_pos_settings(shop))
         if wants_json:
-            return JsonResponse({"ok": True, **font})
+            return JsonResponse(
+                {
+                    "ok": True,
+                    **font,
+                    "custom_fields": _shop_custom_fields_payload(row),
+                }
+            )
         messages.success(request, "Receipt font style updated.")
         return redirect(request.path)
 
@@ -4769,6 +4794,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "receipt_qr_content": row.receipt_qr_content,
                     "receipt_qr_website": row.receipt_qr_website,
                     "receipt_qr": qr,
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Receipt QR settings updated.")
@@ -4791,6 +4817,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "maintainer": receipt_maintainer_line(
                         get_effective_pos_settings(shop)
                     ),
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Maintainer phone updated.")
@@ -4813,6 +4840,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "return_notice": receipt_return_notice_line(
                         get_effective_pos_settings(shop)
                     ),
+                    "custom_fields": _shop_custom_fields_payload(row),
                 }
             )
         messages.success(request, "Return policy text updated.")
@@ -4827,6 +4855,11 @@ def _handle_shop_settings_post(request, shop, *, section: str):
 def _shop_pos_settings_page_context(shop, *, setting_groups):
     pos = get_effective_pos_settings(shop)
     shop_row = get_shop_pos_settings(shop)
+    custom_fields = set()
+    if shop_row.override_pos:
+        custom_fields.update(shop_row.custom_pos_fields or [])
+    if shop_row.override_receipt:
+        custom_fields.update(shop_row.custom_receipt_fields or [])
     groups = []
     enabled_count = 0
     toggle_count = 0
@@ -4838,7 +4871,12 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
             if enabled:
                 enabled_count += 1
             toggles.append(
-                {"field": field, "label": label, "enabled": enabled}
+                {
+                    "field": field,
+                    "label": label,
+                    "enabled": enabled,
+                    "custom": field in custom_fields,
+                }
             )
         groups.append(
             {
@@ -4869,6 +4907,41 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
     return {
         "pos_settings": pos,
         "shop_pos_row": shop_row,
+        "shop_custom_fields": sorted(custom_fields),
+        "custom_detail": {
+            "tax_percent": "tax_percent" in custom_fields,
+            "delivery_amount": "delivery_amount" in custom_fields,
+            "receipt_paper_width": "receipt_paper_width" in custom_fields,
+            "receipt_font": bool(
+                custom_fields & {"receipt_font_size", "receipt_font_weight"}
+            ),
+            "mpesa_details": bool(
+                custom_fields
+                & {
+                    "mpesa_collection_type",
+                    "mpesa_business_number",
+                    "mpesa_account_number",
+                    "mpesa_till_number",
+                    "mpesa_phone_number",
+                }
+            ),
+            "receipt_qr": bool(
+                custom_fields
+                & {
+                    "enable_receipt_qr",
+                    "receipt_qr_content",
+                    "receipt_qr_website",
+                }
+            ),
+            "return_notice": bool(
+                custom_fields
+                & {"show_return_notice_on_receipt", "return_notice_text"}
+            ),
+            "maintainer": bool(
+                custom_fields
+                & {"show_maintainer_on_receipt", "maintainer_phone"}
+            ),
+        },
         "pos_setting_groups": groups,
         "pos_settings_flags": pos_settings_as_dict(pos),
         "pos_enabled_count": enabled_count,

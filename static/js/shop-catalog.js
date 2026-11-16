@@ -146,7 +146,8 @@
     const category = String(item.category || "");
     const imageUrl = String(item.image_url || "");
     const trackSerial = item.track_serial ? "1" : "0";
-    const out = stockTrackingEnabled && stock <= 0;
+    const saleTracked = item.sale_stock_tracked !== false;
+    const out = stockTrackingEnabled && saleTracked && stock <= 0;
 
     const article = document.createElement("article");
     article.className = "shop-floor-item";
@@ -175,6 +176,7 @@
     article.setAttribute("data-item-stock", String(stock));
     if (hideStock) article.setAttribute("data-stock-hidden", "1");
     article.setAttribute("data-item-track-serial", trackSerial);
+    article.setAttribute("data-item-sale-tracked", saleTracked ? "1" : "0");
     if (imageUrl) article.setAttribute("data-item-image", imageUrl);
     article.setAttribute(
       "data-search-text",

@@ -54,10 +54,11 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
         ("stock-management", "movements"),
         ("stock-management", "report"),
         ("stock-management", "print"),
-        # Analytics — Items, Stock, and Trading only (no overview hub).
+        # Analytics — Items, Stock, Trading, and Suppliers (no overview hub).
         ("analytics", "items"),
         ("analytics", "stock"),
         ("analytics", "tradings"),
+        ("analytics", "suppliers"),
         # MY-SHOP floor.
         ("my-shop", "workspace"),
         ("my-shop", "sale"),
@@ -105,6 +106,7 @@ def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
         "request-audits",
         "activity-audits",
         "online-stock-take",
+        "sale-tracking",
     }:
         if slug == "request-audits":
             return "request"
@@ -113,6 +115,9 @@ def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
         if slug == "online-stock-take":
             # Linked from Print stock; allow anyone who can print or stock-take.
             return "print"
+        if slug == "sale-tracking":
+            # Per-item sale deduction page lives under Stock Settings.
+            return "settings"
         return "serials"
     return slug
 

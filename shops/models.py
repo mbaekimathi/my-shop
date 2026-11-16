@@ -1098,6 +1098,22 @@ class ShopPosSettings(models.Model):
         default=False,
         help_text="When on, shop message drafts replace company message drafts.",
     )
+    custom_pos_fields = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "POS field names this shop has customised. Fields not listed here "
+            "keep following the company value."
+        ),
+    )
+    custom_receipt_fields = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Receipt field names this shop has customised. Fields not listed "
+            "here keep following the company value."
+        ),
+    )
     enable_sale = models.BooleanField(default=True)
     enable_credit = models.BooleanField(default=True)
     enable_quotation = models.BooleanField(default=True)
@@ -1350,6 +1366,18 @@ class CompanyStockSettings(models.Model):
     # Stock request
     require_note_on_request = models.BooleanField(default=False)
 
+    # Shelf stock in
+    shelf_require_buying_price_on_in = models.BooleanField(default=True)
+    shelf_require_supplier_on_in = models.BooleanField(default=True)
+    shelf_require_payment_status_on_in = models.BooleanField(default=True)
+
+    # Shelf stock out
+    shelf_require_reason_on_out = models.BooleanField(default=True)
+    shelf_require_refund_on_out = models.BooleanField(default=True)
+
+    # Shelf stock request
+    shelf_require_note_on_request = models.BooleanField(default=False)
+
     # Legacy unused column (was phone last-4; last-4 applies to sell serials only).
     enable_supplier_last4_search = models.BooleanField(default=False)
 
@@ -1384,6 +1412,22 @@ class CompanyStockSettings(models.Model):
             },
             "request": {
                 "note": bool(self.require_note_on_request),
+            },
+        }
+
+    def as_shelf_requirements_dict(self) -> dict:
+        return {
+            "in": {
+                "buying_price": bool(self.shelf_require_buying_price_on_in),
+                "supplier": bool(self.shelf_require_supplier_on_in),
+                "payment_status": bool(self.shelf_require_payment_status_on_in),
+            },
+            "out": {
+                "reason": bool(self.shelf_require_reason_on_out),
+                "refund": bool(self.shelf_require_refund_on_out),
+            },
+            "request": {
+                "note": bool(self.shelf_require_note_on_request),
             },
         }
 

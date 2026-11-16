@@ -12,7 +12,9 @@
         <span class="ax-period">{{ shop_filter_label|default:"All shops" }} · {{ report_period_label|default:"All time" }} · {{ kind_label }}</span>
       </div>
       <div class="ax-top-actions">
+        {% if can_pay %}
         <button type="button" class="ax-apply" data-ax-pay-open data-pay-all="1">Pay all</button>
+        {% endif %}
         <a class="ax-apply ax-apply--ghost" href="{{ back_href }}">{{ back_label|default:"Back to suppliers" }}</a>
       </div>
       <form class="ax-filters" method="get" data-analytics-filters>

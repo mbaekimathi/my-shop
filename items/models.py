@@ -42,6 +42,22 @@ class Item(models.Model):
         help_text="KSh off the list price per unit when the volume quantity is met.",
     )
     stock = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    stock_count_enabled = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text=(
+            "Whether POS sales/returns move this item's central store count "
+            "(StoreStock). Off = the item's store count is manual only."
+        ),
+    )
+    deduct_stock_on_sale = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text=(
+            "Whether selling/returning this item on the shop page moves its "
+            "stock counts. Off = the item sells freely; its stock is manual only."
+        ),
+    )
     low_stock_notify = models.BooleanField(default=False, db_index=True)
     low_stock_threshold = models.PositiveIntegerField(
         default=0,
@@ -733,6 +749,137 @@ class OnlineStockTakeEntry(models.Model):
         return f"Online count {self.item_id} @ shop {self.shop_id} on {self.count_date}"
 
 
+class ShelfOnlineStockTakeEntry(models.Model):
+    """HQ live physical shelf count for one shop shelf item on one day."""
+
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        related_name="shelf_online_stock_take_entries",
+    )
+    shelf_item = models.ForeignKey(
+        "ShelfItem",
+        on_delete=models.CASCADE,
+        related_name="online_stock_take_entries",
+    )
+    count_date = models.DateField(db_index=True)
+    physical_qty = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
+    system_qty_at_count = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    updated_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shelf_online_stock_take_entries",
+    )
+    updated_by_label = models.CharField(max_length=160, blank=True, default="")
+
+    class Meta:
+        ordering = ["-count_date", "shelf_item__category", "shelf_item__name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shop", "shelf_item", "count_date"],
+                name="uniq_shelf_online_take_shop_item_date",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"Shelf online count {self.shelf_item_id} @ shop {self.shop_id} "
+            f"on {self.count_date}"
+        )
+
+
+class ShelfStockTake(models.Model):
+    """Physical count of one shop's shelf items (system vs counted compare)."""
+
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        related_name="shelf_stock_takes",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=StockTakeStatus.choices,
+        default=StockTakeStatus.OPEN,
+        db_index=True,
+    )
+    note = models.CharField(max_length=240, blank=True, default="")
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shelf_stock_takes_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shelf_stock_takes_closed",
+    )
+    applied_at = models.DateTimeField(null=True, blank=True)
+    applied_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shelf_stock_takes_applied",
+    )
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"Shelf stock take #{self.pk} ({self.shop_id}) ({self.status})"
+
+
+class ShelfStockTakeEntry(models.Model):
+    take = models.ForeignKey(
+        ShelfStockTake,
+        on_delete=models.CASCADE,
+        related_name="entries",
+    )
+    shelf_item = models.ForeignKey(
+        "ShelfItem",
+        on_delete=models.CASCADE,
+        related_name="stock_take_entries",
+    )
+    system_qty = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    counted_qty = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ["shelf_item__category", "shelf_item__name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["take", "shelf_item"],
+                name="uniq_shelf_take_item",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.shelf_item_id} @ shelf take {self.take_id}"
+
+
 class StoreStockMovementType(models.TextChoices):
     IN = "in", "Store stock in"
     OUT = "out", "Store stock out"
@@ -813,6 +960,16 @@ class StoreStockMovement(models.Model):
         decimal_places=2,
         null=True,
         blank=True,
+    )
+    source = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "What created this movement. 'pos' rows mirror shop-floor "
+            "receipts; blank rows come from the store stock pages."
+        ),
     )
     note = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -918,6 +1075,7 @@ class ShelfStockMovement(models.Model):
         blank=True,
         default="",
     )
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     buying_price = models.DecimalField(
         max_digits=12,
         decimal_places=2,

@@ -385,8 +385,11 @@ def get_effective_pos_settings(shop: Shop | None = None) -> CompanyPosSettings:
     """
     Company POS/receipt settings with optional per-shop overrides applied.
 
-    Returns a CompanyPosSettings instance. When shop overrides are active the
-    returned row is an unsaved merge — callers must not persist it.
+    A shop column applies only while the shop's section override is on AND the
+    field is listed in the shop's custom_*_fields set — every other field
+    keeps following the company value. Returns a CompanyPosSettings instance;
+    when shop overrides are active the returned row is an unsaved merge —
+    callers must not persist it.
     """
     company = get_company_pos_settings()
     if shop is None:
@@ -397,17 +400,18 @@ def get_effective_pos_settings(shop: Shop | None = None) -> CompanyPosSettings:
     ):
         return company
 
+    custom = set()
+    if shop_row.override_pos:
+        custom.update(shop_row.custom_pos_fields or [])
+    if shop_row.override_receipt:
+        custom.update(shop_row.custom_receipt_fields or [])
+
     values = {}
     for field in company._meta.concrete_fields:
         name = field.attname if field.attname else field.name
         if name in ("id", "pk"):
             continue
-        if shop_row.override_pos and name in SHOP_POS_FIELD_NAMES:
-            values[name] = getattr(shop_row, name)
-        elif shop_row.override_receipt and name in SHOP_RECEIPT_FIELD_NAMES:
-            values[name] = getattr(shop_row, name)
-        else:
-            values[name] = getattr(company, name)
+        values[name] = getattr(shop_row if name in custom else company, name)
     merged = CompanyPosSettings(**values)
     merged.pk = company.pk
     merged._is_effective_merge = True  # noqa: SLF001 — marker for callers
@@ -419,28 +423,61 @@ SHOP_OVERRIDE_FLAGS = {
     "receipt": "override_receipt",
     "messages": "override_messages",
 }
+SHOP_CUSTOM_FIELD_LISTS = {
+    "pos": "custom_pos_fields",
+    "receipt": "custom_receipt_fields",
+}
+
+
+def _sync_shop_custom_fields(row: ShopPosSettings, *names: str) -> list[str]:
+    """Reconcile the shop's custom field lists after a write.
+
+    A field counts as custom while its shop value differs from the company
+    value. Fields written back to the company value re-inherit it, which is
+    how a shop returns a single setting to the company default.
+    """
+    company = get_company_pos_settings()
+    changed = []
+    for name in names:
+        if name in SHOP_POS_FIELD_NAMES:
+            attr = "custom_pos_fields"
+        elif name in SHOP_RECEIPT_FIELD_NAMES:
+            attr = "custom_receipt_fields"
+        else:
+            continue
+        current = set(getattr(row, attr) or [])
+        differs = getattr(row, name, None) != getattr(company, name, None)
+        if differs and name not in current:
+            current.add(name)
+        elif not differs and name in current:
+            current.discard(name)
+        else:
+            continue
+        setattr(row, attr, sorted(current))
+        if attr not in changed:
+            changed.append(attr)
+    return changed
 
 
 def set_shop_pos_override(*, shop: Shop, section: str, enabled: bool) -> ShopPosSettings:
-    """Enable or disable a shop settings override. Enabling seeds from company."""
+    """Enable or disable a shop settings override.
+
+    Turning a section off returns it fully to company defaults (the shop's
+    custom field list for that section is cleared). Turning it on only allows
+    editing — fields keep following the company until the shop changes them.
+    """
     section_key = (section or "").strip().lower()
     flag = SHOP_OVERRIDE_FLAGS.get(section_key)
     if flag is None:
         raise ValidationError("Unknown shop settings section.")
     row = get_shop_pos_settings(shop)
-    company = get_company_pos_settings()
-    fields_to_copy = (
-        SHOP_POS_FIELD_NAMES
-        if section_key == "pos"
-        else SHOP_RECEIPT_FIELD_NAMES if section_key == "receipt" else ()
-    )
     turning_on = bool(enabled) and not getattr(row, flag)
     setattr(row, flag, bool(enabled))
     update_fields = [flag, "updated_at"]
-    if turning_on:
-        for name in fields_to_copy:
-            setattr(row, name, getattr(company, name))
-            update_fields.append(name)
+    custom_attr = SHOP_CUSTOM_FIELD_LISTS.get(section_key)
+    if not enabled and custom_attr and getattr(row, custom_attr):
+        setattr(row, custom_attr, [])
+        update_fields.append(custom_attr)
     row.save(update_fields=update_fields)
     if turning_on and section_key == "messages":
         from communications.automations import seed_shop_triggered_messages
@@ -518,7 +555,8 @@ def set_shop_pos_setting(*, shop: Shop, field: str, enabled: bool) -> ShopPosSet
     row = get_shop_pos_settings(shop)
     _require_shop_override_for_field(row, field)
     setattr(row, field, bool(enabled))
-    row.save(update_fields=[field, "updated_at"])
+    custom_attrs = _sync_shop_custom_fields(row, field)
+    row.save(update_fields=[field, *custom_attrs, "updated_at"])
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -536,7 +574,8 @@ def set_shop_tax_percent(*, shop: Shop, percent) -> ShopPosSettings:
             "Turn on custom shop POS settings before changing tax percentage."
         )
     row.tax_percent = rate.quantize(Decimal("0.01"))
-    row.save(update_fields=["tax_percent", "updated_at"])
+    custom_attrs = _sync_shop_custom_fields(row, "tax_percent")
+    row.save(update_fields=["tax_percent", *custom_attrs, "updated_at"])
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -554,7 +593,8 @@ def set_shop_delivery_amount(*, shop: Shop, amount) -> ShopPosSettings:
             "Turn on custom shop POS settings before changing delivery amount."
         )
     row.delivery_amount = fee.quantize(Decimal("0.01"))
-    row.save(update_fields=["delivery_amount", "updated_at"])
+    custom_attrs = _sync_shop_custom_fields(row, "delivery_amount")
+    row.save(update_fields=["delivery_amount", *custom_attrs, "updated_at"])
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -569,7 +609,10 @@ def set_shop_receipt_paper_width(*, shop: Shop, width: str) -> ShopPosSettings:
             "Turn on custom shop receipt settings before changing paper size."
         )
     row.receipt_paper_width = value
-    row.save(update_fields=["receipt_paper_width", "updated_at"])
+    custom_attrs = _sync_shop_custom_fields(row, "receipt_paper_width")
+    row.save(
+        update_fields=["receipt_paper_width", *custom_attrs, "updated_at"]
+    )
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -588,8 +631,16 @@ def set_shop_receipt_font_style(*, shop: Shop, size: str, weight: str) -> ShopPo
         )
     row.receipt_font_size = size_value
     row.receipt_font_weight = weight_value
+    custom_attrs = _sync_shop_custom_fields(
+        row, "receipt_font_size", "receipt_font_weight"
+    )
     row.save(
-        update_fields=["receipt_font_size", "receipt_font_weight", "updated_at"]
+        update_fields=[
+            "receipt_font_size",
+            "receipt_font_weight",
+            *custom_attrs,
+            "updated_at",
+        ]
     )
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
@@ -633,7 +684,8 @@ def set_shop_receipt_number_formats(
         updates.append("receipt_format_trade_in")
     if not updates:
         raise ValidationError("No receipt formats to update.")
-    row.save(update_fields=[*updates, "updated_at"])
+    custom_attrs = _sync_shop_custom_fields(row, *updates)
+    row.save(update_fields=[*updates, *custom_attrs, "updated_at"])
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -661,6 +713,7 @@ def set_shop_mpesa_payment_details(
     )
     for field, value in cleaned.items():
         setattr(row, field, value)
+    custom_attrs = _sync_shop_custom_fields(row, *cleaned.keys())
     row.save(
         update_fields=[
             "mpesa_collection_type",
@@ -668,6 +721,7 @@ def set_shop_mpesa_payment_details(
             "mpesa_account_number",
             "mpesa_till_number",
             "mpesa_phone_number",
+            *custom_attrs,
             "updated_at",
         ]
     )
@@ -727,11 +781,18 @@ def set_shop_receipt_qr_settings(
     row.enable_receipt_qr = bool(enabled)
     row.receipt_qr_content = content_value
     row.receipt_qr_website = website_value
+    custom_attrs = _sync_shop_custom_fields(
+        row,
+        "enable_receipt_qr",
+        "receipt_qr_content",
+        "receipt_qr_website",
+    )
     row.save(
         update_fields=[
             "enable_receipt_qr",
             "receipt_qr_content",
             "receipt_qr_website",
+            *custom_attrs,
             "updated_at",
         ]
     )
@@ -749,7 +810,11 @@ def set_shop_return_notice_text(*, shop: Shop, text: str = "") -> ShopPosSetting
             "Turn on custom shop receipt settings before changing the return policy text."
         )
     row.return_notice_text = raw
-    row.save(update_fields=["return_notice_text", "updated_at"])
+    custom_attrs = _sync_shop_custom_fields(row, "return_notice_text")
+    row.save(
+        update_fields=["return_notice_text", *custom_attrs, "updated_at"]
+    )
+    _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
 
@@ -765,7 +830,8 @@ def set_shop_maintainer_phone(
             "Turn on custom shop receipt settings before changing the maintainer phone."
         )
     row.maintainer_phone = raw
-    row.save(update_fields=["maintainer_phone", "updated_at"])
+    custom_attrs = _sync_shop_custom_fields(row, "maintainer_phone")
+    row.save(update_fields=["maintainer_phone", *custom_attrs, "updated_at"])
     _invalidate_pos_settings_cache(shop_id=shop.pk)
     return row
 
@@ -779,6 +845,12 @@ STOCK_SETTING_FIELDS = frozenset(
         "require_reason_on_out",
         "require_refund_on_out",
         "require_note_on_request",
+        "shelf_require_buying_price_on_in",
+        "shelf_require_supplier_on_in",
+        "shelf_require_payment_status_on_in",
+        "shelf_require_reason_on_out",
+        "shelf_require_refund_on_out",
+        "shelf_require_note_on_request",
     }
 )
 ANALYTICS_SETTINGS_CACHE_KEY = "company_analytics_settings:v1"
@@ -855,7 +927,20 @@ def stock_settings_as_dict(settings_row: CompanyStockSettings | None = None) -> 
         "require_reason_on_out": bool(row.require_reason_on_out),
         "require_refund_on_out": bool(row.require_refund_on_out),
         "require_note_on_request": bool(row.require_note_on_request),
+        "shelf_require_buying_price_on_in": bool(
+            row.shelf_require_buying_price_on_in
+        ),
+        "shelf_require_supplier_on_in": bool(row.shelf_require_supplier_on_in),
+        "shelf_require_payment_status_on_in": bool(
+            row.shelf_require_payment_status_on_in
+        ),
+        "shelf_require_reason_on_out": bool(row.shelf_require_reason_on_out),
+        "shelf_require_refund_on_out": bool(row.shelf_require_refund_on_out),
+        "shelf_require_note_on_request": bool(
+            row.shelf_require_note_on_request
+        ),
         "requirements": row.as_requirements_dict(),
+        "shelf_requirements": row.as_shelf_requirements_dict(),
     }
 
 
@@ -6069,7 +6154,15 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     sale/credit deducts shop stock. Quotations never touch stock.
     """
     from employees.services import invalid_staff_code_message, verify_active_employee_code
-    from items.models import Item, ItemSerial, ShopItemPrice, ShopStock
+    from items.models import (
+        Item,
+        ItemSerial,
+        ShopItemPrice,
+        ShopStock,
+        StockOutReason,
+        StoreStockMovementType,
+    )
+    from items.store_stock_services import record_store_receipt_movement
 
     from .models import ShopReceipt, ShopReceiptLine
 
@@ -6319,12 +6412,15 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 continue
 
             stock = stock_by_item.get(item_id)
-            if stock is None:
+            track_stock = bool(getattr(pos_settings, "enable_stock_tracking", True))
+            item_tracks_stock = track_stock and bool(
+                getattr(item, "deduct_stock_on_sale", True)
+            )
+            if stock is None and item_tracks_stock:
                 errors.append(f"Item #{item_id} is unavailable.")
                 continue
-            track_stock = bool(getattr(pos_settings, "enable_stock_tracking", True))
             if kind != ShopReceiptKind.TRADE_IN and (
-                track_stock
+                item_tracks_stock
                 and kind != ShopReceiptKind.QUOTATION
                 and stock.quantity < qty
             ):
@@ -6667,7 +6763,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                 stock = row["stock"]
                 item = row["item"]
                 qty = row["qty"]
-                if track_stock:
+                if track_stock and getattr(item, "deduct_stock_on_sale", True):
                     apply_stock_in_average_cost(
                         stock,
                         qty=qty,
@@ -6679,32 +6775,44 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     item.updated_at = now
                     stocks_to_update.append(stock)
                     items_to_update.append(item)
-                    for serial in row.get("serial_numbers") or []:
-                        existing = (
-                            ItemSerial.objects.select_for_update()
-                            .filter(item=item, serial_number=serial)
-                            .first()
+                    record_store_receipt_movement(
+                        actor=authorising,
+                        item=item,
+                        quantity=qty,
+                        movement_type=StoreStockMovementType.IN,
+                        reason=StockOutReason.TRADE_IN,
+                        note=(
+                            f"{receipt.receipt_number} · Trade in · {shop.name}"
+                        ),
+                    )
+                for serial in row.get("serial_numbers") or []:
+                    existing = (
+                        ItemSerial.objects.select_for_update()
+                        .filter(item=item, serial_number=serial)
+                        .first()
+                    )
+                    if existing is None:
+                        serials_to_update.append(
+                            ItemSerial(
+                                item=item,
+                                shop=shop,
+                                serial_number=serial,
+                                is_available=True,
+                            )
                         )
-                        if existing is None:
-                            serials_to_update.append(
-                                ItemSerial(
-                                    item=item,
-                                    shop=shop,
-                                    serial_number=serial,
-                                    is_available=True,
-                                )
-                            )
-                        else:
-                            existing.shop = shop
-                            existing.is_available = True
-                            existing.updated_at = now
-                            existing.save(
-                                update_fields=["shop", "is_available", "updated_at"]
-                            )
+                    else:
+                        existing.shop = shop
+                        existing.is_available = True
+                        existing.updated_at = now
+                        existing.save(
+                            update_fields=["shop", "is_available", "updated_at"]
+                        )
                 stock_updates.append(
                     {
                         "id": item.pk,
-                        "quantity": _qty_number(stock.quantity),
+                        "quantity": _qty_number(
+                            stock.quantity if stock is not None else 0
+                        ),
                     }
                 )
             if stocks_to_update:
@@ -6721,7 +6829,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     shop=shop,
                     receipt=receipt,
                     actor=authorising,
-                    lines=prepared,
+                    lines=[
+                        row
+                        for row in prepared
+                        if getattr(row["item"], "deduct_stock_on_sale", True)
+                    ],
                 )
         elif kind != ShopReceiptKind.QUOTATION:
             now = timezone.now()
@@ -6732,17 +6844,34 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
             for row in prepared:
                 stock = row["stock"]
                 item = row["item"]
-                if track_stock:
+                if track_stock and getattr(item, "deduct_stock_on_sale", True):
                     stock.quantity -= row["qty"]
                     stock.updated_at = now
                     item.stock = max(0, item.stock - row["qty"])
                     item.updated_at = now
                     stocks_to_update.append(stock)
                     items_to_update.append(item)
+                    record_store_receipt_movement(
+                        actor=authorising,
+                        item=item,
+                        quantity=row["qty"],
+                        movement_type=StoreStockMovementType.OUT,
+                        reason=(
+                            StockOutReason.TRADE_OUT
+                            if kind == ShopReceiptKind.TRADE_OUT
+                            else ""
+                        ),
+                        note=(
+                            f"{receipt.receipt_number} · "
+                            f"{receipt.get_kind_display()} · {shop.name}"
+                        ),
+                    )
                 stock_updates.append(
                     {
                         "id": item.pk,
-                        "quantity": _qty_number(stock.quantity),
+                        "quantity": _qty_number(
+                            stock.quantity if stock is not None else 0
+                        ),
                     }
                 )
                 serial_objects = row.get("serial_objects") or {}
@@ -6769,7 +6898,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                     shop=shop,
                     receipt=receipt,
                     actor=authorising,
-                    lines=prepared,
+                    lines=[
+                        row
+                        for row in prepared
+                        if getattr(row["item"], "deduct_stock_on_sale", True)
+                    ],
                 )
 
         confirm_result = None
@@ -9102,8 +9235,9 @@ def return_trade_in_receipt_items(
     amount owed on the trade-in receipt.
     """
     from employees.services import verify_active_employee_code
-    from items.models import Item, ItemSerial, ShopStock
+    from items.models import Item, ItemSerial, ShopStock, StoreStockMovementType
     from items.services import _normalize_serial_list
+    from items.store_stock_services import record_store_receipt_movement
 
     from .models import ShopReceipt, ShopReceiptLine
 
@@ -9265,6 +9399,10 @@ def return_trade_in_receipt_items(
         )
     }
 
+    track_store = bool(
+        getattr(get_effective_pos_settings(shop), "enable_stock_tracking", True)
+    )
+
     now = timezone.now()
     stocks_to_update = []
     items_to_update = []
@@ -9302,32 +9440,45 @@ def return_trade_in_receipt_items(
         item = items_by_id.get(line.item_id) if line.item_id else None
         if item is None:
             continue
-        stock = stock_by_item.get(item.pk)
-        if stock is None:
-            raise ValidationError(
-                f"“{line.item_name}” has no stock record at {shop.name}."
+        if getattr(item, "deduct_stock_on_sale", True):
+            stock = stock_by_item.get(item.pk)
+            if stock is None:
+                raise ValidationError(
+                    f"“{line.item_name}” has no stock record at {shop.name}."
+                )
+            if stock.quantity < qty:
+                raise ValidationError(
+                    f"Insufficient stock for “{line.item_name}” "
+                    f"(available {_qty_label(stock.quantity)}, returning {_qty_label(qty)})."
+                )
+            unit_cost = Decimal(line.unit_cost or stock.average_cost or 0)
+            stock.quantity = _qty(stock.quantity) - qty
+            stock.updated_at = now
+            item.stock = max(_qty(0), _qty(item.stock) - qty)
+            item.updated_at = now
+            stocks_to_update.append(stock)
+            items_to_update.append(item)
+            if track_store:
+                record_store_receipt_movement(
+                    actor=authorising,
+                    item=item,
+                    quantity=qty,
+                    movement_type=StoreStockMovementType.OUT,
+                    note=(
+                        f"{receipt.receipt_number} · Trade-in return · {shop.name}"
+                    ),
+                )
+            stock_updates.append(
+                {"id": item.pk, "quantity": _qty_number(stock.quantity)}
             )
-        if stock.quantity < qty:
-            raise ValidationError(
-                f"Insufficient stock for “{line.item_name}” "
-                f"(available {_qty_label(stock.quantity)}, returning {_qty_label(qty)})."
+            movement_lines.append(
+                {
+                    "item": item,
+                    "qty": qty,
+                    "unit_cost": unit_cost,
+                    "serial_numbers": serials,
+                }
             )
-        unit_cost = Decimal(line.unit_cost or stock.average_cost or 0)
-        stock.quantity = _qty(stock.quantity) - qty
-        stock.updated_at = now
-        item.stock = max(_qty(0), _qty(item.stock) - qty)
-        item.updated_at = now
-        stocks_to_update.append(stock)
-        items_to_update.append(item)
-        stock_updates.append({"id": item.pk, "quantity": _qty_number(stock.quantity)})
-        movement_lines.append(
-            {
-                "item": item,
-                "qty": qty,
-                "unit_cost": unit_cost,
-                "serial_numbers": serials,
-            }
-        )
 
         if serials:
             found = row.get("serial_objects") or {}
@@ -9457,8 +9608,9 @@ def return_shop_receipt_items(
     Pass ``actor`` to skip login-code verification (trusted portal callers).
     """
     from employees.services import verify_active_employee_code
-    from items.models import Item, ItemSerial, ShopStock
+    from items.models import Item, ItemSerial, ShopStock, StoreStockMovementType
     from items.services import _normalize_serial_list, apply_stock_in_average_cost
+    from items.store_stock_services import record_store_receipt_movement
 
     from .models import ShopReceipt, ShopReceiptLine
 
@@ -9631,6 +9783,10 @@ def return_shop_receipt_items(
         ):
             stock_by_item[row.item_id] = row
 
+    track_store = bool(
+        getattr(get_effective_pos_settings(shop), "enable_stock_tracking", True)
+    )
+
     now = timezone.now()
     stocks_to_update = []
     items_to_update = []
@@ -9671,27 +9827,38 @@ def return_shop_receipt_items(
         stock = stock_by_item.get(item.pk)
         if stock is None:
             continue
-        return_unit_cost = Decimal(line.unit_cost or 0)
-        apply_stock_in_average_cost(
-            stock,
-            qty=qty,
-            unit_cost=return_unit_cost,
-        )
-        stock.quantity += qty
-        stock.updated_at = now
-        item.stock = _qty(item.stock) + qty
-        item.updated_at = now
-        stocks_to_update.append(stock)
-        items_to_update.append(item)
-        stock_updates.append({"id": item.pk, "quantity": _qty_number(stock.quantity)})
-        movement_lines.append(
-            {
-                "item": item,
-                "qty": qty,
-                "unit_cost": return_unit_cost,
-                "serial_numbers": serials,
-            }
-        )
+        if getattr(item, "deduct_stock_on_sale", True):
+            return_unit_cost = Decimal(line.unit_cost or 0)
+            apply_stock_in_average_cost(
+                stock,
+                qty=qty,
+                unit_cost=return_unit_cost,
+            )
+            stock.quantity += qty
+            stock.updated_at = now
+            item.stock = _qty(item.stock) + qty
+            item.updated_at = now
+            stocks_to_update.append(stock)
+            items_to_update.append(item)
+            if track_store:
+                record_store_receipt_movement(
+                    actor=authorising,
+                    item=item,
+                    quantity=qty,
+                    movement_type=StoreStockMovementType.IN,
+                    note=f"{receipt.receipt_number} · Return · {shop.name}",
+                )
+            stock_updates.append(
+                {"id": item.pk, "quantity": _qty_number(stock.quantity)}
+            )
+            movement_lines.append(
+                {
+                    "item": item,
+                    "qty": qty,
+                    "unit_cost": return_unit_cost,
+                    "serial_numbers": serials,
+                }
+            )
 
         if serials:
             found = row.get("serial_objects") or {}
@@ -9996,7 +10163,8 @@ def reopen_cancelled_shop_receipt(
     target_status: str = ShopReceiptStatus.ACTIVE,
 ) -> dict:
     """Reopen a cancelled sale: reverse restocks and restore pending/confirmed."""
-    from items.models import Item, ItemSerial, ShopStock
+    from items.models import Item, ItemSerial, ShopStock, StoreStockMovementType
+    from items.store_stock_services import record_store_receipt_movement
 
     from .models import ShopReceipt, ShopReceiptLine
 
@@ -10068,11 +10236,15 @@ def reopen_cancelled_shop_receipt(
         if restore_qty > 0 and track_stock and line.item_id:
             item = items_by_id.get(line.item_id)
             stock = stock_by_item.get(line.item_id)
-            if item is None or stock is None:
+            if item is None:
                 errors.append(f"“{line.item_name}”: stock record missing; cannot reopen.")
                 continue
-            available = _qty(stock.quantity)
-            if available < restore_qty:
+            item_tracks = getattr(item, "deduct_stock_on_sale", True)
+            if item_tracks and stock is None:
+                errors.append(f"“{line.item_name}”: stock record missing; cannot reopen.")
+                continue
+            available = _qty(stock.quantity) if stock is not None else _qty(0)
+            if item_tracks and available < restore_qty:
                 errors.append(
                     f"“{line.item_name}”: need {_qty_label(restore_qty)} in stock to "
                     f"reopen, but only {_qty_label(available)} available."
@@ -10109,12 +10281,20 @@ def reopen_cancelled_shop_receipt(
                     obj.updated_at = now
                     serials_to_update.append(obj)
 
-            stock.quantity = available - restore_qty
-            stock.updated_at = now
-            item.stock = max(Decimal("0"), _qty(item.stock) - restore_qty)
-            item.updated_at = now
-            stocks_to_update.append(stock)
-            items_to_update.append(item)
+            if item_tracks:
+                stock.quantity = available - restore_qty
+                stock.updated_at = now
+                item.stock = max(Decimal("0"), _qty(item.stock) - restore_qty)
+                item.updated_at = now
+                stocks_to_update.append(stock)
+                items_to_update.append(item)
+                record_store_receipt_movement(
+                    actor=actor,
+                    item=item,
+                    quantity=restore_qty,
+                    movement_type=StoreStockMovementType.OUT,
+                    note=f"{receipt.receipt_number} · Reopen · {shop.name}",
+                )
 
         line.returned_quantity = Decimal("0")
         line.returned_serial_numbers = []

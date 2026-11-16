@@ -12,6 +12,7 @@ from items.models import (
     ShelfStockMovement,
     ShelfStockMovementType,
     StockOutReason,
+    StockPaymentStatus,
 )
 from items.store_stock_services import _parse_buying_price
 
@@ -243,6 +244,19 @@ def record_shelf_movement(
     else:
         item.quantity += amount
     item.save(update_fields=["quantity", "updated_at"])
+    status_clean = (
+        (payment_status or "").strip().lower()[:16]
+        if mode == ShelfStockMovementType.IN
+        else ""
+    )
+    paid_amount = Decimal("0")
+    if (
+        status_clean == StockPaymentStatus.PAID
+        and buying_price is not None
+    ):
+        paid_amount = (Decimal(buying_price) * amount).quantize(
+            Decimal("0.01")
+        )
     return ShelfStockMovement.objects.create(
         shelf_item=item,
         movement_type=mode,
@@ -254,11 +268,8 @@ def record_shelf_movement(
         supplier_phone=(
             (supplier_phone or "").strip()[:40] if keep_person else ""
         ),
-        payment_status=(
-            (payment_status or "").strip().lower()[:16]
-            if mode == ShelfStockMovementType.IN
-            else ""
-        ),
+        payment_status=status_clean,
+        amount_paid=paid_amount,
         buying_price=(
             buying_price if mode == ShelfStockMovementType.IN else None
         ),
@@ -350,6 +361,15 @@ def archive_shelf_item(*, shop, shelf_item_id) -> ShelfItem:
     return item
 
 
+def _shelf_requirement(name: str) -> bool:
+    """Read a shelf-mode compulsory-field flag from CompanyStockSettings."""
+    from shops.services import get_company_stock_settings
+
+    return bool(
+        getattr(get_company_stock_settings(), f"shelf_{name}", False)
+    )
+
+
 def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
     """Run one shelf page action (register / in / out / transfer / archive); returns a success message."""
     action = (data.get("action") or "").strip()
@@ -366,6 +386,12 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
         )
         return f"“{item.name}” added to the shelf list."
     if action in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
+        if (
+            action == ShelfStockMovementType.IN
+            and _shelf_requirement("require_buying_price_on_in")
+            and not str(data.get("price") or "").strip()
+        ):
+            raise ValidationError("Enter the unit buying price.")
         movement = record_shelf_movement(
             shop=shop,
             shelf_item_id=data.get("shelf_item_id"),
@@ -389,6 +415,11 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
     if action == "transfer":
         if to_shop is None or to_shop.pk == shop.pk:
             raise ValidationError("Pick another shop to send the shelf stock to.")
+        if (
+            _shelf_requirement("require_note_on_request")
+            and not str(data.get("note") or "").strip()
+        ):
+            raise ValidationError("Enter a transfer note.")
         item, _target = transfer_shelf_item(
             from_shop=shop,
             to_shop=to_shop,

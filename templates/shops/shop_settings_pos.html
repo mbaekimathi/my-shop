@@ -53,6 +53,7 @@
           >
             <div class="pos-settings-copy">
               <strong>{{ toggle.label }}</strong>
+              <span class="shop-custom-tag" data-custom-tag="{{ toggle.field }}"{% if not toggle.custom %} hidden{% endif %}>Custom</span>
             {% if toggle.field == "stock_mode_items" %}
             <p>Track stock on the items you sell. They show on the shop page, and sales need enough stock and reduce it.</p>
             {% elif toggle.field == "stock_mode_shelf" %}
@@ -82,6 +83,7 @@
           <li class="pos-settings-row pos-settings-row--tax" data-delivery-amount-row{% if not pos_settings.enable_cart_delivery %} hidden{% endif %}>
             <div class="pos-settings-copy">
               <strong>Delivery amount</strong>
+              <span class="shop-custom-tag" data-custom-tag="delivery_amount"{% if "delivery_amount" not in shop_custom_fields %} hidden{% endif %}>Custom</span>
               <p>Flat fee added to the sale total when delivery is chosen. 0 = free delivery.</p>
             </div>
             <label class="pos-tax-percent-field">
@@ -103,6 +105,7 @@
           <li class="pos-settings-row pos-settings-row--tax" data-tax-percent-row{% if not pos_settings.enable_tax %} hidden{% endif %}>
             <div class="pos-settings-copy">
               <strong>Tax percentage</strong>
+              <span class="shop-custom-tag" data-custom-tag="tax_percent"{% if "tax_percent" not in shop_custom_fields %} hidden{% endif %}>Custom</span>
               <p>Applied on the items subtotal when tax is on.</p>
             </div>
             <label class="pos-tax-percent-field">

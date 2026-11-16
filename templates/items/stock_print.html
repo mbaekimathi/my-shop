@@ -556,6 +556,8 @@
       {% endif %}
     {% elif document.layout == "balances" %}
       Opening is the system balance at the start of today. Sold is today's sales. Closing is the balance now. Write the counted quantity in Actual shop stock.
+    {% elif document.layout == "shelf" %}
+      Shelf item names are in the first column. Qty is the current shelf balance and Alert at is the low-stock level.
     {% elif document.layout == "stock" %}
       Item names are in the first column. Qty is the current system balance.
     {% elif document.layout == "prices" %}
@@ -661,7 +663,7 @@
   <table class="sheet-grid{% if paper == 'a4' and document.layout == 'prices' and document.shops|length > 3 %} cols-many{% endif %}">
     <thead>
       <tr class="category-row">
-        <th colspan="{% if paper == '80' or paper == '50' %}3{% elif document.layout == 'items' %}4{% elif document.layout == 'balances' %}5{% elif document.layout == 'stock' %}{% if document.shops|length <= 1 %}2{% else %}{{ document.shops|length|add:2 }}{% endif %}{% elif document.layout == 'prices' %}{% if document.shops|length <= 1 %}2{% else %}{{ document.shops|length|add:1 }}{% endif %}{% else %}2{% endif %}">{{ group.name }}</th>
+        <th colspan="{% if paper == '80' or paper == '50' %}3{% elif document.layout == 'items' %}4{% elif document.layout == 'shelf' %}4{% elif document.layout == 'balances' %}5{% elif document.layout == 'stock' %}{% if document.shops|length <= 1 %}2{% else %}{{ document.shops|length|add:2 }}{% endif %}{% elif document.layout == 'prices' %}{% if document.shops|length <= 1 %}2{% else %}{{ document.shops|length|add:1 }}{% endif %}{% else %}2{% endif %}">{{ group.name }}</th>
       </tr>
       <tr>
         <th class="col-item">Item</th>
@@ -673,6 +675,10 @@
           <th class="num">Sold</th>
           <th class="col-closing">Closing</th>
           <th class="col-write">Actual shop stock</th>
+        {% elif document.layout == "shelf" %}
+          <th class="num">Unit</th>
+          <th class="num">Qty</th>
+          <th class="num">Alert at</th>
         {% elif document.layout == "stock" %}
           {% if document.shops|length <= 1 %}
           <th class="num">Qty</th>
@@ -709,6 +715,10 @@
           <td class="num">{{ row.sold }}</td>
           <td class="num col-closing">{{ row.closing }}</td>
           <td class="blank col-write">&nbsp;</td>
+        {% elif document.layout == "shelf" %}
+          <td class="num">{{ row.unit }}</td>
+          <td class="num">{{ row.qty }}</td>
+          <td class="num">{{ row.threshold }}</td>
         {% elif document.layout == "stock" %}
           {% if document.shops|length <= 1 %}
           <td class="num">{{ row.qty }}</td>

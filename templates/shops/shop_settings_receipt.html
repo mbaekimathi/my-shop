@@ -84,6 +84,7 @@
         <li class="pos-settings-row">
           <div class="pos-settings-copy">
             <strong>{{ toggle.label }}</strong>
+            <span class="shop-custom-tag" data-custom-tag="{{ toggle.field }}"{% if not toggle.custom %} hidden{% endif %}>Custom</span>
           </div>
           <label class="perm-switch">
             <input
@@ -108,7 +109,7 @@
 
     <section class="pos-settings-group receipt-paper-group">
       <div class="pos-settings-group-head">
-        <h3>Paper size</h3>
+        <h3>Paper size <span class="shop-custom-tag" data-custom-tag="receipt_paper_width"{% if not custom_detail.receipt_paper_width %} hidden{% endif %}>Custom</span></h3>
         <p>Thermal roll width used when receipts print.</p>
       </div>
       <div class="receipt-paper-picker" role="group" aria-label="Receipt paper size">
@@ -150,6 +151,7 @@
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
             <strong>Sale</strong>
+            <span class="shop-custom-tag" data-custom-tag="receipt_format_sale"{% if "receipt_format_sale" not in shop_custom_fields %} hidden{% endif %}>Custom</span>
             <p data-receipt-format-preview="sale">Example: {{ receipt_format_previews.sale }}</p>
           </div>
           <label class="receipt-format-field">
@@ -167,6 +169,7 @@
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
             <strong>Credit</strong>
+            <span class="shop-custom-tag" data-custom-tag="receipt_format_credit"{% if "receipt_format_credit" not in shop_custom_fields %} hidden{% endif %}>Custom</span>
             <p data-receipt-format-preview="credit">Example: {{ receipt_format_previews.credit }}</p>
           </div>
           <label class="receipt-format-field">
@@ -184,6 +187,7 @@
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
             <strong>Quotation</strong>
+            <span class="shop-custom-tag" data-custom-tag="receipt_format_quotation"{% if "receipt_format_quotation" not in shop_custom_fields %} hidden{% endif %}>Custom</span>
             <p data-receipt-format-preview="quotation">Example: {{ receipt_format_previews.quotation }}</p>
           </div>
           <label class="receipt-format-field">
@@ -201,6 +205,7 @@
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
             <strong>Trade in</strong>
+            <span class="shop-custom-tag" data-custom-tag="receipt_format_trade_in"{% if "receipt_format_trade_in" not in shop_custom_fields %} hidden{% endif %}>Custom</span>
             <p data-receipt-format-preview="trade_in">Example: {{ receipt_format_previews.trade_in }}</p>
           </div>
           <label class="receipt-format-field">
@@ -218,6 +223,7 @@
         <li class="pos-settings-row pos-settings-row--format">
           <div class="pos-settings-copy">
             <strong>Trade out</strong>
+            <span class="shop-custom-tag" data-custom-tag="receipt_format_trade_out"{% if "receipt_format_trade_out" not in shop_custom_fields %} hidden{% endif %}>Custom</span>
             <p data-receipt-format-preview="trade_out">Example: {{ receipt_format_previews.trade_out }}</p>
           </div>
           <label class="receipt-format-field">
@@ -237,7 +243,7 @@
 
     <section class="pos-settings-group receipt-payment-group">
       <div class="pos-settings-group-head">
-        <h3>Payment details</h3>
+        <h3>Payment details <span class="shop-custom-tag" data-custom-tag="mpesa_collection_type,mpesa_business_number,mpesa_account_number,mpesa_till_number,mpesa_phone_number"{% if not custom_detail.mpesa_details %} hidden{% endif %}>Custom</span></h3>
         <p>M-Pesa collection details printed on receipts.</p>
       </div>
       <div class="receipt-payment-body">
@@ -391,7 +397,7 @@
 
     <section class="pos-settings-group receipt-font-group">
       <div class="pos-settings-group-head">
-        <h3>Receipt text style</h3>
+        <h3>Receipt text style <span class="shop-custom-tag" data-custom-tag="receipt_font_size,receipt_font_weight"{% if not custom_detail.receipt_font %} hidden{% endif %}>Custom</span></h3>
         <p>Size and weight of printed receipt text.</p>
       </div>
       <ul class="pos-settings-list">
@@ -426,7 +432,7 @@
 
     <section class="pos-settings-group receipt-qr-group">
       <div class="pos-settings-group-head">
-        <h3>QR code</h3>
+        <h3>QR code <span class="shop-custom-tag" data-custom-tag="enable_receipt_qr,receipt_qr_content,receipt_qr_website"{% if not custom_detail.receipt_qr %} hidden{% endif %}>Custom</span></h3>
         <p>Optional scannable QR on printed receipts.</p>
       </div>
       <ul class="pos-settings-list">
@@ -504,7 +510,7 @@
 
     <section class="pos-settings-group receipt-return-notice-group">
       <div class="pos-settings-group-head">
-        <h3>Return policy</h3>
+        <h3>Return policy <span class="shop-custom-tag" data-custom-tag="show_return_notice_on_receipt,return_notice_text"{% if not custom_detail.return_notice %} hidden{% endif %}>Custom</span></h3>
         <p>Shown at the bottom of sale and credit receipts.</p>
       </div>
       <ul class="pos-settings-list">
@@ -552,7 +558,7 @@
 
     <section class="pos-settings-group receipt-maintainer-group">
       <div class="pos-settings-group-head">
-        <h3>System maintenance</h3>
+        <h3>System maintenance <span class="shop-custom-tag" data-custom-tag="show_maintainer_on_receipt,maintainer_phone"{% if not custom_detail.maintainer %} hidden{% endif %}>Custom</span></h3>
         <p>Support contact printed at the bottom of receipts.</p>
       </div>
       <ul class="pos-settings-list">

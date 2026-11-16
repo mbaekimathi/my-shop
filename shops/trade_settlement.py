@@ -206,7 +206,13 @@ def record_trade_exchange(
         StockPaymentStatus,
     )
     from items.services import apply_stock_in_average_cost, _normalize_serial_list
-    from shops.services import _parse_qty, _qty_label, _qty_number
+    from items.store_stock_services import record_store_receipt_movement
+    from shops.services import (
+        _parse_qty,
+        _qty_label,
+        _qty_number,
+        get_effective_pos_settings,
+    )
 
     if receipt.kind != ShopReceiptKind.TRADE_OUT:
         raise ValidationError("Only open trade-out receipts accept exchange items.")
@@ -277,32 +283,47 @@ def record_trade_exchange(
                 row.shop = shop
                 row.save(update_fields=["is_available", "shop", "updated_at"])
 
-    apply_stock_in_average_cost(shop_stock, qty=qty, unit_cost=unit)
-    shop_stock.quantity += qty
-    shop_stock.save(update_fields=["quantity", "average_cost", "updated_at"])
-    item.stock += qty
-    item.save(update_fields=["stock", "updated_at"])
+    movement = None
+    if getattr(item, "deduct_stock_on_sale", True):
+        apply_stock_in_average_cost(shop_stock, qty=qty, unit_cost=unit)
+        shop_stock.quantity += qty
+        shop_stock.save(update_fields=["quantity", "average_cost", "updated_at"])
+        item.stock += qty
+        item.save(update_fields=["stock", "updated_at"])
 
-    movement = StockMovement.objects.create(
-        movement_type=StockMovementType.IN,
-        entry_source=StockEntrySource.TRADE_EXCHANGE,
-        shop=shop,
-        created_by=actor,
-        notes=f"Trade exchange for {receipt.receipt_number}",
-        payment_status=StockPaymentStatus.PAID,
-        amount_paid=value,
-        supplier_notified=True,
-    )
-    StockMovementLine.objects.create(
-        movement=movement,
-        item=item,
-        quantity=qty,
-        buying_price=unit,
-        unit_cost=unit,
-        payment_status=StockPaymentStatus.PAID,
-        note=f"Trade exchange · {receipt.receipt_number}",
-        serial_numbers=serials,
-    )
+        if actor is not None and bool(
+            getattr(get_effective_pos_settings(shop), "enable_stock_tracking", True)
+        ):
+            from items.models import StoreStockMovementType
+
+            record_store_receipt_movement(
+                actor=actor,
+                item=item,
+                quantity=qty,
+                movement_type=StoreStockMovementType.IN,
+                note=f"{receipt.receipt_number} · Trade exchange · {shop.name}",
+            )
+
+        movement = StockMovement.objects.create(
+            movement_type=StockMovementType.IN,
+            entry_source=StockEntrySource.TRADE_EXCHANGE,
+            shop=shop,
+            created_by=actor,
+            notes=f"Trade exchange for {receipt.receipt_number}",
+            payment_status=StockPaymentStatus.PAID,
+            amount_paid=value,
+            supplier_notified=True,
+        )
+        StockMovementLine.objects.create(
+            movement=movement,
+            item=item,
+            quantity=qty,
+            buying_price=unit,
+            unit_cost=unit,
+            payment_status=StockPaymentStatus.PAID,
+            note=f"Trade exchange · {receipt.receipt_number}",
+            serial_numbers=serials,
+        )
 
     receipt.trade_exchange_value = _money(
         Decimal(receipt.trade_exchange_value or 0) + value
@@ -317,7 +338,7 @@ def record_trade_exchange(
             "item_name": item.name,
             "qty": _qty_number(qty),
             "buying_price": str(unit),
-            "stock_movement_id": movement.pk,
+            "stock_movement_id": getattr(movement, "pk", None),
             "serial_numbers": serials,
             "at": timezone.now().isoformat(),
             "by_id": getattr(actor, "pk", None),
@@ -350,7 +371,7 @@ def record_trade_exchange(
         "item_name": item.name,
         "quantity": _qty_number(qty),
         "value": value,
-        "stock_movement_id": movement.pk,
+        "stock_movement_id": getattr(movement, "pk", None),
         "stock_updates": [
             {
                 "id": item.pk,

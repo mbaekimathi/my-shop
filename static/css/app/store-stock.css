@@ -1042,6 +1042,312 @@
   color: var(--stock-brand, #0f766e);
 }
 
+/* ------------------------------------------------------------------ */
+/* Register shelf stock item popup                                     */
+/* ------------------------------------------------------------------ */
+.stock-shelf-modal {
+  --shelf-accent: var(--accent, #0f766e);
+  --shelf-accent-2: #2563eb;
+  --shelf-soft: color-mix(in srgb, var(--shelf-accent) 10%, transparent);
+  --shelf-ink: color-mix(in srgb, var(--shelf-accent) 85%, #0f172a);
+}
+
+.shelf-register-dialog {
+  width: min(35rem, calc(100vw - 1.5rem));
+  border-radius: 22px;
+}
+
+/* Gradient-tinted header with a coloured icon tile. */
+.shelf-register-head {
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding: 1.3rem 1.35rem 1.15rem;
+  background:
+    radial-gradient(130% 200% at 0% 0%, var(--shelf-soft), transparent 55%),
+    radial-gradient(150% 180% at 100% -20%, color-mix(in srgb, var(--shelf-accent-2) 12%, transparent), transparent 60%);
+}
+
+.shelf-register-head-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.shelf-register-icon {
+  display: grid;
+  place-items: center;
+  width: 2.9rem;
+  height: 2.9rem;
+  flex-shrink: 0;
+  border-radius: 15px;
+  color: #fff;
+  background: linear-gradient(140deg, var(--shelf-accent), var(--shelf-accent-2));
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--shelf-accent) 42%, transparent);
+}
+
+.shelf-register-icon svg {
+  width: 1.45rem;
+  height: 1.45rem;
+}
+
+.shelf-register-head h2 {
+  letter-spacing: -0.01em;
+}
+
+/* Category: suggestion listbox + quick-pick chips. */
+.shelf-cat-field {
+  overflow: visible;
+}
+
+.shelf-cat-suggest {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  max-height: 13rem;
+  overflow: auto;
+  border: 1px solid var(--border, var(--line));
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 14px 34px rgba(8, 28, 34, 0.18);
+}
+
+.shelf-cat-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--text);
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.shelf-cat-option::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--shelf-accent) 55%, transparent);
+}
+
+.shelf-cat-option:hover,
+.shelf-cat-option.is-active {
+  background: var(--shelf-soft);
+  color: var(--shelf-ink);
+}
+
+.shelf-cat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+}
+
+.shelf-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--shelf-accent) 32%, var(--border, var(--line)));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--shelf-accent) 7%, var(--surface));
+  color: var(--shelf-ink);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.shelf-cat-chip svg {
+  width: 0.72rem;
+  height: 0.72rem;
+}
+
+.shelf-cat-chip:hover {
+  transform: translateY(-1px);
+  border-color: var(--shelf-accent);
+  background: color-mix(in srgb, var(--shelf-accent) 14%, var(--surface));
+}
+
+/* Image drop zone with preview. */
+.shelf-file-drop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 5.4rem;
+  padding: 0.9rem 1rem;
+  border: 1.5px dashed color-mix(in srgb, var(--shelf-accent) 40%, var(--border, var(--line)));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--shelf-accent) 4%, var(--surface));
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.shelf-file-drop:hover,
+.shelf-file-drop.is-drag {
+  border-color: var(--shelf-accent);
+  background: color-mix(in srgb, var(--shelf-accent) 9%, var(--surface));
+}
+
+.shelf-file-drop:focus-within {
+  box-shadow: 0 0 0 3px var(--shelf-soft);
+}
+
+.shelf-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.shelf-file-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.shelf-file-empty > svg {
+  width: 1.8rem;
+  height: 1.8rem;
+  flex-shrink: 0;
+  color: var(--shelf-accent);
+}
+
+.shelf-file-empty-copy {
+  display: grid;
+  gap: 0.1rem;
+  font-size: 0.88rem;
+}
+
+.shelf-file-empty-copy strong {
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.shelf-file-empty-copy small {
+  font-size: 0.74rem;
+}
+
+.shelf-file-picked {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.shelf-file-thumb {
+  width: 3rem;
+  height: 3rem;
+  flex-shrink: 0;
+  object-fit: cover;
+  border: 1px solid var(--border, var(--line));
+  border-radius: 11px;
+  background: var(--surface);
+}
+
+.shelf-file-thumb:not([src]) {
+  display: none;
+}
+
+.shelf-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shelf-file-clear {
+  display: inline-grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex-shrink: 0;
+  border: 1px solid var(--border, var(--line));
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.shelf-file-clear:hover {
+  border-color: var(--danger, #dc2626);
+  color: var(--danger, #dc2626);
+}
+
+.shelf-file-clear svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+/* Primary action: accent gradient. */
+.shelf-register-submit {
+  gap: 0.45rem;
+  border: 0;
+  background: linear-gradient(135deg, var(--shelf-accent), var(--shelf-accent-2));
+  box-shadow: 0 10px 20px color-mix(in srgb, var(--shelf-accent) 30%, transparent);
+}
+
+.shelf-register-submit:hover {
+  filter: brightness(1.07);
+}
+
+.shelf-register-submit svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+@media (max-width: 520px) {
+  .shelf-register-dialog {
+    width: calc(100vw - 1rem);
+    border-radius: 18px;
+  }
+
+  .shelf-register-head {
+    padding: 1.1rem 1rem 1rem;
+  }
+
+  .shelf-register-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 12px;
+  }
+
+  .stock-shelf-modal .shelf-stock-register {
+    grid-template-columns: 1fr;
+    padding: 1rem;
+  }
+}
+
 .store-stock-field[hidden] {
   display: none;
 }
@@ -1291,4 +1597,38 @@
     flex: 1 1 0;
     max-width: none;
   }
+}
+
+/* Item-stock page: per-item "deduct on sale" stock count toggle. */
+.store-stock-count-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.store-stock-count-toggle input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--ss-accent);
+  cursor: pointer;
+}
+
+.store-stock-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.4rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-2, color-mix(in srgb, var(--border) 35%, var(--surface)));
+  color: var(--text-muted);
+  font-size: var(--text-xs, 0.75rem);
+  font-weight: 700;
+}
+
+.store-stock-count-toggle.is-on .store-stock-count-pill {
+  background: color-mix(in srgb, var(--ss-accent) 18%, var(--surface));
+  color: var(--ss-accent);
 }

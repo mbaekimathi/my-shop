@@ -43,6 +43,8 @@ class Item(models.Model):
     minimum_selling_price = models.DecimalField(max_digits=12, decimal_places=2)
     shop_price = models.DecimalField(max_digits=12, decimal_places=2)
     stock = models.DecimalField(max_digits=12, decimal_places=3)
+    stock_count_enabled = models.BooleanField(default=True)
+    deduct_stock_on_sale = models.BooleanField(default=True)
     low_stock_notify = models.BooleanField()
     low_stock_threshold = models.PositiveIntegerField()
     track_serial_number = models.BooleanField(default=False)
@@ -273,12 +275,15 @@ class CompanyPosSettings(models.Model):
 
 
 class ShopPosSettings(models.Model):
-    """Per-shop POS overrides — apply only when the override flag is on."""
+    """Per-shop POS overrides — apply only while the override flag is on and
+    the field is listed in the matching custom_*_fields set."""
 
     id = models.BigAutoField(primary_key=True)
     shop_id = models.BigIntegerField()
     override_pos = models.BooleanField(default=False)
     override_receipt = models.BooleanField(default=False)
+    custom_pos_fields = models.JSONField(default=list, blank=True)
+    custom_receipt_fields = models.JSONField(default=list, blank=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
     enable_stock_tracking = models.BooleanField(default=True)
@@ -397,6 +402,18 @@ class StoreStockMovement(models.Model):
     balance_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
     created_by_id = models.BigIntegerField()
     received_by_id = models.BigIntegerField()
+    supplier_name = models.CharField(max_length=160, blank=True, default="")
+    supplier_phone = models.CharField(max_length=40, blank=True, default="")
+    payment_status = models.CharField(max_length=16, blank=True, default="")
+    buying_price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    reason = models.CharField(max_length=16, blank=True, default="")
+    refund = models.CharField(max_length=8, blank=True, default="")
+    refund_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    source = models.CharField(max_length=16, blank=True, default="")
     note = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 

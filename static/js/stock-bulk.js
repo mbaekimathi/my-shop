@@ -134,6 +134,10 @@
   const navigateWithShops = () => {
     const params = new URLSearchParams();
     params.set("mode", mode);
+    if (new URLSearchParams(window.location.search).get("tab") === "shelf") {
+      // Keep the Item stock / Shelf stock tab selection across shop changes.
+      params.set("tab", "shelf");
+    }
     const shopSelect = form.querySelector("[data-stock-shop-nav]");
     const fromSelect = form.querySelector("[data-stock-from-nav]");
     if (shopSelect?.value) params.set("shop_id", shopSelect.value);

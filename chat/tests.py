@@ -1738,6 +1738,7 @@ class TradeTests(ChatTestCase):
         CompanyPosSettings.objects.create(id=1)
         ShopPosSettings.objects.create(
             shop_id=self.shop_a.pk, override_pos=True,
+            custom_pos_fields=["enable_trade_out"],
             enable_trade_out=False, enable_trade_in=True,
         )
         resp = self.post_trade(self.trade_payload(kind="trade_out"))

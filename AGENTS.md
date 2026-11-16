@@ -17,6 +17,12 @@ python manage.py test shops.tests -v 1
 Session-related suites: `test_single_session`, `test_portal_session_exclusivity`,
 `test_shop_portal_session`, `test_switch_login_tmp`.
 
+- The test DB is `test_<MYSQL_DATABASE>`; when other test runs (or parallel
+  sessions) share the same MySQL server, give each run its own database so the
+  `test_` DBs don't collide: `MYSQL_DATABASE=myshop_<slug> python manage.py test ...`
+  → `test_myshop_<slug>`. Concurrent `manage.py test` runs against the same
+  `test_myshop` drop/recreate it mid-run (random "table doesn't exist" errors).
+
 ## Stock modes (Settings → POS → Stock)
 - One-of toggles: Items / Shelf / Both → `enable_stock_tracking` / `enable_shelf_mode`
   on `CompanyPosSettings` (+ per-shop `ShopPosSettings` override). See
@@ -26,6 +32,37 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   Management / the shop's Shelf stock page.
 - The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
   sellable items only; shelf-only mode returns an empty catalog.
+- Per-item sale deduction: `Item.deduct_stock_on_sale` (default on) — when off,
+  sales/credit/trade-out don't decrement `ShopStock`/`Item.stock`, returns and
+  trade-ins don't move them either, insufficient-stock checks are skipped, and
+  the item sells past zero. Toggle page: Stock Management → Settings → "Sale
+  stock tracking" (`?mode=sale-tracking`, shares the `settings` permission).
+  Manual Stock In/Out and transfers still move counts; serial tracking and the
+  central-store mirror flag (`stock_count_enabled`) are separate. Floor JS
+  reads `sale_stock_tracked` from the catalog payload (`data-item-sale-tracked`
+  on cards). Tests: `shops/tests/test_sale_stock_tracking.py`.
+
+## Compulsory stock fields (Stock Management → Settings)
+- `CompanyStockSettings` (singleton, cached via `get_company_stock_settings`)
+  holds **independent** required-field flags per stock type: `require_*`
+  (buying price / supplier / payment status / reason / refund / transfer
+  note) for item stock and `shelf_require_*` for shelf stock. The settings
+  page shows an "Item stock" and/or "Shelf stock" section only while that
+  stock mode is enabled on `CompanyPosSettings`.
+- Toggles go through `set_company_stock_setting` (`STOCK_SETTING_FIELDS` in
+  `shops/services.py`); `as_requirements_dict()` / `as_shelf_requirements_dict()`
+  feed the `data-stock-requirements` JSON the bulk JS reads.
+- Enforcement: shop-floor item movements in `items/services.py`; central
+  Store Manager stock in `items/store_stock_services.py`
+  (`parse_store_stock_qty_lines` / `parse_store_trade_lines` `require_price`,
+  `parse_supplier_payment_details` / `parse_stock_out_details`
+  `field_prefix="shelf_"` for shelf posts); shelf single-line/bulk in
+  `items/shelf_stock_services.py` (`_shelf_requirement`). Store Manager shelf
+  pages enforce the `shelf_*` flags; trade-in honours the matching
+  buying-price flag via a per-line `price_<id>` unit value.
+- Tests that write `CompanyStockSettings` directly must call
+  `_invalidate_stock_settings_cache()` afterwards — the cached row survives
+  into later tests otherwise.
 
 ## Item pricing
 - Prices are stored per shop on `ShopItemPrice` (`price` + `is_sold` flag);

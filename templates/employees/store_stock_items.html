@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=17">
+<link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=19">
 {% endblock %}
 
 {% block workspace_content %}
@@ -52,20 +52,21 @@
     </div>
 
     {% if items %}
-    <div class="store-stock-table-wrap">
+    <div class="store-stock-table-wrap" data-store-toggle-url="{{ item_toggle_url }}">
       <table class="store-stock-table">
         <thead>
           <tr>
             <th scope="col">Item</th>
             <th scope="col" class="store-stock-col-qty">Last buy price</th>
             <th scope="col" class="store-stock-col-qty">In store</th>
+            <th scope="col" class="store-stock-col-qty" title="When on, sales deduct this item's store count">Stock count</th>
           </tr>
         </thead>
         <tbody>
           {% for item in items %}
           {% ifchanged item.category %}
           <tr class="store-stock-cat-row" data-store-cat-row>
-            <td colspan="3">{{ item.category|default:"Uncategorised" }}</td>
+            <td colspan="4">{{ item.category|default:"Uncategorised" }}</td>
           </tr>
           {% endifchanged %}
           <tr class="store-stock-row" data-store-items-row data-search="{{ item.search_text }}">
@@ -80,6 +81,22 @@
             </td>
             <td class="store-stock-col-qty" data-label="In store">
               <span class="store-stock-balance-pill">{{ item.store_qty_display }}</span>
+            </td>
+            <td class="store-stock-col-qty" data-label="Stock count">
+              <label
+                class="store-stock-count-toggle{% if item.stock_count_enabled %} is-on{% endif %}"
+                title="When on, sales deduct this item's store count"
+              >
+                <input
+                  type="checkbox"
+                  data-store-count-toggle="{{ item.id }}"
+                  {% if item.stock_count_enabled %}checked{% endif %}
+                  aria-label="Deduct {{ item.name }} from store stock on sale"
+                >
+                <span class="store-stock-count-pill" data-store-count-label>
+                  {% if item.stock_count_enabled %}On{% else %}Off{% endif %}
+                </span>
+              </label>
             </td>
           </tr>
           {% endfor %}
@@ -125,6 +142,52 @@
     });
     if (empty) empty.hidden = visible > 0;
     if (count) count.textContent = String(visible);
+  });
+
+  var toggleWrap = document.querySelector("[data-store-toggle-url]");
+  var toggleUrl = toggleWrap ? toggleWrap.getAttribute("data-store-toggle-url") : "";
+  function csrfToken() {
+    var match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+  document.querySelectorAll("[data-store-count-toggle]").forEach(function (box) {
+    box.addEventListener("change", function () {
+      if (!toggleUrl) return;
+      var itemId = box.getAttribute("data-store-count-toggle");
+      var enabled = box.checked;
+      var cell = box.closest("label");
+      var label = cell ? cell.querySelector("[data-store-count-label]") : null;
+      box.disabled = true;
+      fetch(toggleUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": csrfToken(),
+          "Accept": "application/json",
+        },
+        body:
+          "item_id=" + encodeURIComponent(itemId) +
+          "&enabled=" + (enabled ? "1" : "0"),
+      })
+        .then(function (res) {
+          return res.json().then(function (data) {
+            if (!res.ok || !data.ok) throw new Error(data.error || "failed");
+            return data;
+          });
+        })
+        .then(function (data) {
+          if (label) label.textContent = data.stock_count_enabled ? "On" : "Off";
+          if (cell) cell.classList.toggle("is-on", !!data.stock_count_enabled);
+        })
+        .catch(function () {
+          box.checked = !enabled;
+          window.alert("Could not update the stock count for that item.");
+        })
+        .finally(function () {
+          box.disabled = false;
+        });
+    });
   });
 })();
 </script>

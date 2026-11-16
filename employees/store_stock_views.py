@@ -29,6 +29,7 @@ from items.store_stock_services import (
     record_store_trade,
     search_active_employees,
     search_store_items,
+    set_item_stock_count_enabled,
 )
 
 
@@ -102,6 +103,7 @@ def store_stock_items(request):
             "stock_in_url": reverse("employees:store_stock_in"),
             "stock_out_url": reverse("employees:store_stock_out"),
             "stock_trade_url": reverse("employees:store_stock_trade"),
+            "item_toggle_url": reverse("employees:store_stock_item_count_toggle"),
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
             "page_sidebar": sidebar_for_store_stock(
@@ -142,6 +144,7 @@ def store_stock_movement(request):
             "stock_in_url": reverse("employees:store_stock_in"),
             "stock_out_url": reverse("employees:store_stock_out"),
             "stock_trade_url": reverse("employees:store_stock_trade"),
+            "item_toggle_url": reverse("employees:store_stock_item_count_toggle"),
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
             "page_sidebar": sidebar_for_store_stock(
@@ -159,16 +162,21 @@ def _render_store_stock_page(request, *, mode: str):
     is_in = mode == StoreStockMovementType.IN
 
     if request.method == "POST":
+        stock_req = _stock_requirements()
         try:
-            lines = parse_store_stock_qty_lines(request.POST)
+            lines = parse_store_stock_qty_lines(
+                request.POST,
+                require_price=is_in
+                and getattr(stock_req, "require_buying_price_on_in", False),
+            )
             if is_in:
                 details = parse_supplier_payment_details(
-                    request.POST, stock_req=_stock_requirements()
+                    request.POST, stock_req=stock_req
                 )
                 note = request.POST.get("note") or ""
             else:
                 details = parse_stock_out_details(
-                    request.POST, stock_req=_stock_requirements()
+                    request.POST, stock_req=stock_req
                 )
                 note = details.pop("note", "")
             movements = record_store_stock_lines(
@@ -254,7 +262,14 @@ def store_stock_trade(request):
 
     if request.method == "POST":
         try:
-            kind, lines = parse_store_trade_lines(request.POST)
+            kind, lines = parse_store_trade_lines(
+                request.POST,
+                require_price=getattr(
+                    _stock_requirements(),
+                    "require_buying_price_on_in",
+                    False,
+                ),
+            )
             movements = record_store_trade(
                 actor=profile,
                 kind=kind,
@@ -373,16 +388,29 @@ def store_shelf_stock(request):
             )
             return redirect("employees:store_shelf_stock")
         if mode in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
+            stock_req = _stock_requirements()
             try:
-                lines = parse_store_stock_qty_lines(request.POST)
+                lines = parse_store_stock_qty_lines(
+                    request.POST,
+                    require_price=mode == ShelfStockMovementType.IN
+                    and getattr(
+                        stock_req,
+                        "shelf_require_buying_price_on_in",
+                        False,
+                    ),
+                )
                 if mode == ShelfStockMovementType.IN:
                     details = parse_supplier_payment_details(
-                        request.POST, stock_req=_stock_requirements()
+                        request.POST,
+                        stock_req=stock_req,
+                        field_prefix="shelf_",
                     )
                     note = (request.POST.get("note") or "").strip()[:255]
                 else:
                     details = parse_stock_out_details(
-                        request.POST, stock_req=_stock_requirements()
+                        request.POST,
+                        stock_req=stock_req,
+                        field_prefix="shelf_",
                     )
                     note = details.pop("note", "")
             except ValidationError as exc:
@@ -417,13 +445,21 @@ def store_shelf_stock(request):
                 )
             return _back(keep_mode=False)
         if mode == "trade":
+            stock_req = _stock_requirements()
             try:
-                kind, lines = parse_store_trade_lines(request.POST)
+                kind, lines = parse_store_trade_lines(
+                    request.POST,
+                    require_price=getattr(
+                        stock_req,
+                        "shelf_require_buying_price_on_in",
+                        False,
+                    ),
+                )
                 person_name = (request.POST.get("person_name") or "").strip()
                 person_phone = (request.POST.get("person_phone") or "").strip()
                 note = (request.POST.get("note") or "").strip()[:255]
                 if kind == StockOutReason.TRADE_IN and getattr(
-                    _stock_requirements(), "require_supplier_on_in", False
+                    stock_req, "shelf_require_supplier_on_in", False
                 ):
                     if not person_name:
                         raise ValidationError("Enter the other person's name.")
@@ -569,6 +605,7 @@ def store_stock_report(request):
             "stock_in_url": reverse("employees:store_stock_in"),
             "stock_out_url": reverse("employees:store_stock_out"),
             "stock_trade_url": reverse("employees:store_stock_trade"),
+            "item_toggle_url": reverse("employees:store_stock_item_count_toggle"),
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
             "page_sidebar": sidebar_for_store_stock(
@@ -588,6 +625,43 @@ def store_stock_report(request):
                 if key in page
             },
         },
+    )
+
+
+@role_required(EmployeeRole.STORE_MANAGER)
+@require_http_methods(["POST"])
+def store_stock_item_count_toggle(request):
+    """Enable/disable stock counting on sale for one item (item-stock page)."""
+    if not item_stock_tracking_enabled():
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Shelf mode is on — item store stock is not tracked.",
+            },
+            status=400,
+        )
+    try:
+        item_id = int(request.POST.get("item_id") or 0)
+    except (TypeError, ValueError):
+        item_id = 0
+    enabled = str(request.POST.get("enabled") or "").strip().lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+    try:
+        item = set_item_stock_count_enabled(item_id=item_id, enabled=enabled)
+    except ValidationError as exc:
+        return JsonResponse(
+            {"ok": False, "error": "; ".join(exc.messages)}, status=400
+        )
+    return JsonResponse(
+        {
+            "ok": True,
+            "item_id": item.pk,
+            "stock_count_enabled": item.stock_count_enabled,
+        }
     )
 
 

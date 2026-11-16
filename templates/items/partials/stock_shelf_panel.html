@@ -66,14 +66,14 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
                 min="0"
                 step="any"
                 inputmode="decimal"
-                placeholder="Buy price"
+                placeholder="Buy price{% if stock_req.shelf_require_buying_price_on_in %}*{% endif %}"
                 aria-label="Buying price for {{ row.name }}"
               >
               <input
                 type="text"
                 name="shelf_note_{{ row.id }}"
                 maxlength="255"
-                placeholder="Note (optional)"
+                placeholder="Note{% if stock_req.shelf_require_note_on_request %}*{% else %} (optional){% endif %}"
                 class="store-stock-qty-input shelf-stock-note"
                 aria-label="Note for {{ row.name }}"
               >

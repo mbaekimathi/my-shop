@@ -1,0 +1,118 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Shelf low stock alerts — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="stock-panel stock-panel--settings stock-panel--low-stock"
+  data-animate="rise"
+  data-stock-mode="low-stock"
+>
+  <header class="stock-panel-head stock-settings-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <p class="stock-kicker">Shelf stock</p>
+        <h2>Shelf low stock alerts</h2>
+        <p>
+          Set each shelf item's "Alert at" level — items at or below that level
+          are flagged low on shelf pages.
+        </p>
+      </div>
+      <div class="stock-settings-head-actions">
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ stock_settings_url }}">
+          <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
+          <span>Shelf stock settings</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  {% if not can_edit_low_stock %}
+  <p class="stock-settings-readonly">
+    You can view these alerts — only staff with the low stock alerts permission can change them.
+  </p>
+  {% endif %}
+
+  {% for group in shelf_low_stock_groups %}
+  <section class="low-stock-shell">
+    <div class="low-stock-toolbar">
+      <h3>{{ group.shop.name }}</h3>
+      <span class="low-stock-chip{% if group.low_count %} low-stock-chip--set{% endif %}">
+        {{ group.low_count }} low · {{ group.item_count }} shelf item{{ group.item_count|pluralize }}
+      </span>
+    </div>
+    <p class="stock-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
+    <div class="low-stock-table-wrap">
+      <table class="low-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Unit</th>
+            <th scope="col" class="low-stock-num">On hand</th>
+            <th scope="col" class="low-stock-num">Alert at</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in group.rows %}
+          <tr class="low-stock-row{% if row.is_low %} is-low{% endif %}">
+            <td class="low-stock-item">
+              <strong>{{ row.name }}</strong>
+              {% if row.category %}<em>{{ row.category }}</em>{% endif %}
+            </td>
+            <td class="low-stock-num">{{ row.unit|default:"—" }}</td>
+            <td class="low-stock-units low-stock-num">
+              <strong>{{ row.quantity_display }}</strong>
+            </td>
+            <td class="low-stock-threshold low-stock-num">
+              {% if can_edit_low_stock %}
+              <form method="post" class="shelf-low-form" style="display:inline-flex;gap:.4rem;align-items:center">
+                {% csrf_token %}
+                <input type="hidden" name="mode" value="low-stock">
+                <input type="hidden" name="stock" value="shelf">
+                <input type="hidden" name="action" value="save_shelf_low_stock">
+                <input type="hidden" name="shop_id" value="{{ group.shop.pk }}">
+                <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
+                <label class="low-stock-threshold-field is-manual">
+                  <span class="visually-hidden">Low stock alert level for {{ row.name }}</span>
+                  <input
+                    type="number"
+                    name="threshold"
+                    inputmode="decimal"
+                    step="any"
+                    min="0"
+                    value="{{ row.low_stock_threshold_display }}"
+                  >
+                </label>
+                <button type="submit" class="low-stock-sync">Save</button>
+              </form>
+              {% else %}
+              <span>{{ row.low_stock_threshold_display }}</span>
+              {% endif %}
+            </td>
+            <td class="low-stock-status">
+              <span class="low-stock-badge{% if row.is_low %} is-low{% else %} is-ok{% endif %}">
+                {% if row.is_low %}Low{% else %}OK{% endif %}
+              </span>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5">No shelf items at this shop yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% empty %}
+  <div class="dashboard-placeholder">
+    <p>No shelf shops are assigned to your account yet.</p>
+  </div>
+  {% endfor %}
+
+  <p class="stock-settings-footnote">
+    Shelf stock only — item stock alerts live under
+    <a href="?mode=low-stock&stock=item">Item low stock alerts</a>.
+  </p>
+</section>
+{% endblock %}
