@@ -365,6 +365,17 @@ html[data-theme="dark"] .workspace-header-bell-badge {
   height: 1.15rem;
 }
 
+.workspace-icon-btn.is-spinning i,
+.workspace-icon-btn.is-spinning svg {
+  animation: workspace-refresh-spin 0.7s linear infinite;
+}
+
+@keyframes workspace-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .workspace-user-menu {
   position: relative;
 }

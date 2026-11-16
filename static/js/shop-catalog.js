@@ -218,7 +218,7 @@
             data-cart-qty-input
             min="0.001"
             step="0.001"
-            ${stockTrackingEnabled && !hideStock && stock > 0 ? `max="${stock}"` : ""}
+            ${stockTrackingEnabled && saleTracked && !hideStock && stock > 0 ? `max="${stock}"` : ""}
             value="1"
             inputmode="decimal"
             aria-label="Quantity in cart"
@@ -245,7 +245,7 @@
       </button>
       <div class="shop-floor-item-meta">
         ${
-          stockTrackingEnabled && !hideStock
+          stockTrackingEnabled && saleTracked && !hideStock
             ? `<span class="shop-floor-stock${out ? " is-empty" : ""}">
           <span class="shop-floor-stock-label">Stock</span>
           <span class="shop-floor-stock-value">${stock}</span>
@@ -774,7 +774,10 @@
                 }
                 card.classList.toggle(
                   "is-out",
-                  stockTrackingEnabled && qty <= 0
+                  stockTrackingEnabled &&
+                    (card.getAttribute("data-item-sale-tracked") || "1") !==
+                      "0" &&
+                    qty <= 0
                 );
               });
           });

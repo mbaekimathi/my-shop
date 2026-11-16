@@ -1962,6 +1962,14 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
 
 def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
     cleaned = validate_item_payload(data, files, editable_shop_ids=editable_shop_ids)
+    from shops.services import get_company_pos_settings
+
+    # New items follow the company stock mode: when item stock tracking is
+    # off, the item is registered with sale deduction off too — flip it per
+    # item under Stock Management → Settings → "Sale stock tracking".
+    deduct_on_sale = bool(
+        getattr(get_company_pos_settings(), "enable_stock_tracking", True)
+    )
     with transaction.atomic():
         item = Item.objects.create(
             category=cleaned["category"],
@@ -1972,6 +1980,7 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
             use_individual_shop_prices=True,
             image=cleaned.get("image"),
             track_serial_number=cleaned["track_serial_number"],
+            deduct_stock_on_sale=deduct_on_sale,
             created_by=profile,
         )
         _sync_shop_item_prices(
