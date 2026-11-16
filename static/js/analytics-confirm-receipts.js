@@ -455,6 +455,9 @@
       <span class="ax-confirm-stack-sub">${phone}</span>
     </div>
   </td>
+  <td class="ax-confirm-sold-by" data-label="Sold by">${escapeHtml(
+    row.sold_by || "—"
+  )}</td>
   <td class="ax-confirm-sold-as" data-label="Sold as">${escapeHtml(
     row.sold_as_label || "—"
   )}</td>

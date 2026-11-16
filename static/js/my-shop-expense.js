@@ -27,6 +27,7 @@
   const clearBtn = form.querySelector("[data-expense-clear]");
   const countEl = form.querySelector("[data-expense-count]");
   const categoryTemplate = form.querySelector("[data-expense-category-template]");
+  const categoryList = form.querySelector("[data-expense-category-list]");
   const printSupplier = form.hasAttribute("data-supplier-print");
 
   let verified = false;
@@ -69,11 +70,46 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
 
-  const categoryLabel = (value) => {
-    const match = [...(categoryDraft?.options || [])].find(
-      (opt) => opt.value === String(value || "")
+  const categoryOptions = () => [
+    ...(categoryList?.querySelectorAll("option") || []),
+  ];
+
+  const categorySlugFor = (text) => {
+    const needle = String(text || "").trim().toLowerCase();
+    if (!needle) return "";
+    const match = categoryOptions().find(
+      (opt) =>
+        (opt.value || "").trim().toLowerCase() === needle ||
+        (opt.getAttribute("data-slug") || "").trim().toLowerCase() === needle
     );
-    return match?.textContent?.trim() || value || "Expense";
+    return match?.getAttribute("data-slug") || "";
+  };
+
+  const categoryLabel = (value) => {
+    const match = categoryOptions().find(
+      (opt) => (opt.getAttribute("data-slug") || "") === String(value || "")
+    );
+    return match?.value?.trim() || value || "Expense";
+  };
+
+  const ensureCategoryOption = (select, value) => {
+    if (!select || !value) return;
+    const exists = [...select.options].some((opt) => opt.value === value);
+    if (!exists) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = categoryLabel(value);
+      select.appendChild(opt);
+    }
+    select.value = value;
+  };
+
+  const rememberCategory = (value) => {
+    if (!categoryList || !value || categorySlugFor(value)) return;
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.setAttribute("data-slug", value);
+    categoryList.appendChild(opt);
   };
 
   const categoryOptionsHtml = () =>
@@ -245,11 +281,13 @@
   };
 
   const addExpense = () => {
-    const category = (categoryDraft?.value || "").trim();
+    const typedCategory = (categoryDraft?.value || "").trim();
+    const category =
+      categorySlugFor(typedCategory) || typedCategory.toUpperCase();
     const name = (nameDraft?.value || "").trim().toUpperCase();
     const amount = Number(amountDraft?.value);
     if (!category) {
-      setHint("Choose a category first.", true);
+      setHint("Pick or type a category first.", true);
       categoryDraft?.focus();
       return false;
     }
@@ -307,8 +345,8 @@
           <input type="hidden" name="name" value="${escapeHtml(name)}">
         </div>
       </div>`;
-    const select = row.querySelector("[name='category']");
-    if (select) select.value = category;
+    ensureCategoryOption(row.querySelector("[name='category']"), category);
+    rememberCategory(category);
     parkedRoot.insertBefore(row, parkedRoot.firstElementChild);
     if (window.lucide?.createIcons) window.lucide.createIcons();
     clearDraft();
@@ -414,7 +452,7 @@
     syncCart();
   };
 
-  const renderSuggest = (wrap, results) => {
+  const renderSuggest = (wrap, results, by) => {
     const suggest = wrap?.querySelector("[data-supplier-suggest]");
     if (!suggest) return;
     suggest.innerHTML = "";
@@ -425,12 +463,20 @@
     results.forEach((row) => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "stock-supplier-suggest-item";
-      btn.innerHTML = `<strong></strong><span></span>`;
-      btn.querySelector("strong").textContent = row.name || "";
-      btn.querySelector("span").textContent =
-        `${row.dial || ""} ${row.phone || ""}`.trim();
-      btn.addEventListener("click", () => applySupplier(row));
+      btn.className = "stock-supplier-suggest-option";
+      btn.innerHTML = `<strong></strong><small></small>`;
+      const phoneLabel = `${row.dial || ""} ${row.phone || ""}`.trim();
+      if (by === "phone") {
+        btn.querySelector("strong").textContent = phoneLabel;
+        btn.querySelector("small").textContent = row.name || "";
+      } else {
+        btn.querySelector("strong").textContent = row.name || "";
+        btn.querySelector("small").textContent = phoneLabel;
+      }
+      btn.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        applySupplier(row);
+      });
       suggest.appendChild(btn);
     });
     suggest.hidden = false;
@@ -475,7 +521,16 @@
       const data = await response.json();
       if (current !== searchSeq) return;
       const results = Array.isArray(data.results) ? data.results : [];
-      renderSuggest(wrap, results);
+      renderSuggest(wrap, results, by);
+
+      // Phone → autofill name/flag on a confident match; name → suggest only.
+      if (by !== "phone" || query.length < 7 || !results.length) return;
+      const match =
+        results.find((row) => phoneDigits(row.phone) === query) ||
+        (results.length === 1 && phoneDigits(results[0].phone).includes(query)
+          ? results[0]
+          : null);
+      if (match) applySupplier(match);
     } catch (_) {
       /* ignore network errors while typing */
     }
@@ -589,6 +644,20 @@
   form.querySelectorAll("[data-supplier-search]").forEach((input) => {
     input.addEventListener("input", () => queueSupplierSearch(input));
     input.addEventListener("focus", () => queueSupplierSearch(input));
+    input.addEventListener("keydown", (event) => {
+      const wrap = input.closest("[data-supplier-search-root]");
+      if (event.key === "Escape") {
+        hideSuggest(wrap);
+        return;
+      }
+      if (event.key !== "Enter") return;
+      const first = wrap?.querySelector(
+        ".stock-supplier-suggest-option:not([disabled])"
+      );
+      if (!first) return;
+      event.preventDefault();
+      first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
   });
 
   document.addEventListener("click", (event) => {

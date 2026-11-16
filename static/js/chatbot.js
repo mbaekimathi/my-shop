@@ -262,6 +262,7 @@
     stockPhone: root.querySelector("[data-stock-phone]"),
     stockPhoneSuggest: root.querySelector("[data-stock-phone-suggest]"),
     stockSupname: root.querySelector("[data-stock-supname]"),
+    stockInpaystatus: root.querySelector("[data-stock-inpaystatus]"),
     stockNameSuggest: root.querySelector("[data-stock-name-suggest]"),
     stockError: root.querySelector("[data-stock-error]"),
     stockSubmit: root.querySelector("[data-stock-submit]"),
@@ -1836,7 +1837,10 @@
         els.stockDetailsToggleLabel.textContent =
           "Supplier · " + (sname || sphone);
       } else {
-        els.stockDetailsToggleLabel.textContent = "Supplier (required)";
+        var sreq = mode === "expense" ? true :
+          ((me.stock_req || {}).in || {}).supplier !== false;
+        els.stockDetailsToggleLabel.textContent =
+          sreq ? "Supplier (required)" : "Supplier (optional)";
       }
       return;
     }
@@ -1911,6 +1915,8 @@
       ? "Sell price (optional — defaults to shop price)"
       : mode === "quickin"
       ? "Buying price"
+      : mode === "stockin" && ((me.stock_req || {}).in || {}).buying_price
+      ? "Buying price (required)"
       : "Buying price (optional — for average cost)";
     if (mode === "sale") {
       els.stockKind.value = "sale";
@@ -1941,6 +1947,16 @@
     if (mode === "stockin" || mode === "expense") {
       els.stockPhone.value = "";
       els.stockSupname.value = "";
+      if (els.stockInpaystatus) {
+        els.stockInpaystatus.value = "";
+        els.stockInpaystatus.hidden = mode !== "stockin";
+      }
+      if (mode === "stockin") {
+        var req = (me.stock_req || {}).in || {};
+        els.stockPhone.placeholder = req.supplier === false
+          ? "Supplier phone (optional)"
+          : "Phone number e.g. 0712 345 678";
+      }
       hideSuggest(els.stockPhoneSuggest);
       hideSuggest(els.stockNameSuggest);
       syncDetailsToggleLabel();
@@ -2763,16 +2779,36 @@
     } else {
       var phone = (els.stockPhone.value || "").trim();
       var sname = (els.stockSupname.value || "").trim();
-      if (!phone) {
-        stockError("Enter the supplier's phone number.");
-        setStockDetails(true);
-        els.stockPhone.focus();
-        return;
+      var sreq = (me.stock_req || {}).in || {};
+      if (sreq.supplier !== false) {
+        if (!phone) {
+          stockError("Enter the supplier's phone number.");
+          setStockDetails(true);
+          els.stockPhone.focus();
+          return;
+        }
+        if (!sname) {
+          stockError("Enter the supplier's name.");
+          setStockDetails(true);
+          els.stockSupname.focus();
+          return;
+        }
       }
-      if (!sname) {
-        stockError("Enter the supplier's name.");
+      if (sreq.buying_price) {
+        var noPrice = state.stock.lines.some(function (l) {
+          return !(parseFloat(l.buying_price) > 0) && !(l.serials || []).length;
+        });
+        if (noPrice) {
+          stockError("Buying price is required for every item.");
+          return;
+        }
+      }
+      var inpay = els.stockInpaystatus
+        ? (els.stockInpaystatus.value || "").trim() : "";
+      if (sreq.payment_status && !inpay) {
+        stockError("Select the payment status.");
         setStockDetails(true);
-        els.stockSupname.focus();
+        els.stockInpaystatus.focus();
         return;
       }
       payload = {
@@ -2786,6 +2822,7 @@
         }),
         supplier_phone: phone,
         supplier_name: sname,
+        payment_status: inpay || undefined,
         staff_code: els.stockStaffCode.value
       };
     }

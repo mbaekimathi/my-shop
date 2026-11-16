@@ -112,6 +112,7 @@ from .throttle import rate_limit
 from .workspace import (
     ROLE_PAGE_META,
     buy_stock_modal_context,
+    cashier_day_summaries_context,
     get_dashboard_module,
     get_settings_section,
     get_settings_sections,
@@ -180,6 +181,7 @@ def _render_role_page(request, expected_role):
     }
     if expected_role == EmployeeRole.SHOP_CASHIER:
         context.update(buy_stock_modal_context(request, profile))
+        context.update(cashier_day_summaries_context(request, profile))
     return render(request, "employees/role_home.html", context)
 
 
@@ -3111,6 +3113,12 @@ def _company_pos_settings(
                 "show_tax": bool(pos.enable_tax and preview_tax_percent > 0),
                 "total": _money(preview_total),
                 "payment": receipt_accepted_payment_methods_label(pos),
+                "payment_method_label": "M-Pesa",
+                "payment_split": [],
+                "amount_paid": _money(preview_total),
+                "show_amount_paid": True,
+                "balance_due": "",
+                "payment_reference": "",
                 "payment_details": (
                     pos.mpesa_payment_details()
                     if pos.enable_receipt_payment_methods
@@ -3188,6 +3196,18 @@ def _company_pos_settings(
         "show_tax": context["receipt_preview"]["show_tax"],
         "total": context["receipt_preview"]["total"],
         "payment": context["receipt_preview"]["payment"],
+        "payment_method_label": context["receipt_preview"].get(
+            "payment_method_label"
+        )
+        or "",
+        "payment_split": list(context["receipt_preview"].get("payment_split") or []),
+        "amount_paid": context["receipt_preview"].get("amount_paid") or "",
+        "show_amount_paid": bool(
+            context["receipt_preview"].get("show_amount_paid")
+        ),
+        "balance_due": context["receipt_preview"].get("balance_due") or "",
+        "payment_reference": context["receipt_preview"].get("payment_reference")
+        or "",
         "payment_details": context["receipt_preview"]["payment_details"],
         "footer": context["receipt_preview"]["footer"],
         "return_notice": context["receipt_preview"].get("return_notice") or "",

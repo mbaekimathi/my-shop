@@ -2818,7 +2818,7 @@ def my_shop_supplier_search(request, shop_id):
 @shop_floor_required
 @require_http_methods(["GET"])
 def expense_supplier_search_api(request):
-    """Search expense suppliers by name or phone."""
+    """Search suppliers by name or phone (expense suppliers, then stock suppliers)."""
     query = (request.GET.get("q") or "").strip()
     by = (request.GET.get("by") or "name").strip().lower()
     dial = (request.GET.get("dial") or "").strip()
@@ -2826,22 +2826,44 @@ def expense_supplier_search_api(request):
     results = search_expense_suppliers(
         query=query, by=by, dial=dial, limit=8, match=match
     )
-    return JsonResponse(
+    seen = {
+        (supplier.phone_country_code, re.sub(r"\D+", "", supplier.phone_number))
+        for supplier in results
+    }
+    payload = [
         {
-            "ok": True,
-            "match": match,
-            "results": [
-                {
-                    "id": supplier.pk,
-                    "name": supplier.name,
-                    "dial": supplier.phone_country_code,
-                    "iso": supplier.phone_country_iso or "KE",
-                    "phone": supplier.phone_number,
-                }
-                for supplier in results
-            ],
+            "id": supplier.pk,
+            "name": supplier.name,
+            "dial": supplier.phone_country_code,
+            "iso": supplier.phone_country_iso or "KE",
+            "phone": supplier.phone_number,
         }
-    )
+        for supplier in results
+    ]
+    # Also surface stock (buy-stock) suppliers — a blank id keeps the POST
+    # upsert keyed on (dial, phone) so no stock-supplier pk is reused.
+    for supplier in search_suppliers(
+        query=query, by=by, dial=dial, limit=8, match=match
+    ):
+        if len(payload) >= 8:
+            break
+        key = (
+            supplier.phone_country_code,
+            re.sub(r"\D+", "", supplier.phone_number),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        payload.append(
+            {
+                "id": "",
+                "name": supplier.name,
+                "dial": supplier.phone_country_code,
+                "iso": supplier.phone_country_iso or "KE",
+                "phone": supplier.phone_number,
+            }
+        )
+    return JsonResponse({"ok": True, "match": match, "results": payload})
 
 
 @shop_floor_required
@@ -5068,6 +5090,12 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
             "show_tax": bool(pos.enable_tax and preview_tax_percent > 0),
             "total": _money(preview_total),
             "payment": receipt_accepted_payment_methods_label(pos),
+            "payment_method_label": "M-Pesa",
+            "payment_split": [],
+            "amount_paid": _money(preview_total),
+            "show_amount_paid": True,
+            "balance_due": "",
+            "payment_reference": "",
             "payment_details": (
                 pos.mpesa_payment_details()
                 if pos.enable_receipt_payment_methods
@@ -5341,6 +5369,18 @@ def my_shop_settings_receipt(request, shop_id):
         "show_tax": context["receipt_preview"]["show_tax"],
         "total": context["receipt_preview"]["total"],
         "payment": context["receipt_preview"]["payment"],
+        "payment_method_label": context["receipt_preview"].get(
+            "payment_method_label"
+        )
+        or "",
+        "payment_split": list(context["receipt_preview"].get("payment_split") or []),
+        "amount_paid": context["receipt_preview"].get("amount_paid") or "",
+        "show_amount_paid": bool(
+            context["receipt_preview"].get("show_amount_paid")
+        ),
+        "balance_due": context["receipt_preview"].get("balance_due") or "",
+        "payment_reference": context["receipt_preview"].get("payment_reference")
+        or "",
         "payment_details": context["receipt_preview"]["payment_details"],
         "footer": context["receipt_preview"]["footer"],
         "return_notice": context["receipt_preview"].get("return_notice") or "",

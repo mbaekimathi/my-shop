@@ -4698,6 +4698,13 @@
   color: #5c3f9a;
 }
 
+/* Shelf-stock ledgers record a distinct "register" (first-stock) type. */
+.stock-report-type--register,
+.stock-report-qty--register:not(.is-empty) {
+  background: rgba(46, 125, 110, 0.14);
+  color: #1f6b5c;
+}
+
 .stock-report-table--timeline {
   min-width: 0;
 }

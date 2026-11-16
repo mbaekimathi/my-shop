@@ -66,6 +66,7 @@ if _myshop_apps_installed():
     StoreStockMovement = mm.StoreStockMovement
     ShopDeliveryAssignedRider = mm.ShopDeliveryAssignedRider
     ClientModel = mm.Client
+    CompanyStockSettings = mm.CompanyStockSettings
 else:
     Shop = mm.Shop
     Item = mm.Item
@@ -89,6 +90,7 @@ else:
     ShopDelivery = mm.ShopDelivery
     ShopDeliveryAssignedRider = mm.ShopDeliveryAssignedRider
     ClientModel = mm.Client
+    CompanyStockSettings = mm.CompanyStockSettings
 
 UNMANAGED = [
     Shop,
@@ -113,6 +115,7 @@ UNMANAGED = [
     ShopDelivery,
     ShopDeliveryAssignedRider,
     ClientModel,
+    CompanyStockSettings,
 ]
 
 
@@ -159,11 +162,17 @@ def ensure_employee_scratch_tables(ddl_statements):
             cur.execute(ddl)
 
 
+DAY_EMP_PK = 999
+
+
 def reset_employee_rows():
     """Clear employee profile rows used by chat auth fixtures."""
+    # The day-session fixture employee (pk 999) stays — open ShopDaySession
+    # rows FK to it (PROTECT); every other row may go.
+    keep = " WHERE id != %d" % DAY_EMP_PK if _myshop_apps_installed() else ""
     with connection.cursor() as cur:
         cur.execute("DELETE FROM employees_employeeprofile_assigned_shops")
-        cur.execute("DELETE FROM employees_employeeprofile")
+        cur.execute("DELETE FROM employees_employeeprofile" + keep)
 
 
 def insert_employee_profile(*, pk, employee_id, user_id, role, status="active"):
@@ -274,6 +283,8 @@ class ChatTestCase(TransactionTestCase):
         )
         self.staff_pk = 1
         self.staff_employee_id = "900001"
+        self.staff_pk = 1
+        self.staff_employee_id = "900001"
         insert_employee_profile(
             pk=self.staff_pk,
             employee_id=self.staff_employee_id,
@@ -281,6 +292,32 @@ class ChatTestCase(TransactionTestCase):
             role="shop_cashier",
             status="active",
         )
+        # Dedicated fixture employee owning the open day sessions — subclass
+        # fixtures wipe/reseed the regular staff rows but never touch pk 999.
+        insert_employee_profile(
+            pk=DAY_EMP_PK, employee_id="999999", user_id=None,
+            role="shop_cashier", status="active",
+        )
+        # Company with compulsory stock fields OFF — tests exercise the plain
+        # flows; enforcement is covered by dedicated flag-on tests.
+        CompanyStockSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "require_buying_price_on_in": False,
+                "require_supplier_on_in": False,
+                "require_payment_status_on_in": False,
+                "require_reason_on_out": False,
+                "require_refund_on_out": False,
+                "require_note_on_request": False,
+            },
+        )
+        # Both shops are mid-day — open/close is compulsory by default and
+        # sales/credits/trade-outs need an open shop day.
+        for shop in (self.shop_a, self.shop_b):
+            ShopDaySession.objects.create(
+                shop_id=shop.pk, opened_by_id=DAY_EMP_PK,
+                opening_cash=0, opening_mpesa=0,
+            )
         self.client = Client()
 
     def create_receipt(self, **kwargs):
@@ -2248,7 +2285,7 @@ class ReceiptsPageTests(ChatTestCase):
 
     def test_confirm_rejects_non_pending(self):
         receipt = self.make_sale()
-        receipt.status = "confirmed"
+        receipt.status = "partial_return"
         receipt.save(update_fields=["status"])
         resp = self.client.post(
             reverse("chat:api_receipts_confirm"),
@@ -2256,6 +2293,17 @@ class ReceiptsPageTests(ChatTestCase):
             content_type="application/json",
         )
         self.assertFalse(resp.json()["ok"])
+        # Already-confirmed sales confirm idempotently (canonical semantics).
+        receipt.status = "confirmed"
+        receipt.save(update_fields=["status"])
+        resp = self.client.post(
+            reverse("chat:api_receipts_confirm"),
+            data=json.dumps({"ids": [receipt.pk], "staff_code": "654321"}),
+            content_type="application/json",
+        )
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("already confirmed", data["message"])
 
     def test_cancel_pending_restocks(self):
         receipt = self.make_sale("3")

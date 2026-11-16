@@ -159,6 +159,13 @@
     const receiptIdInput = payModal.querySelector("[data-ax-pay-receipt-id]");
     const receiptKindInput = payModal.querySelector("[data-ax-pay-receipt-kind]");
     const receiptIdsWrap = payModal.querySelector("[data-ax-pay-receipt-ids]");
+    const accountIdInput = payForm?.querySelector("[name=account_id]");
+    const supplierNameInput = payForm?.querySelector("[name=supplier_name]");
+    const supplierPhoneInput = payForm?.querySelector("[name=supplier_phone]");
+    const defaultAccountId =
+      accountIdInput?.value || payModal.getAttribute("data-account-id") || "";
+    const defaultSupplierName = supplierNameInput?.value || "";
+    const defaultSupplierPhone = supplierPhoneInput?.value || "";
     const payTitleEl = payModal.querySelector("[data-ax-pay-title]");
     const payHintEl = payModal.querySelector("[data-ax-pay-hint]");
     const payDueEl = payModal.querySelector("[data-ax-pay-due]");
@@ -279,6 +286,23 @@
           !multi && !payAll
             ? (source?.getAttribute?.("data-pay-kind") || "").trim()
             : "";
+      }
+      const sourceAccountId = source?.getAttribute?.("data-account-id");
+      if (accountIdInput) {
+        accountIdInput.value =
+          sourceAccountId != null ? sourceAccountId.trim() : defaultAccountId;
+      }
+      const sourceSupplierName = source?.getAttribute?.("data-supplier-name");
+      if (supplierNameInput) {
+        supplierNameInput.value =
+          sourceSupplierName != null ? sourceSupplierName : defaultSupplierName;
+      }
+      const sourceSupplierPhone = source?.getAttribute?.("data-supplier-phone");
+      if (supplierPhoneInput) {
+        supplierPhoneInput.value =
+          sourceSupplierPhone != null
+            ? sourceSupplierPhone
+            : defaultSupplierPhone;
       }
       if (payTitleEl) payTitleEl.textContent = title;
       const dueNumber = Number.parseFloat(String(dueRaw || "0").replace(/,/g, "")) || 0;

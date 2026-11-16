@@ -1,0 +1,1056 @@
+{% extends "employees/workspace_base.html" %}
+{% load static stock_visibility %}
+
+{% block title %}{{ movement_title|default:"Stock Movement" }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="stock-panel stock-panel--report" data-animate="rise" data-stock-mode="movements">
+  <header class="stock-panel-head">
+    <div class="stock-panel-head-top">
+      <div>
+        <h2>{{ movement_title|default:"Stock movement" }}</h2>
+        <p>{{ movement_subtitle|default:report_period_label }}</p>
+      </div>
+    </div>
+
+    <form class="stock-report-filters" method="get" data-stock-report-filters{% if item_picker_url %} data-item-picker-url="{{ item_picker_url }}"{% endif %}>
+      {% for name, value in movement_hidden_params %}
+      <input type="hidden" name="{{ name }}" value="{{ value }}">
+      {% endfor %}
+      {% if filter_shops %}
+      <label class="stock-report-field">
+        <span>Shop</span>
+        <select name="shop_id" aria-label="Shop">
+          <option value="">All shops</option>
+          {% for shop in filter_shops %}
+          <option value="{{ shop.pk }}"{% if shop.pk in selected_shop_ids %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+
+      <label class="stock-report-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="day"{% if report_range == 'day' %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == 'period' %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == 'month' %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == 'year' %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field" data-range-field="day"{% if report_range != 'day' %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" data-stock-report-calendar required aria-label="Select day">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" data-stock-report-calendar required aria-label="Period start">
+      </label>
+      <label class="stock-report-field" data-range-field="period"{% if report_range != 'period' %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" data-stock-report-calendar required aria-label="Period end">
+      </label>
+      <label class="stock-report-field" data-range-field="month"{% if report_range != 'month' %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" data-stock-report-calendar required aria-label="Select month">
+      </label>
+      <label class="stock-report-field" data-range-field="year"{% if report_range != 'year' %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          data-stock-report-calendar
+          required
+          aria-label="Select year"
+        >
+      </label>
+
+      <label class="stock-report-field">
+        <span>View by</span>
+        <select name="view_by" aria-label="View by">
+          <option value="timeline"{% if view_by == 'timeline' %} selected{% endif %}>Timeline</option>
+          <option value="item"{% if view_by == 'item' %} selected{% endif %}>Period summary</option>
+        </select>
+      </label>
+
+      <div class="stock-report-field stock-report-type-multi" data-stock-type-multi>
+        <span>Type</span>
+        <button
+          type="button"
+          class="stock-report-type-trigger"
+          data-stock-type-trigger
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-label="Movement types"
+        >
+          <span data-stock-type-label>{% if event_filter_label and event_filter != 'all' %}{{ event_filter_label }}{% else %}All{% endif %}</span>
+          <i data-lucide="chevron-down" aria-hidden="true"></i>
+        </button>
+        <div class="stock-report-type-menu" data-stock-type-menu hidden role="listbox" aria-multiselectable="true">
+          <label class="stock-report-type-option stock-report-type-option--all">
+            <input
+              type="checkbox"
+              value="all"
+              data-stock-type-all
+              {% if not selected_event_types %}checked{% endif %}
+            >
+            <span>All</span>
+          </label>
+          {% for option in event_filter_options %}
+          <label class="stock-report-type-option">
+            <input
+              type="checkbox"
+              name="event_type"
+              value="{{ option.value }}"
+              data-stock-type-option
+              {% if option.value in selected_event_types %}checked{% endif %}
+            >
+            <span>{{ option.label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <label class="stock-report-field">
+        <span>Items</span>
+        <select name="item_mode" data-stock-item-mode aria-label="Item filter">
+          <option value="all"{% if item_mode != 'category' and item_mode != 'items' %} selected{% endif %}>All</option>
+          <option value="category"{% if item_mode == 'category' %} selected{% endif %}>Category</option>
+          <option value="items"{% if item_mode == 'items' %} selected{% endif %}>Item</option>
+        </select>
+      </label>
+
+      <div class="stock-report-field stock-report-live-search" data-item-mode-panel="all"{% if item_mode == 'category' or item_mode == 'items' %} hidden{% endif %}>
+        <span>Search</span>
+        <div class="stock-report-item-picker-box" data-stock-live-suggest>
+          <input
+            type="search"
+            name="q"
+            value="{{ search_q }}"
+            placeholder="Type to search items…"
+            autocomplete="off"
+            data-stock-live-search
+            {% if item_mode == 'category' or item_mode == 'items' %}disabled{% endif %}
+            aria-label="Search items"
+          >
+          <div class="stock-report-item-results" data-stock-live-results hidden></div>
+        </div>
+      </div>
+
+      <label class="stock-report-field" data-item-mode-panel="category"{% if item_mode != 'category' %} hidden{% endif %}>
+        <span>Category</span>
+        <select name="category" aria-label="Category"{% if item_mode != 'category' %} disabled{% endif %}>
+          <option value="">Select category</option>
+          {% for category in categories %}
+          <option value="{{ category }}"{% if category in selected_categories %} selected{% endif %}>{{ category }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <div class="stock-report-field stock-report-item-picker" data-item-mode-panel="items"{% if item_mode != 'items' %} hidden{% endif %}>
+        <span>Search item</span>
+        <div class="stock-report-item-picker-box" data-stock-item-picker>
+          <input
+            type="search"
+            placeholder="Type to search…"
+            autocomplete="off"
+            data-stock-item-search
+            {% if item_mode != 'items' %}disabled{% endif %}
+            aria-label="Search items"
+          >
+          <div class="stock-report-item-results" data-stock-item-results hidden></div>
+        </div>
+        <div class="stock-report-item-chips" data-stock-item-chips>
+          {% for item in selected_filter_items %}
+          <span class="stock-report-item-chip" data-item-id="{{ item.pk }}">
+            {{ item.name }}
+            {% if item.is_suspended %}<span class="stock-item-badge">{{ item.item_badge|default:"Suspended" }}</span>{% endif %}
+            <button type="button" aria-label="Remove {{ item.name }}" data-stock-item-remove>&times;</button>
+            <input type="hidden" name="item_id" value="{{ item.pk }}">
+          </span>
+          {% endfor %}
+        </div>
+        <script type="application/json" data-stock-item-catalog>{{ filter_items_json|safe }}</script>
+      </div>
+
+      <div class="stock-report-filter-actions">
+        <button type="submit" class="stock-report-apply">Apply</button>
+        <label class="stock-report-field stock-report-download-kind">
+          <span>PDF type</span>
+          <select name="report_kind" aria-label="Download report type">
+            <option value="actual"{% if report_kind != 'audit' %} selected{% endif %}>Actual report</option>
+            {% if movement_pdf_audit %}
+            <option value="audit"{% if report_kind == 'audit' %} selected{% endif %}>Audit trail</option>
+            {% endif %}
+          </select>
+        </label>
+        <button
+          type="submit"
+          class="stock-report-apply stock-report-apply--ghost"
+          name="download"
+          value="1"
+          data-stock-report-download
+        >
+          <i data-lucide="download" aria-hidden="true"></i>
+          Download PDF
+        </button>
+      </div>
+    </form>
+  </header>
+
+  <div id="stock-movements" class="stock-report-movements">
+    {% if is_item_movement_detail and detail_item %}
+    <header class="stock-report-movements-head">
+      <a class="stock-report-back-link" href="{{ movements_back_url }}">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+        All items
+      </a>
+    </header>
+    {% endif %}
+
+    {% if is_item_movement_detail and detail_item %}
+    <div class="stock-report-item-focus">
+      <strong>{{ detail_item.name }}</strong>
+      {% if detail_item.is_suspended %}<span class="stock-item-badge">{{ detail_item.item_badge|default:"Suspended" }}</span>{% endif %}
+      {% if detail_item.category %}
+      <span>{{ detail_item.category }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if is_item_movement_summary %}
+      {% if movement_item_rows %}
+        <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--items">
+          <table class="staff-table stock-report-table stock-report-table--items-summary{% if movement_item_group_by_shop %} stock-report-table--items-by-shop{% endif %}">
+            <thead>
+              <tr>
+                <th scope="col" data-col="item">Item</th>
+                {% if movement_item_group_by_shop %}
+                <th scope="col" data-col="shop">Shop</th>
+                {% endif %}
+                <th scope="col" data-col="num" class="is-center">Events</th>
+                <th scope="col" data-col="num" class="is-center" title="Stock in">In</th>
+                <th scope="col" data-col="num" class="is-center" title="Stock out">Out</th>
+                <th scope="col" data-col="num" class="is-center" title="Transfer in">T-in</th>
+                <th scope="col" data-col="num" class="is-center" title="Transfer out">T-out</th>
+                <th scope="col" data-col="num" class="is-center" title="Trade out, exchange, return, or trade sale">Trade</th>
+                <th scope="col" data-col="num" class="is-center" title="Stock sale">Sale</th>
+                <th scope="col" data-col="num" class="is-center" title="Returned">Return</th>
+                <th scope="col" data-col="num" class="is-center" title="Current total quantity on hand">Stock</th>
+                <th scope="col" data-col="time">Last</th>
+                <th scope="col" data-col="action"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in movement_item_rows %}
+              <tr
+                data-stock-live-row
+                data-item-group="{{ row.item_id }}"
+                data-search-text="{{ row.item_name|lower }} {{ row.item_category|lower }} {{ row.shop_name|lower }}"
+                class="{% if row.is_suspended %}is-suspended {% endif %}{% if row.is_deleted %}is-deleted {% endif %}{% if movement_item_group_by_shop %}{% if row.is_item_total %}is-item-total{% elif row.is_item_start %}is-item-start{% else %}is-shop-follow{% endif %}{% endif %}"
+              >
+                <td data-label="Item">
+                  {% if not movement_item_group_by_shop or row.is_item_start %}
+                  <strong>{{ row.item_name }}</strong>
+                  {% if row.is_deleted %}<span class="stock-item-badge stock-item-badge--deleted">Deleted</span>{% elif row.is_suspended %}<span class="stock-item-badge">{{ row.item_badge|default:"Suspended" }}</span>{% endif %}
+                  {% if row.item_category %}
+                  <span class="stock-report-from">{{ row.item_category }}</span>
+                  {% endif %}
+                  {% endif %}
+                </td>
+                {% if movement_item_group_by_shop %}
+                <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
+                {% endif %}
+                <td data-label="Events">{{ row.event_count }}</td>
+                <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in{% if row.units_in == 0 %} is-empty{% endif %}">{{ row.units_in }}</span></td>
+                <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_out == 0 %} is-empty{% endif %}">{{ row.units_out }}</span></td>
+                <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--transfer-in{% if row.units_transfer_in == 0 %} is-empty{% endif %}">{{ row.units_transfer_in }}</span></td>
+                <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--transfer-out{% if row.units_transfer_out == 0 %} is-empty{% endif %}">{{ row.units_transfer_out }}</span></td>
+                <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade{% if row.units_trade == 0 %} is-empty{% endif %}">{{ row.units_trade }}</span></td>
+                <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
+                <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if row.units_return == 0 %} is-empty{% endif %}">{{ row.units_return }}</span></td>
+                <td data-label="Current stock">
+                  {% if mask_stock %}
+                  {% stock_qty row.current_stock row.hide_item_id row.item_category row.shop_id as shown_stock %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_stock == 'Hidden' %} is-hidden{% elif row.current_stock == 0 %} is-empty{% endif %}">{{ shown_stock }}</span>
+                  {% else %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if row.current_stock == 0 %} is-empty{% endif %}">{{ row.current_stock }}</span>
+                  {% endif %}
+                </td>
+                <td data-label="Last activity">
+                  {% if row.last_at %}
+                    {% if report_range == 'day' %}
+                    {{ row.last_at|time:"H:i" }}
+                    {% else %}
+                    {{ row.last_at|date:"d M Y" }} · {{ row.last_at|time:"H:i" }}
+                    {% endif %}
+                  {% else %}
+                  —
+                  {% endif %}
+                </td>
+                <td data-label="Actions">
+                  {% if row.detail_url %}
+                  <a class="stock-report-item-link" href="{{ row.detail_url }}">View details</a>
+                  {% else %}
+                  —
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            {% if movement_item_rows %}
+            <tfoot>
+              <tr>
+                <td data-label="Item"><strong>Total</strong></td>
+                {% if movement_item_group_by_shop %}
+                <td data-label="Shop"></td>
+                {% endif %}
+                <td data-label="Events">{{ movement_item_totals.event_count }}</td>
+                <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in">{{ movement_item_totals.units_in }}</span></td>
+                <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out">{{ movement_item_totals.units_out }}</span></td>
+                <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--transfer-in">{{ movement_item_totals.units_transfer_in }}</span></td>
+                <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--transfer-out">{{ movement_item_totals.units_transfer_out }}</span></td>
+                <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade">{{ movement_item_totals.units_trade }}</span></td>
+                <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale">{{ movement_item_totals.units_sale }}</span></td>
+                <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ movement_item_totals.units_return }}</span></td>
+                <td data-label="Current stock">{% if mask_stock %}{% stock_level_total movement_item_totals.current_stock as shown_total %}<span class="stock-matrix-qty stock-matrix-qty--total{% if shown_total == 'Hidden' %} is-hidden{% endif %}">{{ shown_total }}</span>{% else %}<span class="stock-matrix-qty stock-matrix-qty--total">{{ movement_item_totals.current_stock }}</span>{% endif %}</td>
+                <td data-label="Last activity"></td>
+                <td data-label="Actions"></td>
+              </tr>
+            </tfoot>
+            {% endif %}
+          </table>
+        </div>
+      {% else %}
+      <div class="dashboard-placeholder">
+        <i data-lucide="package" aria-hidden="true"></i>
+        <p>
+          {% if search_q %}
+          No items match “{{ search_q }}” in {{ report_period_label }} for these filters.
+          {% elif event_filter != 'all' %}
+          No {{ event_filter_label|default:event_filter }} movements in {{ report_period_label }} for these filters.
+          {% else %}
+          No stock or movement in {{ report_period_label }} for these filters.
+          {% endif %}
+        </p>
+      </div>
+      {% endif %}
+    {% else %}
+      {% if movement_event_groups %}
+      <div class="staff-table-wrap stock-report-table-wrap stock-report-table-wrap--timeline">
+        <table class="staff-table stock-report-table stock-report-table--timeline{% if is_item_movement_detail %} stock-report-table--timeline-detail{% endif %}">
+          <thead>
+            <tr>
+              <th scope="col" data-col="when">When · type</th>
+              {% if not is_item_movement_detail %}
+              <th scope="col" data-col="item" data-label="Item">Item</th>
+              {% endif %}
+              <th scope="col" data-col="receipt">Rcpt</th>
+              <th scope="col" data-col="qty" class="is-center">Qty</th>
+              <th scope="col" data-col="serial" class="is-center">Serial</th>
+              <th scope="col" data-col="pay" class="is-center">Pay</th>
+              <th scope="col" data-col="trade">Trade</th>
+              <th scope="col" data-col="from">From</th>
+              <th scope="col" data-col="to">To</th>
+              <th scope="col" data-col="sent">Sent</th>
+              <th scope="col" data-col="receive">Received</th>
+            </tr>
+          </thead>
+          {% for group in movement_event_groups %}
+          <tbody
+            class="stock-report-receipt-group{% if group.is_multi %} is-multi{% endif %}"
+            data-stock-live-row
+            data-search-text="{{ group.search_text }}"
+          >
+            {% if group.is_multi %}
+            <tr class="stock-report-receipt-head">
+              <td colspan="{% if is_item_movement_detail %}10{% else %}11{% endif %}">
+                <div class="stock-report-receipt-head-inner">
+                  <strong class="stock-report-receipt-number">{{ group.receipt_number }}</strong>
+                  <span class="stock-report-receipt-meta">
+                    {% if report_range == 'day' %}
+                    {{ group.happened_at|time:"H:i" }}
+                    {% else %}
+                    {{ group.happened_at|date:"d M Y" }} · {{ group.happened_at|time:"H:i" }}
+                    {% endif %}
+                    {% if group.shop_name %} · {{ group.shop_name }}{% endif %}
+                    · {{ group.activities|length }} activities
+                  </span>
+                  <span class="stock-report-receipt-labels">
+                    {% for badge in group.activity_labels %}
+                    <span class="stock-report-type stock-report-type--{{ badge.type_class|default:badge.event_type }}">{{ badge.label }}</span>
+                    {% endfor %}
+                  </span>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
+            {% for event in group.activities %}
+            <tr class="{% if group.is_multi %}stock-report-receipt-activity{% endif %}">
+              <td data-label="When / Type">
+                <div class="stock-report-when-type">
+                  <time class="stock-report-when" datetime="{{ event.happened_at|date:'c' }}">
+                    {% if report_range == 'day' %}
+                    {{ event.happened_at|time:"H:i" }}
+                    {% elif report_range == 'year' or report_range == 'month' %}
+                    <span class="stock-report-when-date">{{ event.happened_at|date:"d/m/y" }}</span>
+                    <span class="stock-report-when-time">{{ event.happened_at|time:"H:i" }}</span>
+                    {% else %}
+                    <span class="stock-report-when-date">{{ event.happened_at|date:"d M" }}</span>
+                    <span class="stock-report-when-time">{{ event.happened_at|time:"H:i" }}</span>
+                    {% endif %}
+                  </time>
+                  <span class="stock-report-type stock-report-type--{{ event.type_class|default:event.event_type }}">
+                    {{ event.event_label }}
+                  </span>
+                </div>
+              </td>
+              {% if not is_item_movement_detail %}
+              <td data-label="Item">
+                <strong>{{ event.item_name }}</strong>
+                {% if event.item_deleted %}<span class="stock-item-badge stock-item-badge--deleted">Deleted</span>{% elif event.item_suspended %}<span class="stock-item-badge">{{ event.item_badge|default:"Suspended" }}</span>{% endif %}
+                {% if event.item_category %}
+                <span class="stock-report-from">{{ event.item_category }}</span>
+                {% endif %}
+              </td>
+              {% endif %}
+              <td data-label="Receipt">
+                {% if event.receipt_number %}
+                <span class="stock-report-receipt-ref">{{ event.receipt_number }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Qty">
+                <span class="stock-matrix-qty stock-report-qty--{{ event.type_class|default:event.event_type }}{% if event.quantity == 0 %} is-empty{% endif %}">
+                  {{ event.quantity }}
+                </span>
+              </td>
+              <td data-label="Serial">
+                {% if event.serial_numbers %}
+                <div class="stock-report-serial-cell">
+                  <button
+                    type="button"
+                    class="ax-eye stock-report-serial-eye"
+                    data-stock-serials-view
+                    data-serials-title="{% if event.item_name %}{{ event.item_name }}{% endif %}{% if event.receipt_number %} · {{ event.receipt_number }}{% endif %}"
+                    aria-label="View {{ event.serial_numbers|length }} serial{{ event.serial_numbers|length|pluralize }}"
+                  >
+                    <i data-lucide="eye" aria-hidden="true"></i>
+                  </button>
+                  <span class="stock-report-serial-count">{{ event.serial_numbers|length }}</span>
+                  <ul class="stock-report-serials-data" hidden>
+                    {% for serial in event.serial_numbers %}
+                    <li>{{ serial }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Pay">
+                {% if event.pay %}
+                <span class="stock-report-pay">{{ event.pay }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Trade">
+                {% if event.trade %}
+                <span class="stock-report-trade stock-report-trade--{{ event.trade|slugify }}">{{ event.trade }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="From">
+                {% if event.from_shop_name %}
+                <span class="stock-report-party">{{ event.from_shop_name }}</span>
+                {% elif event.from_label %}
+                <span class="stock-report-party">{{ event.from_label }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="To">
+                {% if event.to_shop_name or event.to_label or event.note %}
+                <span class="stock-report-party">{% if event.to_shop_name %}{{ event.to_shop_name }}{% elif event.to_label %}{{ event.to_label }}{% else %}—{% endif %}</span>
+                {% if event.note and not event.to_shop_name %}
+                <span class="stock-report-from">{{ event.note }}</span>
+                {% endif %}
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Sent">
+                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' or event.event_type == 'request' %}
+                  {% with sent_name=event.sent_by|default:event.requested_by %}
+                  {% if sent_name and sent_name != '—' %}
+                  <span class="stock-report-seller">{{ sent_name }}</span>
+                  {% else %}
+                  <span class="stock-report-empty">—</span>
+                  {% endif %}
+                  {% endwith %}
+                {% elif event.by and event.by != '—' %}
+                <span class="stock-report-seller">{{ event.by }}</span>
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+              <td data-label="Received">
+                {% if event.transfer_direction or event.event_type == 'transfer_fulfilled' or event.event_type == 'request' %}
+                  {% if event.received_by and event.received_by != '—' %}
+                  <span class="stock-report-seller">{{ event.received_by }}</span>
+                  {% else %}
+                  <span class="stock-report-empty">—</span>
+                  {% endif %}
+                {% else %}
+                <span class="stock-report-empty">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          {% endfor %}
+          <tfoot>
+            <tr class="stock-report-timeline-total">
+              <td
+                colspan="{% if is_item_movement_detail %}2{% else %}3{% endif %}"
+                data-label="When / Type"
+              >
+                <strong>Current stock</strong>
+              </td>
+              <td data-label="Qty" class="is-center">
+                {% if mask_stock %}
+                {% if detail_item %}{% stock_qty timeline_current_stock detail_item_hide_id detail_item.category as shown_timeline %}{% else %}{% stock_level_total timeline_current_stock as shown_timeline %}{% endif %}
+                <span class="stock-matrix-qty stock-report-qty--transfer-in{% if shown_timeline == 'Hidden' %} is-hidden{% endif %}">{{ shown_timeline }}</span>
+                {% else %}
+                <span class="stock-matrix-qty stock-report-qty--transfer-in">{{ timeline_current_stock }}</span>
+                {% endif %}
+              </td>
+              <td colspan="7" data-label=""></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {% if timeline_total_pages > 1 %}
+      <nav class="stock-report-pagination" aria-label="Timeline pages">
+        <p class="stock-report-pagination-meta">
+          Page {{ timeline_page }} of {{ timeline_total_pages }}
+          · {{ timeline_total_groups }} movement{{ timeline_total_groups|pluralize }}
+        </p>
+        <div class="stock-report-pagination-links">
+          {% if timeline_prev_url %}
+          <a class="stock-report-pagination-link" href="{{ timeline_prev_url }}">Previous</a>
+          {% endif %}
+          <span class="stock-report-pagination-current">{{ timeline_page }} / {{ timeline_total_pages }}</span>
+          {% if timeline_next_url %}
+          <a class="stock-report-pagination-link" href="{{ timeline_next_url }}">Next</a>
+          {% endif %}
+        </div>
+      </nav>
+      {% endif %}
+      {% else %}
+      <div class="dashboard-placeholder">
+        <i data-lucide="arrow-down-up" aria-hidden="true"></i>
+        <p>
+          {% if search_q %}
+          No movements match “{{ search_q }}” in {{ report_period_label }} for these filters.
+          {% elif event_filter != 'all' %}
+          No {{ event_filter_label|default:event_filter }} movements in {{ report_period_label }} for these filters.
+          {% else %}
+          No stock movements in {{ report_period_label }} for these filters.
+          {% endif %}
+        </p>
+      </div>
+      {% endif %}
+    {% endif %}
+  </div>
+</section>
+
+<div
+  class="workspace-modal stock-report-serials-modal"
+  data-stock-report-serials-modal
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-stock-report-serials-close></div>
+  <div
+    class="workspace-modal-dialog stock-report-serials-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stock-report-serials-title"
+  >
+    <header class="workspace-modal-head">
+      <div>
+        <p class="stock-report-serials-kicker">Serial numbers</p>
+        <h2 id="stock-report-serials-title" data-stock-report-serials-title>Serials</h2>
+      </div>
+      <button type="button" class="workspace-modal-close" data-stock-report-serials-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="stock-report-serials-body">
+      <p class="stock-report-serials-count">
+        <span data-stock-report-serials-count>0</span> serial<span data-stock-report-serials-plural>s</span>
+      </p>
+      <ul class="stock-report-serials-list" data-stock-report-serials-list></ul>
+    </div>
+    <div class="workspace-modal-actions">
+      <button type="button" class="btn btn--primary" data-stock-report-serials-close>Done</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block workspace_overlays %}
+{{ block.super }}
+{% block movement_overlays %}{% endblock %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+{% block movement_extra_js %}{% endblock %}
+<script>
+  (() => {
+    const form = document.querySelector("[data-stock-report-filters]");
+    if (!form) return;
+
+    const rangeSelect = form.querySelector("[data-stock-report-range]");
+    const itemModeSelect = form.querySelector("[data-stock-item-mode]");
+    const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+    const itemPanels = [...form.querySelectorAll("[data-item-mode-panel]")];
+
+    const syncRangeFields = (range) => {
+      rangeFields.forEach((field) => {
+        const match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.classList.toggle("is-hidden", !match);
+        field.querySelectorAll("input").forEach((input) => {
+          input.disabled = !match;
+          if (match) input.setAttribute("required", "required");
+          else input.removeAttribute("required");
+        });
+      });
+    };
+
+    const liveSearchInput = form.querySelector("[data-stock-live-search]");
+    const liveSuggestRoot = form.querySelector("[data-stock-live-suggest]");
+    const liveResultsEl = form.querySelector("[data-stock-live-results]");
+
+    const syncItemMode = (mode) => {
+      itemPanels.forEach((panel) => {
+        const match = panel.getAttribute("data-item-mode-panel") === mode;
+        panel.hidden = !match;
+        panel.classList.toggle("is-hidden", !match);
+        panel.querySelectorAll("select, input").forEach((input) => {
+          // Keep hidden item_id inputs enabled when in items mode.
+          if (input.matches('[name="item_id"]')) {
+            input.disabled = !match;
+            return;
+          }
+          if (input.matches("[data-stock-item-search], [data-stock-live-search]")) {
+            input.disabled = !match;
+            return;
+          }
+          if (input.tagName === "SELECT" || input.tagName === "INPUT") {
+            input.disabled = !match;
+          }
+        });
+      });
+      if (mode !== "all" && liveSearchInput) {
+        liveSearchInput.value = "";
+        hideLiveResults();
+      }
+    };
+
+    const picker = form.querySelector("[data-stock-item-picker]");
+    const searchInput = form.querySelector("[data-stock-item-search]");
+    const resultsEl = form.querySelector("[data-stock-item-results]");
+    const chipsEl = form.querySelector("[data-stock-item-chips]");
+    const catalogEl = form.querySelector("[data-stock-item-catalog]");
+    const itemPickerUrl = form.getAttribute("data-item-picker-url") || "";
+    let catalog = [];
+    let catalogLoading = null;
+    try {
+      catalog = JSON.parse(catalogEl?.textContent || "[]");
+    } catch (_e) {
+      catalog = [];
+    }
+
+    const ensureCatalog = () => {
+      if (catalog.length || !itemPickerUrl) return Promise.resolve(catalog);
+      if (catalogLoading) return catalogLoading;
+      catalogLoading = fetch(itemPickerUrl, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      })
+        .then((res) => (res.ok ? res.json() : { items: [] }))
+        .then((data) => {
+          catalog = Array.isArray(data.items) ? data.items : [];
+          if (catalogEl) catalogEl.textContent = JSON.stringify(catalog);
+          return catalog;
+        })
+        .catch(() => {
+          catalog = [];
+          return catalog;
+        })
+        .finally(() => {
+          catalogLoading = null;
+        });
+      return catalogLoading;
+    };
+
+    const selectedIds = () =>
+      new Set(
+        [...(chipsEl?.querySelectorAll("[data-item-id]") || [])].map((chip) =>
+          String(chip.getAttribute("data-item-id"))
+        )
+      );
+
+    const badgeLabel = (item) => item.badge || (item.is_suspended ? "Suspended" : "");
+
+    const addItem = (item) => {
+      if (!chipsEl || selectedIds().has(String(item.id))) return;
+      const badge = badgeLabel(item);
+      const chip = document.createElement("span");
+      chip.className = "stock-report-item-chip";
+      chip.setAttribute("data-item-id", String(item.id));
+      chip.innerHTML = `${item.name}${badge ? ` <span class="stock-item-badge">${badge}</span>` : ""} <button type="button" aria-label="Remove ${item.name}" data-stock-item-remove>&times;</button>`;
+      const hidden = document.createElement("input");
+      hidden.type = "hidden";
+      hidden.name = "item_id";
+      hidden.value = String(item.id);
+      chip.appendChild(hidden);
+      chipsEl.appendChild(chip);
+    };
+
+    const hideResults = () => {
+      if (!resultsEl) return;
+      resultsEl.hidden = true;
+      resultsEl.innerHTML = "";
+    };
+
+    const hideLiveResults = () => {
+      if (!liveResultsEl) return;
+      liveResultsEl.hidden = true;
+      liveResultsEl.innerHTML = "";
+    };
+
+    const escapeAttr = (value) =>
+      String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;");
+
+    const showCatalogResults = ({ resultsNode, inputNode, query, excludeSelected }) => {
+      if (!resultsNode || !inputNode || inputNode.disabled) return;
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        resultsNode.hidden = true;
+        resultsNode.innerHTML = "";
+        return;
+      }
+      const renderMatches = () => {
+        const selected = excludeSelected ? selectedIds() : new Set();
+        const matches = catalog
+          .filter((item) => {
+            if (selected.has(String(item.id))) return false;
+            const hay = `${item.name} ${item.category}`.toLowerCase();
+            return hay.includes(q);
+          })
+          .slice(0, 8);
+
+        if (!matches.length) {
+          resultsNode.innerHTML = `<p class="stock-report-item-empty">No matches</p>`;
+          resultsNode.hidden = false;
+          return;
+        }
+
+        resultsNode.innerHTML = matches
+          .map((item) => {
+            const badge = badgeLabel(item);
+            return `<button type="button" class="stock-report-item-result" data-item-id="${item.id}" data-item-name="${escapeAttr(item.name)}" data-item-suspended="${item.is_suspended ? 1 : 0}" data-item-badge="${escapeAttr(badge)}">
+              <strong>${escapeAttr(item.name)}</strong>${badge ? ` <span class="stock-item-badge">${escapeAttr(badge)}</span>` : ""}
+              <em>${escapeAttr(item.category)}</em>
+            </button>`;
+          })
+          .join("");
+        resultsNode.hidden = false;
+      };
+
+      if (!catalog.length && itemPickerUrl) {
+        resultsNode.innerHTML = `<p class="stock-report-item-empty">Loading items…</p>`;
+        resultsNode.hidden = false;
+        ensureCatalog().then(renderMatches);
+        return;
+      }
+      renderMatches();
+    };
+
+    searchInput?.addEventListener("input", () => {
+      showCatalogResults({
+        resultsNode: resultsEl,
+        inputNode: searchInput,
+        query: searchInput.value,
+        excludeSelected: true,
+      });
+    });
+
+    searchInput?.addEventListener("focus", () => {
+      if (searchInput.value.trim()) {
+        showCatalogResults({
+          resultsNode: resultsEl,
+          inputNode: searchInput,
+          query: searchInput.value,
+          excludeSelected: true,
+        });
+      }
+    });
+
+    resultsEl?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-item-id]");
+      if (!btn) return;
+      addItem({
+        id: btn.getAttribute("data-item-id"),
+        name: btn.getAttribute("data-item-name"),
+        is_suspended: btn.getAttribute("data-item-suspended") === "1",
+        badge: btn.getAttribute("data-item-badge") || "",
+      });
+      searchInput.value = "";
+      hideResults();
+    });
+
+    liveSearchInput?.addEventListener("input", () => {
+      showCatalogResults({
+        resultsNode: liveResultsEl,
+        inputNode: liveSearchInput,
+        query: liveSearchInput.value,
+        excludeSelected: false,
+      });
+    });
+
+    liveSearchInput?.addEventListener("focus", () => {
+      if (liveSearchInput.value.trim()) {
+        showCatalogResults({
+          resultsNode: liveResultsEl,
+          inputNode: liveSearchInput,
+          query: liveSearchInput.value,
+          excludeSelected: false,
+        });
+      } else {
+        ensureCatalog();
+      }
+    });
+
+    liveResultsEl?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-item-name]");
+      if (!btn || !liveSearchInput) return;
+      liveSearchInput.value = btn.getAttribute("data-item-name") || "";
+      hideLiveResults();
+    });
+
+    chipsEl?.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest("[data-stock-item-remove]");
+      if (!removeBtn) return;
+      removeBtn.closest("[data-item-id]")?.remove();
+    });
+
+    document.addEventListener("click", (event) => {
+      if (picker && !picker.contains(event.target)) hideResults();
+      if (liveSuggestRoot && !liveSuggestRoot.contains(event.target)) {
+        hideLiveResults();
+      }
+    });
+
+    const typeMulti = form.querySelector("[data-stock-type-multi]");
+    if (typeMulti) {
+      const typeTrigger = typeMulti.querySelector("[data-stock-type-trigger]");
+      const typeMenu = typeMulti.querySelector("[data-stock-type-menu]");
+      const typeLabel = typeMulti.querySelector("[data-stock-type-label]");
+      const typeAll = typeMulti.querySelector("[data-stock-type-all]");
+      const typeOptions = [...typeMulti.querySelectorAll("[data-stock-type-option]")];
+      const typeLabels = Object.fromEntries(
+        typeOptions.map((input) => [
+          input.value,
+          (input.closest("label")?.querySelector("span")?.textContent || input.value).trim(),
+        ])
+      );
+
+      const selectedTypeValues = () =>
+        typeOptions.filter((input) => input.checked).map((input) => input.value);
+
+      const syncTypeLabel = () => {
+        const selected = selectedTypeValues();
+        if (!typeLabel) return;
+        if (!selected.length || (typeAll && typeAll.checked)) {
+          typeLabel.textContent = "All";
+          return;
+        }
+        const names = selected.map((value) => typeLabels[value] || value);
+        if (names.length === 1) typeLabel.textContent = names[0];
+        else if (names.length === 2) typeLabel.textContent = `${names[0]} + ${names[1]}`;
+        else typeLabel.textContent = `${names.length} types`;
+      };
+
+      const setTypeMenuOpen = (open) => {
+        if (!typeMenu || !typeTrigger) return;
+        typeMenu.hidden = !open;
+        typeTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+        typeMulti.classList.toggle("is-open", open);
+      };
+
+      const syncTypeAllState = () => {
+        const selected = selectedTypeValues();
+        if (!selected.length) {
+          if (typeAll) typeAll.checked = true;
+          typeOptions.forEach((input) => {
+            input.checked = false;
+          });
+        } else if (selected.length >= typeOptions.length) {
+          if (typeAll) typeAll.checked = true;
+          typeOptions.forEach((input) => {
+            input.checked = false;
+          });
+        } else if (typeAll) {
+          typeAll.checked = false;
+        }
+        syncTypeLabel();
+      };
+
+      typeTrigger?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setTypeMenuOpen(Boolean(typeMenu?.hidden));
+      });
+
+      typeMenu?.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+
+      typeAll?.addEventListener("change", () => {
+        if (typeAll.checked) {
+          typeOptions.forEach((input) => {
+            input.checked = false;
+          });
+        } else if (!selectedTypeValues().length) {
+          typeAll.checked = true;
+        }
+        syncTypeLabel();
+      });
+
+      typeOptions.forEach((input) => {
+        input.addEventListener("change", () => {
+          if (input.checked && typeAll) typeAll.checked = false;
+          syncTypeAllState();
+        });
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!typeMulti.contains(event.target)) setTypeMenuOpen(false);
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") setTypeMenuOpen(false);
+      });
+
+      form.addEventListener("submit", () => {
+        // When "All" is active, omit event_type so the server treats it as all.
+        if (typeAll?.checked || !selectedTypeValues().length) {
+          typeOptions.forEach((input) => {
+            input.disabled = true;
+          });
+        }
+      });
+
+      syncTypeAllState();
+      if (window.lucide?.createIcons) {
+        window.lucide.createIcons({ nodes: [typeMulti] });
+      }
+    }
+
+    syncRangeFields(rangeSelect?.value || "day");
+    syncItemMode(itemModeSelect?.value || "all");
+
+    rangeSelect?.addEventListener("change", () => {
+      syncRangeFields(rangeSelect.value);
+    });
+
+    itemModeSelect?.addEventListener("change", () => {
+      syncItemMode(itemModeSelect.value);
+      hideResults();
+      hideLiveResults();
+      if (itemModeSelect.value === "items" || itemModeSelect.value === "all") {
+        ensureCatalog();
+      }
+    });
+  })();
+
+  (() => {
+    const modal = document.querySelector("[data-stock-report-serials-modal]");
+    if (!modal) return;
+
+    const titleEl = modal.querySelector("[data-stock-report-serials-title]");
+    const listEl = modal.querySelector("[data-stock-report-serials-list]");
+    const countEl = modal.querySelector("[data-stock-report-serials-count]");
+    const pluralEl = modal.querySelector("[data-stock-report-serials-plural]");
+    const body = document.body;
+
+    const escapeHtml = (value) =>
+      String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const setOpen = (open) => {
+      modal.hidden = !open;
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      const anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+      if (open && window.lucide?.createIcons) window.lucide.createIcons();
+    };
+
+    const openFromButton = (btn) => {
+      const cell = btn.closest(".stock-report-serial-cell");
+      const items = [...(cell?.querySelectorAll(".stock-report-serials-data li") || [])]
+        .map((li) => (li.textContent || "").trim())
+        .filter(Boolean);
+      if (!items.length || !listEl) return;
+
+      const title = (btn.getAttribute("data-serials-title") || "").trim();
+      if (titleEl) titleEl.textContent = title || "Serial numbers";
+      if (countEl) countEl.textContent = String(items.length);
+      if (pluralEl) pluralEl.hidden = items.length === 1;
+      listEl.innerHTML = items
+        .map(
+          (serial) =>
+            `<li><span class="stock-serial-number">${escapeHtml(serial)}</span></li>`
+        )
+        .join("");
+      setOpen(true);
+    };
+
+    document.addEventListener("click", (event) => {
+      const openBtn = event.target.closest("[data-stock-serials-view]");
+      if (openBtn) {
+        event.preventDefault();
+        openFromButton(openBtn);
+        return;
+      }
+      if (event.target.closest("[data-stock-report-serials-close]")) {
+        setOpen(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) setOpen(false);
+    });
+  })();
+</script>
+{% endblock %}

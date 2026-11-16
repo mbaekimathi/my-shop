@@ -82,6 +82,21 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `validate_item_payload` in `items/services.py`; tests in
   `ShopPriceIsolationTests`.
 
+## Expense payments (Analytics → Expenses → category)
+- `Expense` tracks `amount_paid` + `payment_status` (unpaid/partial/paid);
+  `cash_amount`/`mpesa_amount`/`card_amount` are till splits set at
+  registration/owner-drawings — account payments don't touch them.
+- The category page (`/…/analytics/expenses/?category=<slug>`,
+  `_build_expense_category_suppliers`) lists Paid/Due/Status per expense and,
+  when `analytics/account_pay` is allowed (`filters["can_pay_accounts"]`), a
+  per-row **Pay** button (`cell.kind == "pay"` in `analytics.html`). The shared
+  `analytics_account_pay_modal.html` + `analytics-receipt-ledger.js` POST to
+  `analytics_account_pay` (`kind=expense`, `receipt_id`) →
+  `apply_supplier_receipt_payment`, which caps the amount at the receipt's due.
+  `account_id` is the `ExpenseSupplier` pk; `0`/empty pays expenses with no
+  linked supplier (matched by pk + shop scope). Tests:
+  `employees/tests_analytics_suppliers.py::ExpenseReceiptPayTests`.
+
 ## Shop floor sidebar toggles (Settings → POS)
 - `enable_sidebar_*` on `CompanyPosSettings` (+ per-shop `ShopPosSettings`
   override) are **link-only**: they hide menu links in the `/my-shop/<id>/`

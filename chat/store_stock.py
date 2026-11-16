@@ -13,16 +13,55 @@ from django.db import connection, transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from .myshop_models import Item, StoreStock, StoreStockMovement
+from .myshop_models import (
+    CompanyStockSettings,
+    Item,
+    StoreStock,
+    StoreStockMovement,
+)
 
 QTY_QUANTUM = Decimal("0.001")
 ZERO = Decimal("0")
 MODE_IN = "in"
 MODE_OUT = "out"
 
+# Mirrors items.models StockPaymentStatus / StockOutReason.
+STOCK_PAYMENT_STATUSES = ("unpaid", "paid", "partial")
+PAYMENT_STATUS_LABELS = {
+    "unpaid": "Unpaid",
+    "paid": "Paid",
+    "partial": "Partial",
+}
+STOCK_OUT_REASONS = (
+    ("waste", "Waste"),
+    ("transfer", "Transfer"),
+    ("display", "Display"),
+    ("return", "Supplier return"),
+    ("trade_out", "Trade out"),
+    ("trade_in", "Trade in"),
+    ("custom", "Custom"),
+)
+REASON_LABELS = dict(STOCK_OUT_REASONS)
+REASON_VALUES = frozenset(REASON_LABELS)
+REASON_TRADE_OUT = "trade_out"
+REASON_TRADE_IN = "trade_in"
+REASON_CUSTOM = "custom"
+
 
 class StoreError(Exception):
     """User-facing store stock error."""
+
+
+def get_stock_requirements() -> CompanyStockSettings:
+    """Company-wide compulsory-field flags (singleton row, pk=1)."""
+    row = CompanyStockSettings.objects.filter(pk=1).first()
+    if row is None:
+        row = CompanyStockSettings(pk=1)
+    return row
+
+
+def stock_req_dict() -> dict:
+    return get_stock_requirements().as_requirements_dict()
 
 
 def _parse_qty(raw) -> Decimal:
@@ -46,7 +85,7 @@ def list_store_items(*, query: str = "") -> list[dict]:
     items = (
         Item.objects.filter(is_suspended=False)
         .order_by("category", "name")
-        .only("id", "name", "category")
+        .only("id", "name", "category", "stock_count_enabled")
     )
     if q:
         filt = Q(name__icontains=q) | Q(category__icontains=q)
@@ -54,15 +93,26 @@ def list_store_items(*, query: str = "") -> list[dict]:
             filt = filt | Q(pk=int(q))
         items = items.filter(filt)
     item_list = list(items)
+    item_ids = [item.pk for item in item_list]
     qty_by_item = {
         row.item_id: row.quantity
-        for row in StoreStock.objects.filter(
-            item_id__in=[item.pk for item in item_list]
-        ).only("item_id", "quantity")
+        for row in StoreStock.objects.filter(item_id__in=item_ids).only(
+            "item_id", "quantity"
+        )
     }
+    last_price = {}
+    for move_item_id, price in (
+        StoreStockMovement.objects.filter(
+            item_id__in=item_ids, buying_price__isnull=False
+        )
+        .order_by("item_id", "-created_at", "-id")
+        .values_list("item_id", "buying_price")
+    ):
+        last_price.setdefault(move_item_id, price)
     rows = []
     for item in item_list:
         qty = qty_by_item.get(item.pk) or ZERO
+        price = last_price.get(item.pk)
         rows.append(
             {
                 "id": item.pk,
@@ -70,6 +120,10 @@ def list_store_items(*, query: str = "") -> list[dict]:
                 "category": item.category,
                 "label": f"{item.name} · {item.category}",
                 "store_qty": str(qty),
+                "store_qty_display": str(qty),
+                "last_buying_price": str(price) if price is not None else "",
+                "stock_count_enabled": bool(item.stock_count_enabled),
+                "search_text": f"{item.name} {item.category} {item.pk}".lower(),
             }
         )
     return rows
@@ -141,6 +195,7 @@ def _resolve_item(item_id) -> Item:
 
 
 def _resolve_counterpart(received_by_id, *, mode: str) -> int:
+    """Counterpart pk — optional like MY-SHOP: blank falls back to the actor."""
     try:
         pk = int(received_by_id)
     except (TypeError, ValueError) as exc:
@@ -161,7 +216,29 @@ def _resolve_counterpart(received_by_id, *, mode: str) -> int:
     return int(row[0])
 
 
-def _parse_lines(raw_lines) -> list[tuple[int, Decimal]]:
+def _counterpart_or_actor(received_by_id, *, mode: str, actor_id: int) -> int:
+    if received_by_id in (None, ""):
+        return actor_id
+    return _resolve_counterpart(received_by_id, mode=mode)
+
+
+def _parse_buying_price(raw, item_raw) -> Decimal | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        price = Decimal(text)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise StoreError(
+            f"Invalid buying price for item {item_raw}."
+        ) from exc
+    if price < 0:
+        raise StoreError(f"Buying price cannot be negative for item {item_raw}.")
+    return price.quantize(Decimal("0.01"))
+
+
+def _parse_lines(raw_lines, *, require_price: bool = False):
+    """Return ``(item_id, qty, buying_price|None)`` per filled line."""
     if not isinstance(raw_lines, list) or not raw_lines:
         raise StoreError("Enter a quantity for at least one item.")
     lines = []
@@ -180,10 +257,102 @@ def _parse_lines(raw_lines) -> list[tuple[int, Decimal]]:
             qty = _parse_qty(text)
         except StoreError as exc:
             raise StoreError(f"Invalid quantity for item {item_id}.") from exc
-        lines.append((item_id, qty))
+        price = _parse_buying_price(
+            raw.get("buying_price", raw.get("price")), item_id
+        )
+        if require_price and price is None:
+            raise StoreError(f"Enter a buying price for item {item_id}.")
+        lines.append((item_id, qty, price))
     if not lines:
         raise StoreError("Enter a quantity for at least one item.")
     return lines
+
+
+def parse_supplier_payment_details(data, *, stock_req) -> dict:
+    """Read supplier name/phone + payment status from a stock-in payload.
+
+    Mirrors items.store_stock_services.parse_supplier_payment_details:
+    CompanyStockSettings decides whether the fields are compulsory.
+    """
+    name = str((data or {}).get("supplier_name") or "").strip().upper()
+    phone = str((data or {}).get("supplier_phone") or "").strip()
+    payment = str((data or {}).get("payment_status") or "").strip().lower()
+    if getattr(stock_req, "require_supplier_on_in", False):
+        if not name:
+            raise StoreError("Enter the supplier name.")
+        if not phone:
+            raise StoreError("Enter the supplier phone number.")
+    if getattr(stock_req, "require_payment_status_on_in", False):
+        if payment not in STOCK_PAYMENT_STATUSES:
+            raise StoreError(
+                "Choose a payment status (unpaid, paid, or partial)."
+            )
+    elif payment not in STOCK_PAYMENT_STATUSES:
+        payment = ""
+    return {
+        "supplier_name": name[:160],
+        "supplier_phone": phone[:40],
+        "payment_status": payment,
+    }
+
+
+def parse_stock_out_details(data, *, stock_req) -> dict:
+    """Read reason / refund from a stock-out payload.
+
+    Mirrors items.store_stock_services.parse_stock_out_details: the reason is
+    one of the stock-out choices (custom needs a note), refund is yes/no
+    (yes needs an amount) and CompanyStockSettings decides requiredness.
+    """
+    data = data or {}
+    reason = str(data.get("reason") or "").strip().lower()
+    note = str(data.get("note") or "").strip()
+    if getattr(stock_req, "require_reason_on_out", False):
+        if reason not in REASON_VALUES:
+            raise StoreError(
+                "Choose a reason (waste, transfer, display, supplier return, "
+                "trade out, trade in, or custom)."
+            )
+    elif reason not in REASON_VALUES:
+        reason = ""
+    if reason == REASON_CUSTOM:
+        if not note:
+            raise StoreError("Enter a custom reason.")
+        if len(note) > 200:
+            raise StoreError("Custom reason must be 200 characters or fewer.")
+    elif reason:
+        # Preset reasons carry no free-text note from this form.
+        note = ""
+
+    refund = str(data.get("refund") or "").strip().lower()
+    refund_amount = None
+    if getattr(stock_req, "require_refund_on_out", False):
+        if refund not in ("yes", "no"):
+            raise StoreError("Choose whether a refund applies (yes or no).")
+    elif refund not in ("yes", "no"):
+        refund = ""
+    if refund == "yes":
+        refund_amount = _parse_buying_price(
+            data.get("refund_amount"), "refund"
+        )
+        if refund_amount is None or refund_amount <= 0:
+            raise StoreError("Refund amount must be greater than zero.")
+    return {
+        "reason": reason,
+        "note": note,
+        "refund": refund,
+        "refund_amount": refund_amount,
+    }
+
+
+def parse_store_trade_lines(data, *, require_price: bool = False):
+    """Read a one-way store trade: trade_kind plus its item lines."""
+    kind = str((data or {}).get("trade_kind") or "").strip().lower()
+    if kind not in {REASON_TRADE_OUT, REASON_TRADE_IN}:
+        raise StoreError("Choose the trade direction — trade out or trade in.")
+    return kind, _parse_lines(
+        (data or {}).get("lines"),
+        require_price=require_price and kind == REASON_TRADE_IN,
+    )
 
 
 @transaction.atomic
@@ -194,12 +363,22 @@ def record_store_stock_in(
     quantity,
     received_by_id,
     note: str = "",
+    supplier_name: str = "",
+    supplier_phone: str = "",
+    payment_status: str = "",
+    buying_price=None,
+    reason: str = "",
 ) -> StoreStockMovement:
     if not actor_id:
         raise StoreError("Sign in to record store stock in.")
     item = _resolve_item(item_id)
     qty = _parse_qty(quantity)
-    receiver_id = _resolve_counterpart(received_by_id, mode=MODE_IN)
+    reason = (reason or "").strip().lower()
+    if reason not in REASON_VALUES:
+        reason = ""
+    receiver_id = _counterpart_or_actor(
+        received_by_id, mode=MODE_IN, actor_id=actor_id
+    )
     stock, _ = StoreStock.objects.select_for_update().get_or_create(
         item_id=item.pk,
         defaults={"quantity": ZERO},
@@ -213,6 +392,11 @@ def record_store_stock_in(
         balance_after=stock.quantity,
         created_by_id=(actor_id or None),
         received_by_id=receiver_id,
+        supplier_name=(supplier_name or "").strip().upper()[:160],
+        supplier_phone=(supplier_phone or "").strip()[:40],
+        payment_status=(payment_status or "").strip().lower()[:16],
+        buying_price=buying_price,
+        reason=reason,
         note=(note or "").strip()[:255],
     )
 
@@ -225,12 +409,19 @@ def record_store_stock_out(
     quantity,
     received_by_id,
     note: str = "",
+    reason: str = "",
+    refund: str = "",
+    refund_amount=None,
+    supplier_name: str = "",
+    supplier_phone: str = "",
 ) -> StoreStockMovement:
     if not actor_id:
         raise StoreError("Sign in to record store stock out.")
     item = _resolve_item(item_id)
     qty = _parse_qty(quantity)
-    receiver_id = _resolve_counterpart(received_by_id, mode=MODE_OUT)
+    receiver_id = _counterpart_or_actor(
+        received_by_id, mode=MODE_OUT, actor_id=actor_id
+    )
     stock, _ = StoreStock.objects.select_for_update().get_or_create(
         item_id=item.pk,
         defaults={"quantity": ZERO},
@@ -242,6 +433,14 @@ def record_store_stock_out(
         )
     stock.quantity = current - qty
     stock.save(update_fields=["quantity", "updated_at"])
+    reason = (reason or "").strip().lower()
+    if reason not in REASON_VALUES:
+        reason = ""
+    refund = (refund or "").strip().lower()
+    if refund not in ("yes", "no"):
+        refund = ""
+    if refund != "yes":
+        refund_amount = None
     return StoreStockMovement.objects.create(
         movement_type=MODE_OUT,
         item_id=item.pk,
@@ -249,6 +448,11 @@ def record_store_stock_out(
         balance_after=stock.quantity,
         created_by_id=(actor_id or None),
         received_by_id=receiver_id,
+        supplier_name=(supplier_name or "").strip().upper()[:160],
+        supplier_phone=(supplier_phone or "").strip()[:40],
+        reason=reason,
+        refund=refund,
+        refund_amount=refund_amount,
         note=(note or "").strip()[:255],
     )
 
@@ -261,13 +465,21 @@ def record_store_stock_lines(
     lines,
     received_by_id,
     note: str = "",
+    supplier_name: str = "",
+    supplier_phone: str = "",
+    payment_status: str = "",
+    reason: str = "",
+    refund: str = "",
+    refund_amount=None,
 ) -> list[StoreStockMovement]:
     mode = (mode or "").strip().lower()
     if mode not in {MODE_IN, MODE_OUT}:
         raise StoreError("Unknown store stock mode.")
-    parsed = _parse_lines(lines)
+    if not lines:
+        raise StoreError("Enter a quantity for at least one item.")
+    parsed = _parse_lines(lines) if isinstance(lines[0], dict) else lines
     movements = []
-    for item_id, qty in parsed:
+    for item_id, qty, buying_price in parsed:
         if mode == MODE_IN:
             movements.append(
                 record_store_stock_in(
@@ -276,6 +488,11 @@ def record_store_stock_lines(
                     quantity=qty,
                     received_by_id=received_by_id,
                     note=note,
+                    supplier_name=supplier_name,
+                    supplier_phone=supplier_phone,
+                    payment_status=payment_status,
+                    buying_price=buying_price,
+                    reason=reason,
                 )
             )
         else:
@@ -286,6 +503,79 @@ def record_store_stock_lines(
                     quantity=qty,
                     received_by_id=received_by_id,
                     note=note,
+                    reason=reason,
+                    refund=refund,
+                    refund_amount=refund_amount,
+                    supplier_name=supplier_name,
+                    supplier_phone=supplier_phone,
+                )
+            )
+    return movements
+
+
+@transaction.atomic
+def record_store_trade(
+    *,
+    actor_id: int,
+    kind: str,
+    person_name: str = "",
+    person_phone: str = "",
+    lines,
+    note: str = "",
+    require_person: bool = False,
+) -> list[StoreStockMovement]:
+    """One-way store trade with one person — mirrors record_store_trade.
+
+    trade_out: items leave the store to the person (stock out tagged
+    trade_out). trade_in: items enter the store from the person (stock
+    in tagged trade_in, optional unit value per line).
+    """
+    if not actor_id:
+        raise StoreError("Sign in to record a store trade.")
+    kind = (kind or "").strip().lower()
+    if kind not in {REASON_TRADE_OUT, REASON_TRADE_IN}:
+        raise StoreError("Choose the trade direction — trade out or trade in.")
+    if not lines:
+        raise StoreError("Enter a quantity for at least one item.")
+    parsed = (
+        _parse_lines(lines)
+        if isinstance(lines[0], dict)
+        else lines
+    )
+    person_name = (person_name or "").strip().upper()[:160]
+    person_phone = (person_phone or "").strip()[:40]
+    if require_person and kind == REASON_TRADE_IN:
+        if not person_name:
+            raise StoreError("Enter the other person's name.")
+        if not person_phone:
+            raise StoreError("Enter the other person's phone number.")
+    movements = []
+    for item_id, qty, buying_price in parsed:
+        if kind == REASON_TRADE_OUT:
+            movements.append(
+                record_store_stock_out(
+                    actor_id=actor_id,
+                    item_id=item_id,
+                    quantity=qty,
+                    received_by_id=None,
+                    note=note,
+                    reason=REASON_TRADE_OUT,
+                    supplier_name=person_name,
+                    supplier_phone=person_phone,
+                )
+            )
+        else:
+            movements.append(
+                record_store_stock_in(
+                    actor_id=actor_id,
+                    item_id=item_id,
+                    quantity=qty,
+                    received_by_id=None,
+                    note=note,
+                    reason=REASON_TRADE_IN,
+                    supplier_name=person_name,
+                    supplier_phone=person_phone,
+                    buying_price=buying_price,
                 )
             )
     return movements
@@ -311,7 +601,33 @@ def _movement_payload(movement: StoreStockMovement, item: Item | None = None) ->
         "recorded_by": _employee_display_name(movement.created_by_id),
         "counterpart_label": counterpart_label,
         "counterpart": _employee_display_name(movement.received_by_id),
+        "supplier_name": (movement.supplier_name or "").strip(),
+        "supplier_phone": (movement.supplier_phone or "").strip(),
+        "payment_status": (movement.payment_status or "").strip(),
+        "payment_label": PAYMENT_STATUS_LABELS.get(
+            (movement.payment_status or "").strip(), ""
+        ),
+        "buying_price_display": (
+            str(movement.buying_price)
+            if movement.buying_price is not None
+            else ""
+        ),
+        "reason": (movement.reason or "").strip(),
+        "reason_label": REASON_LABELS.get(
+            (movement.reason or "").strip(), ""
+        ),
+        "refund": (movement.refund or "").strip(),
+        "refund_amount_display": (
+            str(movement.refund_amount)
+            if movement.refund_amount is not None
+            else ""
+        ),
         "note": (movement.note or "").strip(),
+        "search_text": (
+            f"{item.name if item else ''} {item.category if item else ''} "
+            f"{movement.movement_type} {movement.note} "
+            f"{movement.supplier_name} {movement.supplier_phone}"
+        ).lower(),
         "when": timezone.localtime(movement.created_at).strftime("%d %b %Y · %H:%M"),
     }
 
@@ -340,11 +656,18 @@ def store_stock_card(movements: list[StoreStockMovement], *, mode: str) -> dict:
                     "name": row["item_name"],
                     "qty": row["quantity"],
                     "balance": row["balance_after"],
+                    "price": row["buying_price_display"],
                 }
                 for row in rows
             ],
             "counterpart_label": first["counterpart_label"],
             "counterpart": first["counterpart"],
+            "supplier_name": first["supplier_name"],
+            "supplier_phone": first["supplier_phone"],
+            "payment_label": first["payment_label"],
+            "reason_label": first["reason_label"],
+            "refund": first["refund"],
+            "refund_amount_display": first["refund_amount_display"],
             "recorded_by": first["recorded_by"],
             "note": first["note"],
             "when": first["when"],
@@ -379,6 +702,10 @@ def build_store_feed(*, limit: int = 40) -> list[dict]:
             and movement.created_by_id == head.created_by_id
             and movement.received_by_id == head.received_by_id
             and (movement.note or "") == (head.note or "")
+            and (movement.supplier_name or "") == (head.supplier_name or "")
+            and (movement.payment_status or "") == (head.payment_status or "")
+            and (movement.reason or "") == (head.reason or "")
+            and (movement.refund or "") == (head.refund or "")
             and abs((movement.created_at - head.created_at).total_seconds()) <= 2
         )
         if same_batch:

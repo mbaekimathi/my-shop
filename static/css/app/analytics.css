@@ -6704,7 +6704,11 @@
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-client {
-  width: 18%;
+  width: 15%;
+}
+
+.ax--confirm .ax-table--confirm-compact col.ax-col-sold-by {
+  width: 12%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-sold-as {
@@ -9413,4 +9417,65 @@ body.ax-credit-due-open {
 
 .ax-items-table tbody tr:last-child td {
   border-bottom: none;
+}
+
+/* Receipts / return-receipts browse — coloured pills, clearer entity cells. */
+.ax--list-table[data-ax-section="receipts"] .ax-card-head h3::before,
+.ax--list-table[data-ax-section="return-receipts"] .ax-card-head h3::before {
+  content: "";
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 0.15rem;
+  background: var(--teal);
+  flex-shrink: 0;
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-card--matrix .ax-card-head h3::before,
+.ax--list-table[data-ax-section="return-receipts"] .ax-card--matrix .ax-card-head h3::before {
+  background: var(--accent-deep);
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-entity-link,
+.ax--list-table[data-ax-section="return-receipts"] .ax-entity-link {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-entity-name,
+.ax--list-table[data-ax-section="return-receipts"] .ax-entity-name {
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-entity-meta,
+.ax--list-table[data-ax-section="return-receipts"] .ax-entity-meta {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--mist-dim);
+  line-height: 1.2;
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-table:not(.ax-table--shops) .ax-cell--primary .ax-entity-name {
+  color: var(--teal);
+  font-weight: 700;
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-table:not(.ax-table--shops) td[data-label="Date & time"],
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) td[data-label="Date & time"] {
+  color: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-table:not(.ax-table--shops) .ax-items-cell,
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) .ax-items-cell {
+  display: flex;
+  max-width: min(22rem, 70vw);
+}
+
+.ax--list-table[data-ax-section="receipts"] .ax-table:not(.ax-table--shops) .ax-items-label,
+.ax--list-table[data-ax-section="return-receipts"] .ax-table:not(.ax-table--shops) .ax-items-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

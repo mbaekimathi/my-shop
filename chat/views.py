@@ -456,8 +456,17 @@ def role_home_view(request, slug):
                 "employees_url": reverse("chat:api_store_employees"),
                 "stock_in_url": reverse("chat:api_store_stock_in"),
                 "stock_out_url": reverse("chat:api_store_stock_out"),
+                "trade_url": reverse("chat:api_store_trade"),
                 "report_url": reverse("chat:api_store_report"),
                 "feed_url": reverse("chat:api_store_feed"),
+                "stock_req_json": json.dumps(
+                    store_stock_ops.stock_req_dict()
+                ),
+                "stock_out_reasons": store_stock_ops.STOCK_OUT_REASONS,
+                "payment_statuses": tuple(
+                    (value, store_stock_ops.PAYMENT_STATUS_LABELS[value])
+                    for value in store_stock_ops.STOCK_PAYMENT_STATUSES
+                ),
             }
         )
         return render(request, "chat/store_manager.html", context)
@@ -594,12 +603,22 @@ def api_store_stock_in(request):
     """Record qty into the central store (does not change shop floor stock)."""
     data = _json_body(request)
     try:
+        stock_req = store_stock_ops.get_stock_requirements()
+        details = store_stock_ops.parse_supplier_payment_details(
+            data, stock_req=stock_req
+        )
         movements = store_stock_ops.record_store_stock_lines(
             mode="in",
             actor_id=request.chat_employee["id"],
-            lines=data.get("lines") or [],
+            lines=store_stock_ops._parse_lines(
+                data.get("lines") or [],
+                require_price=bool(
+                    getattr(stock_req, "require_buying_price_on_in", False)
+                ),
+            ),
             received_by_id=data.get("received_by_id"),
             note=data.get("note") or "",
+            **details,
         )
     except store_stock_ops.StoreError as exc:
         return _err(str(exc))
@@ -622,17 +641,65 @@ def api_store_stock_out(request):
     """Record qty leaving the central store (must not exceed on-hand)."""
     data = _json_body(request)
     try:
+        stock_req = store_stock_ops.get_stock_requirements()
+        details = store_stock_ops.parse_stock_out_details(
+            data, stock_req=stock_req
+        )
+        note = details.pop("note", "")
         movements = store_stock_ops.record_store_stock_lines(
             mode="out",
             actor_id=request.chat_employee["id"],
             lines=data.get("lines") or [],
             received_by_id=data.get("received_by_id"),
-            note=data.get("note") or "",
+            note=note,
+            supplier_name=data.get("supplier_name") or "",
+            supplier_phone=data.get("supplier_phone") or "",
+            **details,
         )
     except store_stock_ops.StoreError as exc:
         return _err(str(exc))
     body = store_stock_ops.store_stock_body(movements, mode="out")
     card = store_stock_ops.store_stock_card(movements, mode="out")
+    return JsonResponse(
+        {
+            "ok": True,
+            "movements": store_stock_ops.serialize_movements(movements),
+            "count": len(movements),
+            "body": body,
+            "card": card,
+        }
+    )
+
+
+@api_store_manager_required
+@require_POST
+def api_store_trade(request):
+    """One-way central-store trade with a person (trade in / trade out)."""
+    data = _json_body(request)
+    try:
+        stock_req = store_stock_ops.get_stock_requirements()
+        kind, lines = store_stock_ops.parse_store_trade_lines(
+            data,
+            require_price=bool(
+                getattr(stock_req, "require_buying_price_on_in", False)
+            ),
+        )
+        movements = store_stock_ops.record_store_trade(
+            actor_id=request.chat_employee["id"],
+            kind=kind,
+            person_name=data.get("person_name") or "",
+            person_phone=data.get("person_phone") or "",
+            lines=lines,
+            note=(data.get("note") or "").strip(),
+            require_person=bool(
+                getattr(stock_req, "require_supplier_on_in", False)
+            ),
+        )
+    except store_stock_ops.StoreError as exc:
+        return _err(str(exc))
+    mode = "in" if kind == store_stock_ops.REASON_TRADE_IN else "out"
+    body = store_stock_ops.store_stock_body(movements, mode=mode)
+    card = store_stock_ops.store_stock_card(movements, mode=mode)
     return JsonResponse(
         {
             "ok": True,
@@ -768,6 +835,7 @@ def app_view(request):
             "trade_in": trade["trade_in"],
             "trade_enabled": trade["trade_out"] or trade["trade_in"],
         },
+        "stock_req_json": json.dumps(store_stock_ops.stock_req_dict()),
         "conversations_json": json.dumps(_conversations_payload(me)),
         "contacts_json": json.dumps(contacts),
         "suggestions_json": json.dumps(bot_engine.BOT_SUGGESTIONS),
@@ -1245,6 +1313,13 @@ def api_receipts_confirm(request):
             me,
             data.get("ids") or [],
             staff_code=data.get("staff_code") or "",
+            mpesa_receipt_number=data.get("mpesa_receipt_number") or "",
+            payment_at=data.get("payment_at") or "",
+            amount=data.get("amount"),
+            payment_method=data.get("payment_method") or "",
+            cash_amount=data.get("cash_amount"),
+            mpesa_amount=data.get("mpesa_amount"),
+            card_amount=data.get("card_amount"),
         )
     except stock_ops.StockError as exc:
         return _err(str(exc))
@@ -1335,6 +1410,7 @@ def _create_transfer(me, destination, data, require_member=False):
     movement, lines = stock_ops.create_transfer(
         me, destination, data.get("lines") or [],
         staff_code=data.get("staff_code") or "",
+        note=data.get("note") or "",
         require_member=require_member,
     )
     movement_lines = list(
@@ -1825,6 +1901,7 @@ def api_stock_in(request):
             data.get("lines") or [],
             supplier_name=supplier_name,
             supplier_phone=supplier_phone,
+            payment_status=data.get("payment_status") or "",
             staff_code=data.get("staff_code") or "",
             require_member=_needs_member_confirmation(request, me),
         )

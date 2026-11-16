@@ -14,9 +14,15 @@
     employees: root.getAttribute("data-employees-url"),
     stockIn: root.getAttribute("data-stock-in-url"),
     stockOut: root.getAttribute("data-stock-out-url"),
+    trade: root.getAttribute("data-trade-url"),
     report: root.getAttribute("data-report-url"),
     feed: root.getAttribute("data-feed-url"),
   };
+
+  var stockReq = { in: {}, out: {}, request: {} };
+  try {
+    stockReq = JSON.parse(root.getAttribute("data-stock-req") || "{}") || stockReq;
+  } catch (e) {}
 
   var home = root.querySelector("[data-sm-home]");
   var feedEl = root.querySelector("[data-sm-feed]");
@@ -29,10 +35,35 @@
   var submitLabel = root.querySelector("[data-sm-submit-label]");
   var statusEl = root.querySelector("[data-sm-form-status]");
   var counterpartLabel = root.querySelector("[data-sm-counterpart-label]");
+  var counterpartWrap = root.querySelector("[data-sm-counterpart-wrap]");
   var empQuery = root.querySelector("[data-sm-employee-query]");
   var empId = root.querySelector("[data-sm-employee-id]");
   var empResults = root.querySelector("[data-sm-employee-results]");
+  var tradeKindWrap = root.querySelector("[data-sm-trade-kind-wrap]");
+  var tradeKinds = root.querySelectorAll("[data-sm-trade-kind]");
+  var personWrap = root.querySelector("[data-sm-person-wrap]");
+  var personNameLabel = root.querySelector("[data-sm-person-name-label]");
+  var personPhoneLabel = root.querySelector("[data-sm-person-phone-label]");
+  var personName = root.querySelector("[data-sm-person-name]");
+  var personPhone = root.querySelector("[data-sm-person-phone]");
+  var inDetails = root.querySelector("[data-sm-in-details]");
+  var supplierNameLabel = root.querySelector("[data-sm-supplier-name-label]");
+  var supplierPhoneLabel = root.querySelector("[data-sm-supplier-phone-label]");
+  var paymentLabel = root.querySelector("[data-sm-payment-label]");
+  var supplierName = root.querySelector("[data-sm-supplier-name]");
+  var supplierPhone = root.querySelector("[data-sm-supplier-phone]");
+  var paymentSel = root.querySelector("[data-sm-payment]");
+  var outDetails = root.querySelector("[data-sm-out-details]");
+  var reasonLabel = root.querySelector("[data-sm-reason-label]");
+  var refundLabel = root.querySelector("[data-sm-refund-label]");
+  var reasonSel = root.querySelector("[data-sm-reason]");
+  var refundSel = root.querySelector("[data-sm-refund]");
+  var refundAmountWrap = root.querySelector("[data-sm-refund-amount-wrap]");
+  var refundAmountInput = root.querySelector("[data-sm-refund-amount]");
+  var noteWrap = root.querySelector("[data-sm-note-wrap]");
+  var noteLabel = root.querySelector("[data-sm-note-label]");
   var noteInput = root.querySelector("[data-sm-note]");
+  var priceInput = root.querySelector("[data-sm-price]");
   var cartItems = root.querySelector("[data-sm-cart-items]");
   var cartEmpty = root.querySelector("[data-sm-cart-empty]");
   var cartCount = root.querySelector("[data-sm-cart-count]");
@@ -44,6 +75,7 @@
   var reportItemResults = root.querySelector("[data-sm-report-item-results]");
 
   var mode = "in";
+  var tradeKind = "trade_out";
   var cart = [];
   var pickedItem = null;
   var empTimer = null;
@@ -149,6 +181,9 @@
     var isOut = s.mode === "out";
     var icon = isOut ? "package-minus" : "package-plus";
     var headCls = isOut ? "wa-card__head--out" : "wa-card__head--in";
+    var hasPrice = (s.items || []).some(function (item) {
+      return item.price;
+    });
     var rows = (s.items || [])
       .map(function (item, idx) {
         return (
@@ -158,6 +193,9 @@
           escapeHtml(item.name) +
           '</td><td class="n">' +
           escapeHtml(item.qty) +
+          (hasPrice
+            ? '</td><td class="n">' + escapeHtml(item.price || "—")
+            : "") +
           '</td><td class="n">' +
           escapeHtml(item.balance || "—") +
           "</td></tr>"
@@ -166,6 +204,12 @@
       .join("");
     var footParts = [
       (s.counterpart_label || "By") + " " + (s.counterpart || "—"),
+      s.supplier_name ? "Supplier " + s.supplier_name : "",
+      s.payment_label ? "Payment " + s.payment_label : "",
+      s.reason_label ? "Reason " + s.reason_label : "",
+      s.refund === "yes" && s.refund_amount_display
+        ? "Refund " + s.refund_amount_display
+        : "",
       s.recorded_by ? "Recorded by " + s.recorded_by : "",
       s.note || "",
     ].filter(Boolean);
@@ -180,7 +224,9 @@
       escapeHtml(s.title || (isOut ? "Store stock out" : "Store stock in")) +
       "</span></div>" +
       '<div class="wa-card__tablewrap"><table class="wa-table"><thead><tr>' +
-      "<th>#</th><th>Item</th><th class=\"n\">Qty</th><th class=\"n\">Bal</th>" +
+      "<th>#</th><th>Item</th><th class=\"n\">Qty</th>" +
+      (hasPrice ? '<th class="n">Price</th>' : "") +
+      '<th class="n">Bal</th>' +
       "</tr></thead><tbody>" +
       rows +
       "</tbody></table></div>" +
@@ -280,12 +326,70 @@
       });
   }
 
+  function reqMark(el, base, required) {
+    if (!el) return;
+    el.innerHTML = escapeHtml(base) + (required ? "" : " <em>optional</em>");
+  }
+
+  function tradeKindValue() {
+    var checked = null;
+    tradeKinds.forEach(function (r) {
+      if (r.checked) checked = r.value;
+    });
+    return checked || "trade_out";
+  }
+
+  function priceEnabled() {
+    if (mode === "in") return true;
+    return mode === "trade" && tradeKind === "trade_in";
+  }
+
+  function syncModeFields() {
+    var isIn = mode === "in";
+    var isOut = mode === "out";
+    var isTrade = mode === "trade";
+    var tradeIn = isTrade && tradeKind === "trade_in";
+    if (tradeKindWrap) tradeKindWrap.hidden = !isTrade;
+    if (counterpartWrap) counterpartWrap.hidden = isTrade;
+    if (personWrap) personWrap.hidden = !isTrade;
+    if (inDetails) inDetails.hidden = !isIn;
+    if (outDetails) outDetails.hidden = !isOut;
+    if (refundAmountWrap) {
+      refundAmountWrap.hidden = !(refundSel && refundSel.value === "yes");
+    }
+    var customReason = isOut && reasonSel && reasonSel.value === "custom";
+    if (noteWrap) noteWrap.hidden = isOut && !customReason;
+    reqMark(noteLabel, customReason ? "Custom reason" : "Note", customReason);
+    if (priceInput) {
+      priceInput.hidden = !priceEnabled();
+      priceInput.placeholder = tradeIn ? "Value" : "Price";
+    }
+    reqMark(supplierNameLabel, "Supplier name", !!stockReq.in.supplier);
+    reqMark(supplierPhoneLabel, "Supplier phone", !!stockReq.in.supplier);
+    reqMark(paymentLabel, "Payment status", !!stockReq.in.payment_status);
+    reqMark(reasonLabel, "Reason", !!stockReq.out.reason);
+    reqMark(refundLabel, "Refund", !!stockReq.out.refund);
+    var personReq = !!stockReq.in.supplier && tradeIn;
+    reqMark(personNameLabel, "Person name", personReq);
+    reqMark(personPhoneLabel, "Person phone", personReq);
+  }
+
   function configureForm(nextMode) {
-    mode = nextMode === "out" ? "out" : "in";
-    formTitle.textContent = mode === "in" ? "Store Stock In" : "Store Stock Out";
+    mode =
+      nextMode === "out" || nextMode === "trade" ? nextMode : "in";
+    if (mode === "trade") tradeKind = tradeKindValue();
+    var isOutLike = mode === "out";
+    var isTradeOut = mode === "trade" && tradeKind === "trade_out";
+    formTitle.textContent =
+      mode === "in"
+        ? "Store Stock In"
+        : mode === "out"
+          ? "Store Stock Out"
+          : "Store Trade";
     if (counterpartLabel) {
-      counterpartLabel.textContent =
-        mode === "in" ? "Who delivered" : "Employee who received";
+      counterpartLabel.innerHTML =
+        (mode === "in" ? "Who delivered" : "Employee who received") +
+        " <em>optional</em>";
     }
     if (empQuery) {
       empQuery.placeholder =
@@ -294,13 +398,28 @@
           : "Search who received…";
     }
     submitLabel.textContent =
-      mode === "in" ? "Record stock in" : "Record stock out";
-    formPanel.classList.toggle("sm-stock--out", mode === "out");
+      mode === "in"
+        ? "Record stock in"
+        : mode === "out"
+          ? "Record stock out"
+          : tradeKind === "trade_in"
+            ? "Record trade in"
+            : "Record trade out";
+    formPanel.classList.toggle("sm-stock--out", isOutLike || isTradeOut);
     clearEmployee();
     clearPicker();
     cart = [];
     renderCart();
     if (noteInput) noteInput.value = "";
+    if (supplierName) supplierName.value = "";
+    if (supplierPhone) supplierPhone.value = "";
+    if (paymentSel) paymentSel.value = "";
+    if (reasonSel) reasonSel.value = "custom";
+    if (refundSel) refundSel.value = "";
+    if (refundAmountInput) refundAmountInput.value = "";
+    if (personName) personName.value = "";
+    if (personPhone) personPhone.value = "";
+    syncModeFields();
     setStatus("");
   }
 
@@ -320,6 +439,7 @@
     pickedItem = null;
     if (itemInput) itemInput.value = "";
     if (qtyInput) qtyInput.value = "";
+    if (priceInput) priceInput.value = "";
     if (haveEl) haveEl.value = "";
     hideSuggest(itemSuggest);
   }
@@ -537,6 +657,11 @@
           '<input type="number" min="0" step="any" inputmode="decimal" value="' +
           escapeAttr(line.quantity) +
           '" data-cart-qty aria-label="Qty">' +
+          (priceEnabled()
+            ? '<input type="number" min="0" step="any" inputmode="decimal" value="' +
+              escapeAttr(line.price || "") +
+              '" data-cart-price aria-label="Buying price" placeholder="Price">'
+            : "") +
           '<button type="button" class="wa-stock-line__remove" data-cart-remove aria-label="Remove">' +
           '<i data-lucide="x"></i>' +
           "</button>" +
@@ -569,7 +694,7 @@
       setStatus("Enter a quantity greater than zero.");
       return;
     }
-    if (mode === "out") {
+    if (mode === "out" || (mode === "trade" && tradeKind === "trade_out")) {
       var have = Number(pickedItem.store_qty || 0);
       if (Number(qty) > have) {
         setStatus(
@@ -578,6 +703,7 @@
         return;
       }
     }
+    var price = String((priceInput && priceInput.value) || "").trim();
     var existing = cart.find(function (line) {
       return line.item_id === pickedItem.id;
     });
@@ -586,6 +712,7 @@
         (Number(existing.quantity) || 0) + (Number(qty) || 0)
       );
       existing.store_qty = pickedItem.store_qty;
+      if (price) existing.price = price;
     } else {
       cart.push({
         item_id: pickedItem.id,
@@ -593,6 +720,7 @@
         category: pickedItem.category || "",
         store_qty: pickedItem.store_qty || "0",
         quantity: qty,
+        price: price,
       });
     }
     clearPicker();
@@ -713,13 +841,35 @@
 
   if (addBtn) addBtn.addEventListener("click", addToCart);
 
+  tradeKinds.forEach(function (radio) {
+    radio.addEventListener("change", function () {
+      tradeKind = tradeKindValue();
+      if (mode === "trade") {
+        submitLabel.textContent =
+          tradeKind === "trade_in" ? "Record trade in" : "Record trade out";
+        formPanel.classList.toggle(
+          "sm-stock--out",
+          tradeKind === "trade_out"
+        );
+        syncModeFields();
+      }
+    });
+  });
+
+  if (reasonSel) reasonSel.addEventListener("change", syncModeFields);
+  if (refundSel) refundSel.addEventListener("change", syncModeFields);
+
   if (cartItems) {
     cartItems.addEventListener("input", function (ev) {
       var row = ev.target.closest("[data-cart-idx]");
-      if (!row || !ev.target.matches("[data-cart-qty]")) return;
+      if (!row) return;
       var idx = Number(row.getAttribute("data-cart-idx"));
       if (!cart[idx]) return;
-      cart[idx].quantity = String(ev.target.value || "").trim();
+      if (ev.target.matches("[data-cart-qty]")) {
+        cart[idx].quantity = String(ev.target.value || "").trim();
+      } else if (ev.target.matches("[data-cart-price]")) {
+        cart[idx].price = String(ev.target.value || "").trim();
+      }
     });
     cartItems.addEventListener("click", function (ev) {
       var btn = ev.target.closest("[data-cart-remove]");
@@ -735,35 +885,113 @@
   if (submitBtn) {
     submitBtn.addEventListener("click", function () {
       setStatus("");
-      var receivedBy = empId && empId.value;
-      if (!receivedBy) {
-        setStatus(
-          mode === "in"
-            ? "Select who delivered the stock."
-            : "Select the employee who received the stock."
-        );
-        return;
-      }
+      var isTrade = mode === "trade";
+      var isIn = mode === "in" || (isTrade && tradeKind === "trade_in");
       var lines = cart
         .filter(function (line) {
           return line.item_id && Number(line.quantity) > 0;
         })
         .map(function (line) {
-          return { item_id: line.item_id, quantity: String(line.quantity) };
+          var out = {
+            item_id: line.item_id,
+            quantity: String(line.quantity),
+          };
+          if (priceEnabled() && String(line.price || "").trim()) {
+            out.buying_price = String(line.price).trim();
+          }
+          return out;
         });
       if (!lines.length) {
         setStatus("Add at least one item to the cart.");
         return;
       }
+      if (priceEnabled() && stockReq.in.buying_price) {
+        var missingPrice = lines.some(function (line) {
+          return !line.buying_price;
+        });
+        if (missingPrice) {
+          setStatus("Enter a buying price on every line.");
+          return;
+        }
+      }
+
+      var url;
+      var payload = { lines: lines };
+      if (isTrade) {
+        var pName = ((personName && personName.value) || "").trim();
+        var pPhone = ((personPhone && personPhone.value) || "").trim();
+        if (stockReq.in.supplier && tradeKind === "trade_in") {
+          if (!pName) {
+            setStatus("Enter the other person's name.");
+            return;
+          }
+          if (!pPhone) {
+            setStatus("Enter the other person's phone number.");
+            return;
+          }
+        }
+        url = urls.trade;
+        payload.trade_kind = tradeKind;
+        payload.person_name = pName;
+        payload.person_phone = pPhone;
+        payload.note = (noteInput && noteInput.value) || "";
+      } else if (isIn) {
+        var sName = ((supplierName && supplierName.value) || "").trim();
+        var sPhone = ((supplierPhone && supplierPhone.value) || "").trim();
+        var payment = (paymentSel && paymentSel.value) || "";
+        if (stockReq.in.supplier) {
+          if (!sName) {
+            setStatus("Enter the supplier name.");
+            return;
+          }
+          if (!sPhone) {
+            setStatus("Enter the supplier phone number.");
+            return;
+          }
+        }
+        if (stockReq.in.payment_status && !payment) {
+          setStatus("Choose a payment status (unpaid, paid, or partial).");
+          return;
+        }
+        url = urls.stockIn;
+        payload.received_by_id = empId && empId.value ? Number(empId.value) : null;
+        payload.note = (noteInput && noteInput.value) || "";
+        payload.supplier_name = sName;
+        payload.supplier_phone = sPhone;
+        payload.payment_status = payment;
+      } else {
+        var reason = (reasonSel && reasonSel.value) || "";
+        var refund = (refundSel && refundSel.value) || "";
+        var note = ((noteInput && noteInput.value) || "").trim();
+        if (stockReq.out.reason && !reason) {
+          setStatus("Choose a reason.");
+          return;
+        }
+        if (reason === "custom" && !note) {
+          setStatus("Enter a custom reason.");
+          return;
+        }
+        var refundAmount = ((refundAmountInput && refundAmountInput.value) || "").trim();
+        if (stockReq.out.refund && !refund) {
+          setStatus("Choose whether a refund applies (yes or no).");
+          return;
+        }
+        if (refund === "yes" && !(Number(refundAmount) > 0)) {
+          setStatus("Refund amount must be greater than zero.");
+          return;
+        }
+        url = urls.stockOut;
+        payload.received_by_id = empId && empId.value ? Number(empId.value) : null;
+        payload.reason = reason;
+        payload.note = note;
+        payload.refund = refund;
+        payload.refund_amount = refundAmount;
+      }
+
       submitBtn.disabled = true;
-      var url = mode === "in" ? urls.stockIn : urls.stockOut;
       fetchJSON(url, {
         method: "POST",
-        body: JSON.stringify({
-          received_by_id: Number(receivedBy),
-          note: (noteInput && noteInput.value) || "",
-          lines: lines,
-        }),
+        body: JSON.stringify(payload),
       })
         .then(function (data) {
           var stamp = nowStamp();
@@ -778,6 +1006,14 @@
           clearEmployee();
           clearPicker();
           if (noteInput) noteInput.value = "";
+          if (supplierName) supplierName.value = "";
+          if (supplierPhone) supplierPhone.value = "";
+          if (paymentSel) paymentSel.value = "";
+          if (reasonSel) reasonSel.value = "custom";
+          if (refundSel) refundSel.value = "";
+          if (refundAmountInput) refundAmountInput.value = "";
+          if (personName) personName.value = "";
+          if (personPhone) personPhone.value = "";
           setStatus("");
           show(null);
         })
@@ -891,6 +1127,35 @@
               escapeHtml(row.counterpart) +
               "</span>" +
               "</div>" +
+              (row.supplier_name
+                ? '<div class="sm-move__meta"><span>Supplier ' +
+                  escapeHtml(row.supplier_name) +
+                  (row.supplier_phone
+                    ? " · " + escapeHtml(row.supplier_phone)
+                    : "") +
+                  "</span>" +
+                  (row.payment_label
+                    ? "<span>" + escapeHtml(row.payment_label) + "</span>"
+                    : "") +
+                  (row.buying_price_display
+                    ? "<span>Buy " + escapeHtml(row.buying_price_display) + "</span>"
+                    : "") +
+                  "</div>"
+                : "") +
+              (row.reason_label || row.refund
+                ? '<div class="sm-move__meta">' +
+                  (row.reason_label
+                    ? "<span>" + escapeHtml(row.reason_label) + "</span>"
+                    : "") +
+                  (row.refund === "yes"
+                    ? "<span>Refund " +
+                      escapeHtml(row.refund_amount_display || "yes") +
+                      "</span>"
+                    : row.refund === "no"
+                      ? "<span>No refund</span>"
+                      : "") +
+                  "</div>"
+                : "") +
               (row.note
                 ? '<p class="sm-move__note">' + escapeHtml(row.note) + "</p>"
                 : "") +
