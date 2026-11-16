@@ -295,12 +295,14 @@
       <div class="wa-stock__supplier" data-stock-expense hidden>
         <p class="wa-stock__label">Add expense</p>
         <div class="wa-stock__expgrid">
-          <select data-expense-category aria-label="Expense category">
-            <option value="">Category…</option>
+          <input type="text" list="wa-expense-category-options"
+                 placeholder="Pick or type category…" autocomplete="off"
+                 maxlength="32" data-expense-category aria-label="Expense category">
+          <datalist id="wa-expense-category-options">
             {% for value, label in expense_categories %}
-            <option value="{{ value }}">{{ label }}</option>
+            <option value="{{ label }}"></option>
             {% endfor %}
-          </select>
+          </datalist>
           <select data-expense-status aria-label="Payment status">
             <option value="paid">Paid</option>
             <option value="partial">Partial</option>

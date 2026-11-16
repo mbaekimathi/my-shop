@@ -1784,11 +1784,18 @@
 
   function expenseCategoryLabel(value) {
     if (!els.expenseCategory) return value || "";
-    var opts = els.expenseCategory.options;
+    var v = (value || "").trim();
+    var opts =
+      els.expenseCategory.options ||
+      (els.expenseCategory.list && els.expenseCategory.list.options) ||
+      [];
     for (var i = 0; i < opts.length; i++) {
-      if (opts[i].value === value) return opts[i].textContent;
+      var o = opts[i];
+      if (o.value === v || o.textContent === v || o.label === v) {
+        return o.label || o.textContent || o.value;
+      }
     }
-    return value || "";
+    return v;
   }
 
   function tradeKind() {
