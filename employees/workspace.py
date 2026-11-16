@@ -892,18 +892,21 @@ def _it_support_shelf_stock_available(profile):
 def _it_support_stock_links(role, *, active_slug=None, profile=None):
     """Item / shelf stock dashboard links — replace the Stock Management entry."""
     from .module_permissions import employee_may_any
+    from .store_stock_views import item_stock_tracking_enabled
 
     if profile is not None and not employee_may_any(profile, "stock-management"):
         return []
     base = stock_management_url(role, "view")
-    links = [
-        _link(
-            "Item stock management",
-            "boxes",
-            href=base,
-            active=active_slug == "item-stock",
+    links = []
+    if item_stock_tracking_enabled():
+        links.append(
+            _link(
+                "Item stock management",
+                "boxes",
+                href=base,
+                active=active_slug == "item-stock",
+            )
         )
-    ]
     if _it_support_shelf_stock_available(profile):
         links.append(
             _link(
