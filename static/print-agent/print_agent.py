@@ -48,6 +48,7 @@ import ipaddress
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -86,6 +87,12 @@ COMMON_PRINTER_SUBNETS = (
     "192.168.100.0/24", "192.168.123.0/24", "192.168.168.0/24",
     "192.168.254.0/24", "10.0.0.0/24", "10.1.1.0/24", "172.16.0.0/24",
 )
+# Canary probe for foreign subnets — ports routers usually answer on, plus
+# ICMP ping. A subnet whose likely gateways are all silent is almost
+# certainly unroutable from here, so we skip its 254 hosts instead of
+# flooding the NAT table with dead connects.
+GATEWAY_PORTS = (80, 443, 22, 23, 53, 8080)
+GATEWAY_TIMEOUT = 0.3
 
 
 def log(msg: str) -> None:
@@ -272,6 +279,42 @@ def probe_host(host: str, timeout: float = PROBE_TIMEOUT,
     return None
 
 
+def _ping_host(host: str, timeout_ms: int = 250) -> bool:
+    if os.name == "nt":
+        cmd = ["ping", "-n", "1", "-w", str(timeout_ms), host]
+    else:
+        cmd = ["ping", "-c", "1", "-W", "1", host]
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, timeout=1.5, check=False
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def subnet_alive(net, timeout: float = GATEWAY_TIMEOUT) -> bool:
+    """Cheap canary: is anything answering at this subnet's likely gateways?
+
+    Checks x.x.x.1 and x.x.x.254 on common router TCP ports and ICMP. Used
+    to skip dead subnets before sweeping all their hosts.
+    """
+    candidates = {str(net.network_address + 1)}
+    try:
+        candidates.add(str(net.broadcast_address - 1))
+    except (AttributeError, TypeError):
+        pass
+    for ip in candidates:
+        if _ping_host(ip):
+            return True
+        for port in GATEWAY_PORTS:
+            try:
+                with socket.create_connection((ip, port), timeout=timeout):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def _subnet_hosts(nets) -> list[str]:
     hosts: list[str] = []
     seen: set[str] = set()
@@ -304,10 +347,21 @@ def scan_lan(extra_subnets=None, wide: bool = False) -> tuple[list, int]:
         wide_nets = []
         for raw in COMMON_PRINTER_SUBNETS:
             try:
-                wide_nets.append(ipaddress.ip_network(raw))
+                net = ipaddress.ip_network(raw)
             except ValueError:
                 continue
-        for host in _subnet_hosts(wide_nets):
+            wide_nets.append(net)
+        local_nets = {str(net) for net in nets}
+        foreign = [n for n in wide_nets if str(n) not in local_nets]
+        # Canary-check foreign subnets in parallel — a /24 whose gateways
+        # don't answer is unroutable and not worth 254 dead connects.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+            live = [
+                net
+                for net, ok in zip(foreign, pool.map(subnet_alive, foreign))
+                if ok
+            ]
+        for host in _subnet_hosts(live):
             targets.setdefault(host, WIDE_PORTS)
     printers: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
@@ -327,12 +381,17 @@ def scan_lan(extra_subnets=None, wide: bool = False) -> tuple[list, int]:
 
 
 def report_scan(cfg: dict, printers: list, scanned: int) -> None:
+    payload = {"printers": printers, "scanned": scanned}
     status, data = request(
-        report_url(cfg),
-        token=cfg["token"],
-        method="POST",
-        payload={"printers": printers, "scanned": scanned},
+        report_url(cfg), token=cfg["token"], method="POST", payload=payload
     )
+    if status == 0:
+        # Transient drop (NAT busy during a big sweep) — retry once.
+        time.sleep(3)
+        status, data = request(
+            report_url(cfg), token=cfg["token"], method="POST",
+            payload=payload,
+        )
     if status == 200 and data.get("ok"):
         log(f"Reported {len(printers)} LAN printer(s) ({scanned} hosts scanned)")
     else:
