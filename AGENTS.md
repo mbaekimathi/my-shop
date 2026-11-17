@@ -151,15 +151,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `shop.print_agent_token` is set (else 502 `agent_required`). A local agent
   (`static/print-agent/print_agent.py`) polls `print-agent/<shop>/jobs/` with
   the `X-Print-Agent-Token` header and acks `…/jobs/<id>/` (done/failed).
-  The agent also TCP-probes its own /24s for printer ports ~every 45s and
-  POSTs results to `print-agent/<shop>/report/` → stored on
+  The agent also TCP-probes its own /24s — plus a built-in list of common
+  printer subnets (192.168.x / 10.x / 172.16.x, `COMMON_PRINTER_SUBNETS`,
+  disable with `"wide_scan": false` in print_agent.json) — for printer ports
+  ~every 45s and POSTs results to `print-agent/<shop>/report/` → stored on
   `shop.print_agent_scan`/`_scan_at`; Wi‑Fi "Scan" merges those (fresh within
   5 min) into results on hosted *and* on-LAN servers (rows flagged
   `via_agent`). Polls stamp `shop.print_agent_seen_at` (30s throttle) →
   `agent_alive` in scan/config responses. Pressing Scan writes
   `shop.print_agent_scan_request` (`{at, hosts, subnets}`); the poll response
-  carries it (<10 min old) and the agent probes the requested hosts + its LAN
-  and reports — the JS retries once ~7s later to collect the results.
+  carries it (<10 min old) and the agent reports twice — a quick pass on the
+  requested hosts + its own LAN, then a slower wide sweep of the common
+  subnets — the JS retries once ~7s later for the quick pass.
   The scan view also sends `shop.wifi_printer_host` as `extra_hosts` to
   `discover_lan_printers` (direct probes off the detected /24s), and the
   relay tries a direct socket for off-/24 hosts before queueing a

@@ -34,6 +34,9 @@ Extra config keys (optional):
     "report_url": override the derived .../report/ endpoint
     "extra_subnets": ["192.168.100.0/24"] — also scan subnets the PC can
                      route to but isn't directly on (e.g. a second SSID)
+    "wide_scan": false — don't sweep the built-in list of common printer
+                 subnets (192.168.x, 10.x, 172.16.x) beyond this PC's own;
+                 on by default so a printer on another segment is found
 """
 
 from __future__ import annotations
@@ -64,9 +67,25 @@ except (AttributeError, OSError):
 
 # LAN printer discovery: probe each host's first open printer port.
 PRINTER_PORTS = (9100, 9101, 9102, 9112, 9200, 10001, 631, 515)
+# Shorter port list for subnets outside this PC's own — keeps the wide sweep
+# quick while covering what receipt printers actually listen on.
+WIDE_PORTS = (9100, 9101, 631, 515)
 PROBE_TIMEOUT = 0.15
 SCAN_WORKERS = 64
 SCAN_INTERVAL = 45.0
+
+# Private subnets beyond this PC's own that printers commonly live on —
+# second routers, guest SSIDs, and the fixed defaults of Wi‑Fi print modules
+# (many thermal dongles sit on 192.168.123.x / 192.168.10.x). Swept during
+# "wide" scans so a printer on a different segment still shows up. Probing
+# an unreachable subnet just times out — no harm done.
+COMMON_PRINTER_SUBNETS = (
+    "192.168.0.0/24", "192.168.1.0/24", "192.168.2.0/24", "192.168.3.0/24",
+    "192.168.4.0/24", "192.168.5.0/24", "192.168.8.0/24", "192.168.10.0/24",
+    "192.168.11.0/24", "192.168.31.0/24", "192.168.50.0/24",
+    "192.168.100.0/24", "192.168.123.0/24", "192.168.168.0/24",
+    "192.168.254.0/24", "10.0.0.0/24", "10.1.1.0/24", "172.16.0.0/24",
+)
 
 
 def log(msg: str) -> None:
@@ -235,8 +254,9 @@ def _reverse_name(host: str) -> str:
         socket.setdefaulttimeout(None)
 
 
-def probe_host(host: str, timeout: float = PROBE_TIMEOUT) -> dict | None:
-    for port in PRINTER_PORTS:
+def probe_host(host: str, timeout: float = PROBE_TIMEOUT,
+               ports=PRINTER_PORTS) -> dict | None:
+    for port in ports:
         try:
             with socket.create_connection((host, port), timeout=timeout):
                 pass
@@ -252,14 +272,7 @@ def probe_host(host: str, timeout: float = PROBE_TIMEOUT) -> dict | None:
     return None
 
 
-def scan_lan(extra_subnets=None) -> tuple[list, int]:
-    """TCP-probe this PC's private /24s (plus any extra_subnets) for printers."""
-    nets = list(private_networks(local_ipv4_addresses()))
-    for raw in extra_subnets or []:
-        try:
-            nets.append(ipaddress.ip_network(str(raw), strict=False))
-        except ValueError:
-            log(f"Ignoring invalid extra_subnet: {raw}")
+def _subnet_hosts(nets) -> list[str]:
     hosts: list[str] = []
     seen: set[str] = set()
     for net in nets:
@@ -267,13 +280,50 @@ def scan_lan(extra_subnets=None) -> tuple[list, int]:
             if str(h) not in seen:
                 seen.add(str(h))
                 hosts.append(str(h))
+    return hosts
+
+
+def scan_lan(extra_subnets=None, wide: bool = False) -> tuple[list, int]:
+    """TCP-probe for printers.
+
+    Always sweeps this PC's private /24s plus any extra_subnets. When
+    ``wide`` is set, also sweeps COMMON_PRINTER_SUBNETS — other private
+    ranges a printer on another segment (or a Wi‑Fi dongle's default net)
+    might answer on.
+    """
+    nets = list(private_networks(local_ipv4_addresses()))
+    for raw in extra_subnets or []:
+        try:
+            nets.append(ipaddress.ip_network(str(raw), strict=False))
+        except ValueError:
+            log(f"Ignoring invalid extra_subnet: {raw}")
+    targets: dict[str, tuple] = {
+        h: PRINTER_PORTS for h in _subnet_hosts(nets)
+    }
+    if wide:
+        wide_nets = []
+        for raw in COMMON_PRINTER_SUBNETS:
+            try:
+                wide_nets.append(ipaddress.ip_network(raw))
+            except ValueError:
+                continue
+        for host in _subnet_hosts(wide_nets):
+            targets.setdefault(host, WIDE_PORTS)
     printers: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
-        for result in pool.map(probe_host, hosts):
+        futures = {
+            pool.submit(probe_host, host, ports=ports): host
+            for host, ports in targets.items()
+        }
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+            except Exception:
+                continue
             if result:
                 printers.append(result)
     printers.sort(key=lambda row: tuple(int(p) for p in row["host"].split(".")))
-    return printers, len(hosts)
+    return printers, len(targets)
 
 
 def report_scan(cfg: dict, printers: list, scanned: int) -> None:
@@ -328,12 +378,30 @@ def run_scan_request(cfg: dict, req: dict) -> None:
     )
     report_scan(cfg, list(found.values()), scanned + len(hosts))
 
+    # Wide pass over the common printer subnets — slower, so it reports in a
+    # second post instead of delaying the quick answer above.
+    try:
+        printers, wide_scanned = scan_lan(subnets, wide=True)
+    except Exception as exc:
+        log(f"Requested wide scan failed: {exc}")
+        return
+    for row in printers:
+        found.setdefault(row["host"], row)
+    log(
+        f"Wide scan: {len(printers)} printer(s) "
+        f"({wide_scanned} hosts probed)"
+    )
+    report_scan(
+        cfg, list(found.values()), scanned + len(hosts) + wide_scanned
+    )
+
 
 def scanner_loop(cfg: dict, stop: threading.Event) -> None:
     """Periodically scan the shop LAN and report printers to the server."""
+    wide = bool(cfg.get("wide_scan", True))
     while not stop.is_set():
         try:
-            printers, scanned = scan_lan(cfg.get("extra_subnets"))
+            printers, scanned = scan_lan(cfg.get("extra_subnets"), wide=wide)
         except Exception as exc:
             log(f"Printer scan failed: {exc}")
             printers, scanned = [], 0
@@ -429,7 +497,10 @@ def main() -> None:
     if args.once:
         run_once(cfg)
         try:
-            printers, scanned = scan_lan(cfg.get("extra_subnets"))
+            printers, scanned = scan_lan(
+                cfg.get("extra_subnets"),
+                wide=bool(cfg.get("wide_scan", True)),
+            )
             report_scan(cfg, printers, scanned)
         except Exception as exc:
             log(f"Printer scan failed: {exc}")
