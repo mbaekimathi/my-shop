@@ -23,6 +23,12 @@ Keep it running while the shop is open. Python 3.8+ only — no extra packages.
 On Windows you can autostart it via Task Scheduler or a shortcut in
 shell:startup.
 
+Wrong-subnet printer? If a printer shares this Wi‑Fi but keeps a static IP
+on another subnet (e.g. a dongle pinned to 192.168.123.100), the agent gives
+this PC a second address in that /24 so it becomes reachable — needs an
+Administrator account on Windows; without it the agent logs the one-time
+netsh command to run manually.
+
 Options:
     --config PATH   use a different config file (default: print_agent.json
                     next to this script)
@@ -315,6 +321,101 @@ def subnet_alive(net, timeout: float = GATEWAY_TIMEOUT) -> bool:
     return False
 
 
+def _interface_alias_for(ip: str) -> str:
+    """Name of the Windows interface that owns the given IPv4 address."""
+    try:
+        out = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "(Get-NetIPAddress -AddressFamily IPv4 | "
+                f"Where-Object {{$_.IPAddress -eq '{ip}'}}).InterfaceAlias",
+            ],
+            capture_output=True, text=True, timeout=6, check=False,
+        )
+        for line in (out.stdout or "").splitlines():
+            if line.strip():
+                return line.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # Fallback: parse ipconfig sections — the adapter name is in the header.
+    try:
+        out = subprocess.run(
+            ["ipconfig"], capture_output=True, text=True, timeout=6,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    current = ""
+    for line in (out.stdout or "").splitlines():
+        if line.strip() and not line.startswith((" ", "\t")):
+            if "adapter" in line.lower():
+                current = line.rstrip(":").rsplit("adapter", 1)[-1].strip()
+        elif current and ip in line:
+            return current
+    return ""
+
+
+def ensure_subnet_access(host: str, cfg: dict) -> bool:
+    """Reach a printer that shares this Wi‑Fi but sits on a wrong‑subnet
+    static IP (e.g. a dongle pinned to 192.168.123.100 while the LAN is
+    192.168.2.x) by giving this PC a second address in the printer's /24.
+
+    Windows only, needs admin. On success the subnet is added to this run's
+    sweep list so future scans cover it. Harmless when the printer isn't on
+    the same L2 — traffic to the alias net just goes nowhere.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if not isinstance(ip, ipaddress.IPv4Address) or not (
+        ip.is_private or ip.is_link_local
+    ):
+        return False
+    local = local_ipv4_addresses()
+    nets = private_networks(local)
+    if any(ip in net for net in nets):
+        return True  # already reachable
+    net = ipaddress.ip_network(f"{ip}/24", strict=False)
+    primary = next((x for x in local if not x.startswith("127.")), "")
+    if not primary:
+        return False
+    iface = _interface_alias_for(primary)
+    if not iface:
+        return False
+    last = int(primary.rsplit(".", 1)[1])
+    if last == int(str(ip).rsplit(".", 1)[1]):
+        last = 250
+    alias = str(net.network_address + last)
+    try:
+        result = subprocess.run(
+            [
+                "netsh", "interface", "ipv4", "add", "address",
+                f"name={iface}", f"address={alias}", "mask=255.255.255.0",
+            ],
+            capture_output=True, text=True, timeout=8, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"Could not add {alias} to '{iface}': {exc}")
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[:160]
+        log(f"Could not add {alias} to '{iface}' (needs admin): {detail}")
+        log(
+            f"To reach {host} run this once in an Administrator terminal: "
+            f'netsh interface ipv4 add address name="{iface}" '
+            f"address={alias} mask=255.255.255.0"
+        )
+        return False
+    log(f"Added {alias} to '{iface}' — {host} is now reachable on this Wi‑Fi")
+    extras = cfg.setdefault("extra_subnets", [])
+    if str(net) not in extras:
+        extras.append(str(net))
+    return True
+
+
 def _subnet_hosts(nets) -> list[str]:
     hosts: list[str] = []
     seen: set[str] = set()
@@ -424,6 +525,13 @@ def run_scan_request(cfg: dict, req: dict) -> None:
             for row in pool.map(lambda h: probe_host(h, timeout=0.6), hosts):
                 if row:
                     found[row["host"]] = row
+        # Missed? The printer may be L2‑adjacent on a wrong subnet — try the
+        # self-heal (adds a local IP in its /24) and probe again.
+        for host in hosts:
+            if host not in found and ensure_subnet_access(host, cfg):
+                row = probe_host(host, timeout=0.6)
+                if row:
+                    found[row["host"]] = row
     try:
         printers, scanned = scan_lan(subnets)
     except Exception as exc:
@@ -468,15 +576,26 @@ def scanner_loop(cfg: dict, stop: threading.Event) -> None:
         stop.wait(SCAN_INTERVAL)
 
 
-def print_job(job: dict) -> None:
+def _send(host: str, port: int, data: bytes) -> None:
+    with socket.create_connection((host, port), timeout=CONNECT_TIMEOUT) as sock:
+        sock.settimeout(WRITE_TIMEOUT)
+        sock.sendall(data)
+
+
+def print_job(job: dict, cfg: dict) -> None:
     host = str(job.get("host") or "").strip()
     port = int(job.get("port") or 9100)
     data = base64.b64decode(job.get("data") or "")
     if not host or not data:
         raise ValueError("Job is missing printer host or data.")
-    with socket.create_connection((host, port), timeout=CONNECT_TIMEOUT) as sock:
-        sock.settimeout(WRITE_TIMEOUT)
-        sock.sendall(data)
+    try:
+        _send(host, port, data)
+    except OSError:
+        # Printer may share this Wi‑Fi on a wrong‑subnet static IP — give
+        # this PC an address in its /24 and retry before failing the job.
+        if not ensure_subnet_access(host, cfg):
+            raise
+        _send(host, port, data)
 
 
 def run_once(cfg: dict) -> bool:
@@ -492,7 +611,7 @@ def run_once(cfg: dict) -> bool:
     for job in data.get("jobs") or []:
         job_id = job.get("id")
         try:
-            print_job(job)
+            print_job(job, cfg)
         except Exception as exc:
             log(f"Job {job_id} failed → {job.get('host')}:{job.get('port')}: {exc}")
             request(
