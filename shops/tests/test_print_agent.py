@@ -488,21 +488,104 @@ class PrintAgentFlowTests(TestCase):
         self.assertFalse(payload["from_agent"])
         self.assertFalse(payload["agent_alive"])
 
-    def test_onlan_scan_passes_typed_and_saved_host(self):
+    def test_onlan_scan_passes_saved_host(self):
         self.shop.wifi_printer_host = "192.168.100.171"
         self.shop.save(update_fields=["wifi_printer_host"])
 
-        _, disco = self._onlan_scan(
-            self._portal_client(), body={"host": "192.168.0.55"}
-        )
+        _, disco = self._onlan_scan(self._portal_client())
         extra = disco.call_args.kwargs.get("extra_hosts") or []
-        self.assertIn("192.168.0.55", extra)
         self.assertIn("192.168.100.171", extra)
 
-    def test_scan_writes_agent_scan_request_with_typed_host(self):
-        response, _ = self._onlan_scan(
-            self._portal_client(), body={"host": "192.168.100.171"}
+    # --- targeted scan (typed IP) -------------------------------------------
+
+    def _targeted_scan(self, client, host, **extra):
+        body = {"host": host}
+        body.update(extra)
+        return client.post(
+            reverse(
+                "employees:my_shop_wifi_printer_scan",
+                kwargs={"shop_id": self.shop.pk},
+            ),
+            data=json.dumps(body),
+            content_type="application/json",
         )
+
+    def test_typed_host_runs_targeted_scan_not_full_sweep(self):
+        printer = self._agent_row("192.168.0.55")
+        with mock.patch(
+            "shops.printer_discovery._local_ipv4_addresses",
+            return_value=["192.168.0.102"],
+        ), mock.patch(
+            "shops.printer_discovery._probe_host", return_value=printer
+        ) as probe, mock.patch(
+            "shops.printer_discovery.discover_lan_printers"
+        ) as disco:
+            response = self._targeted_scan(
+                self._portal_client(), "192.168.0.55"
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            [row["host"] for row in payload["printers"]], ["192.168.0.55"]
+        )
+        probe.assert_called_once_with(
+            "192.168.0.55", resolve_name=True, connect_timeout=0.6
+        )
+        disco.assert_not_called()
+
+    def test_typed_host_rejects_bad_ip(self):
+        for host in ("192.168.x.x", "8.8.8.8", "not-an-ip"):
+            response = self._targeted_scan(self._portal_client(), host)
+            self.assertEqual(response.status_code, 400, host)
+            self.assertFalse(response.json()["ok"])
+            self.assertIn("printer IP", response.json()["error"])
+
+    def test_typed_host_uses_agent_report_when_hosted(self):
+        other = self._agent_row()
+        other["host"] = "192.168.100.99"
+        self.shop.print_agent_scan = [self._agent_row(), other]
+        self.shop.print_agent_scan_at = timezone.now()
+        self.shop.save(
+            update_fields=["print_agent_scan", "print_agent_scan_at"]
+        )
+        with mock.patch(
+            "shops.printer_discovery._local_ipv4_addresses",
+            return_value=["8.8.8.8"],
+        ):
+            response = self._targeted_scan(
+                self._portal_client(), "192.168.100.171"
+            )
+        payload = response.json()
+        self.assertTrue(payload["hosted"])
+        self.assertEqual(
+            [row["host"] for row in payload["printers"]],
+            ["192.168.100.171"],
+        )
+        self.assertTrue(payload["printers"][0]["via_agent"])
+
+    def test_typed_host_miss_reports_specific_hint(self):
+        # Agent alive but its report doesn't contain the typed host.
+        self.shop.print_agent_seen_at = timezone.now()
+        self.shop.save(update_fields=["print_agent_seen_at"])
+        with mock.patch(
+            "shops.printer_discovery._local_ipv4_addresses",
+            return_value=["8.8.8.8"],
+        ):
+            response = self._targeted_scan(
+                self._portal_client(), "192.168.100.171"
+            )
+        payload = response.json()
+        self.assertEqual(payload["printers"], [])
+        self.assertIn("192.168.100.171", payload["hint"])
+
+    def test_scan_writes_agent_scan_request_with_typed_host(self):
+        with mock.patch(
+            "shops.printer_discovery._local_ipv4_addresses",
+            return_value=["8.8.8.8"],
+        ):
+            response = self._targeted_scan(
+                self._portal_client(), "192.168.100.171"
+            )
         self.assertEqual(response.status_code, 200)
         self.shop.refresh_from_db()
         req = self.shop.print_agent_scan_request

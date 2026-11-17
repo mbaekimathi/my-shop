@@ -3896,7 +3896,34 @@ def my_shop_wifi_printer_scan(request, shop_id):
         scan_host = str(payload.get("host") or "").strip()
         is_retry = bool(payload.get("retry"))
 
+    import ipaddress
     import time
+    from django.utils import timezone
+
+    # A typed IP means "check that specific printer"; an empty field means
+    # search the whole network for any printer.
+    target_host = ""
+    if scan_host:
+        try:
+            ip = ipaddress.ip_address(scan_host)
+        except ValueError:
+            ip = None
+        if not (
+            isinstance(ip, ipaddress.IPv4Address)
+            and (ip.is_private or ip.is_loopback or ip.is_link_local)
+        ):
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        f'"{scan_host}" is not a usable printer IP — type the '
+                        "printer's local address (e.g. 192.168.100.171), or "
+                        "leave the field empty to search the whole network."
+                    ),
+                },
+                status=400,
+            )
+        target_host = str(ip)
 
     # Ask the agent for an on-demand scan before the (slow) local sweep — it
     # picks this up on its next poll (~2s) and probes the typed host + its own
@@ -3906,25 +3933,13 @@ def my_shop_wifi_printer_scan(request, shop_id):
         Shop.objects.filter(pk=shop.pk).update(
             print_agent_scan_request={
                 "at": time.time(),
-                "hosts": [scan_host] if scan_host else [],
+                "hosts": [target_host] if target_host else [],
                 "subnets": [],
             }
         )
 
-    # Probe the typed IP and the shop's saved printer even when they sit
-    # outside the server's detected /24s — routed subnets are still reachable.
-    result = discover_lan_printers(
-        thorough=thorough,
-        extra_hosts=[scan_host, shop.wifi_printer_host or ""],
-    )
-    hosted = not result.get("networks")
-    result["hosted"] = hosted
-    result["agent"] = bool(shop.print_agent_token)
-
     # The print agent scans the shop's own network — its report can see
     # printers the server can't (hosted server, or a different LAN segment).
-    from django.utils import timezone
-
     now = timezone.now()
     report = shop.print_agent_scan if isinstance(shop.print_agent_scan, list) else []
     seen_fresh = bool(
@@ -3939,6 +3954,92 @@ def my_shop_wifi_printer_scan(request, shop_id):
     agent_printers = (
         [dict(row, via_agent=True) for row in report] if report_fresh else []
     )
+
+    if target_host:
+        # Targeted scan — check only the typed printer: directly when the
+        # server can reach it, and/or through the agent's freshest report.
+        from .printer_discovery import (
+            _local_ipv4_addresses,
+            _networks_from_local_ips,
+            _probe_host,
+        )
+
+        local_ips = _local_ipv4_addresses()
+        networks = _networks_from_local_ips(local_ips)
+        hosted = not networks
+        printers = []
+        if not hosted:
+            row = _probe_host(
+                target_host, resolve_name=True, connect_timeout=0.6
+            )
+            if row:
+                printers.append(row)
+        agent_row = next(
+            (
+                row
+                for row in agent_printers
+                if str(row.get("host") or "") == target_host
+            ),
+            None,
+        )
+        if agent_row and not printers:
+            printers.append(agent_row)
+
+        if printers:
+            hint = (
+                f"Printer answered at {target_host}:"
+                f"{printers[0].get('port') or 9100}."
+            )
+        elif agent_alive:
+            hint = (
+                f"{target_host} did not answer on the usual printer ports "
+                "(9100, 631, 515 …) — check the IP is right and the printer "
+                "is powered on the same network as the print agent."
+            )
+        elif shop.print_agent_token:
+            hint = (
+                "No scan report from your print agent yet — make sure "
+                "print_agent.py is running on the shop PC, then Scan again."
+            )
+        else:
+            hint = (
+                f"Could not reach {target_host} on any printer port — check "
+                "the IP and that the printer is on the same Wi‑Fi."
+            )
+        return JsonResponse(
+            {
+                "ok": True,
+                "hosted": hosted,
+                "agent": bool(shop.print_agent_token),
+                "agent_alive": agent_alive,
+                # Live agent → it may still be probing this host; the client
+                # waits a few seconds and retries once for the report.
+                "agent_scan_pending": bool(
+                    shop.print_agent_token and seen_fresh
+                ),
+                "from_agent": bool(agent_row),
+                "printers": printers,
+                "agent_scan_at": (
+                    shop.print_agent_scan_at.isoformat()
+                    if shop.print_agent_scan_at
+                    else ""
+                ),
+                "local_ips": local_ips,
+                "networks": [str(net) for net in networks],
+                "hint": hint,
+                "cached": False,
+            }
+        )
+
+    # Probe the shop's saved printer even when it sits outside the server's
+    # detected /24s — routed subnets are still reachable.
+    result = discover_lan_printers(
+        thorough=thorough,
+        extra_hosts=[shop.wifi_printer_host or ""],
+    )
+    hosted = not result.get("networks")
+    result["hosted"] = hosted
+    result["agent"] = bool(shop.print_agent_token)
     result["agent_alive"] = agent_alive
     # True while a live agent is around to fulfil an on-demand scan — the
     # client waits a few seconds and retries once for the report to land.

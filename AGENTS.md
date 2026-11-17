@@ -160,10 +160,14 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `shop.print_agent_scan_request` (`{at, hosts, subnets}`); the poll response
   carries it (<10 min old) and the agent probes the requested hosts + its LAN
   and reports — the JS retries once ~7s later to collect the results.
-  The scan view also sends the typed host + `shop.wifi_printer_host` as
-  `extra_hosts` to `discover_lan_printers` (direct probes off the detected
-  /24s), and the relay tries a direct socket for off-/24 hosts before
-  queueing a `PrintAgentJob`.
+  The scan view also sends `shop.wifi_printer_host` as `extra_hosts` to
+  `discover_lan_printers` (direct probes off the detected /24s), and the
+  relay tries a direct socket for off-/24 hosts before queueing a
+  `PrintAgentJob`. A typed IP in the Scan field makes the scan **targeted**:
+  only that host is checked — `_probe_host` directly when the server has a
+  LAN, plus the matching row in the agent's fresh report (filtered by host);
+  no full sweep, and a miss returns a host-specific hint. Invalid/non-LAN
+  input 400s; empty field = scan the whole network.
   Agent config self-setup: `print-agent/<shop>/setup/<key>/` returns
   `{poll_url, token}` (or a `print_agent.json` download with `?download=1`);
   `key` is `agent_setup_key(shop)` — an HMAC of the agent token, so a
