@@ -164,6 +164,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `extra_hosts` to `discover_lan_printers` (direct probes off the detected
   /24s), and the relay tries a direct socket for off-/24 hosts before
   queueing a `PrintAgentJob`.
+  Agent config self-setup: `print-agent/<shop>/setup/<key>/` returns
+  `{poll_url, token}` (or a `print_agent.json` download with `?download=1`);
+  `key` is `agent_setup_key(shop)` — an HMAC of the agent token, so a
+  regenerated token invalidates old links. The receipt settings page shows the
+  link; the agent prompts for it once when `print_agent.json` is missing,
+  writes the file itself, and re-prompts on a 401 (`relink`). `--setup URL`
+  does it non-interactively.
   Views: `shops/agent_views.py`; token (re)generation: action `print_agent_token`
   on the shop receipt settings page (gated by `shop_settings`). Tests:
   `shops/tests/test_print_agent.py`.

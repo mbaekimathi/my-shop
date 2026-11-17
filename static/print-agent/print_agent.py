@@ -9,12 +9,15 @@ list them even though the server cannot see the shop LAN. Run this on any
 computer in the shop that can reach the printer — e.g. the till PC.
 
 Setup:
-    1. Put this file anywhere and create print_agent.json next to it:
+    1. Put this file anywhere and run it:  python print_agent.py
+    2. When asked, paste the Agent setup link shown under
+       Shop settings → Receipt → Cloud print agent. The agent fetches
+       its config from the server and saves print_agent.json next to
+       this file — nothing to type by hand.
+       (You can also click "download print_agent.json" on that page and
+       save it next to this file, or create it manually:
          {"poll_url": "https://example.com/print-agent/1/jobs/",
-          "token": "your-shop-agent-token"}
-       The ready-made config is shown under
-       Shop settings → Receipt → Cloud print agent.
-    2. Run:  python print_agent.py
+          "token": "your-shop-agent-token"})
 
 Keep it running while the shop is open. Python 3.8+ only — no extra packages.
 On Windows you can autostart it via Task Scheduler or a shortcut in
@@ -23,6 +26,7 @@ shell:startup.
 Options:
     --config PATH   use a different config file (default: print_agent.json
                     next to this script)
+    --setup URL     fetch the agent config from this setup link now
     --once          poll once, print anything queued, then exit
     --interval SEC  seconds between polls (default: 2)
 
@@ -67,6 +71,65 @@ SCAN_INTERVAL = 45.0
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def fetch_setup(setup_url: str) -> dict:
+    """Fetch {"poll_url", "token"} from the setup link on the settings page."""
+    setup_url = setup_url.strip()
+    req = urllib.request.Request(
+        setup_url, headers={"Accept": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8") or "{}")
+    except Exception as exc:
+        sys.exit(f"Could not fetch the agent config from the setup link: {exc}")
+    cfg = {
+        "poll_url": str(data.get("poll_url") or "").strip(),
+        "token": str(data.get("token") or "").strip(),
+    }
+    if not cfg["poll_url"] or not cfg["token"]:
+        sys.exit(
+            "The setup link did not return an agent config. Copy the whole "
+            "link from Shop settings → Receipt → Cloud print agent."
+        )
+    return cfg
+
+
+def prompt_setup_link() -> str:
+    if not sys.stdin.isatty():
+        return ""
+    print()
+    print("Paste the Agent setup link from")
+    print("Shop settings → Receipt → Cloud print agent:")
+    try:
+        return input("> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
+def save_config(path: str, cfg: dict) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+        fh.write("\n")
+    log(f"Saved agent config → {path}")
+
+
+def relink(cfg: dict) -> None:
+    """Re-pair after the token was regenerated (server answered 401)."""
+    url = prompt_setup_link()
+    if not url:
+        sys.exit(
+            "Server rejected the agent token (401). Regenerate the token under "
+            "Shop settings → Receipt → Cloud print agent and update "
+            "print_agent.json — or run again and paste the new setup link."
+        )
+    fresh = fetch_setup(url)
+    path = str(cfg.get("_config_path") or "").strip()
+    if path:
+        save_config(path, fresh)
+    cfg.update(fresh)
+    log("Agent re-linked to the server.")
 
 
 def load_config(path: str) -> dict:
@@ -293,10 +356,8 @@ def run_once(cfg: dict) -> bool:
     """One poll/print cycle. Returns True when the server answered."""
     status, data = request(cfg["poll_url"], token=cfg["token"])
     if status == 401:
-        sys.exit(
-            "Server rejected the agent token (401). Regenerate the token under "
-            "Shop settings → Receipt → Cloud print agent and update print_agent.json."
-        )
+        relink(cfg)
+        return True
     if status != 200 or not data.get("ok"):
         log(f"Poll failed: {data.get('error') or f'HTTP {status}'}")
         return False
@@ -344,6 +405,7 @@ def _run_scan_request_safe(cfg: dict, req: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="MY-SHOP local print agent")
     parser.add_argument("--config", default="", help="Path to print_agent.json")
+    parser.add_argument("--setup", default="", help="Agent setup link to fetch config from")
     parser.add_argument("--once", action="store_true", help="Poll once and exit")
     parser.add_argument("--interval", type=float, default=2.0, help="Poll interval seconds")
     args = parser.parse_args()
@@ -351,7 +413,18 @@ def main() -> None:
     config_path = args.config or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "print_agent.json"
     )
+    if not os.path.exists(config_path):
+        setup_url = args.setup or prompt_setup_link()
+        if not setup_url:
+            sys.exit(
+                f"Config not found: {config_path}\n"
+                "Run again and paste the Agent setup link from Shop settings "
+                "→ Receipt → Cloud print agent, or save the downloaded "
+                "print_agent.json next to this file."
+            )
+        save_config(config_path, fetch_setup(setup_url))
     cfg = load_config(config_path)
+    cfg["_config_path"] = config_path
     log(f"Agent polling {cfg['poll_url']} every {args.interval:g}s")
     if args.once:
         run_once(cfg)

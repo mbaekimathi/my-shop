@@ -201,6 +201,11 @@ urlpatterns = [
         name="my_shop_wifi_printer_config",
     ),
     path(
+        "print-agent/<int:shop_id>/setup/<str:key>/",
+        shop_agent_views.print_agent_setup,
+        name="print_agent_setup",
+    ),
+    path(
         "print-agent/<int:shop_id>/jobs/",
         shop_agent_views.print_agent_poll,
         name="print_agent_poll",

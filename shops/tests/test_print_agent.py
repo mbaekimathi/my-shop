@@ -13,6 +13,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from shops.agent_views import agent_setup_key
 from shops.models import PrintAgentJob, Shop
 from shops.session import SESSION_SHOP_PORTAL_SHOP_KEY
 
@@ -220,6 +221,53 @@ class PrintAgentFlowTests(TestCase):
             self._poll_url(), HTTP_X_PRINT_AGENT_TOKEN=AGENT_TOKEN
         ).json()
         self.assertEqual([row["id"] for row in payload["jobs"]], [job.pk])
+
+    # --- agent setup link --------------------------------------------------
+
+    def _setup_url(self, key=None):
+        return reverse(
+            "employees:print_agent_setup",
+            kwargs={
+                "shop_id": self.shop.pk,
+                "key": agent_setup_key(self.shop) if key is None else key,
+            },
+        )
+
+    def test_setup_link_requires_valid_key(self):
+        client = Client()
+        self.assertEqual(client.get(self._setup_url("bogus")).status_code, 401)
+        response = client.get(self._setup_url())
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["token"], AGENT_TOKEN)
+        self.assertTrue(
+            payload["poll_url"].endswith(
+                f"/print-agent/{self.shop.pk}/jobs/"
+            )
+        )
+
+    def test_setup_link_download_serves_config_file(self):
+        response = Client().get(self._setup_url() + "?download=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            'filename="print_agent.json"',
+            response["Content-Disposition"],
+        )
+        payload = response.json()
+        self.assertNotIn("ok", payload)
+        self.assertEqual(payload["token"], AGENT_TOKEN)
+
+    def test_setup_link_invalidated_by_new_token(self):
+        old_url = self._setup_url()
+        self.shop.print_agent_token = "new-token-after-regenerate"
+        self.shop.save(update_fields=["print_agent_token"])
+        self.assertEqual(Client().get(old_url).status_code, 401)
+
+    def test_setup_link_rejected_without_token(self):
+        self.shop.print_agent_token = ""
+        self.shop.save(update_fields=["print_agent_token"])
+        self.assertEqual(Client().get(self._setup_url("anything")).status_code, 401)
 
     # --- agent ack ---------------------------------------------------------
 

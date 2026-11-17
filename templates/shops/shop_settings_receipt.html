@@ -651,10 +651,14 @@
             <a href="{% static 'print-agent/print_agent.bat' %}" download>print_agent.bat</a>
             into the same folder on the shop computer that can reach the printer
             (needs Python 3).<br>
-            2. Next to them, create <code>print_agent.json</code> with:<br>
-            <code>{"poll_url": "{{ print_agent_poll_url }}", "token": "{{ print_agent_token }}"}</code><br>
-            3. Double-click <code>print_agent.bat</code> — a terminal opens and
-            runs the agent. Keep that window open while the shop is open.
+            2. Double-click <code>print_agent.bat</code> — when it asks, paste
+            this shop’s agent setup link and it saves its own config:<br>
+            <code>{{ print_agent_setup_url }}</code><br>
+            Or
+            <a href="{{ print_agent_setup_url }}?download=1" download>download print_agent.json</a>
+            into the same folder (it contains
+            <code>{"poll_url": "{{ print_agent_poll_url }}", "token": "{{ print_agent_token }}"}</code>).<br>
+            3. Keep the agent window open while the shop is open.
             Receipts then print via the agent wherever the server is hosted.
           </p>
         </div>

@@ -11,12 +11,15 @@ header (or ``?token=`` for simple agent setups). No session required.
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import ipaddress
 import json
 from datetime import timedelta
 
+from django.conf import settings
 from django.http import JsonResponse
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -26,6 +29,23 @@ from .models import PrintAgentJob, Shop
 POLL_BATCH = 10
 CLAIM_STALE_SECONDS = 120
 RETENTION_DAYS = 7
+
+
+def agent_setup_key(shop: Shop) -> str:
+    """URL-safe key for the agent's one-time setup link.
+
+    Derived from SECRET_KEY + the shop's agent token — no extra DB field,
+    and regenerating the token automatically invalidates old setup links.
+    """
+    token = (shop.print_agent_token or "").strip()
+    if not token:
+        return ""
+    digest = hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        f"print-agent-setup:{shop.pk}:{token}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return digest[:32]
 
 
 def _agent_shop(request, shop_id: int) -> Shop | None:
@@ -61,6 +81,36 @@ def _lan_ip(host: str) -> bool:
     except ValueError:
         return False
     return ip.is_private or ip.is_loopback or ip.is_link_local
+
+
+@require_GET
+def print_agent_setup(request, shop_id: int, key: str):
+    """Return the agent config for the setup link shown on the settings page.
+
+    The agent fetches this URL once (or the user downloads it as
+    print_agent.json) instead of the config being typed by hand.
+    """
+    shop = (
+        Shop.objects.filter(pk=shop_id)
+        .only("pk", "print_agent_token")
+        .first()
+    )
+    if shop is None or not shop.print_agent_token:
+        return _unauthorized()
+    if not hmac.compare_digest(agent_setup_key(shop), str(key or "").strip()):
+        return _unauthorized()
+
+    payload = {
+        "poll_url": request.build_absolute_uri(
+            reverse("employees:print_agent_poll", kwargs={"shop_id": shop.pk})
+        ),
+        "token": shop.print_agent_token,
+    }
+    if request.GET.get("download"):
+        response = JsonResponse(payload)
+        response["Content-Disposition"] = 'attachment; filename="print_agent.json"'
+        return response
+    return JsonResponse({"ok": True, **payload})
 
 
 @require_GET

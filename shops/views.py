@@ -64,6 +64,7 @@ from .models import (
     ShopReceiptStatus,
     COUNTED_RECEIPT_STATUSES,
 )
+from .agent_views import agent_setup_key
 from .daraja_stk import (
     get_stk_payment,
     handle_stk_callback,
@@ -5295,6 +5296,16 @@ def my_shop_settings_receipt(request, shop_id):
         "print_agent_token": shop.print_agent_token or "",
         "print_agent_poll_url": request.build_absolute_uri(
             reverse("employees:print_agent_poll", kwargs={"shop_id": shop.pk})
+        ),
+        "print_agent_setup_url": (
+            request.build_absolute_uri(
+                reverse(
+                    "employees:print_agent_setup",
+                    kwargs={"shop_id": shop.pk, "key": agent_setup_key(shop)},
+                )
+            )
+            if shop.print_agent_token
+            else ""
         ),
         **_shop_pos_settings_page_context(
             shop, setting_groups=SHOP_RECEIPT_SETTING_GROUPS

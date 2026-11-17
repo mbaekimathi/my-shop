@@ -24,7 +24,8 @@ goto pause
 if errorlevel 1 (
     echo.
     echo The agent stopped with an error - read the message above.
-    echo Most often it is a missing print_agent.json config or an old token.
+    echo Most often it needs the Agent setup link from
+    echo Shop settings -^> Receipt -^> Cloud print agent.
     goto pause
 )
 exit /b 0
