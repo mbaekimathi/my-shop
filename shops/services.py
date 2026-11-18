@@ -11065,6 +11065,17 @@ def cancel_pending_shop_receipt(*, shop: Shop, receipt_id: int, actor) -> dict:
     if actor is None:
         raise ValidationError("Sign in to cancel receipts.")
 
+    # Cancelling restocks the remaining lines — the same capability as
+    # returning a receipt, so it follows the "Return receipt" toggle.
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        actor,
+        "analytics",
+        "return-receipts",
+        message="You do not have permission to cancel receipts.",
+    )
+
     try:
         receipt = (
             ShopReceipt.objects.select_for_update()

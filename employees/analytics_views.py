@@ -2339,6 +2339,12 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
         return JsonResponse({"ok": False, "error": message}, status=404)
+
+    from .module_permissions import employee_may
+
+    if not employee_may(profile, "analytics", "return-receipts"):
+        payload["can_return"] = False
+        payload["can_cancel"] = False
     return JsonResponse(payload)
 
 
@@ -2433,6 +2439,13 @@ def analytics_receipt_cancel(request, role_segment, shop_id, receipt_id):
     if denied is not None:
         return denied
 
+    # Cancelling restocks the remaining lines — same capability as returning.
+    denied = require_module_permission(
+        request, profile, "analytics", "return-receipts", as_json=True
+    )
+    if denied is not None:
+        return denied
+
     shop = _analytics_receipt_shop_access(profile, shop_id)
     if shop is None:
         return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
@@ -2464,6 +2477,24 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
     if denied is not None:
         return denied
 
+    status = request.POST.get("status") or ""
+    try:
+        from shops.models import ShopReceiptStatus
+        from shops.services import _resolve_confirm_receipt_status
+
+        cancelling = (
+            _resolve_confirm_receipt_status(status) == ShopReceiptStatus.CANCELLED
+        )
+    except Exception:
+        cancelling = False
+    if cancelling:
+        # Setting a receipt to cancelled restocks it — same as a return.
+        denied = require_module_permission(
+            request, profile, "analytics", "return-receipts", as_json=True
+        )
+        if denied is not None:
+            return denied
+
     shop = _analytics_receipt_shop_access(profile, shop_id)
     if shop is None:
         return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
@@ -2475,7 +2506,6 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
     cash_amount = (request.POST.get("cash_amount") or "").strip()
     mpesa_amount = (request.POST.get("mpesa_amount") or "").strip()
     card_amount = (request.POST.get("card_amount") or "").strip()
-    status = request.POST.get("status") or ""
     try:
         result = set_confirm_receipt_status(
             shop=shop,
@@ -2511,7 +2541,7 @@ def analytics_receipt_return(request, role_segment, shop_id, receipt_id):
         return err
 
     denied = require_module_permission(
-        request, profile, "analytics", "receipts", as_json=True
+        request, profile, "analytics", "return-receipts", as_json=True
     )
     if denied is not None:
         return denied

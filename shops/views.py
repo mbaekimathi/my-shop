@@ -3008,6 +3008,13 @@ def my_shop_receipt_detail(request, shop_id, receipt_id):
             },
             status=404,
         )
+
+    if profile is not None:
+        from employees.module_permissions import employee_may
+
+        if not employee_may(profile, "my-shop", "return_receipt"):
+            payload["can_return"] = False
+            payload["can_cancel"] = False
     return JsonResponse(payload)
 
 
@@ -3507,7 +3514,11 @@ def my_shop_checkout(request, shop_id):
         return JsonResponse({"ok": False, "error": "Invalid checkout payload."}, status=400)
 
     kind = str(payload.get("kind") or "").strip().lower()
-    perm_key = kind if kind in {"sale", "credit", "quotation"} else "workspace"
+    perm_key = (
+        kind
+        if kind in {"sale", "credit", "quotation", "trade_out", "trade_in"}
+        else "workspace"
+    )
     denied = _require_my_shop_permission(
         request,
         profile,

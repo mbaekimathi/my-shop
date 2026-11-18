@@ -252,3 +252,26 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   employees still `pending_approval`, may not assign the Super Admin role, and
   may not modify Super Admin accounts (edit/suspend/delete). The same rules are
   enforced for queued offline syncs in `sync_handlers._sync_update_employee_access`.
+
+## Receipt return / cancel permission
+- Cancel IS a return: `cancel_pending_shop_receipt` restocks the remaining
+  lines, so every cancel path also requires the **Return receipt** toggle —
+  `analytics/return-receipts` on `analytics_receipt_cancel`,
+  `analytics_receipt_set_status` (only when the target status is cancelled),
+  and belt-and-braces inside `cancel_pending_shop_receipt` itself
+  (`ensure_employee_may`). `analytics_receipt_return` requires
+  `analytics/return-receipts` on the viewer plus `my-shop/return_receipt` on
+  the authorising staff code; `my_shop_receipt_return` requires
+  `my-shop/return_receipt` on the floor profile (portal sessions fall through
+  to the staff-code check inside `return_shop_receipt_items`).
+- `can_return` / `can_cancel` in receipt-detail payloads and `can_cancel` on
+  confirm-receipts rows are masked off when the viewing profile lacks the
+  matching return toggle (`_confirm_rows_apply_permissions`), so the buttons
+  hide instead of 403ing.
+- Checkout perm keys map 1:1 to `my-shop/<kind>` (`sale`, `credit`,
+  `quotation`, `trade_out`, `trade_in`) — unknown kinds fall back to
+  `workspace`; `complete_shop_checkout` re-checks the authorising code's
+  `my-shop/<kind>` and `my-shop/receipts` when confirm-at-checkout is used.
+- Tests: `shops/tests/test_permission_enforcement.py`
+  (`ReceiptReturnCancelPermissionTests`, `TradeCheckoutPermissionTests`,
+  `FloorReceiptReturnPermissionTests`).

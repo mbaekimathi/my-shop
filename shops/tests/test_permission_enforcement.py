@@ -23,7 +23,14 @@ from employees.models import (
     EmployeeStatus,
 )
 from items.models import Item, StoreStockMovement
-from shops.models import Shop
+from shops.models import (
+    Shop,
+    ShopPaymentMethod,
+    ShopReceipt,
+    ShopReceiptKind,
+    ShopReceiptLine,
+    ShopReceiptStatus,
+)
 
 
 def _profile(*, employee_id, role):
@@ -196,3 +203,226 @@ class StockTakeSubmitPermissionTests(TestCase):
         # and lands on the "No open stock take" branch instead of 403.
         resp = self.client.post(self.url, {"assignment_id": "1"})
         self.assertEqual(resp.status_code, 404)
+
+
+class ReceiptReturnCancelPermissionTests(TestCase):
+    """``analytics/return-receipts`` off ⇒ return AND cancel are refused.
+
+    Cancel restocks the remaining lines, so it must follow the same
+    "Return receipt" toggle everywhere it appears.
+    """
+
+    def setUp(self):
+        self.profile = _profile(
+            employee_id="410006", role=EmployeeRole.IT_SUPPORT
+        )
+        self.shop = _shop("410006", self.profile)
+        self.client.force_login(self.profile.user)
+        self.item = Item.objects.create(
+            name="Perm Return Item",
+            category="Parts",
+            minimum_selling_price=Decimal("50.00"),
+            shop_price=Decimal("100.00"),
+            stock=3,
+            created_by=self.profile,
+        )
+        self.receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="PERM-CANCEL-1",
+            kind=ShopReceiptKind.SALE,
+            payment_method=ShopPaymentMethod.CASH,
+            subtotal=Decimal("200.00"),
+            total=Decimal("200.00"),
+            amount_paid=Decimal("200.00"),
+            cash_amount=Decimal("200.00"),
+            created_by=self.profile,
+            status=ShopReceiptStatus.CONFIRMED,
+        )
+        self.line = ShopReceiptLine.objects.create(
+            receipt=self.receipt,
+            item=self.item,
+            item_name=self.item.name,
+            quantity=2,
+            unit_price=Decimal("100.00"),
+            unit_cost=Decimal("60.00"),
+            line_total=Decimal("200.00"),
+            line_cogs=Decimal("120.00"),
+        )
+
+    def _url(self, name):
+        return reverse(
+            f"employees:{name}",
+            kwargs={
+                "role_segment": "it-support",
+                "shop_id": self.shop.pk,
+                "receipt_id": self.receipt.pk,
+            },
+        )
+
+    def test_cancel_denied_when_return_receipts_toggled_off(self):
+        _deny(self.profile, "analytics", "return-receipts")
+        resp = self.client.post(self._url("analytics_receipt_cancel"))
+        self.assertEqual(resp.status_code, 403)
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_set_status_cancelled_denied_when_return_receipts_off(self):
+        _deny(self.profile, "analytics", "return-receipts")
+        resp = self.client.post(
+            self._url("analytics_receipt_set_status"), {"status": "cancelled"}
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_set_status_pending_still_works_without_return_perm(self):
+        # Confirm-side statuses are not return actions.
+        _deny(self.profile, "analytics", "return-receipts")
+        self.receipt.status = ShopReceiptStatus.ACTIVE
+        self.receipt.save(update_fields=["status"])
+        resp = self.client.post(
+            self._url("analytics_receipt_set_status"), {"status": "confirmed"}
+        )
+        self.assertEqual(resp.status_code, 200)
+
+    def test_return_denied_for_viewer_when_return_receipts_off(self):
+        _deny(self.profile, "analytics", "return-receipts")
+        resp = self.client.post(
+            self._url("analytics_receipt_return"),
+            data=json.dumps(
+                {
+                    "login_code": self.profile.employee_id,
+                    "reason": "Customer changed mind",
+                    "lines": [{"line_id": self.line.pk, "qty": 1}],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_return_denied_for_authoriser_when_my_shop_return_off(self):
+        _deny(self.profile, "my-shop", "return_receipt")
+        resp = self.client.post(
+            self._url("analytics_receipt_return"),
+            data=json.dumps(
+                {
+                    "login_code": self.profile.employee_id,
+                    "reason": "Customer changed mind",
+                    "lines": [{"line_id": self.line.pk, "qty": 1}],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_cancel_service_denied_when_return_receipts_off(self):
+        from django.core.exceptions import ValidationError
+
+        from shops.services import cancel_pending_shop_receipt
+
+        _deny(self.profile, "analytics", "return-receipts")
+        with self.assertRaises(ValidationError):
+            cancel_pending_shop_receipt(
+                shop=self.shop, receipt_id=self.receipt.pk, actor=self.profile
+            )
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_cancel_allowed_by_default(self):
+        resp = self.client.post(self._url("analytics_receipt_cancel"))
+        self.assertEqual(resp.status_code, 200)
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, ShopReceiptStatus.CANCELLED)
+
+
+class TradeCheckoutPermissionTests(TestCase):
+    """Trade out/in checkouts must follow their own matrix keys."""
+
+    def setUp(self):
+        self.profile = _profile(
+            employee_id="410007", role=EmployeeRole.SHOP_CASHIER
+        )
+        self.shop = _shop("410007", self.profile)
+        self.client.force_login(self.profile.user)
+        session = self.client.session
+        session["active_shop_id"] = str(self.shop.pk)
+        session.save()
+        self.url = reverse(
+            "employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}
+        )
+
+    def test_trade_out_denied_when_toggled_off(self):
+        _deny(self.profile, "my-shop", "trade_out")
+        resp = self.client.post(
+            self.url,
+            data=json.dumps(
+                {
+                    "kind": "trade_out",
+                    "login_code": self.profile.employee_id,
+                    "lines": [],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_trade_in_denied_when_toggled_off(self):
+        _deny(self.profile, "my-shop", "trade_in")
+        resp = self.client.post(
+            self.url,
+            data=json.dumps(
+                {
+                    "kind": "trade_in",
+                    "login_code": self.profile.employee_id,
+                    "lines": [],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+
+
+class FloorReceiptReturnPermissionTests(TestCase):
+    """Floor return endpoint must follow ``my-shop/return_receipt``."""
+
+    def setUp(self):
+        self.profile = _profile(
+            employee_id="410008", role=EmployeeRole.SHOP_CASHIER
+        )
+        self.shop = _shop("410008", self.profile)
+        self.profile.assigned_shops.add(self.shop)
+        self.client.force_login(self.profile.user)
+        session = self.client.session
+        session["active_shop_id"] = str(self.shop.pk)
+        session.save()
+        self.receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="PERM-RET-1",
+            kind=ShopReceiptKind.SALE,
+            payment_method=ShopPaymentMethod.CASH,
+            subtotal=Decimal("100.00"),
+            total=Decimal("100.00"),
+            amount_paid=Decimal("100.00"),
+            cash_amount=Decimal("100.00"),
+            created_by=self.profile,
+            status=ShopReceiptStatus.CONFIRMED,
+        )
+        self.url = reverse(
+            "employees:my_shop_receipt_return",
+            kwargs={"shop_id": self.shop.pk, "receipt_id": self.receipt.pk},
+        )
+
+    def test_floor_return_denied_when_toggled_off(self):
+        _deny(self.profile, "my-shop", "return_receipt")
+        resp = self.client.post(
+            self.url,
+            data=json.dumps(
+                {
+                    "login_code": self.profile.employee_id,
+                    "reason": "Changed mind",
+                    "lines": [{"line_id": 1, "qty": 1}],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)

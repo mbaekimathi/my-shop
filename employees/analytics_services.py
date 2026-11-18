@@ -4417,6 +4417,17 @@ def _confirm_receipts_collect_rows(
     return pending[:band_limit] + cancelled[:band_limit] + confirmed[:band_limit]
 
 
+def _confirm_rows_apply_permissions(rows, profile):
+    """Hide cancel affordances when the profile may not return receipts."""
+    from .module_permissions import employee_may
+
+    if employee_may(profile, "analytics", "return-receipts"):
+        return rows
+    for row in rows:
+        row["can_cancel"] = False
+    return rows
+
+
 def serialize_confirm_receipt_rows(rows) -> list[dict]:
     """JSON-safe row payload for async list rendering."""
     payload = []
@@ -4486,13 +4497,16 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
 def build_confirm_receipts_rows(*, profile, request) -> dict:
     """Lean row payload for the confirm-receipts async list."""
     context = _confirm_receipts_query_context(profile=profile, request=request)
-    rows = _confirm_receipts_collect_rows(
-        shop_ids=context["active_shop_ids"],
-        start=context["start"],
-        end=context["end"],
-        status_key=context["status_filter"],
-        search=context["search"],
-        kind_key=context["kind_filter"],
+    rows = _confirm_rows_apply_permissions(
+        _confirm_receipts_collect_rows(
+            shop_ids=context["active_shop_ids"],
+            start=context["start"],
+            end=context["end"],
+            status_key=context["status_filter"],
+            search=context["search"],
+            kind_key=context["kind_filter"],
+        ),
+        profile,
     )
     return {
         "ok": True,
@@ -4515,13 +4529,16 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
     context = _confirm_receipts_query_context(profile=profile, request=request)
     rows = []
     if include_rows:
-        rows = _confirm_receipts_collect_rows(
-            shop_ids=context["active_shop_ids"],
-            start=context["start"],
-            end=context["end"],
-            status_key=context["status_filter"],
-            search=context["search"],
-            kind_key=context["kind_filter"],
+        rows = _confirm_rows_apply_permissions(
+            _confirm_receipts_collect_rows(
+                shop_ids=context["active_shop_ids"],
+                start=context["start"],
+                end=context["end"],
+                status_key=context["status_filter"],
+                search=context["search"],
+                kind_key=context["kind_filter"],
+            ),
+            profile,
         )
 
     segment = role_url_segment(profile.role)
