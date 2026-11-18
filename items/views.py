@@ -8578,7 +8578,7 @@ def _shelf_view_matrix(shops):
     from decimal import Decimal
     from collections import OrderedDict
 
-    from .models import ShelfItem
+    from .models import ShelfItem, ShelfStockMovement
     from .shelf_stock_services import _qty_display
 
     shops = [shop for shop in shops if shop is not None]
@@ -8588,6 +8588,15 @@ def _shelf_view_matrix(shops):
         ShelfItem.objects.filter(shop__in=shops, is_archived=False)
         .order_by("category", "name", "pk")
     )
+    last_price = {}
+    for shelf_item_id, price in (
+        ShelfStockMovement.objects.filter(
+            shelf_item__in=items, buying_price__isnull=False
+        )
+        .order_by("shelf_item_id", "-created_at", "-id")
+        .values_list("shelf_item_id", "buying_price")
+    ):
+        last_price.setdefault(shelf_item_id, price)
     shop_index = {shop.pk: idx for idx, shop in enumerate(shops)}
     merged = OrderedDict()
     for item in items:
@@ -8609,12 +8618,18 @@ def _shelf_view_matrix(shops):
         if not entry["unit"] and item.unit:
             entry["unit"] = item.unit
         threshold = item.low_stock_threshold or Decimal("0")
+        price = last_price.get(item.pk)
         entry["cells"][shop_index[item.shop_id]] = {
+            "id": item.pk,
             "qty": item.quantity,
             "display": _qty_display(item.quantity),
             "empty": item.quantity == 0,
             "is_low": threshold > 0 and item.quantity <= threshold,
             "threshold_display": _qty_display(threshold),
+            "last_buying_price": price,
+            "last_buying_price_display": (
+                str(price) if price is not None else ""
+            ),
         }
         entry["total"] += item.quantity
 
@@ -8625,6 +8640,9 @@ def _shelf_view_matrix(shops):
     ):
         entry["total_display"] = _qty_display(entry["total"])
         entry["total_empty"] = entry["total"] == 0
+        entry["has_low"] = any(
+            cell is not None and cell["is_low"] for cell in entry["cells"]
+        )
         entry["search_text"] = (
             f'{entry["name"]} {entry["category"]} {entry["unit"]}'
         ).lower()
@@ -9284,6 +9302,18 @@ def stock_management(request, profile, meta, module, page_sidebar):
     shelf_matrix_groups = []
     shelf_matrix_item_count = 0
     shelf_matrix_has_low = False
+    if (
+        can_shelf_stock
+        and (shelf_shop is not None or shelf_register_shops)
+        and not (mode == "view" and shelf_tab)
+    ):
+        # Shelf panel matrix: one row per item name, one cell per shelf shop
+        # column — editable inputs on in/out, read-only elsewhere. The view
+        # shelf tab builds its own read-only matrix below.
+        shelf_matrix_shops = (
+            [shelf_shop] if shelf_shop is not None else list(shelf_register_shops)
+        )
+        shelf_matrix_groups = _shelf_view_matrix(shelf_matrix_shops)
     if mode == "view" and can_shelf_stock:
         tab_scope = [selected_shop] if selected_shop else tab_scope_shops
         shelf_scope_shops = [
@@ -9329,6 +9359,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
         shelf_items = []
         shelf_movements = []
         shelf_transfer_shops = []
+        shelf_matrix_shops = []
+        shelf_matrix_groups = []
 
     items_by_category = []
     item_count = Item.objects.filter(is_suspended=False).count()

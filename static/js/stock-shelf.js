@@ -262,12 +262,11 @@
         return;
       }
       event.preventDefault();
-      const inputsRow = target.closest("tr[data-shelf-row-inputs]");
-      if (!inputsRow) return;
+      const cell = target.closest("[data-shelf-cell]");
+      if (!cell) return;
       (
         document.querySelector("[data-shelf-float-submit]") ||
-        document.querySelector("[data-shelf-bulk-submit]") ||
-        inputsRow.querySelector('button[name="shelf_action"][value^="transfer:"]')
+        document.querySelector("[data-shelf-bulk-submit]")
       )?.click();
     });
 
@@ -281,27 +280,10 @@
     });
   }
 
-  // Expandable shelf rows (items-page pattern): clicking a row's head opens
-  // the inputs row beneath it; typed values persist while collapsed.
   const shelfPanel = document.querySelector("[data-shelf-stock]");
-  shelfPanel?.addEventListener("click", (event) => {
-    const btn = event.target.closest("[data-shelf-row-toggle]");
-    if (!btn) return;
-    const headRow = btn.closest("tr");
-    const inputsRow = headRow && headRow.nextElementSibling;
-    if (!inputsRow || !inputsRow.hasAttribute("data-shelf-row-inputs")) return;
-    const opening = inputsRow.hidden;
-    inputsRow.hidden = !opening;
-    headRow.classList.toggle("is-open", opening);
-    btn.setAttribute("aria-expanded", opening ? "true" : "false");
-    if (opening) {
-      inputsRow.querySelector("input, select")?.focus({ preventScroll: true });
-    }
-  });
 
   // Shelf float panel (mirrors the item stock-in/out submit card): lists the
-  // filled lines — expanded rows and the quick-add strip — and submits them
-  // all via in_bulk/out_bulk.
+  // filled cells and submits them all via in_bulk/out_bulk.
   const floatRoot = document.querySelector("[data-stock-float]");
   const floatLines = floatRoot?.querySelector("[data-shelf-float-lines]");
   const floatEmpty = floatRoot?.querySelector("[data-shelf-float-empty]");
@@ -344,31 +326,56 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
 
+  const cellQty = (cell) => {
+    const raw = (
+      cell.querySelector('[name^="shelf_qty_"]')?.value || ""
+    ).trim();
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  };
+
+  const updateCellState = (cell) => {
+    const qty = cellQty(cell);
+    cell.classList.toggle("is-filled", qty > 0);
+    cell.closest("tr")?.classList.toggle(
+      "is-filled",
+      qty > 0 ||
+        Boolean(
+          cell
+            .closest("tr")
+            ?.querySelector(".stock-list-pair.is-filled")
+        )
+    );
+    // Stock-out cells mirror the item matrix balance readout.
+    const balance = cell.querySelector("[data-shelf-balance]");
+    if (balance) {
+      const stock = Number(cell.getAttribute("data-shelf-stock")) || 0;
+      const left = stock - qty;
+      balance.hidden = qty <= 0;
+      balance.textContent = qty <= 0 ? "—" : String(left);
+      balance.classList.toggle("is-empty", qty <= 0 || left === 0);
+      balance.classList.toggle("is-projected-out", qty > 0 && left < 0);
+    }
+  };
+
   const collectShelfLines = () => {
     const lines = [];
-    document
-      .querySelectorAll('[data-shelf-row-inputs] input[name^="shelf_qty_"]')
-      .forEach((qtyInput) => {
-        const qty = qtyInput.value.trim();
-        if (!qty || !(Number(qty) > 0)) return;
-        const inputsRow = qtyInput.closest("tr");
-        const headRow = inputsRow && inputsRow.previousElementSibling;
-        const id = qtyInput.name.slice("shelf_qty_".length);
-        const name =
-          headRow
-            ?.querySelector(".stock-matrix-item strong")
-            ?.textContent.trim() || `Item ${id}`;
-        const shopName = headRow?.getAttribute("data-shop-name") || "";
-        const price =
-          inputsRow
-            .querySelector(`input[name="shelf_price_${id}"]`)
-            ?.value.trim() || "";
-        const note =
-          inputsRow
-            .querySelector(`input[name="shelf_note_${id}"]`)
-            ?.value.trim() || "";
-        lines.push({ id, name, shopName, qty, price, note });
-      });
+    document.querySelectorAll("[data-shelf-cell]").forEach((cell) => {
+      const qty = cellQty(cell);
+      if (qty <= 0) return;
+      const id = cell.getAttribute("data-shelf-id") || "";
+      const name =
+        cell
+          .closest("tr")
+          ?.querySelector(".stock-matrix-item strong")
+          ?.textContent.trim() || `Item ${id}`;
+      const shopName = cell.getAttribute("data-shop-name") || "";
+      const price =
+        cell
+          .querySelector('[name^="shelf_price_"]')
+          ?.value.trim() || "";
+      lines.push({ id, name, shopName, qty, price });
+    });
     return lines;
   };
 
@@ -385,8 +392,7 @@
               line.shopName ? ` · ${esc(line.shopName)}` : ""
             }">${esc(line.name)}${
               line.shopName ? ` · ${esc(line.shopName)}` : ""
-            }${line.price ? ` @ ${esc(line.price)}` : ""
-            }${line.note ? ` · ${esc(line.note)}` : ""}</span>
+            }${line.price ? ` @ ${esc(line.price)}` : ""}</span>
             <strong>×${esc(line.qty)}</strong>
             <button type="button" data-shelf-float-remove data-shelf-id="${esc(
               line.id
@@ -398,25 +404,14 @@
     // Disabled only while JS is running — a no-JS post still reaches the
     // server, which validates and reports an empty submit.
     if (floatSubmit) floatSubmit.disabled = lines.length === 0;
-    // Highlight filled head rows like the item stock matrix.
     document
-      .querySelectorAll('[data-shelf-row-inputs] input[name^="shelf_qty_"]')
-      .forEach((qtyInput) => {
-        const headRow = qtyInput.closest("tr")?.previousElementSibling;
-        headRow?.classList.toggle(
-          "is-filled",
-          Number(qtyInput.value.trim()) > 0
-        );
-      });
+      .querySelectorAll("[data-shelf-cell]")
+      .forEach(updateCellState);
   };
 
   const clearLine = (id) => {
-    const inputsRow = document
-      .querySelector(
-        `[data-shelf-row-inputs] input[name="shelf_qty_${id}"]`
-      )
-      ?.closest("tr");
-    inputsRow
+    document
+      .querySelector(`[data-shelf-cell][data-shelf-id="${id}"]`)
       ?.querySelectorAll("input")
       .forEach((field) => {
         field.value = "";
@@ -435,7 +430,7 @@
     floatClear?.addEventListener("click", () => {
       document
         .querySelectorAll(
-          '[data-shelf-row-inputs] input[name^="shelf_"]'
+          '[data-shelf-cell] input[name^="shelf_"]'
         )
         .forEach((field) => {
           field.value = "";
