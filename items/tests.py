@@ -3345,13 +3345,14 @@ class ItSupportItemStockPagesTests(TestCase):
         set_company_pos_setting(field="stock_mode_both", enabled=True)
         self._shelf_item()
 
-        # No shop picked: prompt to pick a shelf shop, no item catalog.
+        # No shop picked: the all-shops shelf panel renders, no item catalog.
         page = self.client.get(self.url, {"mode": "in", "tab": "shelf"})
         self.assertEqual(page.status_code, 200)
-        self.assertContains(page, "Pick a shelf-mode shop")
+        self.assertContains(page, "IT SHELF WIDGET")
         self.assertNotContains(page, "data-stock-catalog-api")
 
-        # Shelf-mode shop picked: the shelf panel renders its shelf items.
+        # Shelf-mode shop picked: the shelf panel renders its shelf items
+        # exactly once — the trailing both-shops append must not repeat it.
         page = self.client.get(
             self.url,
             {"mode": "in", "tab": "shelf", "shop_id": self.shop.pk},
@@ -3359,6 +3360,9 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "IT SHELF WIDGET")
         self.assertContains(page, "Shelf stock in")
+        self.assertEqual(
+            page.content.decode().count('aria-label="Shelf items"'), 1
+        )
 
     def test_shelf_tab_view_lists_shop_column_matrix(self):
         from items.models import ShelfItem

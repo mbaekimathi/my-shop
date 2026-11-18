@@ -1085,9 +1085,10 @@
       <p>No items registered in the system yet.</p>
     </div>
     {% endif %}
-    {% if shelf_shop and not shelf_only and not shelf_tabs_enabled %}
+    {% if shelf_shop and not shelf_only and not shelf_tabs_enabled and stock_tab != 'shelf' %}
     {# Both-mode shops keep the catalog matrix; the shelf list follows it.
-       With tabbed stock lists the shelf list lives on the Shelf stock tab. #}
+       With tabbed stock lists the shelf list lives on the Shelf stock tab,
+       where it is already rendered as the main panel above. #}
     {% include "items/partials/stock_shelf_panel.html" %}
     {% endif %}
   </section>
