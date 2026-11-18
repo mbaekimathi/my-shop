@@ -524,7 +524,10 @@ def employee_login(request):
     # being auto-redirected into the current session.
     switching = request.GET.get("switch") or request.POST.get("switch")
 
-    if request.user.is_authenticated and not switching:
+    # GET only: a POST means the user actively submitted the form — the typed
+    # credentials are an explicit sign-in (or account switch), never an
+    # auto-resume of the current session.
+    if request.method == "GET" and request.user.is_authenticated and not switching:
         profile = get_profile(request.user)
         if profile and profile.is_active_employee:
             if next_url:
