@@ -6,20 +6,22 @@
   const visibleCountEl = document.querySelector("[data-item-visible-count]");
 
   if (!searchInput || !itemPanel) return;
-  // Progressive catalog APIs own search/filter.
+  // Search-gated lists (e.g. the shelf stock panel on in/out) reveal rows
+  // only while a query is typed — the full list never dumps on the page.
+  const gated = Boolean(itemList && itemList.hasAttribute("data-search-gated"));
+  // Progressive catalog APIs own search/filter — except on a gated list,
+  // where the catalog UI is not rendered (e.g. the shelf tab).
   if (
-    itemPanel.hasAttribute("data-catalog-api") ||
-    itemPanel.hasAttribute("data-stock-catalog-api") ||
-    itemPanel.hasAttribute("data-item-catalog-api")
+    !gated &&
+    (itemPanel.hasAttribute("data-catalog-api") ||
+      itemPanel.hasAttribute("data-stock-catalog-api") ||
+      itemPanel.hasAttribute("data-item-catalog-api"))
   ) {
     return;
   }
 
   const totalCount = Number(itemPanel.dataset.itemTotal) || 0;
   const categoryGroups = document.querySelectorAll("[data-item-category-group]");
-  // Search-gated lists (e.g. the shelf stock panel on in/out) reveal rows
-  // only while a query is typed — the full list never dumps on the page.
-  const gated = Boolean(itemList && itemList.hasAttribute("data-search-gated"));
   const idleHint = document.querySelector("[data-item-search-idle]");
   let frame = 0;
 

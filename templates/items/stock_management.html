@@ -1094,6 +1094,7 @@
 
   {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
   {% if shops %}
+  {% if shelf_shop or stock_tab != 'shelf' and not shelf_only %}
   <aside
     class="stock-float stock-float--{{ stock_mode }}"
     data-stock-float
@@ -1105,7 +1106,7 @@
         <button
           type="button"
           class="stock-float-collapse-btn"
-          data-stock-float-toggle
+          {% if stock_tab == 'shelf' or shelf_only %}data-shelf-float-toggle{% else %}data-stock-float-toggle{% endif %}
           aria-expanded="true"
           aria-controls="stock-float-body"
         >
@@ -1119,14 +1120,25 @@
           </span>
           <i class="stock-float-collapse-icon" data-lucide="chevron-up" aria-hidden="true"></i>
         </button>
+        {% if stock_tab == 'shelf' or shelf_only %}
+        <button class="stock-float-clear" type="button" data-shelf-float-clear hidden>
+          Clear
+        </button>
+        {% else %}
         <button class="stock-float-clear" type="button" data-stock-float-clear hidden>
           Clear
         </button>
+        {% endif %}
       </header>
 
       <div class="stock-float-body" id="stock-float-body" data-stock-float-body>
         <div class="stock-float-shops">
-          {% if stock_mode == 'request' %}
+          {% if stock_tab == 'shelf' or shelf_only %}
+          <p class="stock-float-shop-readout">
+            <span>Shop</span>
+            <strong>{% if shelf_shop %}{{ shelf_shop.name }}{% else %}Pick a shelf-mode shop{% endif %}</strong>
+          </p>
+          {% elif stock_mode == 'request' %}
           <p class="stock-float-shop-readout">
             <span>Sending</span>
             <strong data-stock-float-requesting-label>{% if selected_shop %}{{ selected_shop.name }}{% else %}Choose sending shop{% endif %}</strong>
@@ -1143,6 +1155,34 @@
           {% endif %}
         </div>
 
+        {% if stock_tab == 'shelf' or shelf_only %}
+        <div class="stock-float-empty" data-shelf-float-empty>
+          <p>
+            {% if stock_mode == 'in' %}
+            Expand a shelf item and enter qty and buying price. New names go in the quick-add row on the list.
+            {% elif stock_mode == 'out' %}
+            Expand a shelf item and enter the qty to remove.
+            {% else %}
+            Expand a shelf item, pick the receiving shop, then Send.
+            {% endif %}
+          </p>
+        </div>
+        <ul class="stock-float-lines" data-shelf-float-lines hidden></ul>
+        {% if stock_mode == 'in' or stock_mode == 'out' %}
+        <button
+          class="stock-float-submit"
+          type="submit"
+          name="shelf_action"
+          value="{% if stock_mode == 'in' %}in_bulk{% else %}out_bulk{% endif %}"
+          data-shelf-float-submit
+        >
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>
+            {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+          </span>
+        </button>
+        {% endif %}
+        {% else %}
         <div class="stock-float-empty" data-stock-float-empty>
           <p>
             {% if stock_mode == 'in' %}
@@ -1287,9 +1327,11 @@
             {% if stock_mode == 'in' %}Submit stock in{% elif stock_mode == 'out' %}Submit stock out{% else %}Submit request{% endif %}
           </span>
         </button>
+        {% endif %}
       </div>
     </div>
   </aside>
+  {% endif %}
   {% endif %}
   {% endif %}
 </form>
@@ -1759,7 +1801,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
-<script defer src="{% static 'js/item-search.js' %}?v=5"></script>
+<script defer src="{% static 'js/item-search.js' %}?v=6"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=20261115-shelf-tab"></script>
 <script

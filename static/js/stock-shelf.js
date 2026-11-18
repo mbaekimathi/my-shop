@@ -270,6 +270,7 @@
       const inputsRow = target.closest("tr[data-shelf-row-inputs]");
       if (!inputsRow) return;
       (
+        document.querySelector("[data-shelf-float-submit]") ||
         document.querySelector("[data-shelf-bulk-submit]") ||
         inputsRow.querySelector('button[name="shelf_action"][value^="transfer:"]')
       )?.click();
@@ -303,26 +304,162 @@
     }
   });
 
-  // Bulk stock in/out: keep a live count of rows (and the quick-add strip)
-  // with a quantity typed, so hidden search-filtered rows still count.
-  const bulkSummary = document.querySelector("[data-shelf-bulk-summary]");
-  if (bulkSummary && layout) {
-    const idleText = bulkSummary.textContent;
-    const recount = () => {
-      let count = 0;
+  // Shelf float panel (mirrors the item stock-in/out submit card): lists the
+  // filled lines — expanded rows and the quick-add strip — and submits them
+  // all via in_bulk/out_bulk.
+  const floatRoot = document.querySelector("[data-stock-float]");
+  const floatLines = floatRoot?.querySelector("[data-shelf-float-lines]");
+  const floatEmpty = floatRoot?.querySelector("[data-shelf-float-empty]");
+  const floatClear = floatRoot?.querySelector("[data-shelf-float-clear]");
+  const floatToggle = floatRoot?.querySelector("[data-shelf-float-toggle]");
+  const floatSubmit = floatRoot?.querySelector("[data-shelf-float-submit]");
+
+  // Shelf variant owns its collapse toggle (the item flow binds the shared
+  // data-stock-float-toggle itself when that variant is rendered).
+  if (floatRoot && floatToggle) {
+    const collapseMq = window.matchMedia("(max-width: 1199px)");
+    const collapseKey = `stock-float-collapsed:${
+      floatRoot.dataset.stockFloatMode || "in"
+    }:shelf`;
+    const setCollapsed = (collapsed, persist = true) => {
+      const next = Boolean(collapsed) && collapseMq.matches;
+      floatRoot.classList.toggle("is-collapsed", next);
+      floatToggle.setAttribute("aria-expanded", next ? "false" : "true");
+      if (persist) {
+        try {
+          sessionStorage.setItem(collapseKey, next ? "1" : "0");
+        } catch (_err) {
+          /* ignore */
+        }
+      }
+    };
+    floatToggle.addEventListener("click", () => {
+      setCollapsed(!floatRoot.classList.contains("is-collapsed"));
+    });
+    try {
+      setCollapsed(sessionStorage.getItem(collapseKey) === "1", false);
+    } catch (_err) {
+      /* ignore */
+    }
+  }
+  const esc = (value) =>
+    String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const collectShelfLines = () => {
+    const lines = [];
+    document
+      .querySelectorAll('[data-shelf-row-inputs] input[name^="shelf_qty_"]')
+      .forEach((qtyInput) => {
+        const qty = qtyInput.value.trim();
+        if (!qty || !(Number(qty) > 0)) return;
+        const inputsRow = qtyInput.closest("tr");
+        const headRow = inputsRow && inputsRow.previousElementSibling;
+        const id = qtyInput.name.slice("shelf_qty_".length);
+        const name =
+          headRow
+            ?.querySelector(".stock-matrix-item strong")
+            ?.textContent.trim() || `Item ${id}`;
+        const price =
+          inputsRow
+            .querySelector(`input[name="shelf_price_${id}"]`)
+            ?.value.trim() || "";
+        const note =
+          inputsRow
+            .querySelector(`input[name="shelf_note_${id}"]`)
+            ?.value.trim() || "";
+        lines.push({ id, name, qty, price, note });
+      });
+    const stripQty = (
+      document.querySelector('[name="shelf_new_qty"]')?.value || ""
+    ).trim();
+    if (stripQty && Number(stripQty) > 0) {
+      const stripName =
+        (
+          document.querySelector('[name="shelf_new_name"]')?.value || ""
+        ).trim() || "New item";
+      const stripPrice =
+        (
+          document.querySelector('[name="shelf_new_price"]')?.value || ""
+        ).trim() || "";
+      lines.push({
+        id: "new",
+        name: stripName,
+        qty: stripQty,
+        price: stripPrice,
+        note: "",
+      });
+    }
+    return lines;
+  };
+
+  const renderShelfFloat = () => {
+    if (!floatLines || !floatEmpty) return;
+    const lines = collectShelfLines();
+    floatEmpty.hidden = lines.length > 0;
+    floatLines.hidden = lines.length === 0;
+    floatLines.innerHTML = lines
+      .map(
+        (line) =>
+          `<li>
+            <span title="${esc(line.name)}">${esc(line.name)}${
+              line.price ? ` @ ${esc(line.price)}` : ""
+            }${line.note ? ` · ${esc(line.note)}` : ""}</span>
+            <strong>×${esc(line.qty)}</strong>
+            <button type="button" data-shelf-float-remove data-shelf-id="${esc(
+              line.id
+            )}" aria-label="Clear ${esc(line.name)}">×</button>
+          </li>`
+      )
+      .join("");
+    if (floatClear) floatClear.hidden = lines.length === 0;
+    // Disabled only while JS is running — a no-JS post still reaches the
+    // server, which validates and reports an empty submit.
+    if (floatSubmit) floatSubmit.disabled = lines.length === 0;
+  };
+
+  const clearLine = (id) => {
+    if (id === "new") {
+      ["shelf_new_qty", "shelf_new_price", "shelf_new_note"].forEach((name) => {
+        const field = document.querySelector(`[name="${name}"]`);
+        if (field) field.value = "";
+      });
+      return;
+    }
+    const inputsRow = document
+      .querySelector(
+        `[data-shelf-row-inputs] input[name="shelf_qty_${id}"]`
+      )
+      ?.closest("tr");
+    inputsRow
+      ?.querySelectorAll("input")
+      .forEach((field) => {
+        field.value = "";
+      });
+  };
+
+  if (floatLines) {
+    (layout || shelfPanel)?.addEventListener("input", renderShelfFloat);
+    (layout || shelfPanel)?.addEventListener("change", renderShelfFloat);
+    floatLines.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-shelf-float-remove]");
+      if (!btn) return;
+      clearLine(btn.getAttribute("data-shelf-id"));
+      renderShelfFloat();
+    });
+    floatClear?.addEventListener("click", () => {
       document
         .querySelectorAll(
-          '[data-shelf-stock] input[name^="shelf_qty_"], [name="shelf_new_qty"]'
+          '[data-shelf-row-inputs] input[name^="shelf_"], [data-shelf-quick-add] input'
         )
-        .forEach((input) => {
-          const value = input.value.trim();
-          if (value && Number(value) > 0) count += 1;
+        .forEach((field) => {
+          field.value = "";
         });
-      bulkSummary.textContent = count
-        ? `${count} item${count === 1 ? "" : "s"} ready — press the button to apply.`
-        : idleText;
-    };
-    layout.addEventListener("input", recount);
-    recount();
+      renderShelfFloat();
+    });
+    renderShelfFloat();
   }
 })();

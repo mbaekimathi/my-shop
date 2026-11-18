@@ -381,10 +381,13 @@ class ShelfStockTests(TestCase):
         self.assertNotContains(page, "Pick a shelf-mode shop above")
 
         # Rows follow the item stock-in pattern: collapsed heads that expand
-        # to reveal the fields, with a single bulk submit — no per-row
-        # Add/Remove buttons on the in/out tabs.
+        # to reveal the fields, with the floating submit card collecting the
+        # lines — no per-row Add/Remove buttons on the in/out tabs.
         self.assertContains(page, "data-shelf-row-toggle")
         self.assertContains(page, "data-shelf-row-inputs")
+        self.assertContains(page, "stock-matrix-row--action")
+        self.assertContains(page, "data-shelf-float-submit")
+        self.assertContains(page, "data-shelf-float-lines")
         self.assertNotContains(page, 'value="in:')
         self.assertNotContains(page, 'value="out:')
 
@@ -396,6 +399,7 @@ class ShelfStockTests(TestCase):
         )
         self.assertContains(out_page, "data-search-gated")
         self.assertContains(out_page, "data-shelf-row-toggle")
+        self.assertContains(out_page, 'value="out_bulk"')
         view_page = self.client.get(
             f"{stock_management_url(admin.role, 'view', shop_id=self.shop.pk)}"
             "&tab=shelf"
