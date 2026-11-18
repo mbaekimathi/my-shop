@@ -64,6 +64,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   the "By item" scope with those items pre-checked (shops + deadline still
   needed). Checkbox JS lives in `stock-take.js` (`data-score-report-form`).
 
+## Stock take system qty (live → frozen)
+- `StockTakeCount.system_qty` is **re-stamped to the live `ShopStock` qty the
+  moment that line's count is saved** (`submit_stock_take_one` /
+  `submit_stock_take_counts` in `items/stock_take.py`); the value stamped at
+  take creation is only a placeholder. Uncounted lines therefore display live
+  stock on the comparison page (`build_stock_take_comparison`), the shop's own
+  results (`build_shop_stock_count_results`), and the HQ form payload
+  (`online_stock_take_assignment_payload`); counted/submitted lines show the
+  frozen at-count qty. Same convention as `OnlineStockTakeEntry.
+  system_qty_at_count` (`_baseline_system` in `items/online_stock_take.py`).
+  Tests: `items/tests.py::StockTakeLiveSystemQtyTests`.
+
 ## Stock take deadlines
 - A `StockTake` closes itself once `deadline` passes — no scheduler needed:
   `close_overdue_stock_takes()` (`items/stock_take.py`) is swept lazily from the

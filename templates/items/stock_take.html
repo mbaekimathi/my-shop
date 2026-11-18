@@ -26,7 +26,7 @@
         </h2>
         <p>
           {% if selected_take %}
-          Compare system quantity with what each shop counted. Use Edit to change shops, items, or the deadline.
+          Compare system quantity with what each shop counted. Pending lines show live stock; a line's system qty freezes once its count is saved. Use Edit to change shops, items, or the deadline.
           {% elif stock_take_score_view %}
           Average count accuracy per item for {{ report_period_label }} — lowest scores first.
           {% else %}

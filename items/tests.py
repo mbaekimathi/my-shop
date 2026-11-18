@@ -5351,6 +5351,130 @@ class StockTakeDeadlineLockTests(TestCase):
         self.assertIn("closed", str(ctx.exception).lower())
 
 
+class StockTakeLiveSystemQtyTests(TestCase):
+    """System column: live for uncounted lines, frozen at each line's submit."""
+
+    def setUp(self):
+        from items.models import Item, ShopStock, StockTakeScope
+        from items.stock_take import create_stock_take
+
+        self.user = User.objects.create_user(
+            username="850031",
+            password="live-qty-pass",
+            email="live-qty@test.local",
+            first_name="LIVE",
+            last_name="QTY",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="850031",
+            phone_country_code="+254",
+            phone_number="700000970",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="LIVE QTY SHOP",
+            location="NAIROBI",
+            email="live-qty-shop@test.local",
+            phone_number="0700000970",
+            login_code="850131",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item = Item.objects.create(
+            category="CABLES",
+            name="LIVE ITEM A",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        self.item_b = Item.objects.create(
+            category="CABLES",
+            name="LIVE ITEM B",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(shop=self.shop, item=self.item, quantity=5)
+        ShopStock.objects.create(shop=self.shop, item=self.item_b, quantity=7)
+        self.take = create_stock_take(
+            profile=self.profile,
+            scope_mode=StockTakeScope.ITEMS,
+            categories=[],
+            item_ids=[self.item.pk, self.item_b.pk],
+            shop_ids=[self.shop.pk],
+            deadline=timezone.now() + timedelta(hours=2),
+        )
+        self.assignment = self.take.assignments.get(shop=self.shop)
+
+    def _cells(self):
+        from items.stock_take import build_stock_take_comparison
+
+        comparison = build_stock_take_comparison(self.take)
+        return {
+            row["item"].pk: row["cells"][0] for row in comparison["rows"]
+        }
+
+    def test_pending_cells_show_live_system_qty(self):
+        from items.models import ShopStock
+
+        ShopStock.objects.filter(shop=self.shop, item=self.item).update(
+            quantity=9
+        )
+        cells = self._cells()
+        self.assertEqual(cells[self.item.pk]["system_qty"], Decimal("9"))
+        self.assertEqual(cells[self.item_b.pk]["system_qty"], Decimal("7"))
+
+    def test_counted_line_freezes_while_uncounted_stays_live(self):
+        from items.models import ShopStock
+        from items.stock_take import submit_stock_take_counts, submit_stock_take_one
+
+        count = self.assignment.counts.get(item=self.item)
+        count_b = self.assignment.counts.get(item=self.item_b)
+        ShopStock.objects.filter(shop=self.shop, item=self.item).update(
+            quantity=9
+        )
+        submit_stock_take_one(
+            assignment=self.assignment,
+            count_id=count.pk,
+            qty="9",
+            submitted_by_label="Tester",
+        )
+        count.refresh_from_db()
+        self.assertEqual(count.system_qty, Decimal("9"))
+
+        # Stock moves again: counted line stays frozen, uncounted tracks live.
+        ShopStock.objects.filter(shop=self.shop, item=self.item).update(
+            quantity=12
+        )
+        ShopStock.objects.filter(shop=self.shop, item=self.item_b).update(
+            quantity=20
+        )
+        cells = self._cells()
+        self.assertEqual(cells[self.item.pk]["system_qty"], Decimal("9"))
+        self.assertEqual(cells[self.item_b.pk]["system_qty"], Decimal("20"))
+
+        # Bulk finish re-stamps every resubmitted line at this moment's qty.
+        submit_stock_take_counts(
+            assignment=self.assignment,
+            counts={str(count.pk): "9", str(count_b.pk): "18"},
+            submitted_by_label="Tester",
+        )
+        count.refresh_from_db()
+        count_b.refresh_from_db()
+        self.assertEqual(count.system_qty, Decimal("12"))
+        self.assertEqual(count_b.system_qty, Decimal("20"))
+
+        ShopStock.objects.filter(shop=self.shop, item=self.item_b).update(
+            quantity=30
+        )
+        cells = self._cells()
+        self.assertEqual(cells[self.item.pk]["system_qty"], Decimal("12"))
+        self.assertEqual(cells[self.item_b.pk]["system_qty"], Decimal("20"))
+
+
 class StockTakeItemScoreReportTests(TestCase):
     """Score report lists counted items by average score, lowest first."""
 

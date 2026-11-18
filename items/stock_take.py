@@ -237,6 +237,15 @@ def _stock_map_for(*, shop_ids: list[int], item_ids: list[int]) -> dict:
     }
 
 
+def _live_system_qty(*, shop_id: int, item_id: int) -> Decimal:
+    qty = (
+        ShopStock.objects.filter(shop_id=shop_id, item_id=item_id)
+        .values_list("quantity", flat=True)
+        .first()
+    )
+    return _quantize(qty) if qty is not None else _ZERO
+
+
 def _create_assignment_counts(*, assignment, shop_id: int, items: list[Item], stock_map: dict):
     StockTakeCount.objects.bulk_create(
         [
@@ -605,6 +614,15 @@ def build_shop_stock_count_results(*, shop, limit=20) -> list[dict]:
         .prefetch_related("counts__item")
         .order_by("-stock_take__created_at", "-id")[:limit]
     )
+    live_map = _stock_map_for(
+        shop_ids=[shop.pk],
+        item_ids=[
+            count.item_id
+            for assignment in assignments
+            for count in assignment.counts.all()
+            if count.counted_qty is None
+        ],
+    )
     results = []
     for assignment in assignments:
         take = assignment.stock_take
@@ -615,7 +633,11 @@ def build_shop_stock_count_results(*, shop, limit=20) -> list[dict]:
         short_count = 0
         for count in assignment.counts.all():
             item = count.item
-            system = _quantize(count.system_qty)
+            system = (
+                _quantize(count.system_qty)
+                if count.counted_qty is not None
+                else _quantize(live_map.get((shop.pk, item.pk), _ZERO))
+            )
             counted = (
                 _quantize(count.counted_qty)
                 if count.counted_qty is not None
@@ -732,10 +754,24 @@ def stock_take_assignment_payload(assignment: StockTakeAssignment) -> dict:
 
 
 def online_stock_take_assignment_payload(assignment: StockTakeAssignment) -> dict:
-    """HQ/online count form: includes system qty so variance can update live."""
+    """HQ/online count form: live system qty until a line is counted, then frozen."""
     payload = stock_take_assignment_payload(assignment)
+    live_map = _stock_map_for(
+        shop_ids=[assignment.shop_id],
+        item_ids=[
+            count.item_id
+            for count in assignment.counts.all()
+            if count.counted_qty is None
+        ],
+    )
     system_by_count = {
-        count.pk: _qty_label(_quantize(count.system_qty))
+        count.pk: _qty_label(
+            _quantize(count.system_qty)
+            if count.counted_qty is not None
+            else _quantize(
+                live_map.get((assignment.shop_id, count.item_id), _ZERO)
+            )
+        )
         for count in assignment.counts.all()
     }
     for line in payload["lines"]:
@@ -905,7 +941,10 @@ def submit_stock_take_one(
         raise ValidationError("That item is not part of this stock take.")
 
     row.counted_qty = _parse_count_qty(qty, item_name=row.item.name)
-    row.save(update_fields=["counted_qty"])
+    row.system_qty = _live_system_qty(
+        shop_id=assignment.shop_id, item_id=row.item_id
+    )
+    row.save(update_fields=["counted_qty", "system_qty"])
 
     complete = _finalize_assignment_if_complete(
         assignment, submitted_by_label=submitted_by_label
@@ -953,13 +992,20 @@ def submit_stock_take_counts(
     if not count_rows:
         raise ValidationError("No items to count.")
 
+    stock_map = _stock_map_for(
+        shop_ids=[assignment.shop_id],
+        item_ids=[row.item_id for row in count_rows.values()],
+    )
     updates = []
     for count_id, row in count_rows.items():
         raw = counts.get(str(count_id), counts.get(count_id))
         row.counted_qty = _parse_count_qty(raw, item_name=row.item.name)
+        row.system_qty = _quantize(
+            stock_map.get((assignment.shop_id, row.item_id), _ZERO)
+        )
         updates.append(row)
 
-    StockTakeCount.objects.bulk_update(updates, ["counted_qty"])
+    StockTakeCount.objects.bulk_update(updates, ["counted_qty", "system_qty"])
     _finalize_assignment_if_complete(
         assignment, submitted_by_label=submitted_by_label
     )
@@ -1070,7 +1116,7 @@ def build_stock_take_item_scores(*, start=None, end=None, shop_ids=None) -> dict
     """Per-item counting accuracy across stock takes in a period.
 
     Each submitted count line scores 1 when the counted qty matches the
-    system qty recorded at take creation. Pending (unsubmitted) lines are
+    system qty frozen when that line was counted. Pending (unsubmitted) lines are
     reported but never scored — an uncounted line says nothing about the
     item's accuracy. Rows sort lowest score first so problem items surface.
     """
@@ -1225,6 +1271,19 @@ def build_stock_take_comparison(take: StockTake) -> dict:
             }
         )
 
+    # Uncounted cells show live shop stock; a line's system_qty is frozen
+    # the moment its count is saved (submit_stock_take_one / _counts).
+    pending_shop_ids = [
+        assignment.shop_id
+        for assignment in assignments
+        if assignment.status != StockTakeAssignmentStatus.SUBMITTED
+    ]
+    live_map = (
+        _stock_map_for(shop_ids=pending_shop_ids, item_ids=list(item_map.keys()))
+        if pending_shop_ids
+        else {}
+    )
+
     def _row_variance_kind(cells) -> str | None:
         """Worst submitted variance on the row: short → excess → match."""
         has_short = False
@@ -1280,6 +1339,10 @@ def build_stock_take_comparison(take: StockTake) -> dict:
                     "submitted": False,
                     "match": False,
                 }
+            if cell["counted_qty"] is None:
+                cell["system_qty"] = _quantize(
+                    live_map.get((assignment.shop_id, entry["item"].pk), _ZERO)
+                )
             cells.append(cell)
         rows.append(
             {
