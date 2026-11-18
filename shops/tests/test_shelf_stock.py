@@ -227,6 +227,222 @@ class ShelfStockTests(TestCase):
             2,
         )
 
+    def test_stock_in_by_name_via_stock_management(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        admin_user = User.objects.create_user(
+            username="800992", password="admin-pass", is_active=True
+        )
+        admin = EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="800992",
+            phone_country_code="+254",
+            phone_number="700000992",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        # A second shop keeps the single-shop filter from collapsing to
+        # "all shops" (which would show no shelf panel).
+        Shop.objects.create(
+            name="OTHER SHELF SHOP",
+            location="NAIROBI",
+            email="other-shelf@test.local",
+            phone_number="0700000956",
+            login_code="830956",
+            password_hash="x",
+            created_by=admin,
+        )
+        self.client.force_login(admin_user)
+        from employees.workspace import stock_management_url
+
+        url = (
+            f"{stock_management_url(admin.role, 'in', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'name="shelf_new_name"')
+        self.assertContains(page, 'value="in_new"')
+
+        response = self.client.post(
+            url,
+            {
+                "shelf_action": "in_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_name": "maize flour 2kg",
+                "shelf_new_unit": "PACKETS",
+                "shelf_new_qty": "4",
+                "shelf_new_price": "120.50",
+                "shelf_new_note": "first batch",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("tab=shelf", response["Location"])
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(shelf.name, "MAIZE FLOUR 2KG")
+        self.assertEqual(shelf.unit, "PACKETS")
+        self.assertEqual(shelf.quantity, Decimal("4"))
+        self.assertEqual(
+            list(
+                ShelfStockMovement.objects.filter(shelf_item=shelf)
+                .order_by("id")
+                .values_list("movement_type", flat=True)
+            ),
+            ["register", "in"],
+        )
+        last = ShelfStockMovement.objects.filter(shelf_item=shelf).latest("id")
+        self.assertEqual(last.buying_price, Decimal("120.50"))
+        self.assertEqual(last.note, "first batch")
+
+        # Buying price is compulsory on shelf stock-in by default — a post
+        # without it is rejected and moves nothing.
+        self.client.post(
+            url,
+            {
+                "shelf_action": "in_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_name": "MAIZE FLOUR 2KG",
+                "shelf_new_qty": "2",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("4"))
+
+        # An existing name stocks into the same item — no duplicate row.
+        response = self.client.post(
+            url,
+            {
+                "shelf_action": "in_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_name": "MAIZE FLOUR 2KG",
+                "shelf_new_qty": "2",
+                "shelf_new_price": "115",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("6"))
+        self.assertEqual(ShelfItem.objects.filter(shop=self.shop).count(), 1)
+
+        # Missing name / quantity are rejected without creating anything.
+        self.client.post(
+            url,
+            {
+                "shelf_action": "in_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_qty": "2",
+                "shelf_new_price": "50",
+            },
+        )
+        self.client.post(
+            url,
+            {
+                "shelf_action": "in_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_name": "rice 1kg",
+                "shelf_new_price": "50",
+            },
+        )
+        self.assertEqual(
+            ShelfItem.objects.filter(shop=self.shop).count(), 1
+        )
+
+    def test_shelf_tab_single_shop_still_shows_panel(self):
+        """One shelf-mode shop: shop_id collapses to all-shops scope, but the
+        shelf panel must still render on the stock-in tab."""
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        admin_user = User.objects.create_user(
+            username="800993", password="admin-pass", is_active=True
+        )
+        admin = EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="800993",
+            phone_country_code="+254",
+            phone_number="700000993",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        self.client.force_login(admin_user)
+        from employees.workspace import stock_management_url
+
+        url = (
+            f"{stock_management_url(admin.role, 'in', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'name="shelf_new_name"')
+        self.assertContains(page, 'value="in_new"')
+        self.assertNotContains(page, "Pick a shelf-mode shop above")
+
+    def test_stock_out_by_name_via_stock_management(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        ShelfItem.objects.create(
+            shop=self.shop, name="MAIZE FLOUR 2KG", unit="PACKETS",
+            quantity=Decimal("5"), created_by=self.profile,
+        )
+        admin_user = User.objects.create_user(
+            username="800994", password="admin-pass", is_active=True
+        )
+        admin = EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="800994",
+            phone_country_code="+254",
+            phone_number="700000994",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        self.client.force_login(admin_user)
+        from employees.workspace import stock_management_url
+
+        url = (
+            f"{stock_management_url(admin.role, 'out', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'value="out_new"')
+
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        response = self.client.post(
+            url,
+            {
+                "shelf_action": "out_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_name": "maize flour 2kg",
+                "shelf_new_qty": "2",
+                "shelf_new_note": "damaged",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("tab=shelf", response["Location"])
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("3"))
+        move = ShelfStockMovement.objects.filter(shelf_item=shelf).latest("id")
+        self.assertEqual(move.movement_type, "out")
+        self.assertEqual(move.note, "damaged")
+
+        # Over-removing and unknown names are rejected without moving stock.
+        self.client.post(
+            url,
+            {
+                "shelf_action": "out_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_name": "MAIZE FLOUR 2KG",
+                "shelf_new_qty": "99",
+            },
+        )
+        self.client.post(
+            url,
+            {
+                "shelf_action": "out_new",
+                "shelf_shop_id": str(self.shop.pk),
+                "shelf_new_name": "rice 1kg",
+                "shelf_new_qty": "1",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("3"))
+
     def test_portal_changes_require_permitted_staff_id(self):
         set_company_pos_setting(field="enable_shelf_mode", enabled=True)
         client = self._login()

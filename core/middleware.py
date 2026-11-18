@@ -8,8 +8,11 @@ class NoCacheHtmlMiddleware:
         response = self.get_response(request)
         content_type = response.get("Content-Type", "")
         if "text/html" in content_type and response.status_code == 200:
-            response["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            response["Pragma"] = "no-cache"
+            # no-cache revalidates HTML on every load (fresh after deploys)
+            # while staying eligible for Chrome's back/forward cache —
+            # no-store permanently blocks bfcache, forcing a full reload
+            # plus ~1MB of JS re-parse on every back/forward navigation.
+            response["Cache-Control"] = "no-cache"
         return response
 
 

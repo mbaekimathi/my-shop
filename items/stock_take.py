@@ -67,6 +67,7 @@ def open_stock_take_hide_sets() -> dict:
             "active": bool(by_shop),
         }
 
+    close_overdue_stock_takes()
     by_shop: dict[int, set[int]] = {}
     pending_assignment_ids = list(
         StockTakeAssignment.objects.filter(
@@ -439,8 +440,26 @@ def close_stock_take(*, take: StockTake, profile=None) -> StockTake:
     return take
 
 
+def close_overdue_stock_takes(*, now=None) -> int:
+    """Close every open take whose deadline has passed.
+
+    There is no scheduler, so the pages and shop-floor calls that read
+    stock takes run this sweep lazily — the deadline takes effect on the
+    next request after it hits. Returns the number of takes closed.
+    """
+    now = now or timezone.now()
+    closed = StockTake.objects.filter(
+        status=StockTakeStatus.OPEN,
+        deadline__lte=now,
+    ).update(status=StockTakeStatus.CLOSED, closed_at=now)
+    if closed:
+        invalidate_stock_take_hide_cache()
+    return closed
+
+
 def pending_stock_take_for_shop(shop) -> StockTakeAssignment | None:
     """Oldest open pending assignment for this shop (popup target)."""
+    close_overdue_stock_takes()
     return (
         StockTakeAssignment.objects.filter(
             shop=shop,
@@ -456,6 +475,7 @@ def pending_stock_take_for_shop(shop) -> StockTakeAssignment | None:
 
 def pending_stock_take_count_for_shop(shop) -> int:
     """How many open stock takes this shop still needs to submit."""
+    close_overdue_stock_takes()
     return (
         StockTakeAssignment.objects.filter(
             shop=shop,
@@ -1043,6 +1063,115 @@ def build_stock_take_shop_totals(*, start=None, end=None, shop_ids=None) -> dict
         "overall_marks": overall["marks"] if overall else None,
         "overall_max_marks": overall_total if overall_total else 0,
         "overall_grade": overall["grade"] if overall else None,
+    }
+
+
+def build_stock_take_item_scores(*, start=None, end=None, shop_ids=None) -> dict:
+    """Per-item counting accuracy across stock takes in a period.
+
+    Each submitted count line scores 1 when the counted qty matches the
+    system qty recorded at take creation. Pending (unsubmitted) lines are
+    reported but never scored — an uncounted line says nothing about the
+    item's accuracy. Rows sort lowest score first so problem items surface.
+    """
+    takes_qs = StockTake.objects.all()
+    if start is not None:
+        takes_qs = takes_qs.filter(created_at__gte=start)
+    if end is not None:
+        takes_qs = takes_qs.filter(created_at__lt=end)
+    take_ids = list(takes_qs.values_list("id", flat=True))
+
+    counts_qs = (
+        StockTakeCount.objects.filter(assignment__stock_take_id__in=take_ids)
+        .select_related("item", "assignment")
+        .order_by("item__category", "item__name", "id")
+    )
+    if shop_ids is not None:
+        counts_qs = counts_qs.filter(assignment__shop_id__in=list(shop_ids))
+
+    by_item: dict[int, dict] = {}
+    for count in counts_qs:
+        bucket = by_item.setdefault(
+            count.item_id,
+            {
+                "item": count.item,
+                "correct": 0,
+                "total": 0,
+                "pending": 0,
+                "short_count": 0,
+                "excess_count": 0,
+                "pieces_off": _ZERO,
+                "take_ids": set(),
+            },
+        )
+        bucket["take_ids"].add(count.assignment.stock_take_id)
+        if (
+            count.assignment.status != StockTakeAssignmentStatus.SUBMITTED
+            or count.counted_qty is None
+        ):
+            bucket["pending"] += 1
+            continue
+        bucket["total"] += 1
+        diff = _quantize(count.counted_qty) - _quantize(count.system_qty)
+        if diff == 0:
+            bucket["correct"] += 1
+        elif diff < 0:
+            bucket["short_count"] += 1
+            bucket["pieces_off"] += -diff
+        else:
+            bucket["excess_count"] += 1
+            bucket["pieces_off"] += diff
+
+    rows = []
+    for bucket in by_item.values():
+        total = bucket["total"]
+        has_score = total > 0
+        grade = (
+            _grade_payload(correct=bucket["correct"], total=total)
+            if has_score
+            else None
+        )
+        rows.append(
+            {
+                "item": bucket["item"],
+                "marks": grade["marks"] if grade else None,
+                "max_marks": total,
+                "percent": grade["percent"] if grade else None,
+                "grade": grade["grade"] if grade else None,
+                "grade_label": grade["grade_label"] if grade else None,
+                "has_score": has_score,
+                "take_count": len(bucket["take_ids"]),
+                "pending_count": bucket["pending"],
+                "short_count": bucket["short_count"],
+                "excess_count": bucket["excess_count"],
+                "pieces_off": _qty_label(_quantize(bucket["pieces_off"])),
+            }
+        )
+    # Lowest score first; pending-only items (no score) sit at the bottom.
+    rows.sort(
+        key=lambda row: (
+            0 if row["has_score"] else 1,
+            row["percent"] if row["percent"] is not None else 0,
+            (row["item"].name or "").lower(),
+            row["item"].pk,
+        )
+    )
+    scored = [row for row in rows if row["has_score"]]
+    overall_correct = sum(row["marks"] or 0 for row in scored)
+    overall_total = sum(row["max_marks"] for row in scored)
+    overall = (
+        _grade_payload(correct=overall_correct, total=overall_total)
+        if overall_total
+        else None
+    )
+    return {
+        "items": rows,
+        "item_count": len(rows),
+        "scored_item_count": len(scored),
+        "take_count": len(take_ids),
+        "overall_percent": overall["percent"] if overall else None,
+        "overall_marks": overall["marks"] if overall else None,
+        "overall_max_marks": overall_total,
     }
 
 

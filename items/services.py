@@ -1999,6 +1999,26 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
     return item
 
 
+def sync_sale_tracking_defaults() -> int:
+    """Re-apply the company default to items with no manual pick.
+
+    Items never toggled by hand (``sale_tracking_custom=False``) follow
+    ``CompanyPosSettings.enable_stock_tracking``: when the default is on the
+    item tracks sale stock too, when off it stops. Manual picks are left
+    alone. Returns the number of items updated.
+    """
+    from shops.services import get_company_pos_settings
+
+    default = bool(
+        getattr(get_company_pos_settings(), "enable_stock_tracking", True)
+    )
+    return int(
+        Item.objects.filter(sale_tracking_custom=False)
+        .exclude(deduct_stock_on_sale=default)
+        .update(deduct_stock_on_sale=default)
+    )
+
+
 def update_item(item: Item, data, files, *, editable_shop_ids=None, actor=None) -> Item:
     from items.activity_audit import log_item_edited, snapshot_item_for_audit
 

@@ -101,6 +101,7 @@ from .pagination import page_url, pagination_links, redirect_query_page
 from .services import (
     EMPLOYEE_ID_RE,
     EMPTY_EMPLOYEE_FORM,
+    build_employee_analytics,
     build_employee_performance,
     employee_form_data_from_post,
     employee_id_is_taken,
@@ -690,9 +691,77 @@ def dashboard(request):
     return redirect_to_role_home(get_profile_for_request(request))
 
 
+def _employee_home_pagination(request, receipts_page):
+    """Prev/next URLs for the receipts table, preserving the active filter."""
+    links = {"previous_url": None, "next_url": None}
+    if receipts_page.has_previous():
+        query = request.GET.copy()
+        query["page"] = receipts_page.previous_page_number()
+        links["previous_url"] = f"?{query.urlencode()}"
+    if receipts_page.has_next():
+        query = request.GET.copy()
+        query["page"] = receipts_page.next_page_number()
+        links["next_url"] = f"?{query.urlencode()}"
+    return links
+
+
 @role_required(EmployeeRole.EMPLOYEE)
 def role_employee(request):
+    from shops.services import _shop_receipt_date_bounds
+
     profile = get_profile_for_request(request)
+    receipt_filter = {
+        "mode": (request.GET.get("filter") or "day").strip().lower(),
+        "day": (request.GET.get("day") or "").strip(),
+        "date_from": (request.GET.get("from") or "").strip(),
+        "date_to": (request.GET.get("to") or "").strip(),
+        "month": (request.GET.get("month") or "").strip(),
+        "year": (request.GET.get("year") or "").strip(),
+        "status": (request.GET.get("status") or "all").strip().lower(),
+    }
+    from shops.models import ShopReceiptStatus
+
+    receipt_status = receipt_filter["status"]
+    if receipt_status not in {ShopReceiptStatus.ACTIVE, ShopReceiptStatus.CONFIRMED}:
+        receipt_status = None
+        receipt_filter["status"] = "all"
+    receipt_bounds = None
+    if receipt_filter["mode"] in {"day", "period", "month", "year"}:
+        try:
+            receipt_bounds = _shop_receipt_date_bounds(
+                filter_mode=receipt_filter["mode"],
+                day=receipt_filter["day"],
+                date_from=receipt_filter["date_from"],
+                date_to=receipt_filter["date_to"],
+                month=receipt_filter["month"],
+                year=receipt_filter["year"],
+            )
+        except ValidationError as exc:
+            for error in exc.messages:
+                messages.error(request, error)
+            receipt_filter["mode"] = "all"
+    else:
+        receipt_filter["mode"] = "all"
+    if receipt_filter["mode"] == "day" and not receipt_filter["day"]:
+        receipt_filter["day"] = timezone.localdate().isoformat()
+    period_label = ""
+    if receipt_bounds is not None:
+        start_d, end_d = receipt_bounds
+        if receipt_filter["mode"] == "day":
+            period_label = start_d.strftime("%d %b %Y")
+        elif receipt_filter["mode"] == "month":
+            period_label = start_d.strftime("%b %Y")
+        elif receipt_filter["mode"] == "year":
+            period_label = str(start_d.year)
+        else:
+            period_label = f"{start_d:%d %b %Y} – {end_d:%d %b %Y}"
+    perf = build_employee_performance(
+        profile,
+        receipt_bounds=receipt_bounds,
+        period_label=period_label,
+        receipt_status=receipt_status,
+        page=request.GET.get("page") or 1,
+    )
     return render(
         request,
         "employees/employee_home.html",
@@ -701,7 +770,39 @@ def role_employee(request):
             "meta": ROLE_PAGE_META[EmployeeRole.EMPLOYEE],
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "perf": build_employee_performance(profile),
+            "perf": perf,
+            "receipts_page": perf["receipts_page"],
+            "pagination": _employee_home_pagination(request, perf["receipts_page"]),
+            "receipt_filter": receipt_filter,
+            "receipts_filtered": receipt_bounds is not None,
+            "period_label": period_label,
+            "page_sidebar": sidebar_for_role_dashboard(
+                EmployeeRole.EMPLOYEE, profile=profile
+            ),
+        },
+    )
+
+
+@role_required(EmployeeRole.EMPLOYEE)
+def employee_my_analytics(request):
+    profile = get_profile_for_request(request)
+    return render(
+        request,
+        "employees/employee_analytics.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "My analytics",
+                "headline": "My analytics",
+                "summary": (
+                    "Your sales performance, trends, top items, "
+                    "and receipt statuses."
+                ),
+                "icon": "chart-line",
+            },
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "stats": build_employee_analytics(profile),
             "page_sidebar": sidebar_for_role_dashboard(
                 EmployeeRole.EMPLOYEE, profile=profile
             ),

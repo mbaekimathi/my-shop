@@ -397,3 +397,65 @@ class SaleStockTrackingPageTests(TestCase):
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
         self.assertEqual(response.status_code, 404)
+
+    def test_page_auto_picks_default_when_stock_tracking_enabled(self):
+        # Items never picked by hand follow the company default: default
+        # stock tracking is on, so the page switches the item on too.
+        self._login()
+        Item.objects.filter(pk=self.item.pk).update(
+            deduct_stock_on_sale=False, sale_tracking_custom=False
+        )
+        response = self.client.get(self.url, {"mode": "sale-tracking"})
+        self.assertEqual(response.status_code, 200)
+        self.item.refresh_from_db()
+        self.assertTrue(self.item.deduct_stock_on_sale)
+
+    def test_page_keeps_manual_pick_when_stock_tracking_enabled(self):
+        self._login()
+        Item.objects.filter(pk=self.item.pk).update(
+            deduct_stock_on_sale=False, sale_tracking_custom=True
+        )
+        response = self.client.get(self.url, {"mode": "sale-tracking"})
+        self.assertEqual(response.status_code, 200)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.deduct_stock_on_sale)
+
+    def test_toggle_marks_item_custom(self):
+        self._login()
+        response = self.client.post(
+            self.url,
+            {
+                "mode": "sale-tracking",
+                "action": "toggle_sale_tracking",
+                "item_id": self.item.pk,
+                "enabled": "0",
+                "ajax": "1",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.deduct_stock_on_sale)
+        self.assertTrue(self.item.sale_tracking_custom)
+
+    def test_stock_mode_change_syncs_untouched_items(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.deduct_stock_on_sale)
+
+        set_company_pos_setting(field="stock_mode_items", enabled=True)
+        self.item.refresh_from_db()
+        self.assertTrue(self.item.deduct_stock_on_sale)
+
+    def test_stock_mode_change_keeps_manual_pick(self):
+        from shops.services import set_company_pos_setting
+
+        Item.objects.filter(pk=self.item.pk).update(
+            deduct_stock_on_sale=False, sale_tracking_custom=True
+        )
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        set_company_pos_setting(field="stock_mode_items", enabled=True)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.deduct_stock_on_sale)

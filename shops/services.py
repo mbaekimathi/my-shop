@@ -3036,20 +3036,32 @@ def sync_require_mpesa_reference_on_confirm_to_shops(
     return int(updated)
 
 
+def _sync_items_to_stock_mode(before: bool, row: CompanyPosSettings) -> None:
+    """When the company default flips, items with no manual pick follow it."""
+    if bool(row.enable_stock_tracking) == before:
+        return
+    from items.services import sync_sale_tracking_defaults
+
+    sync_sale_tracking_defaults()
+
+
 def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
     if field in STOCK_MODE_FIELDS:
         _invalidate_pos_settings_cache()
         settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
+        tracking_before = bool(settings_row.enable_stock_tracking)
         changed = _apply_stock_mode(settings_row, field, enabled)
         if changed:
             settings_row.save(update_fields=[*changed, "updated_at"])
         _invalidate_pos_settings_cache()
+        _sync_items_to_stock_mode(tracking_before, settings_row)
         return get_company_pos_settings()
     if field in ("enable_stock_tracking", "enable_shelf_mode"):
         # Raw stock-flag writes must not leave a state the one-of stock-mode
         # toggles cannot represent (both off = no stock mode at all).
         _invalidate_pos_settings_cache()
         settings_row, _ = CompanyPosSettings.objects.get_or_create(pk=1)
+        tracking_before = bool(settings_row.enable_stock_tracking)
         tracking = (
             bool(enabled)
             if field == "enable_stock_tracking"
@@ -3067,6 +3079,7 @@ def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:
         setattr(settings_row, field, bool(enabled))
         settings_row.save(update_fields=[field, "updated_at"])
         _invalidate_pos_settings_cache()
+        _sync_items_to_stock_mode(tracking_before, settings_row)
         return get_company_pos_settings()
     if field not in POS_SETTING_FIELDS:
         raise ValidationError("Unknown POS setting.")

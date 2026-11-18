@@ -25,8 +25,15 @@ const ACTIVITY_EVENTS = [
 let lastUserActivityAt = Date.now();
 let activityTrackerInstalled = false;
 
+// pointermove can fire hundreds of times per second; a timestamp update once
+// a second is plenty to prove the user is still at the terminal.
+const ACTIVITY_THROTTLE_MS = 1000;
+
 function noteUserActivity() {
-  lastUserActivityAt = Date.now();
+  const now = Date.now();
+  if (now - lastUserActivityAt >= ACTIVITY_THROTTLE_MS) {
+    lastUserActivityAt = now;
+  }
 }
 
 function installActivityTracker() {

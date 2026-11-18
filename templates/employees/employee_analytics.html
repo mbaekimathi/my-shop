@@ -1,0 +1,131 @@
+{% extends "employees/workspace_base.html" %}
+
+{% block title %}My analytics — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<div class="employee-home">
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Employee · Analytics</p>
+        <h2>My analytics</h2>
+        <p>Your sales performance, trends, top items, and receipt statuses.</p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong>{{ stats.sales.amount_label }}</strong>
+          <span>all-time sales</span>
+        </p>
+        <p class="stock-stat">
+          <strong>{{ stats.receipts_total }}</strong>
+          <span>receipts</span>
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="workspace-grid workspace-grid--profile">
+    <article class="workspace-card workspace-card--accent">
+      <i data-lucide="banknote" aria-hidden="true"></i>
+      <h3>{{ stats.sales.amount_label }}</h3>
+      <p>Sales · {{ stats.sales.docs }} sale{{ stats.sales.docs|pluralize }}</p>
+    </article>
+    <article class="workspace-card">
+      <i data-lucide="clock-3" aria-hidden="true"></i>
+      <h3>{{ stats.pending.docs }}</h3>
+      <p>Pending · {{ stats.pending.amount_label }}</p>
+    </article>
+    <article class="workspace-card">
+      <i data-lucide="check-check" aria-hidden="true"></i>
+      <h3>{{ stats.confirmed.docs }}</h3>
+      <p>Confirmed · {{ stats.confirmed.amount_label }}</p>
+    </article>
+    <article class="workspace-card">
+      <i data-lucide="undo-2" aria-hidden="true"></i>
+      <h3>{{ stats.partial_return.docs }}</h3>
+      <p>Partially returned · {{ stats.partial_return.amount_label }}</p>
+    </article>
+    <article class="workspace-card">
+      <i data-lucide="x-circle" aria-hidden="true"></i>
+      <h3>{{ stats.cancelled.docs }}</h3>
+      <p>Cancelled · {{ stats.cancelled.amount_label }}</p>
+    </article>
+  </div>
+</section>
+
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Sales by month</h2>
+        <p>
+          Last 12 months
+          {% if stats.peak_month and stats.peak_month.docs %}
+          · best: {{ stats.peak_month.label }} ({{ stats.peak_month.amount_label }})
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </header>
+  <div class="item-table-wrap">
+    <table class="item-table item-table--dense">
+      <thead>
+        <tr>
+          <th scope="col" class="item-col--item">Month</th>
+          <th scope="col">Sales</th>
+          <th scope="col">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.months %}
+        <tr>
+          <td class="item-cell--item" data-label="Month"><strong>{{ row.label }}</strong></td>
+          <td data-label="Sales">{{ row.docs }}</td>
+          <td data-label="Total">{{ row.amount_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="2">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Top items</h2>
+        <p>What you sell best, ranked by revenue.</p>
+      </div>
+    </div>
+  </header>
+  {% if stats.top_items %}
+  <div class="item-table-wrap">
+    <table class="item-table item-table--dense">
+      <thead>
+        <tr>
+          <th scope="col" class="item-col--item">Item</th>
+          <th scope="col">Qty sold</th>
+          <th scope="col">Revenue</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.top_items %}
+        <tr>
+          <td class="item-cell--item" data-label="Item"><strong>{{ row.name }}</strong></td>
+          <td data-label="Qty sold">{{ row.qty_label }}</td>
+          <td data-label="Revenue">{{ row.amount_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="package" aria-hidden="true"></i>
+    <p><strong>No item sales yet.</strong> Items you sell on the shop floor will rank here.</p>
+  </div>
+  {% endif %}
+</section>
+</div>
+{% endblock %}

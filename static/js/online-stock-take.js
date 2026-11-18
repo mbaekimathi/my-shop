@@ -746,7 +746,7 @@
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) pollRemoteCounts();
     });
-    window.addEventListener("beforeunload", stopPolling);
+    // No beforeunload cleanup — it would block Chrome's back/forward cache.
   }
 
   if (typeof window.lucide?.createIcons === "function") {

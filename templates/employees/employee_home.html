@@ -1,20 +1,29 @@
 {% extends "employees/workspace_base.html" %}
+{% load static %}
 
 {% block title %}My Performance — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
+<div class="employee-home">
 <section class="item-panel item-panel--dense" data-animate="rise">
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
         <p class="stock-kicker">Employee · Performance</p>
         <h2>My performance</h2>
-        <p>Your sales and receipts across every shop.</p>
+        <p>
+          {% if receipts_filtered %}
+          Your sales and receipts for {{ period_label }}.
+          {% else %}
+          Your sales and receipts across every shop.
+          {% endif %}
+        </p>
       </div>
       <div class="stock-stats">
+        <a class="stock-report-apply" href="{% url 'employees:employee_my_analytics' %}">My analytics</a>
         <p class="stock-stat">
           <strong>{{ perf.all.amount_label }}</strong>
-          <span>all-time sales</span>
+          <span>{{ perf.all_caption }}</span>
         </p>
         <p class="stock-stat">
           <strong>{{ perf.all.docs }}</strong>
@@ -22,6 +31,86 @@
         </p>
       </div>
     </div>
+    <form
+      class="stock-report-filters stock-report-filters--serials"
+      method="get"
+      data-employee-receipts-filters
+    >
+      <label class="stock-report-field">
+        <span>Period</span>
+        <select name="filter" data-receipt-filter-mode aria-label="Filter period">
+          <option value="all"{% if receipt_filter.mode == "all" %} selected{% endif %}>All time</option>
+          <option value="day"{% if receipt_filter.mode == "day" %} selected{% endif %}>Single day</option>
+          <option value="period"{% if receipt_filter.mode == "period" %} selected{% endif %}>Period</option>
+          <option value="month"{% if receipt_filter.mode == "month" %} selected{% endif %}>Month</option>
+          <option value="year"{% if receipt_filter.mode == "year" %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+
+      <label class="stock-report-field">
+        <span>Status</span>
+        <select name="status" aria-label="Receipt status">
+          <option value="all"{% if receipt_filter.status == "all" %} selected{% endif %}>All statuses</option>
+          <option value="active"{% if receipt_filter.status == "active" %} selected{% endif %}>Pending</option>
+          <option value="confirmed"{% if receipt_filter.status == "confirmed" %} selected{% endif %}>Confirmed</option>
+        </select>
+      </label>
+
+      <label
+        class="stock-report-field{% if receipt_filter.mode != "day" %} is-hidden{% endif %}"
+        data-filter-panel="day"
+        {% if receipt_filter.mode != "day" %}hidden{% endif %}
+      >
+        <span>Date</span>
+        <input type="date" name="day" value="{{ receipt_filter.day }}">
+      </label>
+
+      <label
+        class="stock-report-field{% if receipt_filter.mode != "period" %} is-hidden{% endif %}"
+        data-filter-panel="period"
+        {% if receipt_filter.mode != "period" %}hidden{% endif %}
+      >
+        <span>From</span>
+        <input type="date" name="from" value="{{ receipt_filter.date_from }}">
+      </label>
+
+      <label
+        class="stock-report-field{% if receipt_filter.mode != "period" %} is-hidden{% endif %}"
+        data-filter-panel="period"
+        {% if receipt_filter.mode != "period" %}hidden{% endif %}
+      >
+        <span>To</span>
+        <input type="date" name="to" value="{{ receipt_filter.date_to }}">
+      </label>
+
+      <label
+        class="stock-report-field{% if receipt_filter.mode != "month" %} is-hidden{% endif %}"
+        data-filter-panel="month"
+        {% if receipt_filter.mode != "month" %}hidden{% endif %}
+      >
+        <span>Month</span>
+        <input type="month" name="month" value="{{ receipt_filter.month }}">
+      </label>
+
+      <label
+        class="stock-report-field{% if receipt_filter.mode != "year" %} is-hidden{% endif %}"
+        data-filter-panel="year"
+        {% if receipt_filter.mode != "year" %}hidden{% endif %}
+      >
+        <span>Year</span>
+        <input
+          type="number"
+          min="2000"
+          max="2100"
+          step="1"
+          name="year"
+          value="{{ receipt_filter.year }}"
+          placeholder="YYYY"
+        >
+      </label>
+
+      <button type="submit" class="stock-report-apply">Apply</button>
+    </form>
   </header>
 
   {% if perf.has_activity %}
@@ -44,83 +133,24 @@
   {% endif %}
 </section>
 
-{% if perf.shops %}
 <section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
-        <h2>Sales by shop</h2>
-        <p>Where your sales were recorded.</p>
+        <h2>My receipts</h2>
+        <p>
+          {% if receipts_filtered %}
+          Receipts in the selected period, newest first.
+          {% else %}
+          Every receipt you created, newest first.
+          {% endif %}
+        </p>
       </div>
     </div>
   </header>
-  <div class="item-table-wrap">
-    <table class="item-table item-table--dense">
-      <thead>
-        <tr>
-          <th scope="col" class="item-col--item">Shop</th>
-          <th scope="col">Sales</th>
-          <th scope="col">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in perf.shops %}
-        <tr>
-          <td class="item-cell--item" data-label="Shop"><strong>{{ row.name }}</strong></td>
-          <td data-label="Sales">{{ row.docs }}</td>
-          <td data-label="Total">{{ row.amount_label }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
 
-{% if perf.kinds %}
-<section class="item-panel item-panel--dense" data-animate="rise" data-delay="2">
-  <header class="item-panel-head">
-    <div class="item-panel-head-top">
-      <div>
-        <h2>Receipts by type</h2>
-        <p>Every receipt you created, grouped by kind.</p>
-      </div>
-    </div>
-  </header>
-  <div class="item-table-wrap">
-    <table class="item-table item-table--dense">
-      <thead>
-        <tr>
-          <th scope="col" class="item-col--item">Type</th>
-          <th scope="col">Receipts</th>
-          <th scope="col">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in perf.kinds %}
-        <tr>
-          <td class="item-cell--item" data-label="Type"><strong>{{ row.label }}</strong></td>
-          <td data-label="Receipts">{{ row.docs }}</td>
-          <td data-label="Total">{{ row.amount_label }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
-
-{% if perf.recent %}
-<section class="item-panel item-panel--dense" data-animate="rise" data-delay="3">
-  <header class="item-panel-head">
-    <div class="item-panel-head-top">
-      <div>
-        <h2>Recent receipts</h2>
-        <p>Your latest receipts, newest first.</p>
-      </div>
-    </div>
-  </header>
-  <div class="item-table-wrap">
+  {% if perf.recent %}
+  <div class="item-table-wrap item-table-wrap--receipts">
     <table class="item-table item-table--dense">
       <thead>
         <tr>
@@ -148,8 +178,20 @@
       </tbody>
     </table>
   </div>
+  {% include "employees/partials/pagination_nav.html" with employees_page=receipts_page pagination_label="Receipt pages" %}
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="receipt" aria-hidden="true"></i>
+    <p>
+      {% if receipts_filtered %}
+      <strong>No receipts in this period.</strong> Try a different filter.
+      {% else %}
+      <strong>No receipts yet.</strong> Receipts you create on the shop floor will show up here.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
 </section>
-{% endif %}
 
 {% if not perf.has_activity %}
 <section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
@@ -159,4 +201,10 @@
   </div>
 </section>
 {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script defer src="{% static 'js/employee-home.js' %}?v=1"></script>
 {% endblock %}

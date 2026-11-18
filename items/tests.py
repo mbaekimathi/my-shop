@@ -1325,7 +1325,7 @@ class ItemStockReportRowsTests(TestCase):
         alerts_a = list_shop_low_stock_alerts(self.shop_a)
         alerts_b = list_shop_low_stock_alerts(self.shop_b)
         self.assertEqual([row["item_id"] for row in alerts_a], [self.item.pk])
-        self.assertEqual(alerts_a[0]["quantity"], 2)
+        self.assertEqual(alerts_a[0]["quantity"], "2")
         self.assertEqual(alerts_a[0]["threshold"], 5)
         self.assertEqual(alerts_b, [])
 
@@ -3439,6 +3439,63 @@ class ItSupportItemStockPagesTests(TestCase):
         labels = self._labels(page)
         self.assertIn("Shelf stock movement", labels)
 
+    def test_shelf_tab_report_shows_all_scope_shops(self):
+        from items.models import ShelfItem
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+        ShelfItem.objects.create(
+            shop=self.shop_b,
+            name="IT SHELF GADGET",
+            unit="PCS",
+            quantity=Decimal("2"),
+            created_by=self.profile,
+        )
+
+        # No shop picked: the report covers every in-scope shelf shop.
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "report",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+                "tab": "shelf",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        report = page.context["shelf_report"]
+        self.assertIsNotNone(report)
+        self.assertTrue(report["multi_shop"])
+        self.assertEqual(
+            {row["item"].shop_id for row in report["rows"]},
+            {self.shop.pk, self.shop_b.pk},
+        )
+        self.assertContains(page, "IT SHELF WIDGET")
+        self.assertContains(page, "IT SHELF GADGET")
+        self.assertContains(page, "IT STOCK SHOP B")
+
+        # A picked shop narrows the report to that shop only.
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "report",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+                "tab": "shelf",
+                "shop_id": self.shop.pk,
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        report = page.context["shelf_report"]
+        self.assertFalse(report["multi_shop"])
+        self.assertEqual(
+            {row["item"].shop_id for row in report["rows"]},
+            {self.shop.pk},
+        )
+        self.assertContains(page, "IT SHELF WIDGET")
+        self.assertNotContains(page, "IT SHELF GADGET")
+
     def test_settings_sidebar_splits_item_and_shelf_links(self):
         from shops.services import set_company_pos_setting
 
@@ -5216,3 +5273,276 @@ class StockTakeDeadlineLockTests(TestCase):
         self.assignment.refresh_from_db()
         self.assertEqual(self.assignment.status, "submitted")
         self.assertEqual(result["assignment_id"], self.assignment.pk)
+
+    def test_sweep_closes_take_once_deadline_passes(self):
+        from items.models import StockTakeStatus
+        from items.stock_take import close_overdue_stock_takes
+
+        self.take.deadline = timezone.now() - timedelta(minutes=1)
+        self.take.save(update_fields=["deadline"])
+        self.assertEqual(close_overdue_stock_takes(), 1)
+        self.take.refresh_from_db()
+        self.assertEqual(self.take.status, StockTakeStatus.CLOSED)
+        self.assertIsNotNone(self.take.closed_at)
+        # Assignment stays pending; nothing new closes.
+        self.assertEqual(close_overdue_stock_takes(), 0)
+
+    def test_future_deadline_left_open_by_sweep(self):
+        from items.models import StockTakeStatus
+        from items.stock_take import close_overdue_stock_takes
+
+        self.assertEqual(close_overdue_stock_takes(), 0)
+        self.take.refresh_from_db()
+        self.assertEqual(self.take.status, StockTakeStatus.OPEN)
+
+    def test_pending_assignment_stops_once_deadline_passes(self):
+        from items.models import StockTakeStatus
+        from items.stock_take import pending_stock_take_for_shop
+
+        self.assertIsNotNone(pending_stock_take_for_shop(self.shop))
+        self.take.deadline = timezone.now() - timedelta(minutes=1)
+        self.take.save(update_fields=["deadline"])
+        self.assertIsNone(pending_stock_take_for_shop(self.shop))
+        self.take.refresh_from_db()
+        self.assertEqual(self.take.status, StockTakeStatus.CLOSED)
+
+    def test_hidden_stock_unhides_once_deadline_passes(self):
+        from items.stock_take import (
+            pending_stock_take_for_shop,
+            stock_take_hides_item,
+        )
+
+        self.assertTrue(
+            stock_take_hides_item(self.item.pk, shop_id=self.shop.pk)
+        )
+        self.take.deadline = timezone.now() - timedelta(minutes=1)
+        self.take.save(update_fields=["deadline"])
+        # Any read path sweeps the overdue take, which clears the hide map.
+        pending_stock_take_for_shop(self.shop)
+        self.assertFalse(
+            stock_take_hides_item(self.item.pk, shop_id=self.shop.pk)
+        )
+
+    def test_late_submit_path_closes_the_take(self):
+        from django.core.exceptions import ValidationError
+        from items.models import StockTakeStatus
+        from items.stock_take import (
+            close_overdue_stock_takes,
+            submit_stock_take_counts,
+        )
+
+        self.take.deadline = timezone.now() - timedelta(minutes=1)
+        self.take.save(update_fields=["deadline"])
+        # The submit endpoint sweeps first, so the take is closed before
+        # the assignment is even looked up.
+        close_overdue_stock_takes()
+        self.take.refresh_from_db()
+        self.assertEqual(self.take.status, StockTakeStatus.CLOSED)
+        with self.assertRaises(ValidationError) as ctx:
+            submit_stock_take_counts(
+                assignment=self.assignment,
+                counts={str(self.count.pk): "5"},
+                submitted_by_label="Tester",
+            )
+        self.assertIn("closed", str(ctx.exception).lower())
+
+
+class StockTakeItemScoreReportTests(TestCase):
+    """Score report lists counted items by average score, lowest first."""
+
+    def setUp(self):
+        from items.models import Item, ShopStock
+
+        self.user = User.objects.create_user(
+            username="850021",
+            password="score-report-pass",
+            email="score-report@test.local",
+            first_name="SCORE",
+            last_name="REPORT",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="850021",
+            phone_country_code="+254",
+            phone_number="700000960",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="SCORE SHOP",
+            location="NAIROBI",
+            email="score-shop@test.local",
+            phone_number="0700000960",
+            login_code="850121",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop_b = Shop.objects.create(
+            name="SCORE SHOP B",
+            location="MOMBASA",
+            email="score-shop-b@test.local",
+            phone_number="0700000961",
+            login_code="850122",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.item_a = Item.objects.create(
+            category="CABLES",
+            name="SCORE ITEM A",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        self.item_b = Item.objects.create(
+            category="CABLES",
+            name="SCORE ITEM B",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        self.item_c = Item.objects.create(
+            category="CABLES",
+            name="SCORE ITEM C",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        for shop in (self.shop, self.shop_b):
+            for item in (self.item_a, self.item_b, self.item_c):
+                ShopStock.objects.create(shop=shop, item=item, quantity=5)
+        self.url = "/it-support/stock-management/"
+        self.client.force_login(self.user)
+
+    def _scored_take(self):
+        """Take over A + B at both shops; A counts right, B counts short."""
+        from items.models import StockTakeScope
+        from items.stock_take import create_stock_take, submit_stock_take_counts
+
+        take = create_stock_take(
+            profile=self.profile,
+            scope_mode=StockTakeScope.ITEMS,
+            categories=[],
+            item_ids=[self.item_a.pk, self.item_b.pk],
+            shop_ids=[self.shop.pk, self.shop_b.pk],
+            deadline=timezone.now() + timedelta(hours=2),
+        )
+        for assignment in take.assignments.select_related("stock_take"):
+            submit_stock_take_counts(
+                assignment=assignment,
+                counts={
+                    str(count.pk): (
+                        "5" if count.item_id == self.item_a.pk else "4"
+                    )
+                    for count in assignment.counts.all()
+                },
+                submitted_by_label="Tester",
+            )
+        return take
+
+    def test_item_scores_sort_lowest_first(self):
+        from items.stock_take import build_stock_take_item_scores
+
+        self._scored_take()
+        report = build_stock_take_item_scores()
+        self.assertEqual(
+            [row["item"].pk for row in report["items"]],
+            [self.item_b.pk, self.item_a.pk],
+        )
+        low, high = report["items"]
+        self.assertEqual(low["percent"], 0)
+        self.assertEqual(low["marks"], 0)
+        self.assertEqual(low["max_marks"], 2)
+        self.assertEqual(low["short_count"], 2)
+        self.assertEqual(low["take_count"], 1)
+        self.assertEqual(high["percent"], 100)
+        self.assertEqual(report["scored_item_count"], 2)
+        self.assertEqual(report["overall_percent"], 50)
+
+    def test_pending_counts_do_not_score(self):
+        from items.models import StockTakeScope
+        from items.stock_take import (
+            build_stock_take_item_scores,
+            create_stock_take,
+        )
+
+        create_stock_take(
+            profile=self.profile,
+            scope_mode=StockTakeScope.ITEMS,
+            categories=[],
+            item_ids=[self.item_c.pk],
+            shop_ids=[self.shop.pk],
+            deadline=timezone.now() + timedelta(hours=2),
+        )
+        report = build_stock_take_item_scores()
+        self.assertEqual(len(report["items"]), 1)
+        row = report["items"][0]
+        self.assertFalse(row["has_score"])
+        self.assertIsNone(row["percent"])
+        self.assertEqual(row["pending_count"], 1)
+        self.assertEqual(report["scored_item_count"], 0)
+
+    def test_score_report_page_lists_items_lowest_first(self):
+        self._scored_take()
+        page = self.client.get(
+            self.url, {"mode": "stock-take", "view": "scores"}
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Item score report")
+        self.assertContains(page, "SCORE ITEM A")
+        self.assertContains(page, "SCORE ITEM B")
+        content = page.content.decode()
+        self.assertLess(
+            content.index("SCORE ITEM B"), content.index("SCORE ITEM A")
+        )
+        self.assertContains(page, "view=scores")
+
+    def test_score_report_sidebar_link_marks_active(self):
+        page = self.client.get(
+            self.url, {"mode": "stock-take", "view": "scores"}
+        )
+        self.assertEqual(page.status_code, 200)
+        links = page.context["page_sidebar"]["primary"]
+        score_link = next(
+            link for link in links if link["label"] == "Item score report"
+        )
+        self.assertTrue(score_link["active"])
+        self.assertIn("view=scores", score_link["href"])
+
+    def test_score_report_rows_offer_item_selection(self):
+        self._scored_take()
+        page = self.client.get(
+            self.url, {"mode": "stock-take", "view": "scores"}
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(
+            page, 'name="item_ids" value="%d"' % self.item_a.pk
+        )
+        self.assertContains(
+            page, 'name="item_ids" value="%d"' % self.item_b.pk
+        )
+        self.assertContains(page, "data-score-items-submit")
+        self.assertContains(page, "Initiate stock count")
+
+    def test_init_items_preselects_create_form(self):
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "stock-take",
+                "item_ids": [self.item_a.pk, self.item_c.pk],
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        # Create panel opens on the "By item" scope with both items ticked.
+        self.assertContains(page, "data-stock-take-create-panel>")
+        self.assertContains(page, 'value="items" checked')
+        self.assertNotContains(page, 'value="category" checked')
+        self.assertContains(
+            page, 'name="item_ids" value="%d" checked' % self.item_a.pk
+        )
+        self.assertContains(
+            page, 'name="item_ids" value="%d" checked' % self.item_c.pk
+        )
+        self.assertNotContains(
+            page, 'name="item_ids" value="%d" checked' % self.item_b.pk
+        )

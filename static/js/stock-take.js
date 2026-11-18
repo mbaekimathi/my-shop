@@ -67,4 +67,29 @@
       });
     });
   });
+
+  // Score report: pick items, then jump to the stock-take form with them
+  // pre-selected (GET form submits ?mode=stock-take&item_ids=…).
+  const scoreForm = root.querySelector("[data-score-report-form]");
+  if (scoreForm) {
+    const boxes = [...scoreForm.querySelectorAll("[data-score-item]")];
+    const submit = scoreForm.querySelector("[data-score-items-submit]");
+    const allToggle = scoreForm.querySelector("[data-score-items-all]");
+    const syncSelection = () => {
+      const checked = boxes.filter((box) => box.checked);
+      if (submit) submit.disabled = checked.length === 0;
+      if (allToggle) {
+        allToggle.checked = boxes.length > 0 && checked.length === boxes.length;
+        allToggle.indeterminate = checked.length > 0 && checked.length < boxes.length;
+      }
+    };
+    boxes.forEach((box) => box.addEventListener("change", syncSelection));
+    allToggle?.addEventListener("change", () => {
+      boxes.forEach((box) => {
+        box.checked = allToggle.checked;
+      });
+      syncSelection();
+    });
+    syncSelection();
+  }
 })();

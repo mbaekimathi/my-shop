@@ -111,6 +111,7 @@
         setStateLabel(input, enabled);
       }
       setBadge(row, enabled);
+      row.querySelector("[data-sale-tracking-default]")?.remove();
     });
     syncCounts();
   };
@@ -139,6 +140,7 @@
           input.checked = next;
           setStateLabel(input, next);
           setBadge(row, next);
+          row.querySelector("[data-sale-tracking-default]")?.remove();
           syncCounts();
         } catch (error) {
           input.checked = previous;

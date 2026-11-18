@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
+from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import Coalesce
@@ -375,8 +376,27 @@ def _money_ksh(value) -> str:
     return f"KSh {amount:,.2f}"
 
 
-def build_employee_performance(profile: EmployeeProfile) -> dict:
-    """Sales/receipt activity for one employee — powers the employee home page."""
+EMPLOYEE_HOME_RECEIPTS_PAGE_SIZE = 100
+
+
+def build_employee_performance(
+    profile: EmployeeProfile,
+    *,
+    receipt_bounds=None,
+    period_label="",
+    receipt_status=None,
+    page=1,
+    per_page=EMPLOYEE_HOME_RECEIPTS_PAGE_SIZE,
+) -> dict:
+    """Sales/receipt activity for one employee — powers the employee home page.
+
+    *receipt_bounds* is an optional ``(start_date, end_date)`` inclusive local-
+    date pair limiting every section; without it the stat cards show their own
+    fixed windows. *receipt_status* optionally limits to one receipt status
+    (e.g. pending/confirmed). *page* selects the receipts-list page (Paginator).
+    """
+    from datetime import datetime, time
+
     from pos.models import Sale as PosSale
     from shops.models import (
         COUNTED_RECEIPT_STATUSES,
@@ -387,12 +407,45 @@ def build_employee_performance(profile: EmployeeProfile) -> dict:
 
     now = timezone.now()
     today = timezone.localdate()
+    tz = timezone.get_current_timezone()
+    day_start = timezone.make_aware(datetime.combine(today, time.min), tz)
 
     receipts = ShopReceipt.objects.filter(
         created_by=profile,
         status__in=COUNTED_RECEIPT_STATUSES,
     )
     sales = receipts.filter(kind=ShopReceiptKind.SALE)
+    receipts_list = (
+        ShopReceipt.objects.filter(created_by=profile)
+        .select_related("shop")
+        .only(
+            "id",
+            "receipt_number",
+            "shop_id",
+            "shop__name",
+            "kind",
+            "status",
+            "total",
+            "created_at",
+        )
+    )
+    if receipt_status:
+        sales = sales.filter(status=receipt_status)
+        receipts_list = receipts_list.filter(status=receipt_status)
+    scoped_sales = sales
+    if receipt_bounds is not None:
+        start_dt = timezone.make_aware(
+            datetime.combine(receipt_bounds[0], time.min), tz
+        )
+        end_dt = timezone.make_aware(
+            datetime.combine(receipt_bounds[1], time.max), tz
+        )
+        scoped_sales = sales.filter(
+            created_at__gte=start_dt, created_at__lte=end_dt
+        )
+        receipts_list = receipts_list.filter(
+            created_at__gte=start_dt, created_at__lte=end_dt
+        )
 
     def _totals(qs):
         row = qs.aggregate(
@@ -405,47 +458,56 @@ def build_employee_performance(profile: EmployeeProfile) -> dict:
             "amount_label": _money_ksh(row["amount"]),
         }
 
-    windows = (
-        ("today", "Today", "calendar-day", {"created_at__date": today}),
-        (
-            "week",
-            "Last 7 days",
-            "calendar-days",
-            {"created_at__gte": now - timedelta(days=7)},
-        ),
-        (
-            "month",
-            "Last 30 days",
-            "calendar-range",
-            {"created_at__gte": now - timedelta(days=30)},
-        ),
-        ("all", "All time", "infinity", {}),
-    )
-    periods = [
-        {"key": key, "label": label, "icon": icon, **_totals(sales.filter(**filters))}
-        for key, label, icon, filters in windows
-    ]
-    by_key = {row["key"]: row for row in periods}
-
-    kinds = [
-        {"label": kind_label, **_totals(receipts.filter(kind=kind))}
-        for kind, kind_label in ShopReceiptKind.choices
-    ]
-
-    shops = [
-        {
-            "name": row["shop__name"] or "Shop",
-            "docs": int(row["docs"] or 0),
-            "amount": row["amount"],
-            "amount_label": _money_ksh(row["amount"]),
+    if receipt_bounds is not None:
+        selected = {
+            "key": "selected",
+            "label": period_label or "Selected period",
+            "icon": "calendar-check",
+            **_totals(scoped_sales),
         }
-        for row in sales.values("shop__name")
-        .annotate(
-            docs=Count("id"),
-            amount=Coalesce(Sum("total"), Decimal("0.00")),
+        periods = [selected]
+        by_key = {"all": selected}
+    else:
+        # One query: conditional aggregates for every fixed window. Datetime
+        # bounds (not __date lookups) — MySQL here has no tz tables.
+        week_start = now - timedelta(days=7)
+        month_start = now - timedelta(days=30)
+        agg = sales.aggregate(
+            today_docs=Count("id", filter=Q(created_at__gte=day_start)),
+            today_amount=Coalesce(
+                Sum("total", filter=Q(created_at__gte=day_start)),
+                Decimal("0.00"),
+            ),
+            week_docs=Count("id", filter=Q(created_at__gte=week_start)),
+            week_amount=Coalesce(
+                Sum("total", filter=Q(created_at__gte=week_start)),
+                Decimal("0.00"),
+            ),
+            month_docs=Count("id", filter=Q(created_at__gte=month_start)),
+            month_amount=Coalesce(
+                Sum("total", filter=Q(created_at__gte=month_start)),
+                Decimal("0.00"),
+            ),
+            all_docs=Count("id"),
+            all_amount=Coalesce(Sum("total"), Decimal("0.00")),
         )
-        .order_by("-amount", "shop__name")
-    ]
+        periods = [
+            {
+                "key": key,
+                "label": label,
+                "icon": icon,
+                "docs": int(agg[f"{key}_docs"] or 0),
+                "amount": agg[f"{key}_amount"],
+                "amount_label": _money_ksh(agg[f"{key}_amount"]),
+            }
+            for key, label, icon in (
+                ("today", "Today", "calendar-day"),
+                ("week", "Last 7 days", "calendar-days"),
+                ("month", "Last 30 days", "calendar-range"),
+                ("all", "All time", "infinity"),
+            )
+        ]
+        by_key = {row["key"]: row for row in periods}
 
     pill_by_status = {
         ShopReceiptStatus.ACTIVE: "serial",
@@ -453,7 +515,10 @@ def build_employee_performance(profile: EmployeeProfile) -> dict:
         ShopReceiptStatus.PARTIAL_RETURN: "active",
         ShopReceiptStatus.CANCELLED: "suspended",
     }
-    recent = [
+    receipts_page = Paginator(
+        receipts_list.order_by("-created_at", "-id"), per_page
+    ).get_page(page)
+    all_receipts = [
         {
             "number": receipt.receipt_number,
             "shop": receipt.shop.name if receipt.shop_id else "—",
@@ -463,12 +528,13 @@ def build_employee_performance(profile: EmployeeProfile) -> dict:
             "total": _money_ksh(receipt.total),
             "when": receipt.created_at,
         }
-        for receipt in ShopReceipt.objects.filter(created_by=profile)
-        .select_related("shop")
-        .order_by("-created_at", "-id")[:8]
+        for receipt in receipts_page.object_list
     ]
 
-    pos_row = PosSale.objects.filter(employee=profile).aggregate(
+    pos_qs = PosSale.objects.filter(employee=profile)
+    if receipt_bounds is not None:
+        pos_qs = pos_qs.filter(sold_at__gte=start_dt, sold_at__lte=end_dt)
+    pos_row = pos_qs.aggregate(
         docs=Count("id"),
         amount=Coalesce(Sum("total"), Decimal("0.00")),
     )
@@ -485,9 +551,153 @@ def build_employee_performance(profile: EmployeeProfile) -> dict:
     return {
         "periods": periods,
         "all": by_key["all"],
-        "kinds": [row for row in kinds if row["docs"]],
-        "shops": shops,
-        "recent": recent,
+        "all_caption": (
+            f"sales · {period_label}" if period_label else "all-time sales"
+        ),
+        "recent": all_receipts,
+        "receipts_page": receipts_page,
         "pos_sales": pos_sales,
         "has_activity": bool(receipts.exists() or pos_sales),
+    }
+
+
+def _qty_label(value) -> str:
+    qty = Decimal(value or 0).normalize()
+    return f"{qty:,f}"
+
+
+def build_employee_analytics(profile: EmployeeProfile) -> dict:
+    """Deeper performance breakdown for the employee "My analytics" page.
+
+    One grouped query for status buckets, one aggregate for all-time sales,
+    one conditional aggregate for the 12-month trend, one grouped query for
+    top items — four queries total.
+    """
+    from datetime import date, datetime, time
+
+    from django.db.models import DecimalField, ExpressionWrapper, F
+
+    from shops.models import (
+        COUNTED_RECEIPT_STATUSES,
+        ShopReceipt,
+        ShopReceiptKind,
+        ShopReceiptLine,
+        ShopReceiptStatus,
+    )
+
+    receipts = ShopReceipt.objects.filter(created_by=profile)
+    sales = receipts.filter(
+        kind=ShopReceiptKind.SALE, status__in=COUNTED_RECEIPT_STATUSES
+    )
+
+    status_rows = {
+        row["status"]: row
+        for row in receipts.values("status").annotate(
+            docs=Count("id"),
+            amount=Coalesce(Sum("total"), Decimal("0.00")),
+        )
+    }
+
+    def _bucket(status):
+        row = status_rows.get(status) or {"docs": 0, "amount": Decimal("0.00")}
+        return {
+            "docs": int(row["docs"] or 0),
+            "amount": row["amount"],
+            "amount_label": _money_ksh(row["amount"]),
+        }
+
+    sales_row = sales.aggregate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("total"), Decimal("0.00")),
+    )
+
+    today = timezone.localdate()
+    first = today.replace(day=1)
+    months = []
+    for i in range(11, -1, -1):
+        year, month = first.year, first.month - i
+        while month <= 0:
+            month += 12
+            year -= 1
+        start = date(year, month, 1)
+        if month == 12:
+            end = date(year + 1, 1, 1)
+        else:
+            end = date(year, month + 1, 1)
+        months.append((start, end))
+    tz = timezone.get_current_timezone()
+    kwargs = {}
+    for idx, (start, end) in enumerate(months):
+        start_dt = timezone.make_aware(datetime.combine(start, time.min), tz)
+        end_dt = timezone.make_aware(datetime.combine(end, time.min), tz)
+        kwargs[f"m{idx}_docs"] = Count(
+            "id", filter=Q(created_at__gte=start_dt, created_at__lt=end_dt)
+        )
+        kwargs[f"m{idx}_amount"] = Coalesce(
+            Sum("total", filter=Q(created_at__gte=start_dt, created_at__lt=end_dt)),
+            Decimal("0.00"),
+        )
+    month_agg = sales.aggregate(**kwargs)
+    month_rows = [
+        {
+            "label": start.strftime("%b %Y"),
+            "docs": int(month_agg[f"m{i}_docs"] or 0),
+            "amount": month_agg[f"m{i}_amount"],
+            "amount_label": _money_ksh(month_agg[f"m{i}_amount"]),
+        }
+        for i, (start, _end) in enumerate(months)
+    ]
+    peak_month = max(month_rows, key=lambda row: row["amount"], default=None)
+
+    remaining = ExpressionWrapper(
+        F("quantity") - F("returned_quantity"),
+        output_field=DecimalField(max_digits=14, decimal_places=3),
+    )
+    top_items = [
+        {
+            "name": row["item_name"],
+            "qty": row["qty"],
+            "qty_label": _qty_label(row["qty"]),
+            "amount": row["revenue"],
+            "amount_label": _money_ksh(row["revenue"]),
+        }
+        for row in ShopReceiptLine.objects.filter(
+            receipt__created_by=profile,
+            receipt__kind=ShopReceiptKind.SALE,
+            receipt__status__in=COUNTED_RECEIPT_STATUSES,
+        )
+        .values("item_name")
+        .annotate(
+            qty=Coalesce(Sum(remaining), Decimal("0")),
+            revenue=Coalesce(
+                Sum(
+                    ExpressionWrapper(
+                        remaining * F("unit_price"),
+                        output_field=DecimalField(
+                            max_digits=14, decimal_places=2
+                        ),
+                    )
+                ),
+                Decimal("0.00"),
+            ),
+        )
+        .order_by("-revenue", "item_name")[:15]
+    ]
+
+    return {
+        "sales": {
+            "docs": int(sales_row["docs"] or 0),
+            "amount": sales_row["amount"],
+            "amount_label": _money_ksh(sales_row["amount"]),
+        },
+        "pending": _bucket(ShopReceiptStatus.ACTIVE),
+        "confirmed": _bucket(ShopReceiptStatus.CONFIRMED),
+        "partial_return": _bucket(ShopReceiptStatus.PARTIAL_RETURN),
+        "cancelled": _bucket(ShopReceiptStatus.CANCELLED),
+        "receipts_total": sum(
+            int(row["docs"] or 0) for row in status_rows.values()
+        ),
+        "months": month_rows,
+        "peak_month": peak_month,
+        "top_items": top_items,
     }

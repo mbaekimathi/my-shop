@@ -2096,7 +2096,13 @@ def my_shop_stock_take_submit(request, shop_id):
         return denied
 
     from items.models import StockTakeAssignment, StockTakeAssignmentStatus, StockTakeStatus
-    from items.stock_take import submit_stock_take_counts, submit_stock_take_one
+    from items.stock_take import (
+        close_overdue_stock_takes,
+        submit_stock_take_counts,
+        submit_stock_take_one,
+    )
+
+    close_overdue_stock_takes()
 
     try:
         assignment_id = int(request.POST.get("assignment_id") or 0)

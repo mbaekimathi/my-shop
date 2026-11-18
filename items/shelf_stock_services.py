@@ -300,6 +300,69 @@ def record_shelf_movement(
 
 
 @transaction.atomic
+def stock_in_shelf_item_by_name(
+    *, shop, actor=None, name, unit="", qty, buying_price=None, note=""
+) -> tuple[ShelfItem, ShelfStockMovement, bool]:
+    """Stock in by name: reuse the matching shelf item, else register it."""
+    amount = parse_shelf_qty(qty)
+    clean = " ".join(str(name or "").split())
+    if not clean:
+        raise ValidationError("Enter the shelf item name.")
+    item = (
+        ShelfItem.objects.select_for_update()
+        .filter(shop=shop, name__iexact=clean, is_archived=False)
+        .first()
+    )
+    registered = False
+    if item is None:
+        item = register_shelf_item(
+            shop=shop,
+            actor=actor,
+            name=clean,
+            unit=unit,
+            opening_qty=0,
+        )
+        registered = True
+    movement = record_shelf_movement(
+        shop=shop,
+        shelf_item_id=item.pk,
+        mode=ShelfStockMovementType.IN,
+        qty=amount,
+        actor=actor,
+        note=note,
+        buying_price=buying_price,
+    )
+    return item, movement, registered
+
+
+@transaction.atomic
+def stock_out_shelf_item_by_name(
+    *, shop, actor=None, name, qty, note=""
+) -> tuple[ShelfItem, ShelfStockMovement]:
+    """Stock out by name: the item must already be on the shop's shelf list."""
+    amount = parse_shelf_qty(qty)
+    clean = " ".join(str(name or "").split())
+    if not clean:
+        raise ValidationError("Enter the shelf item name.")
+    item = (
+        ShelfItem.objects.select_for_update()
+        .filter(shop=shop, name__iexact=clean, is_archived=False)
+        .first()
+    )
+    if item is None:
+        raise ValidationError(f"“{clean.upper()}” is not on the shelf list.")
+    movement = record_shelf_movement(
+        shop=shop,
+        shelf_item_id=item.pk,
+        mode=ShelfStockMovementType.OUT,
+        qty=amount,
+        actor=actor,
+        note=note,
+    )
+    return item, movement
+
+
+@transaction.atomic
 def transfer_shelf_item(
     *, from_shop, to_shop, shelf_item_id, qty, actor=None, note=""
 ) -> tuple[ShelfItem, ShelfItem]:
@@ -385,6 +448,42 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
             image=files.get("image") if files else None,
         )
         return f"“{item.name}” added to the shelf list."
+    if action == "in_new":
+        if (
+            _shelf_requirement("require_buying_price_on_in")
+            and not str(data.get("price") or "").strip()
+        ):
+            raise ValidationError("Enter the unit buying price.")
+        item, movement, registered = stock_in_shelf_item_by_name(
+            shop=shop,
+            actor=actor,
+            name=data.get("name"),
+            unit=data.get("unit"),
+            qty=data.get("qty"),
+            buying_price=_parse_buying_price(
+                data.get("price"), data.get("name") or "item"
+            ),
+            note=data.get("note") or "",
+        )
+        qty_text = f"{movement.quantity.normalize():f}"
+        if registered:
+            return (
+                f"“{item.name}” added to the shelf list — "
+                f"{qty_text} stocked in."
+            )
+        return f"Added {qty_text} to “{item.name}”."
+    if action == "out_new":
+        item, movement = stock_out_shelf_item_by_name(
+            shop=shop,
+            actor=actor,
+            name=data.get("name"),
+            qty=data.get("qty"),
+            note=data.get("note") or "",
+        )
+        return (
+            f"Removed {movement.quantity.normalize():f} "
+            f"from “{item.name}”."
+        )
     if action in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
         if (
             action == ShelfStockMovementType.IN

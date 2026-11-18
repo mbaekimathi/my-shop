@@ -749,7 +749,6 @@
     { passive: true }
   );
   window.addEventListener("pagehide", saveScrollState);
-  window.addEventListener("beforeunload", saveScrollState);
 
   // A saved state for this URL means the user was just here (refresh,
   // back/forward, or the POST -> redirect -> GET round-trip after a form

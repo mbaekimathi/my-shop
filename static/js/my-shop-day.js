@@ -630,9 +630,7 @@
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") fetchTill();
     });
-    window.addEventListener("beforeunload", () => {
-      if (tillPollTimer) window.clearInterval(tillPollTimer);
-    });
+    // No beforeunload cleanup — it would block Chrome's back/forward cache.
   }
 
   if (window.lucide?.createIcons) window.lucide.createIcons();

@@ -621,3 +621,212 @@ html[data-theme="dark"] .stock-request-view-status.is-pending {
 html[data-theme="dark"] .wa-chip--warn {
   color: var(--warning-text);
 }
+
+/* ============================================================
+   Employee home (/employee/) — compact layout
+   ============================================================ */
+.employee-home .item-panel-head {
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+}
+
+.employee-home .item-panel-head h2 {
+  font-size: 1rem;
+}
+
+.employee-home .item-panel-head p {
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+}
+
+.employee-home .stock-kicker {
+  margin-bottom: 0.15rem;
+}
+
+.employee-home .stock-stat {
+  min-width: 4.25rem;
+  padding: 0.35rem 0.55rem;
+}
+
+.employee-home .stock-stat strong {
+  font-size: 0.82rem;
+}
+
+.employee-home .stock-stat span {
+  font-size: 0.62rem;
+}
+
+.employee-home .stock-report-filters {
+  gap: 0.4rem 0.5rem;
+  margin-top: 0.45rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.employee-home .stock-report-field {
+  min-width: 7.25rem;
+}
+
+.employee-home .stock-report-field select,
+.employee-home .stock-report-field input[type="date"],
+.employee-home .stock-report-field input[type="month"],
+.employee-home .stock-report-field input[type="number"] {
+  min-height: 2rem;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.8rem;
+}
+
+.employee-home .stock-report-apply {
+  min-height: 2rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+/* Stat cards -> single-line chips */
+.employee-home .workspace-grid {
+  gap: 0.5rem;
+}
+
+.employee-home .workspace-grid--profile {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.employee-home .workspace-card {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.employee-home .workspace-card i {
+  width: 1rem;
+  height: 1rem;
+  align-self: center;
+  flex: none;
+}
+
+.employee-home .workspace-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+
+.employee-home .workspace-card p {
+  margin: 0;
+  font-size: 0.72rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tighter table rows */
+.employee-home .item-table--dense th,
+.employee-home .item-table--dense td {
+  padding: 0.4rem 0.65rem;
+}
+
+.employee-home .item-table--dense th {
+  font-size: 0.66rem;
+}
+
+.employee-home .item-table td {
+  font-size: 0.82rem;
+}
+
+/* Receipts table scrolls in place instead of growing the page */
+.employee-home .item-table-wrap--receipts {
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
+.employee-home .item-table-wrap--receipts thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.employee-home .dashboard-placeholder {
+  padding: 1rem;
+}
+
+/* Employee home — mobile: flat lists instead of cards */
+@media (max-width: 720px) {
+  .employee-home .workspace-grid--profile {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .employee-home .workspace-card {
+    padding: 0.5rem 0.2rem;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+  }
+
+  .employee-home .workspace-card:last-child {
+    border-bottom: 0;
+  }
+}
+
+/* Employee home — keep the plain column table on every screen
+   (undo the global mobile card transform from components.css) */
+@media (max-width: 720px) {
+  .employee-home .item-table-wrap {
+    overflow-x: auto;
+  }
+
+  .employee-home .item-table {
+    min-width: 0;
+  }
+
+  .employee-home .item-table thead {
+    display: table-header-group;
+  }
+
+  .employee-home .item-table tbody {
+    display: table-row-group;
+    gap: 0;
+  }
+
+  .employee-home .item-table tr {
+    display: table-row;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .employee-home .item-table td {
+    display: table-cell;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    font-size: 0.78rem;
+    vertical-align: middle;
+  }
+
+  .employee-home .item-table td[data-label]::before {
+    content: none;
+  }
+
+  .employee-home .item-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  /* Least-needed columns drop on very narrow screens. */
+  .employee-home .item-table th:nth-child(3),
+  .employee-home .item-table td:nth-child(3),
+  .employee-home .item-table th:nth-child(4),
+  .employee-home .item-table td:nth-child(4) {
+    display: none;
+  }
+}

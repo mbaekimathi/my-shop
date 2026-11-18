@@ -1298,6 +1298,14 @@ def sidebar_for_role_dashboard(
     if role == EmployeeRole.IT_SUPPORT:
         # "Stock Management" splits into direct item / shelf stock links below.
         skip_slugs = (*skip_slugs, "stock-management")
+    if role == EmployeeRole.EMPLOYEE:
+        skip_slugs = (
+            *skip_slugs,
+            "item-management",
+            "hr-management",
+            "shop-management",
+            "whatsapp",
+        )
     if role == EmployeeRole.SHOP_CASHIER:
         primary = _cashier_dashboard_links(
             role, active_slug=active_slug, profile=profile
@@ -2019,6 +2027,7 @@ def sidebar_for_stock_management(
             "sale-tracking",
             "low-stock",
             "stock-take",
+            "stock-take-scores",
             "online-stock-take",
         ):
             if _allowed("settings"):
@@ -2100,6 +2109,18 @@ def sidebar_for_stock_management(
                         active=active_mode == "stock-take",
                     )
                 )
+                if not shelf_links:
+                    primary.append(
+                        _link(
+                            "Item score report"
+                            if item_only
+                            else "Score report",
+                            "award",
+                            href=stock_management_url(role, "stock-take")
+                            + "&view=scores",
+                            active=active_mode == "stock-take-scores",
+                        )
+                    )
             if _allowed("print") or _allowed("stock-take"):
                 primary.append(
                     _link(
@@ -2333,6 +2354,7 @@ def sidebar_for_stock_management(
             "sale-tracking",
             "low-stock",
             "stock-take",
+            "stock-take-scores",
             "online-stock-take",
         ):
             if _allowed("settings"):
@@ -2368,6 +2390,15 @@ def sidebar_for_stock_management(
                         "clipboard-check",
                         href=stock_management_url(role, "stock-take"),
                         active=active_mode == "stock-take",
+                    )
+                )
+                primary.append(
+                    _link(
+                        "Score report",
+                        "award",
+                        href=stock_management_url(role, "stock-take")
+                        + "&view=scores",
+                        active=active_mode == "stock-take-scores",
                     )
                 )
             if _allowed("print") or _allowed("stock-take"):

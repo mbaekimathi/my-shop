@@ -1549,15 +1549,19 @@ def _stock_shelf_post(
         return _next(shelf_shop)
     data = {
         "action": action,
-        "name": request.POST.get("name"),
-        "unit": request.POST.get("unit"),
+        "name": request.POST.get("shelf_new_name") or request.POST.get("name"),
+        "unit": request.POST.get("shelf_new_unit") or request.POST.get("unit"),
         "opening_qty": request.POST.get("opening_qty"),
         "low_stock_threshold": request.POST.get("low_stock_threshold"),
         "shelf_item_id": row_id or request.POST.get("shelf_item_id"),
-        "qty": request.POST.get(f"shelf_qty_{row_id}") or request.POST.get("qty"),
+        "qty": request.POST.get(f"shelf_qty_{row_id}")
+        or request.POST.get("shelf_new_qty")
+        or request.POST.get("qty"),
         "price": request.POST.get(f"shelf_price_{row_id}")
+        or request.POST.get("shelf_new_price")
         or request.POST.get("price"),
         "note": request.POST.get(f"shelf_note_{row_id}")
+        or request.POST.get("shelf_new_note")
         or request.POST.get("note")
         or "",
     }
@@ -5930,19 +5934,20 @@ def _stock_report_download(
     return _stock_report_pdf_response(filename=filename, pdf_bytes=pdf_bytes)
 
 
-def _build_shelf_report(shop, *, day_start, day_end, type_filter=""):
-    """Shelf-stock report data for one shop over a period."""
+def _build_shelf_report(shops, *, day_start, day_end, type_filter=""):
+    """Shelf-stock report data for the in-scope shops over a period."""
     from decimal import Decimal
 
     from .models import ShelfItem, ShelfStockMovement
 
+    shops = [shop for shop in shops if shop is not None]
     mvs = list(
         ShelfStockMovement.objects.filter(
-            shelf_item__shop=shop,
+            shelf_item__shop__in=shops,
             created_at__gte=day_start,
             created_at__lt=day_end,
         )
-        .select_related("shelf_item", "created_by__user")
+        .select_related("shelf_item__shop", "created_by__user")
         .order_by("-created_at", "-id")
     )
 
@@ -5955,7 +5960,11 @@ def _build_shelf_report(shop, *, day_start, day_end, type_filter=""):
 
     rows = []
     units_on_hand = Decimal("0")
-    for item in ShelfItem.objects.filter(shop=shop).order_by("name"):
+    for item in (
+        ShelfItem.objects.filter(shop__in=shops)
+        .select_related("shop")
+        .order_by("shop__name", "name")
+    ):
         agg = sums.get(item.pk) or {}
         rows.append(
             {
@@ -5977,6 +5986,7 @@ def _build_shelf_report(shop, *, day_start, day_end, type_filter=""):
             {
                 "created_at": mv.created_at,
                 "name": mv.shelf_item.name,
+                "shop_name": mv.shelf_item.shop.name,
                 "type": mv.movement_type,
                 "type_label": mv.get_movement_type_display(),
                 "qty": mv.quantity,
@@ -6005,6 +6015,7 @@ def _build_shelf_report(shop, *, day_start, day_end, type_filter=""):
         ),
         "movement_count": len(mvs),
         "type_filter": type_filter,
+        "multi_shop": len(shops) > 1,
     }
 
 
@@ -6015,7 +6026,6 @@ def _stock_shelf_report(
     module,
     *,
     page_mode,
-    shop,
     filter_shops,
     selected_shop_ids,
     range_type,
@@ -6083,6 +6093,11 @@ def _stock_shelf_report(
         profile=profile,
         shelf_tab=shelf_tab,
     )
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+    report_shops = [
+        shops_by_id[pk] for pk in selected_shop_ids if pk in shops_by_id
+    ] or list(filter_shops)
+    shelf_shop = report_shops[0] if len(report_shops) == 1 else None
     return render(
         request,
         "items/stock_shelf_report.html",
@@ -6098,18 +6113,15 @@ def _stock_shelf_report(
             "is_movements_page": page_mode == "movements",
             "filter_shops": filter_shops,
             "selected_shop_ids": set(selected_shop_ids),
-            "shelf_shop": shop,
-            "shelf_report": (
-                _build_shelf_report(
-                    shop,
-                    day_start=day_start,
-                    day_end=day_end,
-                    type_filter=(
-                        request.GET.get("shelf_type") or ""
-                    ).strip().lower(),
-                )
-                if shop is not None
-                else None
+            "shelf_shop": shelf_shop,
+            "shelf_report_shop": shelf_shop,
+            "shelf_report": _build_shelf_report(
+                report_shops,
+                day_start=day_start,
+                day_end=day_end,
+                type_filter=(
+                    request.GET.get("shelf_type") or ""
+                ).strip().lower(),
             ),
             "report_range_label": {
                 "day": "Single day",
@@ -6162,11 +6174,6 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 meta,
                 module,
                 page_mode=page_mode,
-                shop=(
-                    shops_by_id.get(selected_shop_ids[0])
-                    if len(selected_shop_ids) == 1
-                    else None
-                ),
                 filter_shops=filter_shops,
                 selected_shop_ids=selected_shop_ids,
                 range_type=range_type,
@@ -6202,7 +6209,6 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             meta,
             module,
             page_mode=page_mode,
-            shop=shelf_report_shop,
             filter_shops=filter_shops,
             selected_shop_ids=selected_shop_ids,
             range_type=range_type,
@@ -6854,7 +6860,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             "shelf_report_shop": shelf_report_shop,
             "shelf_report": (
                 _build_shelf_report(
-                    shelf_report_shop,
+                    [shelf_report_shop],
                     day_start=day_start,
                     day_end=day_end,
                     type_filter=(
@@ -7138,7 +7144,14 @@ def stock_sale_tracking(request, profile, meta, module):
                 return redirect(page_url)
             enabled = _truthy(request.POST.get("enabled"))
             item.deduct_stock_on_sale = enabled
-            item.save(update_fields=["deduct_stock_on_sale", "updated_at"])
+            item.sale_tracking_custom = True
+            item.save(
+                update_fields=[
+                    "deduct_stock_on_sale",
+                    "sale_tracking_custom",
+                    "updated_at",
+                ]
+            )
             if wants_json:
                 return JsonResponse(
                     {
@@ -7154,6 +7167,7 @@ def stock_sale_tracking(request, profile, meta, module):
             enabled = _truthy(request.POST.get("enabled") or "1")
             updated = Item.objects.filter(is_suspended=False).update(
                 deduct_stock_on_sale=enabled,
+                sale_tracking_custom=True,
                 updated_at=timezone.now(),
             )
             if wants_json:
@@ -7173,6 +7187,11 @@ def stock_sale_tracking(request, profile, meta, module):
         messages.error(request, "Unknown action.")
         return redirect(page_url)
 
+    from .services import sync_sale_tracking_defaults
+
+    # Items never picked by hand auto-follow the company stock mode — when
+    # default stock tracking is enabled they switch on here too.
+    sync_sale_tracking_defaults()
     items = list(
         Item.objects.filter(is_suspended=False)
         .only(
@@ -7180,6 +7199,7 @@ def stock_sale_tracking(request, profile, meta, module):
             "name",
             "category",
             "deduct_stock_on_sale",
+            "sale_tracking_custom",
             "track_serial_number",
         )
         .order_by("category", "name")
@@ -7216,7 +7236,9 @@ def stock_take_page(request, profile, meta, module):
     from items.models import StockTake, StockTakeStatus
     from items.stock_take import (
         build_stock_take_comparison,
+        build_stock_take_item_scores,
         build_stock_take_shop_totals,
+        close_overdue_stock_takes,
         close_stock_take,
         create_stock_take,
         update_stock_take,
@@ -7225,9 +7247,15 @@ def stock_take_page(request, profile, meta, module):
     if _stock_kind_param(request) == "shelf":
         return shelf_stock_take_page(request, profile, meta, module)
 
+    close_overdue_stock_takes()
+
+    score_view = (
+        (request.GET.get("view") or "").strip().lower() == "scores"
+        and not (request.GET.get("take_id") or "").strip()
+    )
     page_sidebar = sidebar_for_stock_management(
         profile.role,
-        active_mode="stock-take",
+        active_mode="stock-take-scores" if score_view else "stock-take",
         profile=profile,
     )
     can_edit = employee_may(profile, "stock-management", "stock-take")
@@ -7405,6 +7433,15 @@ def stock_take_page(request, profile, meta, module):
         end=range_end,
         shop_ids=[shop.pk for shop in shops] or None,
     )
+    item_scores = (
+        build_stock_take_item_scores(
+            start=range_start,
+            end=range_end,
+            shop_ids=[shop.pk for shop in shops] or None,
+        )
+        if score_view
+        else None
+    )
     categories = [
         {"value": category_form_token(name), "label": name or "Uncategorised"}
         for name in Item.objects.filter(is_suspended=False)
@@ -7427,6 +7464,15 @@ def stock_take_page(request, profile, meta, module):
                 .values("id", "name", "category")
             )
 
+    # ?item_ids=… pre-selects items in the create form (score report → initiate).
+    init_item_ids = set()
+    if not selected_take:
+        for raw in request.GET.getlist("item_ids"):
+            try:
+                init_item_ids.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+
     return render(
         request,
         "items/stock_take.html",
@@ -7446,8 +7492,12 @@ def stock_take_page(request, profile, meta, module):
             "stock_take_edit_shop_ids": edit_shop_ids,
             "stock_take_edit_category_values": edit_category_values,
             "stock_take_edit_item_ids": edit_item_ids,
+            "stock_take_init_item_ids": init_item_ids,
             "stock_take_edit_deadline_value": edit_deadline_value,
             "stock_take_shop_totals": shop_totals,
+            "stock_take_score_view": score_view,
+            "stock_take_item_scores": item_scores,
+            "stock_take_scores_url": f"{list_url}&view=scores",
             "StockTakeStatus": StockTakeStatus,
             "report_range": filter_context["report_range"],
             "report_range_label": range_labels.get(range_type, "Month"),
@@ -9067,6 +9117,16 @@ def stock_management(request, profile, meta, module, page_sidebar):
         shelf_mode_ids = {shop.pk for shop in shelf_register_shops}
         if selected_shop and selected_shop.pk in shelf_mode_ids:
             shelf_shop = selected_shop
+        # Shelf tab on the action pages: a single shelf-mode shop can never be
+        # "selected" — picking it collapses to the all-shops scope. Fall back
+        # to it so its panel (and stock-in strip) still renders.
+        if (
+            shelf_shop is None
+            and shelf_tab
+            and mode in ("in", "out")
+            and len(shelf_register_shops) == 1
+        ):
+            shelf_shop = shelf_register_shops[0]
         if shelf_shop is not None:
             shelf_items = list_shelf_items(shop=shelf_shop)
             shelf_movements = recent_shelf_movements(shop=shelf_shop, limit=20)

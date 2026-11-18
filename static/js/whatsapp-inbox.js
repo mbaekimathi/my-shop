@@ -448,6 +448,6 @@
   }
 
   pollTimer = window.setInterval(() => refresh({ silent: true }), 10000);
-  window.addEventListener("beforeunload", () => window.clearInterval(pollTimer));
+  // No beforeunload cleanup — it would block Chrome's back/forward cache.
   if (window.lucide?.createIcons) window.lucide.createIcons();
 })();

@@ -15,6 +15,155 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
     </div>
   </div>
 
+  {% if stock_mode == 'in' %}
+  <div class="shelf-quick-add" data-shelf-quick-add>
+    <div class="shelf-quick-add-fields">
+      <label class="shelf-quick-add-field shelf-quick-add-field--name">
+        <span>Item <em>search or type a new name</em></span>
+        <input
+          class="store-stock-qty-input shelf-quick-add-name"
+          type="text"
+          name="shelf_new_name"
+          list="shelf-quick-items-{{ shelf_shop.pk }}"
+          maxlength="200"
+          placeholder="e.g. Sugar 50kg bag"
+          autocomplete="off"
+          aria-label="Shelf item — pick an existing item or type a new name"
+        >
+        <datalist id="shelf-quick-items-{{ shelf_shop.pk }}">
+          {% for row in shelf_items %}
+          <option value="{{ row.name }}">{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
+          {% endfor %}
+        </datalist>
+      </label>
+      <label class="shelf-quick-add-field">
+        <span>Unit <em>new items</em></span>
+        <select
+          class="store-stock-qty-input shelf-quick-add-unit"
+          name="shelf_new_unit"
+          aria-label="Unit — used when the name is a new shelf item"
+        >
+          {% for unit in shelf_unit_choices %}
+          <option value="{{ unit }}"{% if forloop.first %} selected{% endif %}>{{ unit }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="shelf-quick-add-field">
+        <span>Qty</span>
+        <input
+          class="store-stock-qty-input"
+          type="number"
+          name="shelf_new_qty"
+          min="0"
+          step="any"
+          inputmode="decimal"
+          placeholder="0"
+          aria-label="Quantity to stock in"
+        >
+      </label>
+      <label class="shelf-quick-add-field">
+        <span>Buy price{% if stock_req.shelf_require_buying_price_on_in %} *{% endif %}</span>
+        <input
+          class="store-stock-qty-input"
+          type="number"
+          name="shelf_new_price"
+          min="0"
+          step="any"
+          inputmode="decimal"
+          placeholder="Unit price"
+          aria-label="Unit buying price"
+        >
+      </label>
+      <label class="shelf-quick-add-field">
+        <span>Note</span>
+        <input
+          class="store-stock-qty-input shelf-quick-add-note"
+          type="text"
+          name="shelf_new_note"
+          maxlength="255"
+          placeholder="Optional"
+          aria-label="Note"
+        >
+      </label>
+      <button
+        type="submit"
+        name="shelf_action"
+        value="in_new"
+        class="store-stock-btn store-stock-btn--primary shelf-quick-add-btn"
+      >
+        <i data-lucide="package-plus" aria-hidden="true"></i>
+        Stock in
+      </button>
+    </div>
+    <p class="shelf-quick-add-hint">
+      Pick an item from the list or type a new name — new names are added to
+      the shelf list, then stocked in.
+    </p>
+  </div>
+  {% endif %}
+
+  {% if stock_mode == 'out' %}
+  <div class="shelf-quick-add" data-shelf-quick-add>
+    <div class="shelf-quick-add-fields">
+      <label class="shelf-quick-add-field shelf-quick-add-field--name">
+        <span>Item <em>search the shelf list</em></span>
+        <input
+          class="store-stock-qty-input shelf-quick-add-name"
+          type="text"
+          name="shelf_new_name"
+          list="shelf-quick-items-{{ shelf_shop.pk }}"
+          maxlength="200"
+          placeholder="e.g. Sugar 50kg bag"
+          autocomplete="off"
+          aria-label="Shelf item to remove stock from"
+        >
+        <datalist id="shelf-quick-items-{{ shelf_shop.pk }}">
+          {% for row in shelf_items %}
+          <option value="{{ row.name }}">{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
+          {% endfor %}
+        </datalist>
+      </label>
+      <label class="shelf-quick-add-field">
+        <span>Qty</span>
+        <input
+          class="store-stock-qty-input"
+          type="number"
+          name="shelf_new_qty"
+          min="0"
+          step="any"
+          inputmode="decimal"
+          placeholder="0"
+          aria-label="Quantity to remove"
+        >
+      </label>
+      <label class="shelf-quick-add-field">
+        <span>Note</span>
+        <input
+          class="store-stock-qty-input shelf-quick-add-note"
+          type="text"
+          name="shelf_new_note"
+          maxlength="255"
+          placeholder="Optional"
+          aria-label="Note"
+        >
+      </label>
+      <button
+        type="submit"
+        name="shelf_action"
+        value="out_new"
+        class="store-stock-btn store-stock-btn--primary shelf-quick-add-btn"
+      >
+        <i data-lucide="package-minus" aria-hidden="true"></i>
+        Remove
+      </button>
+    </div>
+    <p class="shelf-quick-add-hint">
+      Pick an item from the list, enter a quantity, then
+      <strong>Remove</strong> to take it off the shelf.
+    </p>
+  </div>
+  {% endif %}
+
   {% if shelf_items %}
   <div class="store-stock-table-wrap" data-item-list>
     <table class="store-stock-table">

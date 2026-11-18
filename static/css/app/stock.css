@@ -7943,6 +7943,69 @@
   padding: 0.85rem;
 }
 
+.stock-take-scores-wrap {
+  margin: 0.85rem;
+}
+
+.stock-take-scores-form .stock-take-scores-wrap {
+  margin-top: 0.6rem;
+}
+
+.stock-take-scores-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.85rem 0.85rem 0;
+}
+
+.stock-take-scores-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.stock-take-scores .stock-take-check {
+  width: 1.9rem;
+  text-align: center;
+}
+
+.stock-take-scores .stock-take-check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-deep, #b7791f);
+}
+
+.stock-take-scores .stock-take-shop-head-score {
+  font-style: normal;
+  font-weight: 800;
+}
+
+.stock-take-scores .stock-take-shop-head-score.is-grade-perfect {
+  color: var(--ok, #2f7d4a);
+}
+
+.stock-take-scores .stock-take-shop-head-score.is-grade-great {
+  color: #2a6fd1;
+}
+
+.stock-take-scores .stock-take-shop-head-score.is-grade-fair {
+  color: var(--accent-deep, #b7791f);
+}
+
+.stock-take-scores .stock-take-shop-head-score.is-grade-low {
+  color: var(--danger, #c45c4a);
+}
+
+html[data-theme="dark"] .stock-take-scores .stock-take-shop-head-score.is-grade-great {
+  color: #7eb6ff;
+}
+
 .stock-take-overall .stock-count-shop-card.is-grade-perfect {
   border-color: color-mix(in srgb, var(--ok, #2f7d4a) 35%, var(--line));
   background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, var(--surface));

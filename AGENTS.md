@@ -39,12 +39,42 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `CompanyPosSettings.enable_stock_tracking` (off while the company is in
   shelf/no-item-stock mode). Toggle page: Stock Management → Settings → "Sale
   stock tracking" (`?mode=sale-tracking`, shares the `settings` permission).
+  Items never picked by hand (`sale_tracking_custom=False`) auto-follow the
+  company default: `sync_sale_tracking_defaults()` (`items/services.py`)
+  re-stamps them to `enable_stock_tracking` on the sale-tracking page GET and
+  whenever the flag changes in `set_company_pos_setting`; a per-item toggle or
+  "Track all" marks the item custom so manual picks survive later mode flips.
   Manual Stock In/Out and transfers still move counts; serial tracking and the
   central-store mirror flag (`stock_count_enabled`) are separate. Floor JS
   reads `sale_stock_tracked` from the catalog payload (`data-item-sale-tracked`
   on cards) — untracked items show no stock number on the floor card, product
   popup, serial modal, or trade search. Tests:
   `shops/tests/test_sale_stock_tracking.py`.
+
+## Stock take score report
+- `?mode=stock-take&view=scores` on the stock-management page shows the item
+  score report: `build_stock_take_item_scores` (`items/stock_take.py`)
+  aggregates each item's submitted count lines in the selected period —
+  matched/total → average score %, sorted lowest → highest; pending-only
+  items sort last with no score. Shares the `stock-take` permission; sidebar
+  uses `active_mode="stock-take-scores"`. Tests:
+  `items/tests.py::StockTakeItemScoreReportTests`.
+- Row checkboxes + "Initiate stock count" GET-submit `item_ids` back to
+  `?mode=stock-take` → `stock_take_init_item_ids` opens the create panel on
+  the "By item" scope with those items pre-checked (shops + deadline still
+  needed). Checkbox JS lives in `stock-take.js` (`data-score-report-form`).
+
+## Stock take deadlines
+- A `StockTake` closes itself once `deadline` passes — no scheduler needed:
+  `close_overdue_stock_takes()` (`items/stock_take.py`) is swept lazily from the
+  stock-take page, `open_stock_take_hide_sets` (cache miss only, so hidden qtys
+  unhide), `pending_stock_take_for_shop` / `_count_for_shop` (floor popup and
+  badge stop prompting), and the `my_shop_stock_take_submit` endpoint (a late
+  submit hits the closed take → "No open stock take"). The deadline check in
+  `_assert_assignment_submittable` stays as belt-and-braces for direct callers.
+  `closed_by` stays NULL on auto-close.
+- `python manage.py close_overdue_stock_takes` runs the same sweep — schedule it
+  (Task Scheduler / cron) if takes must close with zero site traffic.
 
 ## Compulsory stock fields (Stock Management → Settings)
 - `CompanyStockSettings` (singleton, cached via `get_company_stock_settings`)
@@ -181,6 +211,24 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   Views: `shops/agent_views.py`; token (re)generation: action `print_agent_token`
   on the shop receipt settings page (gated by `shop_settings`). Tests:
   `shops/tests/test_print_agent.py`.
+
+## Performance notes
+- `static/sw.js` (served at `/sw.js` via `core.views.service_worker`): bump
+  `CACHE_VERSION` on every edit. Runtime caching is deliberately narrow —
+  `/static/` is cache-first (all asset URLs carry `?v=` busts) and `/media/`
+  is network-first. Do NOT go back to `cache.put`-ing every same-origin GET:
+  per-request Cache Storage writes are a known Chrome jank/hang source.
+- HTML must never send `Cache-Control: no-store` (`core.middleware.
+  NoCacheHtmlMiddleware` sends `no-cache` only) — `no-store` and
+  `beforeunload` listeners both permanently block Chrome's back/forward
+  cache. Use `pagehide`/`pageshow` (with `event.persisted`) instead of
+  `beforeunload` for page-lifecycle cleanup.
+- `django.middleware.gzip.GZipMiddleware` compresses HTML/JSON (the shop
+  website landing page is ~600KB HTML → ~28KB gzipped).
+- Keep `MYSQL_CONN_MAX_AGE` > 0 in `.env`; `0` pays a fresh MySQL handshake
+  on every request.
+- Shop floor loads ~850KB of deferred JS by design (my-shop.js, stock-bulk.js,
+  shop-printer.js…); keep new page scripts `defer` or `type="module"`.
 
 ## Auth model
 - Two independent session types per browser: employee (Django auth) and shop

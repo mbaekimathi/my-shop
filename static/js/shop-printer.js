@@ -1028,12 +1028,15 @@ ${bodyHtml}
     }
   };
 
+  // persisted=false → real unload; persisted=true → Chrome stashed us in the
+  // back/forward cache (timers freeze, resume on restore — keep printing live).
   let pageUnloading = false;
-  const markPageUnloading = () => {
-    pageUnloading = true;
-  };
-  window.addEventListener("pagehide", markPageUnloading);
-  window.addEventListener("beforeunload", markPageUnloading);
+  window.addEventListener("pagehide", (event) => {
+    pageUnloading = !event.persisted;
+  });
+  window.addEventListener("pageshow", () => {
+    pageUnloading = false;
+  });
 
   const createBluetoothDriver = () => {
     let device = null;

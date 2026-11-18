@@ -1315,8 +1315,6 @@
 
   refreshStatus();
   pollTimer = setInterval(refreshStatus, 3500);
-  window.addEventListener("beforeunload", () => {
-    clearInterval(pollTimer);
-    clearInterval(campaignPoll);
-  });
+  // No beforeunload/pagehide cleanup — a beforeunload listener blocks
+  // Chrome's back/forward cache, and page teardown clears timers anyway.
 })();

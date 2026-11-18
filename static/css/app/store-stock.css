@@ -922,6 +922,78 @@
   justify-content: flex-end;
 }
 
+.shelf-quick-add {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem 1.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.shelf-quick-add-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+
+.shelf-quick-add-field {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.shelf-quick-add-field > span {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.shelf-quick-add-field > span em {
+  font-style: normal;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--text-muted) 80%, transparent);
+}
+
+.shelf-quick-add-field--name {
+  flex: 1 1 15rem;
+}
+
+.shelf-quick-add .store-stock-qty-input {
+  width: 7rem;
+  max-width: none;
+}
+
+.shelf-quick-add .shelf-quick-add-name,
+.shelf-quick-add .shelf-quick-add-note,
+.shelf-quick-add .shelf-quick-add-unit {
+  width: 100%;
+  text-align: left;
+}
+
+/* Shelf entries are stored uppercase, so the name field shows them that way
+   too (placeholder stays sentence-case). */
+.shelf-quick-add-name {
+  text-transform: uppercase;
+}
+
+.shelf-quick-add-name::placeholder {
+  text-transform: none;
+}
+
+.shelf-quick-add-btn {
+  margin-left: auto;
+}
+
+.shelf-quick-add-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
 .shelf-stock-move .store-stock-qty-input {
   width: 6rem;
 }

@@ -262,6 +262,11 @@
         return;
       }
       event.preventDefault();
+      const quickAdd = target.closest("[data-shelf-quick-add]");
+      if (quickAdd) {
+        quickAdd.querySelector('button[name="shelf_action"]')?.click();
+        return;
+      }
       target
         .closest("tr")
         ?.querySelector('button[name="shelf_action"][value^="in:"]')

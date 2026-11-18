@@ -1,5 +1,5 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v35";
+const CACHE_VERSION = "myshop-v41";
 
 // Precache only the shared shell. Page-specific bundles (my-shop, catalogs,
 // printer) are cached on first use via networkFirst to keep install light.
@@ -84,19 +84,50 @@ const isAuthPath = (url) => {
   );
 };
 
+// Only versioned static assets and uploaded media are ever written into
+// Cache Storage. The previous handler cached EVERY same-origin GET — a
+// `caches.open` + `cache.put` per file per navigation — which is a known
+// source of jank/hangs in Chrome (Cache Storage is disk-backed).
+const isStaticAsset = (url) => url.pathname.startsWith("/static/");
+const isMediaAsset = (url) => url.pathname.startsWith("/media/");
+const isCacheableAsset = (url) => isStaticAsset(url) || isMediaAsset(url);
+
+let cachePromise = null;
+const openCache = () => {
+  if (!cachePromise) {
+    cachePromise = caches.open(CACHE_VERSION).catch(() => null);
+  }
+  return cachePromise;
+};
+
 const cacheResponse = async (request, response) => {
-  if (!response?.ok || !isSameOrigin(new URL(request.url))) return;
+  if (!response?.ok) return;
   const url = new URL(request.url);
-  if (isAuthPath(url) || isNavigation(request) || isFileDownload(url, request)) {
+  if (!isSameOrigin(url) || !isCacheableAsset(url)) return;
+  if (isAuthPath(url) || isFileDownload(url, request)) {
     return;
   }
   try {
-    const cache = await caches.open(CACHE_VERSION);
-    await cache.put(request, response.clone());
+    const cache = await openCache();
+    if (cache) await cache.put(request, response.clone());
   } catch (_) {
     /* Quota / opaque / binary — never fail the real response. */
   }
 };
+
+// /static/ URLs carry ?v= cache-busters, so a hit is always the right file.
+// Serving them from Cache Storage skips the network entirely on repeat
+// navigations instead of re-downloading ~1MB of JS/CSS every page hop.
+const cacheFirst = (request) =>
+  openCache()
+    .then((cache) => (cache ? cache.match(request) : null))
+    .then(async (cached) => {
+      if (cached) return cached;
+      const response = await fetch(request);
+      await cacheResponse(request, response);
+      return response;
+    })
+    .catch(() => fetch(request));
 
 const networkFirst = (request, fallbackUrl) =>
   fetch(request)
@@ -263,5 +294,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(networkFirst(request));
+  // Versioned static assets: serve straight from Cache Storage; fill on miss.
+  if (isStaticAsset(url)) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
+
+  // Uploaded media: network-first, cached for offline catalogue images.
+  if (isMediaAsset(url)) {
+    event.respondWith(networkFirst(request));
+    return;
+  }
+
+  // Everything else (fetches, partials, JSON) goes straight to the network —
+  // no respondWith, so no per-request Cache Storage work in Chrome.
 });

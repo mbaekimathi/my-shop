@@ -740,6 +740,11 @@ urlpatterns = [
         name="legacy_communications_module",
     ),
     path(
+        "employee/my-analytics/",
+        views.employee_my_analytics,
+        name="employee_my_analytics",
+    ),
+    path(
         "<role_segment:role_segment>/<slug:module_slug>/",
         views.workspace_module,
         name="workspace_module",

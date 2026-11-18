@@ -30,6 +30,7 @@ Expects: shelf_report, shelf_report_shop (optional), is_movements_page.
         <tr>
           <th scope="col">When</th>
           <th scope="col">Shelf item</th>
+          {% if shelf_report.multi_shop %}<th scope="col">Shop</th>{% endif %}
           <th scope="col">Change</th>
           <th scope="col" class="store-stock-col-qty">Qty</th>
           <th scope="col" class="store-stock-col-qty">Left</th>
@@ -42,6 +43,7 @@ Expects: shelf_report, shelf_report_shop (optional), is_movements_page.
         <tr class="store-stock-row">
           <td data-label="When">{{ ev.created_at|date:"d M Y H:i" }}</td>
           <td data-label="Shelf item">{{ ev.name }}</td>
+          {% if shelf_report.multi_shop %}<td data-label="Shop">{{ ev.shop_name }}</td>{% endif %}
           <td data-label="Change">{{ ev.type_label }}</td>
           <td class="store-stock-col-qty" data-label="Qty">{% if ev.type == "out" %}−{% else %}+{% endif %}{{ ev.qty|floatformat:"-3" }}</td>
           <td class="store-stock-col-qty" data-label="Left">{{ ev.balance_after|floatformat:"-3" }}</td>
@@ -68,6 +70,7 @@ Expects: shelf_report, shelf_report_shop (optional), is_movements_page.
       <thead>
         <tr>
           <th scope="col">Shelf item</th>
+          {% if shelf_report.multi_shop %}<th scope="col">Shop</th>{% endif %}
           <th scope="col" class="store-stock-col-qty">On shelf</th>
           <th scope="col" class="store-stock-col-qty">Registered</th>
           <th scope="col" class="store-stock-col-qty">In</th>
@@ -84,6 +87,7 @@ Expects: shelf_report, shelf_report_shop (optional), is_movements_page.
               {% if row.item.is_archived %}<span class="stock-item-badge">Archived</span>{% endif %}
             </div>
           </td>
+          {% if shelf_report.multi_shop %}<td data-label="Shop">{{ row.item.shop.name }}</td>{% endif %}
           <td class="store-stock-col-qty" data-label="On shelf">{{ row.item.quantity|floatformat:"-3" }}</td>
           <td class="store-stock-col-qty" data-label="Registered">{{ row.register_qty|floatformat:"-3" }}</td>
           <td class="store-stock-col-qty" data-label="In">+{{ row.in_qty|floatformat:"-3" }}</td>
@@ -96,7 +100,7 @@ Expects: shelf_report, shelf_report_shop (optional), is_movements_page.
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="archive" aria-hidden="true"></i>
-    <p>No shelf items are registered for this shop yet. Register them from the Shelf stock page.</p>
+    <p>No shelf items are registered for {% if shelf_report.multi_shop %}these shops{% else %}this shop{% endif %} yet. Register them from the Shelf stock page.</p>
   </div>
   {% endif %}
   {% endif %}

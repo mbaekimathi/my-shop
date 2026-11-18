@@ -18,6 +18,8 @@
         <h2>
           {% if selected_take %}
           Stock take #{{ selected_take.pk }}
+          {% elif stock_take_score_view %}
+          Item score report
           {% else %}
           Stock take
           {% endif %}
@@ -25,6 +27,8 @@
         <p>
           {% if selected_take %}
           Compare system quantity with what each shop counted. Use Edit to change shops, items, or the deadline.
+          {% elif stock_take_score_view %}
+          Average count accuracy per item for {{ report_period_label }} — lowest scores first.
           {% else %}
           Overall shop accuracy for {{ report_period_label }}. Choose categories or items, pick shops, set a deadline.
           {% endif %}
@@ -36,7 +40,13 @@
           <i data-lucide="arrow-left" aria-hidden="true"></i>
           <span>All stock takes</span>
         </a>
-        {% elif stock_take_shop_totals and stock_take_shop_totals.overall_percent is not None %}
+        {% elif stock_take_score_view %}
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ stock_take_list_url }}">
+          <i data-lucide="clipboard-check" aria-hidden="true"></i>
+          <span>Stock takes</span>
+        </a>
+        {% else %}
+        {% if stock_take_shop_totals and stock_take_shop_totals.overall_percent is not None %}
         <div class="stock-stats">
           <p class="stock-stat">
             <strong>{{ stock_take_shop_totals.overall_percent }}%</strong>
@@ -48,12 +58,18 @@
           </p>
         </div>
         {% endif %}
+        <a class="stock-settings-jump stock-settings-jump--ghost" href="{{ stock_take_scores_url }}">
+          <i data-lucide="award" aria-hidden="true"></i>
+          <span>Score report</span>
+        </a>
+        {% endif %}
       </div>
     </div>
 
     {% if not selected_take %}
     <form class="stock-report-filters" method="get" data-stock-report-filters data-stock-take-filters>
       <input type="hidden" name="mode" value="stock-take">
+      {% if stock_take_score_view %}<input type="hidden" name="view" value="scores">{% endif %}
 
       <label class="stock-report-field">
         <span>Time</span>
@@ -365,6 +381,91 @@
       </table>
     </div>
   </div>
+  {% elif stock_take_score_view %}
+
+  <section class="stock-take-overall" aria-label="Item score report for {{ report_period_label }}">
+    <div class="stock-take-overall-head">
+      <div>
+        <p class="stock-settings-section-label">{{ report_range_label }} · {{ report_period_label }}</p>
+        <h3>Item score report</h3>
+      </div>
+      <p class="stock-take-overall-meta">
+        {{ stock_take_item_scores.take_count }} stock take{{ stock_take_item_scores.take_count|pluralize }}
+        · {{ stock_take_item_scores.scored_item_count }}/{{ stock_take_item_scores.item_count }} items scored
+        {% if stock_take_item_scores.overall_percent is not None %} · overall {{ stock_take_item_scores.overall_percent }}%{% endif %}
+      </p>
+    </div>
+    {% if stock_take_item_scores.items %}
+    {% if can_edit_stock_take %}
+    <form method="get" class="stock-take-scores-form" data-score-report-form>
+      <input type="hidden" name="mode" value="stock-take">
+      <div class="stock-take-scores-toolbar">
+        <label class="stock-take-scores-select-all">
+          <input type="checkbox" data-score-items-all>
+          <span>Select all</span>
+        </label>
+        <button type="submit" class="btn btn--primary" data-score-items-submit disabled>
+          <i data-lucide="clipboard-plus" aria-hidden="true"></i>
+          <span>Initiate stock count</span>
+        </button>
+      </div>
+    {% endif %}
+    <div class="stock-take-table-wrap stock-take-scores-wrap">
+      <table class="stock-take-table stock-take-scores">
+        <thead>
+          <tr>
+            {% if can_edit_stock_take %}<th scope="col" class="stock-take-check"></th>{% endif %}
+            <th scope="col">Item</th>
+            <th scope="col" class="stock-take-num">Stock takes</th>
+            <th scope="col" class="stock-take-num">Counted</th>
+            <th scope="col" class="stock-take-num">Matched</th>
+            <th scope="col" class="stock-take-num">Short</th>
+            <th scope="col" class="stock-take-num">Excess</th>
+            <th scope="col" class="stock-take-num">Pieces off</th>
+            <th scope="col" class="stock-take-num">Pending</th>
+            <th scope="col" class="stock-take-num">Avg score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in stock_take_item_scores.items %}
+          <tr>
+            {% if can_edit_stock_take %}
+            <td class="stock-take-check">
+              <input type="checkbox" name="item_ids" value="{{ row.item.pk }}" data-score-item aria-label="Select {{ row.item.name }}">
+            </td>
+            {% endif %}
+            <td class="stock-take-item">
+              <strong>{{ row.item.name }}</strong>
+              {% if row.item.category %}<em>{{ row.item.category }}</em>{% endif %}
+            </td>
+            <td class="stock-take-num">{{ row.take_count }}</td>
+            <td class="stock-take-num">{{ row.max_marks }}</td>
+            <td class="stock-take-num">
+              {% if row.has_score %}{{ row.marks }}{% else %}<span class="stock-take-muted">—</span>{% endif %}
+            </td>
+            <td class="stock-take-num{% if row.short_count %} is-diff{% endif %}">{{ row.short_count }}</td>
+            <td class="stock-take-num{% if row.excess_count %} is-diff{% endif %}">{{ row.excess_count }}</td>
+            <td class="stock-take-num">{{ row.pieces_off }}</td>
+            <td class="stock-take-num">{{ row.pending_count }}</td>
+            <td class="stock-take-num">
+              {% if row.has_score %}
+              <em class="stock-take-shop-head-score{% if row.grade %} is-grade-{{ row.grade }}{% endif %}">{{ row.percent }}%</em>
+              {% else %}
+              <span class="stock-take-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if can_edit_stock_take %}
+    </form>
+    {% endif %}
+    {% else %}
+    <p class="stock-settings-footnote">No stock take counts in {{ report_period_label }}.</p>
+    {% endif %}
+  </section>
   {% else %}
 
   {% if stock_take_shop_totals %}
@@ -416,13 +517,13 @@
   {% endif %}
 
   {% if can_edit_stock_take %}
-  <div class="stock-take-initiate" data-stock-take-create>
-    <button type="button" class="btn btn--primary stock-take-initiate-btn" data-stock-take-create-open>
+  <div class="stock-take-initiate{% if stock_take_init_item_ids %} is-open{% endif %}" data-stock-take-create>
+    <button type="button" class="btn btn--primary stock-take-initiate-btn" data-stock-take-create-open{% if stock_take_init_item_ids %} hidden{% endif %}>
       <i data-lucide="clipboard-plus" aria-hidden="true"></i>
       <span>Initiate a stock count</span>
     </button>
 
-    <article class="stock-settings-card stock-settings-card--visibility stock-take-create" data-stock-take-create-panel hidden>
+    <article class="stock-settings-card stock-settings-card--visibility stock-take-create" data-stock-take-create-panel{% if not stock_take_init_item_ids %} hidden{% endif %}>
     <header class="stock-settings-card-head">
       <span class="stock-settings-card-icon" aria-hidden="true">
         <i data-lucide="clipboard-check"></i>
@@ -440,16 +541,16 @@
 
       <fieldset class="stock-visibility-modes">
         <legend class="stock-settings-section-label">What to count</legend>
-        <label class="stock-visibility-mode is-selected">
-          <input type="radio" name="scope_mode" value="category" checked data-stock-take-scope>
+        <label class="stock-visibility-mode{% if not stock_take_init_item_ids %} is-selected{% endif %}">
+          <input type="radio" name="scope_mode" value="category"{% if not stock_take_init_item_ids %} checked{% endif %} data-stock-take-scope>
           <span class="stock-visibility-mode-icon" aria-hidden="true"><i data-lucide="layers"></i></span>
           <span class="stock-visibility-mode-copy">
             <strong>By category</strong>
             <em>All items in the categories you select.</em>
           </span>
         </label>
-        <label class="stock-visibility-mode">
-          <input type="radio" name="scope_mode" value="items" data-stock-take-scope>
+        <label class="stock-visibility-mode{% if stock_take_init_item_ids %} is-selected{% endif %}">
+          <input type="radio" name="scope_mode" value="items"{% if stock_take_init_item_ids %} checked{% endif %} data-stock-take-scope>
           <span class="stock-visibility-mode-icon" aria-hidden="true"><i data-lucide="package"></i></span>
           <span class="stock-visibility-mode-copy">
             <strong>By item</strong>
@@ -458,7 +559,7 @@
         </label>
       </fieldset>
 
-      <div class="stock-visibility-panel" data-stock-take-panel="category">
+      <div class="stock-visibility-panel" data-stock-take-panel="category"{% if stock_take_init_item_ids %} hidden{% endif %}>
         <div class="stock-visibility-panel-head">
           <p class="stock-settings-section-label">Categories</p>
         </div>
@@ -478,7 +579,7 @@
         {% endif %}
       </div>
 
-      <div class="stock-visibility-panel" data-stock-take-panel="items" hidden>
+      <div class="stock-visibility-panel" data-stock-take-panel="items"{% if not stock_take_init_item_ids %} hidden{% endif %}>
         <div class="stock-visibility-panel-head">
           <p class="stock-settings-section-label">Items</p>
         </div>
@@ -492,7 +593,7 @@
           {% for item in stock_take_items %}
           <li data-stock-take-item data-search="{{ item.name|lower }} {{ item.category|lower }}">
             <label>
-              <input type="checkbox" name="item_ids" value="{{ item.id }}">
+              <input type="checkbox" name="item_ids" value="{{ item.id }}"{% if item.id in stock_take_init_item_ids %} checked{% endif %}>
               <span>
                 <strong>{{ item.name }}</strong>
                 {% if item.category %}<em>{{ item.category }}</em>{% endif %}
@@ -575,7 +676,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/stock-take.js' %}?v=5"></script>
+<script src="{% static 'js/stock-take.js' %}?v=6"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-stock-take-filters]");

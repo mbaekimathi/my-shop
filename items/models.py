@@ -58,6 +58,14 @@ class Item(models.Model):
             "stock counts. Off = the item sells freely; its stock is manual only."
         ),
     )
+    sale_tracking_custom = models.BooleanField(
+        default=False,
+        help_text=(
+            "True once this item's sale stock tracking was picked by hand on "
+            "the Sale stock tracking page. False = it auto-follows the company "
+            "default (CompanyPosSettings.enable_stock_tracking)."
+        ),
+    )
     low_stock_notify = models.BooleanField(default=False, db_index=True)
     low_stock_threshold = models.PositiveIntegerField(
         default=0,
