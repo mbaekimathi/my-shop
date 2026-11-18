@@ -7621,7 +7621,15 @@ def day_session_report_details(session) -> dict:
         "created_at__lt": closed,
     }
 
+    def _supplier_phone(dial, number) -> str:
+        return " ".join(
+            part
+            for part in ((dial or "").strip(), (number or "").strip())
+            if part
+        )
+
     category_labels = dict(ExpenseCategory.choices)
+    status_labels = dict(ExpensePaymentStatus.choices)
     expense_rows = []
     drawing_rows = []
     for row in (
@@ -7633,9 +7641,13 @@ def day_session_report_details(session) -> dict:
             "category",
             "amount",
             "amount_paid",
+            "payment_status",
             "cash_amount",
             "mpesa_amount",
             "card_amount",
+            "supplier_name",
+            "supplier_phone_country_code",
+            "supplier_phone_number",
             "created_by__user__first_name",
             "created_by__user__last_name",
             "created_by__user__username",
@@ -7650,7 +7662,15 @@ def day_session_report_details(session) -> dict:
             "category_label": category_labels.get(
                 row["category"], row["category"] or "Expense"
             ),
+            "qty": Decimal("1"),
             "paid": paid,
+            "status": row["payment_status"] or "",
+            "status_label": status_labels.get(row["payment_status"], ""),
+            "supplier_name": (row["supplier_name"] or "").strip(),
+            "supplier_phone": _supplier_phone(
+                row["supplier_phone_country_code"],
+                row["supplier_phone_number"],
+            ),
             "cash": Decimal(row["cash_amount"] or 0),
             "mpesa": Decimal(row["mpesa_amount"] or 0),
             "card": Decimal(row["card_amount"] or 0),
@@ -7678,42 +7698,121 @@ def day_session_report_details(session) -> dict:
             amount_paid__gt=0,
             **window,
         )
-        .prefetch_related("lines")
+        .prefetch_related("lines__item")
         .order_by("created_at")
     )
     for movement in movements:
-        lines = list(movement.lines.all())
-        suppliers = []
-        for line in lines:
-            supplier = (line.supplier_name or "").strip()
-            if supplier and supplier not in suppliers:
-                suppliers.append(supplier)
-        item_names = [
-            (line.item_name or (line.item.name if line.item else "") or "").strip()
-            for line in lines
-        ]
-        item_names = [name for name in item_names if name]
-        if suppliers:
-            label = " · ".join(suppliers)
-        elif len(item_names) == 1:
-            label = item_names[0]
-        elif item_names:
-            label = f"{item_names[0]} +{len(item_names) - 1} more"
-        else:
-            label = "Stock purchase"
-        count = len(lines)
-        if count:
-            label = f"{label} ({count} item{'s' if count != 1 else ''})"
+        lines = []
+        for line in movement.lines.all():
+            item = (
+                line.item_name
+                or (line.item.name if line.item else "")
+                or ""
+            ).strip() or "Stock item"
+            qty = _qty(line.quantity)
+            unit = line.buying_price
+            lines.append(
+                {
+                    "item": item,
+                    "qty": qty,
+                    "unit_cost": unit,
+                    "total": (
+                        (unit * qty).quantize(Decimal("0.01"))
+                        if unit is not None
+                        else None
+                    ),
+                    "supplier_name": (line.supplier_name or "").strip(),
+                    "supplier_phone": _supplier_phone(
+                        line.supplier_phone_country_code,
+                        line.supplier_phone_number,
+                    ),
+                }
+            )
         stock_rows.append(
-            {"at": movement.created_at, "label": label, "paid": movement.amount_paid}
+            {
+                "at": movement.created_at,
+                "paid": movement.amount_paid,
+                "lines": lines,
+            }
         )
 
-    sales_count = ShopReceipt.objects.filter(
-        kind=ShopReceiptKind.SALE, **window
-    ).count()
+    counted_statuses = {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.CONFIRMED,
+        ShopReceiptStatus.PARTIAL_RETURN,
+    }
+    flagged_statuses = {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.CANCELLED,
+    }
+    receipt_status_labels = dict(ShopReceiptStatus.choices)
+    item_totals = {}
+    flagged_receipts = []
+    receipts = (
+        ShopReceipt.objects.filter(kind=ShopReceiptKind.SALE, **window)
+        .select_related("created_by__user")
+        .prefetch_related("lines")
+        .order_by("created_at")
+    )
+    for receipt in receipts:
+        seller = ""
+        if receipt.created_by_id:
+            user = receipt.created_by.user
+            seller = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+            )
+        if receipt.status in counted_statuses:
+            for line in receipt.lines.all():
+                qty = _qty(line.quantity) - _qty(line.returned_quantity)
+                if qty <= 0:
+                    continue
+                name = (line.item_name or "").strip() or "Item"
+                amount = (qty * Decimal(line.unit_price or 0)).quantize(
+                    Decimal("0.01")
+                )
+                agg = item_totals.setdefault(
+                    name, {"qty": Decimal("0"), "amount": Decimal("0")}
+                )
+                agg["qty"] += qty
+                agg["amount"] += amount
+        if receipt.status in flagged_statuses:
+            lines = list(receipt.lines.all())
+            labels = [
+                f"{(line.item_name or '').strip() or 'Item'}"
+                f" ×{_qty_label(line.quantity)}"
+                for line in lines[:2]
+            ]
+            extra = len(lines) - len(labels)
+            items_label = ", ".join(labels)
+            if extra > 0:
+                items_label += f" +{extra} more"
+            flagged_receipts.append(
+                {
+                    "at": receipt.created_at,
+                    "number": receipt.receipt_number,
+                    "items_label": items_label or "—",
+                    "seller": seller or "—",
+                    "status": receipt.status,
+                    "status_label": receipt_status_labels.get(
+                        receipt.status, receipt.status
+                    ),
+                    "total": receipt.total,
+                }
+            )
+    items_sold = sorted(
+        (
+            {"item": name, "qty": agg["qty"], "amount": agg["amount"]}
+            for name, agg in item_totals.items()
+        ),
+        key=lambda row: (-row["amount"], row["item"]),
+    )
+    sales_count = len(receipts)
 
     return {
         "sales_count": sales_count,
+        "items_sold": items_sold,
+        "flagged_receipts": flagged_receipts,
         "expenses": expense_rows,
         "drawings": drawing_rows,
         "stock_purchases": stock_rows,
@@ -7727,17 +7826,19 @@ def build_shop_day_report_pdf(
     from io import BytesIO
 
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
     from reportlab.platypus import (
+        KeepTogether,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
         Table,
         TableStyle,
     )
+    from reportlab.platypus.flowables import HRFlowable
 
     from core.pdf_fonts import (
         MANROPE_PDF,
@@ -7809,10 +7910,6 @@ def build_shop_day_report_pdf(
         "DayMetaRight", parent=styles["Normal"], fontName=MANROPE_PDF,
         fontSize=8, textColor=muted, leading=10, alignment=TA_RIGHT,
     )
-    meta_right_strong = ParagraphStyle(
-        "DayMetaRightStrong", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
-        fontSize=9, textColor=ink, leading=11, alignment=TA_RIGHT,
-    )
     kpi_label = ParagraphStyle(
         "DayKpiLabel", parent=styles["Normal"], fontName=MANROPE_PDF,
         fontSize=7, textColor=muted, leading=9, alignment=TA_LEFT,
@@ -7845,9 +7942,35 @@ def build_shop_day_report_pdf(
     cell_out = ParagraphStyle(
         "DayCellOut", parent=cell_right, textColor=money_out,
     )
+    cell_muted = ParagraphStyle(
+        "DayCellMuted", parent=cell, fontSize=7, textColor=muted, leading=9,
+    )
+    cell_sm = ParagraphStyle(
+        "DayCellSm", parent=styles["Normal"], fontName=MANROPE_PDF,
+        fontSize=7.5, textColor=ink, leading=9,
+    )
+    cell_sm_right = ParagraphStyle(
+        "DayCellSmRight", parent=cell_sm, alignment=TA_RIGHT,
+    )
+    cell_sm_strong = ParagraphStyle(
+        "DayCellSmStrong", parent=cell_sm, fontName=MANROPE_PDF_BOLD,
+    )
+    cell_sm_strong_right = ParagraphStyle(
+        "DayCellSmStrongRight", parent=cell_sm_strong, alignment=TA_RIGHT,
+    )
+    head_cell_sm = ParagraphStyle(
+        "DayHeadSm", parent=head_cell, fontSize=7, leading=9,
+    )
+    head_cell_sm_right = ParagraphStyle(
+        "DayHeadSmRight", parent=head_cell_sm, alignment=TA_RIGHT,
+    )
     section_style = ParagraphStyle(
         "DaySection", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
-        fontSize=10, textColor=ink, leading=13, spaceBefore=8, spaceAfter=3,
+        fontSize=10, textColor=ink, leading=13,
+    )
+    pill_style = ParagraphStyle(
+        "DayPill", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=7, textColor=ink, leading=9, alignment=TA_CENTER,
     )
     note_style = ParagraphStyle(
         "DayNote", parent=styles["Normal"], fontName=MANROPE_PDF,
@@ -7873,6 +7996,34 @@ def build_shop_day_report_pdf(
     story = []
     day_label = timezone.localtime(session.opened_at).strftime("%d %b %Y")
     status_label = "Open — preview" if is_open else "Closed"
+    status_fg = money_out if is_open else accent
+    status_bg = colors.HexColor("#fef3c7") if is_open else accent_soft
+    status_pill = Table(
+        [
+            [
+                Paragraph(
+                    _esc(status_label.upper()),
+                    ParagraphStyle(
+                        "DayPillText", parent=pill_style, textColor=status_fg
+                    ),
+                )
+            ]
+        ],
+        colWidths=[33 * mm],
+    )
+    status_pill.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), status_bg),
+                ("ROUNDEDCORNERS", [9, 9, 9, 9]),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    status_pill.hAlign = "RIGHT"
     header = Table(
         [
             [
@@ -7884,7 +8035,8 @@ def build_shop_day_report_pdf(
                     ),
                 ],
                 [
-                    Paragraph(_esc(status_label), meta_right_strong),
+                    status_pill,
+                    Spacer(1, 3),
                     Paragraph(
                         "Opened "
                         + timezone.localtime(session.opened_at).strftime("%H:%M")
@@ -7923,7 +8075,13 @@ def build_shop_day_report_pdf(
         )
     )
     story.append(header)
-    story.append(Spacer(1, 6))
+    story.append(
+        HRFlowable(
+            width="100%", thickness=1.4, color=accent,
+            spaceBefore=7, spaceAfter=0,
+        )
+    )
+    story.append(Spacer(1, 8))
 
     outflows = (
         (summary.get("expenses_paid") or 0)
@@ -7958,13 +8116,15 @@ def build_shop_day_report_pdf(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), surface),
+                ("BACKGROUND", (3, 0), (3, 0), accent_soft),
+                ("LINEABOVE", (0, 0), (-1, 0), 1.5, accent),
                 ("BOX", (0, 0), (-1, -1), 0.75, line),
                 ("INNERGRID", (0, 0), (-1, -1), 0.5, line),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 7),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
             ]
         )
     )
@@ -8089,70 +8249,262 @@ def build_shop_day_report_pdf(
     money_table = Table([head, *rows], colWidths=col_widths, repeatRows=1)
     money_style = [
         ("BACKGROUND", (0, 0), (-1, 0), head_fill),
-        ("GRID", (0, 0), (-1, -1), 0.5, line),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.75, head_fill),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.4, line),
         ("BOX", (0, 0), (-1, -1), 0.75, line),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, surface]),
     ]
     for index in sorted(strong_rows):
         money_style.append(("BACKGROUND", (0, index), (-1, index), accent_soft))
     money_table.setStyle(TableStyle(money_style))
     story.append(money_table)
-    story.append(Spacer(1, 10))
 
     # ---- Detail tables -------------------------------------------------------
-    def _detail_table(title, headers, body, widths=None, empty_note="None recorded."):
-        story.append(Paragraph(_esc(title), section_style))
-        if not body:
-            story.append(Paragraph(_esc(empty_note), note_style))
-            story.append(Spacer(1, 6))
-            return
-        data = [
-            [
-                Paragraph(_esc(h), head_cell_right if i else head_cell)
-                for i, h in enumerate(headers)
-            ]
-        ]
-        for row in body:
-            data.append(
-                [
-                    Paragraph(_esc(c), cell_right if i else cell)
-                    for i, c in enumerate(row)
-                ]
+    def _p(text, style=cell):
+        return Paragraph(_esc(text), style)
+
+    def _pr(text, strong=False):
+        return Paragraph(_esc(text), cell_strong_right if strong else cell_right)
+
+    def _supplier_cell(name, phone):
+        name = (name or "").strip()
+        phone = (phone or "").strip()
+        if not name and not phone:
+            return _p("—", cell_muted)
+        html = f"<b>{_esc(name) or '—'}</b>"
+        if phone:
+            html += (
+                "<br/><font size='6.8' color='#5b6b7c'>"
+                + _esc(phone)
+                + "</font>"
             )
-        if widths is None:
-            widths = [doc.width * 0.5] + [
-                doc.width * 0.5 / (len(headers) - 1)
-            ] * (len(headers) - 1)
-        table = Table(data, colWidths=widths, repeatRows=1)
-        table.setStyle(
+        return Paragraph(html, cell)
+
+    status_colors = {
+        ExpensePaymentStatus.PAID: "#0f766e",
+        ExpensePaymentStatus.PARTIAL: "#b45309",
+        ExpensePaymentStatus.UNPAID: "#b91c1c",
+    }
+
+    def _status_cell(status, label):
+        if not label:
+            return _p("—", cell_muted)
+        color = status_colors.get(status, "#5b6b7c")
+        return Paragraph(
+            f"<font color='{color}'><b>{_esc(label)}</b></font>", cell
+        )
+
+    def _section_heading(title):
+        bar = Table(
+            [["", Paragraph(_esc(title), section_style)]],
+            colWidths=[2.2 * mm, doc.width - 2.2 * mm],
+        )
+        bar.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, 0), head_fill),
-                    ("GRID", (0, 0), (-1, -1), 0.5, line),
-                    ("BOX", (0, 0), (-1, -1), 0.75, line),
+                    ("BACKGROUND", (0, 0), (0, 0), accent),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, surface]),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("LEFTPADDING", (1, 0), (1, 0), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
                 ]
             )
         )
-        story.append(table)
-        story.append(Spacer(1, 6))
+        return bar
+
+    def _detail_table(
+        title,
+        headers,
+        rows,
+        widths,
+        *,
+        aligns=None,
+        footer=None,
+        spans=None,
+        group_backgrounds=None,
+        dense=False,
+        empty_note="None recorded.",
+    ):
+        """Modern horizontal-rule detail table; cells may be str or Paragraph."""
+        story.append(Spacer(1, 11))
+        if not rows:
+            story.append(_section_heading(title))
+            story.append(Spacer(1, 5))
+            story.append(Paragraph(_esc(empty_note), note_style))
+            return
+        ncol = len(headers)
+        aligns = aligns or ["l"] * ncol
+        head_l = head_cell_sm if dense else head_cell
+        head_r = head_cell_sm_right if dense else head_cell_right
+        body_l = cell_sm if dense else cell
+        body_r = cell_sm_right if dense else cell_right
+        foot_l = cell_sm_strong if dense else cell_strong
+        foot_r = cell_sm_strong_right if dense else cell_strong_right
+        pad_v = 3 if dense else 5
+        pad_h = 5 if dense else 6
+
+        def _head(i, text):
+            return _p(text, head_r if aligns[i] == "r" else head_l)
+
+        def _body_cell(i, value):
+            if isinstance(value, Paragraph):
+                return value
+            return _p(value, body_r if aligns[i] == "r" else body_l)
+
+        data = [[_head(i, h) for i, h in enumerate(headers)]]
+        data.extend(
+            [[_body_cell(i, value) for i, value in enumerate(row)] for row in rows]
+        )
+        has_footer = footer is not None
+        if has_footer:
+            data.append(
+                [
+                    value
+                    if isinstance(value, Paragraph)
+                    else _p(value, foot_r if i else foot_l)
+                    for i, value in enumerate(footer)
+                ]
+            )
+        table = Table(data, colWidths=widths, repeatRows=1)
+        body_end = -2 if has_footer else -1
+        commands = [
+            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.75, head_fill),
+            ("LINEBELOW", (0, 1), (-1, body_end), 0.4, line),
+            ("BOX", (0, 0), (-1, -1), 0.75, line),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), pad_h),
+            ("RIGHTPADDING", (0, 0), (-1, -1), pad_h),
+            ("TOPPADDING", (0, 0), (-1, -1), pad_v),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), pad_v),
+        ]
+        if group_backgrounds is not None:
+            for start_row, end_row in group_backgrounds:
+                commands.append(
+                    (
+                        "BACKGROUND",
+                        (0, start_row),
+                        (-1, end_row),
+                        surface,
+                    )
+                )
+        else:
+            commands.append(
+                ("ROWBACKGROUNDS", (0, 1), (-1, body_end), [white, surface])
+            )
+        for span in spans or []:
+            commands.append(("SPAN",) + span)
+        if has_footer:
+            commands += [
+                ("BACKGROUND", (0, -1), (-1, -1), accent_soft),
+                ("LINEABOVE", (0, -1), (-1, -1), 0.75, head_fill),
+            ]
+        table.setStyle(TableStyle(commands))
+        story.append(
+            KeepTogether([_section_heading(title), Spacer(1, 5), table])
+        )
 
     def _time(at):
         return timezone.localtime(at).strftime("%H:%M")
 
-    drawing_headers = ["Time · detail"] + [label for _k, label in channel_cols] + ["Total"]
+    # -- Items sold -----------------------------------------------------------
+    sold_rows = details.get("items_sold") or []
+    sold_qty_total = sum(
+        (r["qty"] or Decimal("0")) for r in sold_rows
+    )
+    sold_amount_total = sum(
+        (r["amount"] or Decimal("0")) for r in sold_rows
+    )
+    _detail_table(
+        "Items sold",
+        ["Item", "Qty", "Amount"],
+        [
+            [
+                _p(r["item"], cell_sm),
+                _p(_qty_label(r["qty"]), cell_sm_right),
+                _p(_fmt(r["amount"]), cell_sm_right),
+            ]
+            for r in sold_rows
+        ],
+        [doc.width * 0.68, doc.width * 0.13, doc.width * 0.19],
+        aligns=["l", "r", "r"],
+        footer=["Total", _qty_label(sold_qty_total), _fmt(sold_amount_total)],
+        dense=True,
+        empty_note="No items sold this day.",
+    )
+
+    # -- Pending & cancelled sales --------------------------------------------
+    receipt_status_colors = {
+        ShopReceiptStatus.ACTIVE: "#b45309",
+        ShopReceiptStatus.CANCELLED: "#b91c1c",
+    }
+
+    def _receipt_status_cell(row):
+        color = receipt_status_colors.get(row["status"], "#5b6b7c")
+        return Paragraph(
+            f"<font color='{color}'><b>{_esc(row['status_label'])}</b></font>",
+            cell_sm,
+        )
+
+    def _receipt_cell(row):
+        return Paragraph(
+            f"<b>{_esc(row['number'])}</b>"
+            f"<br/><font size='6.8' color='#5b6b7c'>"
+            f"{_esc(row['items_label'])}</font>",
+            cell_sm,
+        )
+
+    flagged_rows = details.get("flagged_receipts") or []
+    flagged_total = sum(
+        (r["total"] or Decimal("0")) for r in flagged_rows
+    )
+    _detail_table(
+        "Pending & cancelled sales",
+        ["Time", "Receipt", "Sold by", "Status", "Amount"],
+        [
+            [
+                _p(_time(r["at"]), cell_sm),
+                _receipt_cell(r),
+                _p(r["seller"], cell_sm),
+                _receipt_status_cell(r),
+                _p(_fmt(r["total"]), cell_sm_right),
+            ]
+            for r in flagged_rows
+        ],
+        [
+            doc.width * 0.07,
+            doc.width * 0.40,
+            doc.width * 0.24,
+            doc.width * 0.11,
+            doc.width * 0.18,
+        ],
+        aligns=["l", "l", "l", "l", "r"],
+        footer=["Total", "", "", "", _fmt(flagged_total)],
+        dense=True,
+        empty_note="No pending or cancelled sales this day.",
+    )
+
+    # -- Drawings -------------------------------------------------------------
+    drawing_rows = details.get("drawings") or []
+    drawing_headers = (
+        ["Time · detail"] + [label for _k, label in channel_cols] + ["Total"]
+    )
+    drawing_ncol = len(drawing_headers)
     drawing_widths = [doc.width * 0.46] + [
-        doc.width * 0.54 / (len(channel_cols) + 1)
-    ] * (len(channel_cols) + 1)
+        doc.width * 0.54 / (drawing_ncol - 1)
+    ] * (drawing_ncol - 1)
+    channel_totals = {
+        "cash": summary.get("drawings_cash"),
+        "mpesa": summary.get("drawings_mpesa"),
+        "card": summary.get("drawings_card"),
+    }
     _detail_table(
         "Drawings done",
         drawing_headers,
@@ -8171,41 +8523,123 @@ def build_shop_day_report_pdf(
                 ],
                 _fmt(r["paid"]),
             ]
-            for r in details.get("drawings") or []
+            for r in drawing_rows
         ],
-        widths=drawing_widths,
+        drawing_widths,
+        aligns=["l"] + ["r"] * (drawing_ncol - 1),
+        footer=(
+            ["Total"]
+            + [_fmt(channel_totals.get(key)) for key, _lbl in channel_cols]
+            + [_fmt(summary.get("drawings_paid"))]
+        ),
         empty_note="No drawings recorded this day.",
     )
 
+    # -- Expenses -------------------------------------------------------------
+    expense_rows = details.get("expenses") or []
+    expenses_paid_total = sum(
+        (r["paid"] or Decimal("0")) for r in expense_rows
+    )
     _detail_table(
         "Expenses incurred",
-        ["Time", "Expense", "Category", "Paid"],
+        ["Time", "Expense", "Category", "Qty", "Supplier", "Status", "Paid"],
         [
             [
-                _time(r["at"]),
-                r["name"],
-                r["category_label"],
-                _fmt(r["paid"]),
+                _p(_time(r["at"])),
+                _p(r["name"]),
+                _p(r["category_label"]),
+                _pr(_qty_label(r["qty"])),
+                _supplier_cell(r["supplier_name"], r["supplier_phone"]),
+                _status_cell(r["status"], r["status_label"]),
+                _pr(_fmt(r["paid"])),
             ]
-            for r in details.get("expenses") or []
+            for r in expense_rows
         ],
-        widths=[
-            doc.width * 0.12,
-            doc.width * 0.48,
-            doc.width * 0.22,
-            doc.width * 0.18,
+        [
+            doc.width * 0.07,
+            doc.width * 0.24,
+            doc.width * 0.14,
+            doc.width * 0.06,
+            doc.width * 0.25,
+            doc.width * 0.09,
+            doc.width * 0.15,
         ],
+        aligns=["l", "l", "l", "r", "l", "l", "r"],
+        footer=["Total", "", "", "", "", "", _fmt(expenses_paid_total)],
         empty_note="No expenses recorded this day.",
     )
 
+    # -- Stock bought ---------------------------------------------------------
+    stock_groups = details.get("stock_purchases") or []
+    stock_rows = []
+    stock_spans = []
+    stock_bgs = []
+    for index, group in enumerate(stock_groups):
+        lines = group.get("lines") or []
+        if not lines:
+            lines = [
+                {
+                    "item": "Stock purchase",
+                    "qty": None,
+                    "unit_cost": None,
+                    "total": None,
+                    "supplier_name": "",
+                    "supplier_phone": "",
+                }
+            ]
+        start = len(stock_rows) + 1  # +1 for the header row
+        for i, stock_line in enumerate(lines):
+            stock_rows.append(
+                [
+                    _p(_time(group["at"])) if i == 0 else "",
+                    _p(stock_line["item"]),
+                    _pr(
+                        _qty_label(stock_line["qty"])
+                        if stock_line["qty"] is not None
+                        else "—"
+                    ),
+                    _pr(
+                        _fmt(stock_line["unit_cost"])
+                        if stock_line["unit_cost"] is not None
+                        else "—"
+                    ),
+                    _pr(
+                        _fmt(stock_line["total"])
+                        if stock_line["total"] is not None
+                        else "—"
+                    ),
+                    _supplier_cell(
+                        stock_line["supplier_name"],
+                        stock_line["supplier_phone"],
+                    ),
+                    _pr(_fmt(group["paid"]), strong=True) if i == 0 else "",
+                ]
+            )
+        end = len(stock_rows)
+        if end > start:
+            stock_spans += [((0, start), (0, end)), ((6, start), (6, end))]
+        if index % 2 == 1:
+            stock_bgs.append((start, end))
+    stock_paid_total = sum(
+        (g.get("paid") or Decimal("0")) for g in stock_groups
+    )
     _detail_table(
         "Stock bought",
-        ["Time", "Supplier / items", "Paid"],
+        ["Time", "Item", "Qty", "Unit cost", "Amount", "Supplier", "Paid"],
+        stock_rows,
         [
-            [_time(r["at"]), r["label"], _fmt(r["paid"])]
-            for r in details.get("stock_purchases") or []
+            doc.width * 0.07,
+            doc.width * 0.24,
+            doc.width * 0.07,
+            doc.width * 0.10,
+            doc.width * 0.11,
+            doc.width * 0.26,
+            doc.width * 0.15,
         ],
-        widths=[doc.width * 0.14, doc.width * 0.64, doc.width * 0.22],
+        aligns=["l", "l", "r", "r", "r", "l", "r"],
+        footer=["Total", "", "", "", "", "", _fmt(stock_paid_total)],
+        spans=stock_spans,
+        group_backgrounds=stock_bgs,
         empty_note="No stock purchases paid this day.",
     )
 

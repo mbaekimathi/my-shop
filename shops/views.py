@@ -1677,7 +1677,7 @@ def _require_shop_read_access(request, shop_id):
         if profile.role in (
             EmployeeRole.SUPER_ADMIN,
             EmployeeRole.COMPANY_MANAGER,
-            EmployeeRole.STORE_MANAGER,
+            EmployeeRole.COMPANY_STORE_MANAGER,
             EmployeeRole.IT_SUPPORT,
         ):
             shop = Shop.objects.filter(
@@ -3355,7 +3355,6 @@ def my_shop_day_toggle(request, shop_id):
     is_open = open_session is not None
     mode = "close" if is_open else "open"
     stale_open = bool(day_state.get("stale_open"))
-    day_sessions = list_shop_day_sessions(shop, limit=40)
     open_summary = (
         day_session_balance_summary(open_session) if open_session else {}
     )
@@ -3443,8 +3442,6 @@ def my_shop_day_toggle(request, shop_id):
             "open_session": open_session,
             "open_summary": open_summary,
             "last_closed": last_closed,
-            "day_sessions": day_sessions,
-            "day_session_count": len(day_sessions),
             "form_data": form_data,
             "form_errors": form_errors,
             "drawing_data": drawing_data,
@@ -3455,9 +3452,6 @@ def my_shop_day_toggle(request, shop_id):
             or _shop_workspace_url(shop),
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
-            ),
-            "day_report_url": reverse(
-                "employees:my_shop_day_report", kwargs={"shop_id": shop.pk}
             ),
             "drawings_url": _day_url(
                 "employees:my_shop_drawings"
@@ -3479,7 +3473,20 @@ def my_shop_day_report(request, shop_id):
     if denied:
         return denied
 
-    session = get_open_shop_day(shop) or get_last_closed_shop_day(shop)
+    session_id = (request.GET.get("session") or "").strip()
+    if session_id:
+        from .models import ShopDaySession
+
+        session = ShopDaySession.objects.filter(
+            shop=shop, pk=session_id
+        ).first()
+        if session is None:
+            messages.info(request, "That day was not found.")
+            return redirect(
+                "employees:my_shop_day_history", shop_id=shop.pk
+            )
+    else:
+        session = get_open_shop_day(shop) or get_last_closed_shop_day(shop)
     if session is None:
         messages.info(request, "No day recorded yet — open the shop first.")
         return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
@@ -3499,6 +3506,57 @@ def my_shop_day_report(request, shop_id):
     response["Content-Disposition"] = f'inline; filename="{filename}"'
     response["Content-Length"] = str(len(pdf_bytes))
     return response
+
+
+@shop_floor_required
+@require_http_methods(["GET"])
+def my_shop_day_history(request, shop_id):
+    """Every recorded shop day — open and closed — with a link to each report."""
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "open_close", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    shops = _shops_for_floor(profile, shop)
+    day_sessions = list_shop_day_sessions(shop, limit=100)
+    balance_channels = shop_day_balance_channels(shop=shop)
+    day_url = reverse(
+        "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+    )
+
+    requested_back = (request.GET.get("back") or "").strip()
+    back_url = ""
+    if requested_back and url_has_allowed_host_and_scheme(
+        requested_back, allowed_hosts={request.get_host()}
+    ):
+        back_url = requested_back
+
+    return _render_my_shop_tool_page(
+        request,
+        shop=shop,
+        profile=profile,
+        shops=shops,
+        active="day_history",
+        title=f"Day history — {shop.name}",
+        headline="Day history",
+        summary="Every shop day — opening, closing, and the difference.",
+        icon="history",
+        template_name="shops/my_shop_day_history.html",
+        extra_context={
+            "day_sessions": day_sessions,
+            "day_session_count": len(day_sessions),
+            "balance_channels": balance_channels,
+            "day_report_url": reverse(
+                "employees:my_shop_day_report", kwargs={"shop_id": shop.pk}
+            ),
+            "day_url": day_url,
+            "back_url": back_url or day_url,
+        },
+    )
 
 
 @shop_floor_required

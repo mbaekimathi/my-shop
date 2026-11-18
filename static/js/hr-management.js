@@ -122,6 +122,8 @@
 
       }
 
+      box.closest(".perm-switch")?.classList.toggle("is-denied", !box.checked);
+
     });
 
   };
@@ -129,6 +131,16 @@
   editForm?.querySelector('[name="role"]')?.addEventListener("change", () => {
 
     syncEditExtraRoles();
+
+  });
+
+  editForm?.querySelectorAll('[name="extra_roles"]').forEach((box) => {
+
+    box.addEventListener("change", () => {
+
+      box.closest(".perm-switch")?.classList.toggle("is-denied", !box.checked);
+
+    });
 
   });
 
@@ -344,6 +356,8 @@
 
         employeeIdInput.dataset.checkExclude = dataset.originalEmployeeId || "";
 
+        employeeIdInput.dispatchEvent(new Event("input", { bubbles: true }));
+
       }
 
 
@@ -407,6 +421,8 @@
     bindEditPhoneField();
 
     bindEditProfileUpload();
+
+    syncEditExtraRoles();
 
     if (window.initUppercaseInputs) window.initUppercaseInputs(editForm);
 

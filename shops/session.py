@@ -266,7 +266,23 @@ def profile_allocated_to_shop(profile, shop) -> bool:
 
     if profile.role not in SHOP_ASSIGNABLE_ROLES:
         return True
-    return profile.assigned_shops.filter(pk=shop.pk).exists()
+    if profile.assigned_shops.filter(pk=shop.pk).exists():
+        return True
+    return _acting_shop_is(profile, shop)
+
+
+def _acting_shop_is(profile, shop) -> bool:
+    """True when the profile's role-picker acting shop matches ``shop``.
+
+    Only applies while the profile has no active allocated shops — real
+    assignments always win over the session-only pick.
+    """
+    acting = getattr(profile, "acting_shop_id", None)
+    if not acting or str(acting) != str(shop.pk):
+        return False
+    return not profile.assigned_shops.filter(
+        is_hidden=False, is_suspended=False
+    ).exists()
 
 
 def allocated_shop_names_for_profile(profile):
@@ -327,7 +343,18 @@ def get_shop_for_profile(profile, shop_id):
 
     qs = Shop.objects.filter(pk=shop_id, is_hidden=False, is_suspended=False)
     if profile is not None and profile.role in SHOP_ASSIGNABLE_ROLES:
-        qs = qs.filter(assigned_employees=profile)
+        shop = qs.filter(assigned_employees=profile).first()
+        if shop is None:
+            acting = getattr(profile, "acting_shop_id", None)
+            if (
+                acting
+                and str(acting) == shop_id
+                and not profile.assigned_shops.filter(
+                    is_hidden=False, is_suspended=False
+                ).exists()
+            ):
+                shop = qs.first()
+        return shop
     return qs.first()
 
 

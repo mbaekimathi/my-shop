@@ -31,10 +31,16 @@ ROLE_PAGE_META = {
         "summary": "Your shop manager workspace.",
         "icon": "store",
     },
-    EmployeeRole.STORE_MANAGER: {
-        "title": "Store Manager",
-        "headline": "Store workspace",
+    EmployeeRole.COMPANY_STORE_MANAGER: {
+        "title": "Company Store Manager",
+        "headline": "Company store workspace",
         "summary": "Manage all stores, stock, and floor operations across the company.",
+        "icon": "store",
+    },
+    EmployeeRole.SHOP_STORE_MANAGER: {
+        "title": "Shop Store Manager",
+        "headline": "Shop store workspace",
+        "summary": "Manage stock and floor operations for your allocated shops.",
         "icon": "store",
     },
     EmployeeRole.SHOP_CASHIER: {
@@ -108,7 +114,7 @@ def get_dashboard_modules(role):
     modules = DASHBOARD_MODULES
     if role == EmployeeRole.RIDER:
         modules = []
-    elif role == EmployeeRole.STORE_MANAGER:
+    elif role == EmployeeRole.COMPANY_STORE_MANAGER:
         modules = [
             module
             for module in DASHBOARD_MODULES
@@ -149,7 +155,8 @@ WORKSPACE_DASHBOARD_VIEWS = frozenset(
         "employees:role_super_admin_dashboard",
         "employees:role_company_manager",
         "employees:role_shop_manager",
-        "employees:role_store_manager",
+        "employees:role_company_store_manager",
+        "employees:role_shop_store_manager",
         "employees:role_shop_cashier",
         "employees:role_it_support",
         "employees:role_rider",
@@ -242,7 +249,11 @@ def _workspace_parent_url(request, role):
         if section == "company-receipt":
             return settings_section_url(role, "company-pos")
         if section == "message-drafts":
-            if role in (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN):
+            if role in (
+                EmployeeRole.IT_SUPPORT,
+                EmployeeRole.SUPER_ADMIN,
+                EmployeeRole.SHOP_MANAGER,
+            ):
                 return marketing_links_url()
             return settings_url(role)
         if section in {"twilio", "sms", "whatsapp"}:
@@ -419,6 +430,7 @@ def _link(
     badge=None,
     live_badge=False,
     nav_key="",
+    new_tab=False,
 ):
     item = {
         "type": "link",
@@ -433,6 +445,8 @@ def _link(
         item["href"] = reverse(url_name)
     elif href:
         item["href"] = href
+    if new_tab:
+        item["new_tab"] = True
     if nav_key:
         item["nav_key"] = nav_key
     if live_badge:
@@ -573,7 +587,7 @@ def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
     from .module_permissions import employee_may
 
     wanted = ("credits", "suppliers", "clients")
-    if role == EmployeeRole.STORE_MANAGER:
+    if role in (EmployeeRole.COMPANY_STORE_MANAGER, EmployeeRole.SHOP_STORE_MANAGER):
         wanted = ()
     elif role == EmployeeRole.EMPLOYEE:
         wanted = ("credits",)
@@ -704,7 +718,7 @@ def store_shelf_stock_url():
 
 
 def _store_shelf_stock_link(profile, *, active):
-    """Shelf stock shortcut for Store Manager when any shop has Shelf mode on."""
+    """Shelf stock shortcut for the Company Store Manager when any shop has Shelf mode on."""
     from .module_permissions import employee_may
     from .store_stock_views import shelf_mode_shops
 
@@ -819,6 +833,18 @@ def _store_shelf_nav_links(profile, *, active=None):
             "bar-chart-3",
             href=f"{base}?mode=report",
             active=active == "shelf-report",
+        ),
+        _link(
+            "Shelf stock audits",
+            "clipboard-list",
+            href=f"{base}?mode=audits",
+            active=active == "shelf-audits",
+        ),
+        _link(
+            "Suspended items",
+            "circle-pause",
+            href=f"{base}?mode=suspended",
+            active=active == "shelf-suspended",
         ),
         _action(
             "Register shelf stock item",
@@ -1487,14 +1513,21 @@ def sidebar_for_role_dashboard(
         return sidebar_for_rider(profile=profile, active=active)
 
     dashboard_url = reverse(role_home_url_name(role))
-    comms_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
+    comms_roles = (
+        EmployeeRole.IT_SUPPORT,
+        EmployeeRole.SUPER_ADMIN,
+        EmployeeRole.SHOP_MANAGER,
+    )
+    split_stock_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SHOP_MANAGER)
     skip_slugs = ("whatsapp",) if role in comms_roles else ()
-    if role == EmployeeRole.IT_SUPPORT:
+    if role in split_stock_roles:
         # "Stock Management" splits into direct item / shelf stock links below.
         skip_slugs = (*skip_slugs, "stock-management")
     if role == EmployeeRole.EMPLOYEE:
         skip_slugs = (
             *skip_slugs,
+            "analytics",
+            "stock-management",
             "item-management",
             "hr-management",
             "shop-management",
@@ -1508,14 +1541,14 @@ def sidebar_for_role_dashboard(
         primary = _module_sidebar_links(
             role, active_slug=active_slug, profile=profile, skip_slugs=skip_slugs
         )
-    if role == EmployeeRole.IT_SUPPORT:
+    if role in split_stock_roles:
         primary = [
             *_it_support_stock_links(
                 role, active_slug=active_slug, profile=profile
             ),
             *primary,
         ]
-    if role == EmployeeRole.STORE_MANAGER:
+    if role == EmployeeRole.COMPANY_STORE_MANAGER:
         # Dashboard keeps entry links only — the five sub-links live in the
         # stock pages' sidebar (sidebar_for_store_stock).
         primary.extend(
@@ -1526,6 +1559,10 @@ def sidebar_for_role_dashboard(
                 *_store_shelf_stock_link(profile, active=active_slug == "shelf-stock"),
             ]
         )
+    if role in (
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
+    ):
         from .module_permissions import employee_may
         from shops.services import company_pos_analytics_section_visible
 
@@ -1713,6 +1750,27 @@ def sidebar_for_my_shop(
                             active=active == "day_toggle",
                         )
                     )
+                primary.append(
+                    _link(
+                        "Day report",
+                        "file-text",
+                        href=reverse(
+                            "employees:my_shop_day_report",
+                            kwargs={"shop_id": shop.pk},
+                        ),
+                        new_tab=True,
+                    )
+                )
+                primary.append(
+                    _link(
+                        "Day history",
+                        "history",
+                        href=reverse(
+                            "employees:my_shop_day_history",
+                            kwargs={"shop_id": shop.pk},
+                        ),
+                    )
+                )
             if _flag("enable_sidebar_trade") and (
                 (trade_out_enabled and _allowed("trade_out"))
                 or (trade_in_enabled and _allowed("trade_in"))
@@ -1868,6 +1926,39 @@ def sidebar_for_my_shop(
                         kwargs={"shop_id": shop.pk},
                     ),
                     active=active == "settings_messages",
+                )
+            )
+        elif active in {"day_toggle", "day_history"} and _allowed("open_close"):
+            primary.append(
+                _link(
+                    "Shop day",
+                    "calendar-clock",
+                    href=reverse(
+                        "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}
+                    ),
+                    active=active == "day_toggle",
+                )
+            )
+            primary.append(
+                _link(
+                    "Day report",
+                    "file-text",
+                    href=reverse(
+                        "employees:my_shop_day_report",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    new_tab=True,
+                )
+            )
+            primary.append(
+                _link(
+                    "Day history",
+                    "history",
+                    href=reverse(
+                        "employees:my_shop_day_history",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    active=active == "day_history",
                 )
             )
         elif (
@@ -2920,7 +3011,10 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     dashboard_url = reverse(role_home_url_name(role))
     home_url = analytics_url(role)
     active_view = (active_view or "overview").strip().lower()
-    show_overview = role != EmployeeRole.STORE_MANAGER
+    show_overview = role not in (
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
+    )
     section_links = []
     for section in ANALYTICS_SECTIONS:
         if section["slug"] == "overview":
@@ -3044,8 +3138,11 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
     from .analytics_services import ANALYTICS_SECTION_BY_SLUG
     from .module_permissions import employee_may
 
-    # Store Manager keeps Items / Stock / Tradings visible together (no Overview).
-    if role == EmployeeRole.STORE_MANAGER:
+    # Store managers keep Items / Stock / Tradings visible together (no Overview).
+    if role in (
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
+    ):
         return sidebar_for_analytics(role, active_view=active_view, profile=profile)
 
     dashboard_url = reverse(role_home_url_name(role))
@@ -3229,7 +3326,10 @@ def sidebar_for_stock(role, *, profile=None, active="stock"):
     home_url = analytics_url(role)
     active = (active or "stock").strip().lower()
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
-    if role != EmployeeRole.STORE_MANAGER and (
+    if role not in (
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
+    ) and (
         profile is None or employee_may(profile, "analytics", "view")
     ):
         primary.append(_link("Overview", "layout-grid", href=home_url, active=False))

@@ -1036,6 +1036,44 @@ tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
   vertical-align: middle;
 }
 
+.shelf-stock-col-manage {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.store-stock-table th.shelf-stock-col-manage {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.shelf-stock-manage {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.shelf-stock-manage .shelf-stock-archive {
+  margin-left: 0;
+}
+
+.shelf-edit-clear {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.45rem;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.shelf-edit-clear img {
+  border-radius: 6px;
+  object-fit: cover;
+}
+
 [data-shelf-low] {
   background: color-mix(in srgb, #d97706 18%, transparent);
   color: #92400e;
@@ -1073,6 +1111,24 @@ tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
   display: grid;
   max-width: 240px;
   padding: 1rem 1.15rem 1.15rem;
+}
+
+.shelf-audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem;
+  padding: 0 1.15rem 1.1rem;
+}
+
+.shelf-audit-filters .shelf-audit-field {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 8.5rem;
+}
+
+.shelf-audit-filters .shelf-audit-apply {
+  margin-left: auto;
 }
 
 /* Shelf register form: entries are stored uppercase, so inputs show them that
@@ -1718,4 +1774,225 @@ tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
 .store-stock-count-toggle.is-on .store-stock-count-pill {
   background: color-mix(in srgb, var(--ss-accent) 18%, var(--surface));
   color: var(--ss-accent);
+}
+
+/* ------------------------------------------------------------------ */
+/* Shelf stock page — modern polish (store manager + shop floor)      */
+/* ------------------------------------------------------------------ */
+
+/* Hero: layered accent glow, gradient icon tile, elevated stat cards. */
+.shelf-stock .store-stock-hero {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--ss-accent) 24%, var(--border));
+  background:
+    radial-gradient(140% 240% at 100% -40%, color-mix(in srgb, var(--ss-accent) 20%, transparent), transparent 58%),
+    radial-gradient(120% 200% at -10% 130%, color-mix(in srgb, var(--ss-accent) 10%, transparent), transparent 55%),
+    var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.shelf-stock .store-stock-mode-pill {
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--ss-accent), var(--accent-deep, var(--ss-accent)));
+  color: #fff;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--ss-accent) 38%, transparent);
+}
+
+.shelf-stock .store-stock-mode-pill i {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.shelf-stock .store-stock-stat {
+  border-color: color-mix(in srgb, var(--ss-accent) 22%, var(--border));
+  border-radius: calc(var(--radius) + 2px);
+  background: color-mix(in srgb, var(--surface) 88%, var(--ss-accent-soft));
+  box-shadow: var(--shadow-sm);
+}
+
+.shelf-stock .store-stock-stat dd {
+  color: var(--ss-accent-ink);
+}
+
+/* Panels: rounder cards, layered shadow, accent dot on panel titles. */
+.shelf-stock .store-stock-panel {
+  border-radius: calc(var(--radius-lg) + 4px);
+  box-shadow: var(--shadow-sm), var(--shadow-md);
+}
+
+.shelf-stock .store-stock-panel-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.shelf-stock .store-stock-panel-head h3::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--ss-accent), var(--accent-deep, var(--ss-accent)));
+  box-shadow: 0 0 0 4px var(--ss-accent-soft);
+}
+
+/* Tables: tinted header + category bands, smooth row hover. */
+.shelf-stock .store-stock-table th {
+  background: color-mix(in srgb, var(--ss-accent) 5%, var(--surface-2));
+}
+
+.shelf-stock .store-stock-cat-row td {
+  background: color-mix(in srgb, var(--ss-accent) 5%, var(--surface));
+}
+
+.shelf-stock .store-stock-row td {
+  transition: background 0.15s ease;
+}
+
+/* On-shelf balance reads as an accent figure; low stock is a clear red
+   warning so it can't blend into the amber brand accent. */
+.shelf-stock td[data-label="On shelf"] .store-stock-balance-pill:not([data-shelf-low]) {
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+}
+
+.shelf-stock [data-shelf-low] {
+  background: color-mix(in srgb, #dc2626 13%, transparent);
+  color: #b91c1c;
+}
+
+/* Change-type pill + signed qty colouring on audit / recent rows. */
+.store-stock-type-pill--register {
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  color: var(--text-muted);
+}
+
+.shelf-delta {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.shelf-delta--in {
+  color: #0f766e;
+}
+
+.shelf-delta--out {
+  color: #b42318;
+}
+
+.shelf-delta--register {
+  color: var(--text-muted);
+}
+
+/* Search + audit controls get a focus ring; the audit bar becomes an
+   inset card with fully styled (not native) inputs. */
+.shelf-stock .store-stock-filter {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.shelf-stock .store-stock-filter:focus-within {
+  border-color: var(--ss-accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--ss-accent-soft);
+}
+
+.shelf-stock .shelf-audit-filters {
+  margin: 0 1.15rem 1.15rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-2) 65%, var(--surface));
+}
+
+.shelf-stock .shelf-audit-filters .shelf-audit-field {
+  flex: 1 1 9rem;
+}
+
+.shelf-stock .shelf-audit-filters select,
+.shelf-stock .shelf-audit-filters input {
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--input-border, var(--border));
+  border-radius: var(--radius);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.shelf-stock .shelf-audit-filters select:focus,
+.shelf-stock .shelf-audit-filters input:focus {
+  outline: none;
+  border-color: var(--ss-accent);
+  box-shadow: 0 0 0 3px var(--ss-accent-soft);
+}
+
+/* Compact icon-only buttons in the Manage column. */
+.shelf-stock-manage .store-stock-btn {
+  width: 2.3rem;
+  height: 2.3rem;
+  min-height: 0;
+  padding: 0;
+  border-radius: 10px;
+}
+
+.shelf-stock-manage .store-stock-btn i {
+  width: 1rem;
+  height: 1rem;
+}
+
+.shelf-stock-manage .store-stock-btn:hover {
+  border-color: var(--ss-accent);
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+  transform: none;
+}
+
+/* Empty state icon becomes a soft accent tile. */
+.shelf-stock .store-stock-empty i,
+.shelf-stock .store-stock-empty svg {
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0.85rem;
+  box-sizing: content-box;
+  border-radius: 999px;
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+  opacity: 1;
+}
+
+/* Shop picker gets a little more room. */
+.shelf-stock .shelf-stock-staff-field {
+  max-width: 22rem;
+}
+
+@media (max-width: 720px) {
+  .shelf-stock .shelf-stock-staff-field {
+    max-width: none;
+  }
+
+  .shelf-stock .shelf-audit-filters {
+    margin: 0 0.95rem 0.95rem;
+    padding: 0.8rem;
+  }
+
+  /* Cardified rows: label every cell, not just qty / input columns. */
+  .shelf-stock .store-stock-table td[data-label]:not(.store-stock-col-qty):not(.store-stock-col-input) {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  .shelf-stock .store-stock-table td[data-label]:not(.store-stock-col-qty):not(.store-stock-col-input)::before {
+    content: attr(data-label);
+    font-size: 0.65rem;
+    font-weight: 750;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
 }

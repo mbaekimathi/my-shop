@@ -598,12 +598,50 @@ def _qty_label(value) -> str:
     return f"{qty:,f}"
 
 
-def build_employee_analytics(profile: EmployeeProfile) -> dict:
+def _trend_bucket_windows(start, end, bucket_kind):
+    """Split [start, end) into hour/day/month windows: (label, win_start, win_end)."""
+    if bucket_kind == "hour":
+        cursor = start.replace(minute=0, second=0, microsecond=0)
+        step = timedelta(hours=1)
+
+        def label_for(dt):
+            return dt.strftime("%H:00")
+    elif bucket_kind == "day":
+        cursor = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        step = timedelta(days=1)
+
+        def label_for(dt):
+            return dt.strftime("%d %b").lstrip("0")
+    else:
+        cursor = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        step = None
+
+        def label_for(dt):
+            return dt.strftime("%b %Y")
+    buckets = []
+    while cursor < end:
+        if step is None:
+            year, month = cursor.year, cursor.month + 1
+            if month > 12:
+                year, month = year + 1, 1
+            nxt = cursor.replace(year=year, month=month)
+        else:
+            nxt = cursor + step
+        buckets.append((label_for(cursor), cursor, nxt))
+        cursor = nxt
+    return buckets
+
+
+def build_employee_analytics(
+    profile: EmployeeProfile, date_filter: dict | None = None
+) -> dict:
     """Deeper performance breakdown for the employee "My analytics" page.
 
-    One grouped query for status buckets, one aggregate for all-time sales,
-    one conditional aggregate for the 12-month trend, one grouped query for
-    top items — four queries total.
+    ``date_filter`` is the shared day/period/month/year context from
+    ``analytics_services._date_filter_context`` — stats scope to that window
+    and the trend chart buckets as hours (day / short period), days (month /
+    mid period) or months (year / long period). Without a filter the page
+    falls back to all-time stats and a trailing-12-month trend.
     """
     from datetime import date, datetime, time
 
@@ -617,7 +655,16 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
         ShopReceiptStatus,
     )
 
+    range_start = (date_filter or {}).get("start")
+    range_end = (date_filter or {}).get("end")
+    range_type = (date_filter or {}).get("range_type") or "day"
+    period_label = (date_filter or {}).get("report_period_label") or "All time"
+
     receipts = ShopReceipt.objects.filter(created_by=profile)
+    if range_start and range_end:
+        receipts = receipts.filter(
+            created_at__gte=range_start, created_at__lt=range_end
+        )
     sales = receipts.filter(
         kind=ShopReceiptKind.SALE, status__in=COUNTED_RECEIPT_STATUSES
     )
@@ -643,28 +690,57 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
         amount=Coalesce(Sum("total"), Decimal("0.00")),
     )
 
-    today = timezone.localdate()
-    first = today.replace(day=1)
-    months = []
-    for i in range(11, -1, -1):
-        year, month = first.year, first.month - i
-        while month <= 0:
-            month += 12
-            year -= 1
-        start = date(year, month, 1)
-        if month == 12:
-            end = date(year + 1, 1, 1)
-        else:
-            end = date(year, month + 1, 1)
-        months.append((start, end))
     tz = timezone.get_current_timezone()
     counted_status = Q(status__in=COUNTED_RECEIPT_STATUSES)
     cancelled_status = Q(status=ShopReceiptStatus.CANCELLED)
+
+    if range_start and range_end:
+        from .analytics_services import _period_breakdown_config
+
+        breakdown = _period_breakdown_config(
+            {
+                "range_type": range_type,
+                "start": range_start,
+                "end": range_end,
+            }
+        ) or {}
+        bucket_kind = breakdown.get("bucket_kind") or "month"
+        windows = _trend_bucket_windows(range_start, range_end, bucket_kind)
+        trend_title = {
+            "hour": "Sales by hour",
+            "day": "Sales by day",
+            "month": "Sales by month",
+        }.get(bucket_kind, "Sales by month")
+        trend_subtitle = period_label
+    else:
+        today = timezone.localdate()
+        first = today.replace(day=1)
+        months = []
+        for i in range(11, -1, -1):
+            year, month = first.year, first.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+            start_day = date(year, month, 1)
+            if month == 12:
+                end_day = date(year + 1, 1, 1)
+            else:
+                end_day = date(year, month + 1, 1)
+            months.append((start_day, end_day))
+        windows = [
+            (
+                start_day.strftime("%b %Y"),
+                timezone.make_aware(datetime.combine(start_day, time.min), tz),
+                timezone.make_aware(datetime.combine(end_day, time.min), tz),
+            )
+            for start_day, end_day in months
+        ]
+        trend_title = "Sales by month"
+        trend_subtitle = "Last 12 months"
+
     kwargs = {}
-    for idx, (start, end) in enumerate(months):
-        start_dt = timezone.make_aware(datetime.combine(start, time.min), tz)
-        end_dt = timezone.make_aware(datetime.combine(end, time.min), tz)
-        window = Q(created_at__gte=start_dt, created_at__lt=end_dt)
+    for idx, (_label, win_start, win_end) in enumerate(windows):
+        window = Q(created_at__gte=win_start, created_at__lt=win_end)
         kwargs[f"m{idx}_docs"] = Count(
             "id", filter=window & counted_status
         )
@@ -676,18 +752,52 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
             Sum("total", filter=window & cancelled_status),
             Decimal("0.00"),
         )
-    month_agg = receipts.filter(kind=ShopReceiptKind.SALE).aggregate(**kwargs)
-    month_rows = [
+    trend_agg = ShopReceipt.objects.filter(
+        created_by=profile, kind=ShopReceiptKind.SALE
+    ).aggregate(**kwargs)
+    trend_rows = [
         {
-            "label": start.strftime("%b %Y"),
-            "docs": int(month_agg[f"m{i}_docs"] or 0),
-            "amount": month_agg[f"m{i}_amount"],
-            "amount_label": _money_ksh(month_agg[f"m{i}_amount"]),
+            "label": label,
+            "docs": int(trend_agg[f"m{i}_docs"] or 0),
+            "amount": trend_agg[f"m{i}_amount"],
+            "amount_label": _money_ksh(trend_agg[f"m{i}_amount"]),
         }
-        for i, (start, _end) in enumerate(months)
+        for i, (label, _ws, _we) in enumerate(windows)
     ]
-    peak_month = max(month_rows, key=lambda row: row["amount"], default=None)
+    peak = max(trend_rows, key=lambda row: row["amount"], default=None)
 
+    prev_start = (date_filter or {}).get("prev_start")
+    prev_end = (date_filter or {}).get("prev_end")
+    sales_hint = ""
+    sales_hint_tone = "neutral"
+    if prev_start and prev_end:
+        from .analytics_services import _trend_hint
+
+        prev_amount = (
+            ShopReceipt.objects.filter(
+                created_by=profile,
+                kind=ShopReceiptKind.SALE,
+                status__in=COUNTED_RECEIPT_STATUSES,
+                created_at__gte=prev_start,
+                created_at__lt=prev_end,
+            ).aggregate(
+                amount=Coalesce(Sum("total"), Decimal("0.00"))
+            )["amount"]
+        )
+        sales_hint, sales_hint_tone = _trend_hint(
+            sales_row["amount"], prev_amount
+        )
+
+    top_lines = ShopReceiptLine.objects.filter(
+        receipt__created_by=profile,
+        receipt__kind=ShopReceiptKind.SALE,
+        receipt__status__in=COUNTED_RECEIPT_STATUSES,
+    )
+    if range_start and range_end:
+        top_lines = top_lines.filter(
+            receipt__created_at__gte=range_start,
+            receipt__created_at__lt=range_end,
+        )
     remaining = ExpressionWrapper(
         F("quantity") - F("returned_quantity"),
         output_field=DecimalField(max_digits=14, decimal_places=3),
@@ -700,12 +810,7 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
             "amount": row["revenue"],
             "amount_label": _money_ksh(row["revenue"]),
         }
-        for row in ShopReceiptLine.objects.filter(
-            receipt__created_by=profile,
-            receipt__kind=ShopReceiptKind.SALE,
-            receipt__status__in=COUNTED_RECEIPT_STATUSES,
-        )
-        .values("item_name")
+        for row in top_lines.values("item_name")
         .annotate(
             qty=Coalesce(Sum(remaining), Decimal("0")),
             revenue=Coalesce(
@@ -725,7 +830,7 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
 
     from .analytics_services import (
         _chart_bars,
-        _donut_slices,
+        _column_chart,
         _trend_line_chart,
     )
 
@@ -735,17 +840,12 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
     cancelled = _bucket(ShopReceiptStatus.CANCELLED)
     trend_line = _trend_line_chart(
         [
-            (row["label"], row["amount"], month_agg[f"c{i}_amount"])
-            for i, row in enumerate(month_rows)
+            (row["label"], row["amount"], trend_agg[f"c{i}_amount"])
+            for i, row in enumerate(trend_rows)
         ]
     )
-    status_donut = _donut_slices(
-        [
-            ("Pending", pending["amount"], "pending"),
-            ("Confirmed", confirmed["amount"], "confirmed"),
-            ("Partially returned", partial_return["amount"], "partial"),
-            ("Cancelled", cancelled["amount"], "cancelled"),
-        ]
+    time_columns = _column_chart(
+        [(row["label"], row["docs"]) for row in trend_rows]
     )
     top_bars = _chart_bars(
         [(row["name"], row["amount"]) for row in top_items]
@@ -757,6 +857,9 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
             "amount": sales_row["amount"],
             "amount_label": _money_ksh(sales_row["amount"]),
         },
+        "sales_hint": sales_hint,
+        "sales_hint_tone": sales_hint_tone,
+        "period_label": period_label,
         "pending": pending,
         "confirmed": confirmed,
         "partial_return": partial_return,
@@ -764,10 +867,12 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
         "receipts_total": sum(
             int(row["docs"] or 0) for row in status_rows.values()
         ),
-        "months": month_rows,
-        "peak_month": peak_month,
+        "trend_rows": trend_rows,
+        "peak": peak,
+        "trend_title": trend_title,
+        "trend_subtitle": trend_subtitle,
         "top_items": top_items,
         "trend_line": trend_line,
-        "status_donut": status_donut,
+        "time_columns": time_columns,
         "top_bars": top_bars,
     }

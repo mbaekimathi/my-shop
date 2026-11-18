@@ -79,15 +79,20 @@ def parse_shelf_qty(raw, *, allow_zero=False, label="Quantity") -> Decimal:
     return qty
 
 
-def list_shelf_items(*, shop=None, shops=None) -> list[dict]:
-    qs = ShelfItem.objects.filter(is_archived=False).select_related("shop")
+def _shelf_item_queryset(*, shop=None, shops=None, suspended: bool = False):
+    qs = ShelfItem.objects.filter(
+        is_archived=False, is_suspended=suspended
+    ).select_related("shop")
     if shop is not None:
-        qs = qs.filter(shop=shop).order_by("category", "name")
-    elif shops is not None:
-        qs = qs.filter(shop__in=shops).order_by("category", "shop__name", "name")
-    else:
-        raise ValidationError("Pick a shelf-mode shop.")
-    items = list(qs)
+        return qs.filter(shop=shop).order_by("category", "name")
+    if shops is not None:
+        return qs.filter(shop__in=shops).order_by(
+            "category", "shop__name", "name"
+        )
+    raise ValidationError("Pick a shelf-mode shop.")
+
+
+def _shelf_item_rows(items) -> list[dict]:
     last_price = {}
     for shelf_item_id, price in (
         ShelfStockMovement.objects.filter(
@@ -124,6 +129,18 @@ def list_shelf_items(*, shop=None, shops=None) -> list[dict]:
     return rows
 
 
+def list_shelf_items(*, shop=None, shops=None) -> list[dict]:
+    return _shelf_item_rows(
+        list(_shelf_item_queryset(shop=shop, shops=shops, suspended=False))
+    )
+
+
+def list_suspended_shelf_items(*, shop=None, shops=None) -> list[dict]:
+    return _shelf_item_rows(
+        list(_shelf_item_queryset(shop=shop, shops=shops, suspended=True))
+    )
+
+
 def recent_shelf_movements(
     *, shop=None, shops=None, limit: int = 30
 ) -> list[ShelfStockMovement]:
@@ -135,6 +152,191 @@ def recent_shelf_movements(
     elif shops is not None:
         qs = qs.filter(shelf_item__shop__in=shops)
     return list(qs.order_by("-created_at", "-id")[:limit])
+
+
+def shelf_movements_in_period(
+    *, shop=None, shops=None, day_start, day_end
+) -> list[ShelfStockMovement]:
+    """Every shelf transaction in [day_start, day_end), newest first."""
+    qs = ShelfStockMovement.objects.filter(
+        created_at__gte=day_start,
+        created_at__lt=day_end,
+    ).select_related("shelf_item", "shelf_item__shop", "created_by__user")
+    if shop is not None:
+        qs = qs.filter(shelf_item__shop=shop)
+    elif shops is not None:
+        qs = qs.filter(shelf_item__shop__in=shops)
+    return list(qs.order_by("-created_at", "-id"))
+
+
+def _signed_qty(value) -> str:
+    value = Decimal(value or 0)
+    if value > 0:
+        return f"+{_qty_display(value)}"
+    if value < 0:
+        return f"−{_qty_display(-value)}"
+    return "0"
+
+
+def build_shelf_stock_report(*, shop, day_start, day_end, item_id=None) -> dict:
+    """Opening / in / transfers / trades / out / closing per shelf item.
+
+    ``day_start``/``day_end`` bound the report period (end exclusive).
+    Starting and closing balances come from each item's ``balance_after``
+    trail; movements inside the period bucket as:
+
+    - ``in`` — stock ins and register entries, excluding trade-ins and
+      transfer receipts.
+    - ``transfers`` — inter-shop transfer legs (``reason='transfer'``),
+      shown net: received − sent. Pre-stamp rows fall back to the
+      auto "Sent to" / "Received from" note.
+    - ``trades`` — ``trade_in`` − ``trade_out``, shown net.
+    - ``out`` — stock outs that are neither trades nor transfers.
+
+    ``item_id`` narrows the rows to one shelf item for this shop.
+    """
+    items = list(
+        ShelfItem.objects.filter(shop=shop).order_by("category", "name")
+    )
+    item_options = [
+        {"id": item.pk, "name": item.name}
+        for item in items
+        if not item.is_archived
+    ]
+    selected_item_id = (
+        item_id if item_id in {item.pk for item in items} else None
+    )
+    report_items = (
+        [item for item in items if item.pk == selected_item_id]
+        if selected_item_id is not None
+        else items
+    )
+
+    bounds = {}  # shelf_item_id -> [balance before day_start, balance before day_end]
+    buckets = {}  # shelf_item_id -> per-kind period sums
+    for mv in (
+        ShelfStockMovement.objects.filter(
+            shelf_item__shop=shop,
+            created_at__lt=day_end,
+        )
+        .order_by("shelf_item_id", "created_at", "id")
+        .only(
+            "shelf_item_id",
+            "movement_type",
+            "reason",
+            "note",
+            "quantity",
+            "balance_after",
+            "created_at",
+        )
+        .iterator()
+    ):
+        slot = bounds.setdefault(mv.shelf_item_id, [None, None])
+        slot[1] = mv.balance_after
+        if mv.created_at < day_start:
+            slot[0] = mv.balance_after
+            continue
+        bucket = buckets.setdefault(
+            mv.shelf_item_id,
+            {
+                "in": Decimal("0"),
+                "out": Decimal("0"),
+                "transfer_in": Decimal("0"),
+                "transfer_out": Decimal("0"),
+                "trade_in": Decimal("0"),
+                "trade_out": Decimal("0"),
+            },
+        )
+        reason = (mv.reason or "").strip().lower()
+        note = (mv.note or "").strip().lower()
+        if mv.movement_type == ShelfStockMovementType.OUT:
+            if reason == StockOutReason.TRADE_OUT:
+                bucket["trade_out"] += mv.quantity
+            elif (
+                reason == StockOutReason.TRANSFER
+                or note.startswith("sent to ")
+            ):
+                bucket["transfer_out"] += mv.quantity
+            else:
+                bucket["out"] += mv.quantity
+        elif mv.movement_type == ShelfStockMovementType.IN:
+            if reason == StockOutReason.TRADE_IN:
+                bucket["trade_in"] += mv.quantity
+            elif (
+                reason == StockOutReason.TRANSFER
+                or note.startswith("received from ")
+            ):
+                bucket["transfer_in"] += mv.quantity
+            else:
+                bucket["in"] += mv.quantity
+        else:
+            bucket["in"] += mv.quantity
+
+    rows = []
+    totals = {
+        key: Decimal("0")
+        for key in ("start", "in", "transfers", "trades", "out", "close")
+    }
+    for item in report_items:
+        slot = bounds.get(item.pk) or [None, None]
+        start = slot[0] if slot[0] is not None else Decimal("0")
+        close = slot[1] if slot[1] is not None else Decimal("0")
+        bucket = buckets.get(item.pk)
+        if item.is_archived and bucket is None and start == 0 and close == 0:
+            continue
+        bucket = bucket or {}
+        in_qty = bucket.get("in", Decimal("0"))
+        out_qty = bucket.get("out", Decimal("0"))
+        transfers = bucket.get("transfer_in", Decimal("0")) - bucket.get(
+            "transfer_out", Decimal("0")
+        )
+        trades = bucket.get("trade_in", Decimal("0")) - bucket.get(
+            "trade_out", Decimal("0")
+        )
+        rows.append(
+            {
+                "id": item.pk,
+                "name": item.name,
+                "category": item.category,
+                "unit": item.unit,
+                "is_suspended": item.is_suspended,
+                "is_archived": item.is_archived,
+                "image_url": item.public_image_url(),
+                "start": start,
+                "in": in_qty,
+                "transfers": transfers,
+                "trades": trades,
+                "out": out_qty,
+                "close": close,
+                "start_display": _qty_display(start),
+                "in_display": _qty_display(in_qty),
+                "transfers_display": _signed_qty(transfers),
+                "trades_display": _signed_qty(trades),
+                "out_display": _qty_display(out_qty),
+                "close_display": _qty_display(close),
+            }
+        )
+        totals["start"] += start
+        totals["in"] += in_qty
+        totals["transfers"] += transfers
+        totals["trades"] += trades
+        totals["out"] += out_qty
+        totals["close"] += close
+
+    return {
+        "rows": rows,
+        "row_count": len(rows),
+        "item_options": item_options,
+        "selected_item_id": selected_item_id,
+        "totals": {
+            "start_display": _qty_display(totals["start"]),
+            "in_display": _qty_display(totals["in"]),
+            "transfers_display": _signed_qty(totals["transfers"]),
+            "trades_display": _signed_qty(totals["trades"]),
+            "out_display": _qty_display(totals["out"]),
+            "close_display": _qty_display(totals["close"]),
+        },
+    }
 
 
 @transaction.atomic
@@ -166,7 +368,11 @@ def register_shelf_item(
         .filter(shop=shop, name__iexact=name)
         .first()
     )
-    if existing is not None and not existing.is_archived:
+    if (
+        existing is not None
+        and not existing.is_archived
+        and not existing.is_suspended
+    ):
         raise ValidationError(f"“{existing.name}” is already on the shelf list.")
     try:
         if existing is not None:
@@ -176,6 +382,7 @@ def register_shelf_item(
             existing.quantity = qty
             existing.low_stock_threshold = threshold
             existing.is_archived = False
+            existing.is_suspended = False
             update_fields = [
                 "name",
                 "category",
@@ -183,6 +390,7 @@ def register_shelf_item(
                 "quantity",
                 "low_stock_threshold",
                 "is_archived",
+                "is_suspended",
                 "updated_at",
             ]
             if image is not None:
@@ -235,7 +443,12 @@ def record_shelf_movement(
     amount = parse_shelf_qty(qty)
     item = (
         ShelfItem.objects.select_for_update()
-        .filter(pk=shelf_item_id, shop=shop, is_archived=False)
+        .filter(
+            pk=shelf_item_id,
+            shop=shop,
+            is_archived=False,
+            is_suspended=False,
+        )
         .first()
     )
     if item is None:
@@ -288,7 +501,8 @@ def record_shelf_movement(
             if reason_clean in {choice.value for choice in StockOutReason}
             and (
                 mode == ShelfStockMovementType.OUT
-                or reason_clean == StockOutReason.TRADE_IN
+                or reason_clean
+                in (StockOutReason.TRADE_IN, StockOutReason.TRANSFER)
             )
             else ""
         ),
@@ -324,6 +538,9 @@ def stock_in_shelf_item_by_name(
         .first()
     )
     registered = False
+    if item is not None and item.is_suspended:
+        item.is_suspended = False
+        item.save(update_fields=["is_suspended", "updated_at"])
     if item is None:
         item = register_shelf_item(
             shop=shop,
@@ -356,7 +573,12 @@ def stock_out_shelf_item_by_name(
         raise ValidationError("Enter the shelf item name.")
     item = (
         ShelfItem.objects.select_for_update()
-        .filter(shop=shop, name__iexact=clean, is_archived=False)
+        .filter(
+            shop=shop,
+            name__iexact=clean,
+            is_archived=False,
+            is_suspended=False,
+        )
         .first()
     )
     if item is None:
@@ -383,7 +605,12 @@ def transfer_shelf_item(
     """
     item = (
         ShelfItem.objects.select_for_update()
-        .filter(pk=shelf_item_id, shop=from_shop, is_archived=False)
+        .filter(
+            pk=shelf_item_id,
+            shop=from_shop,
+            is_archived=False,
+            is_suspended=False,
+        )
         .first()
     )
     if item is None:
@@ -396,6 +623,7 @@ def transfer_shelf_item(
         qty=amount,
         actor=actor,
         note=note or f"Sent to {to_shop.name}",
+        reason=StockOutReason.TRANSFER,
     )
     target = (
         ShelfItem.objects.filter(shop=to_shop, name__iexact=item.name).first()
@@ -409,6 +637,9 @@ def transfer_shelf_item(
             opening_qty=0,
             low_stock_threshold=item.low_stock_threshold,
         )
+    elif target.is_suspended:
+        target.is_suspended = False
+        target.save(update_fields=["is_suspended", "updated_at"])
     record_shelf_movement(
         shop=to_shop,
         shelf_item_id=target.pk,
@@ -416,6 +647,7 @@ def transfer_shelf_item(
         qty=amount,
         actor=actor,
         note=note or f"Received from {from_shop.name}",
+        reason=StockOutReason.TRANSFER,
     )
     return item, target
 
@@ -431,6 +663,82 @@ def archive_shelf_item(*, shop, shelf_item_id) -> ShelfItem:
         raise ValidationError("Shelf item not found for this shop.")
     item.is_archived = True
     item.save(update_fields=["is_archived", "updated_at"])
+    return item
+
+
+@transaction.atomic
+def update_shelf_item(
+    *,
+    shop,
+    shelf_item_id,
+    name,
+    category="",
+    unit="",
+    low_stock_threshold=None,
+    image=None,
+    clear_image=False,
+) -> ShelfItem:
+    """Edit a shelf item's details (not its quantity — use in/out for that)."""
+    item = (
+        ShelfItem.objects.select_for_update()
+        .filter(pk=shelf_item_id, shop=shop, is_archived=False)
+        .first()
+    )
+    if item is None:
+        raise ValidationError("Shelf item not found for this shop.")
+    name = " ".join(str(name or "").split()).upper()
+    if not name:
+        raise ValidationError("Enter the shelf item name.")
+    if len(name) > 200:
+        raise ValidationError("Shelf item name is too long.")
+    clash = (
+        ShelfItem.objects.filter(shop=shop, name__iexact=name)
+        .exclude(pk=item.pk)
+        .first()
+    )
+    if clash is not None:
+        raise ValidationError(f"“{clash.name}” is already on the shelf list.")
+    item.name = name
+    item.category = " ".join(str(category or "").split()).upper()[:120]
+    item.unit = " ".join(str(unit or "").split()).upper()[:40]
+    item.low_stock_threshold = parse_shelf_qty(
+        low_stock_threshold, allow_zero=True, label="Low stock alert"
+    )
+    update_fields = [
+        "name",
+        "category",
+        "unit",
+        "low_stock_threshold",
+        "updated_at",
+    ]
+    if image is not None:
+        item.image = image
+        update_fields.append("image")
+    elif clear_image and item.image:
+        item.image = None
+        update_fields.append("image")
+    item.save(update_fields=update_fields)
+    return item
+
+
+@transaction.atomic
+def set_shelf_item_suspended(
+    *, shop, shelf_item_id, suspended: bool
+) -> ShelfItem:
+    item = (
+        ShelfItem.objects.select_for_update()
+        .filter(pk=shelf_item_id, shop=shop, is_archived=False)
+        .first()
+    )
+    if item is None:
+        raise ValidationError("Shelf item not found for this shop.")
+    if item.is_suspended == suspended:
+        raise ValidationError(
+            f"“{item.name}” is already "
+            f"{'suspended' if suspended else 'on the shelf list'}."
+        )
+    item.is_suspended = suspended
+    item.save(update_fields=["is_suspended", "updated_at"])
     return item
 
 
@@ -541,6 +849,28 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
     if action == "archive":
         item = archive_shelf_item(shop=shop, shelf_item_id=data.get("shelf_item_id"))
         return f"“{item.name}” removed from the shelf list."
+    if action == "edit":
+        item = update_shelf_item(
+            shop=shop,
+            shelf_item_id=data.get("shelf_item_id"),
+            name=data.get("name"),
+            category=data.get("category"),
+            unit=data.get("unit"),
+            low_stock_threshold=data.get("low_stock_threshold"),
+            image=files.get("image") if files else None,
+            clear_image=(data.get("clear_image") or "").strip() in ("1", "on"),
+        )
+        return f"“{item.name}” updated."
+    if action == "suspend":
+        item = set_shelf_item_suspended(
+            shop=shop, shelf_item_id=data.get("shelf_item_id"), suspended=True
+        )
+        return f"“{item.name}” suspended — find it under Suspended items."
+    if action == "unsuspend":
+        item = set_shelf_item_suspended(
+            shop=shop, shelf_item_id=data.get("shelf_item_id"), suspended=False
+        )
+        return f"“{item.name}” is back on the shelf list."
     raise ValidationError("Unknown shelf action.")
 
 

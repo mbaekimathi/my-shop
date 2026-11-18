@@ -47,13 +47,14 @@
             <th scope="col" class="store-stock-col-qty">Last buy price</th>
             <th scope="col" class="store-stock-col-qty">On shelf</th>
             {% if not shelf_readonly %}<th scope="col" class="shelf-stock-col-change">Change</th>{% endif %}
+            {% if shelf_manage %}<th scope="col" class="shelf-stock-col-manage">Manage</th>{% endif %}
           </tr>
         </thead>
         <tbody>
           {% for row in shelf_items %}
           {% ifchanged row.category %}
           <tr class="store-stock-cat-row" data-store-cat-row>
-            <td colspan="{% if shelf_readonly %}3{% else %}4{% endif %}">{{ row.category|default:"Uncategorised" }}</td>
+            <td colspan="{% if shelf_readonly %}{% if shelf_manage %}4{% else %}3{% endif %}{% else %}{% if shelf_manage %}5{% else %}4{% endif %}{% endif %}">{{ row.category|default:"Uncategorised" }}</td>
           </tr>
           {% endifchanged %}
           <tr class="store-stock-row" data-shelf-row="{{ row.id }}" data-store-items-row data-search="{{ row.search_text }}">
@@ -113,6 +114,34 @@
               </form>
             </td>
             {% endif %}
+            {% if shelf_manage %}
+            <td class="shelf-stock-col-manage" data-label="Manage">
+              <div class="shelf-stock-manage">
+                <button
+                  type="button"
+                  class="store-stock-btn store-stock-btn--ghost shelf-edit-btn"
+                  data-shelf-edit
+                  data-item-id="{{ row.id }}"
+                  data-name="{{ row.name }}"
+                  data-category="{{ row.category }}"
+                  data-unit="{{ row.unit }}"
+                  data-threshold="{{ row.low_stock_threshold_display }}"
+                  data-image-url="{{ row.image_url }}"
+                  aria-label="Edit {{ row.name }}"
+                  title="Edit {{ row.name }}"
+                >
+                  <i data-lucide="pencil" aria-hidden="true"></i>
+                </button>
+                <form method="post" class="shelf-stock-archive" data-shelf-confirm="Suspend “{{ row.name }}”? It leaves the shelf list until you unsuspend it.">
+                  {% csrf_token %}{% if shelf_shop_field %}<input type="hidden" name="shop" value="{{ shop.pk }}">{% endif %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+                  <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
+                  <button type="submit" name="action" value="suspend" class="store-stock-btn store-stock-btn--ghost" aria-label="Suspend {{ row.name }}" title="Suspend {{ row.name }}">
+                    <i data-lucide="pause" aria-hidden="true"></i>
+                  </button>
+                </form>
+              </div>
+            </td>
+            {% endif %}
           </tr>
           {% endfor %}
         </tbody>
@@ -155,8 +184,8 @@
           <tr class="store-stock-row">
             <td data-label="When">{{ move.created_at|date:"d M Y H:i" }}</td>
             <td data-label="Shelf item">{{ move.shelf_item.name }}{% if move.note %} <span class="store-stock-item-cat-mobile">{{ move.note }}</span>{% endif %}</td>
-            <td data-label="Change">{{ move.get_movement_type_display }}</td>
-            <td class="store-stock-col-qty" data-label="Qty">{% if move.movement_type == "out" %}−{% elif move.movement_type == "in" %}+{% endif %}{{ move.quantity|floatformat:"-3" }}</td>
+            <td data-label="Change"><span class="store-stock-type-pill store-stock-type-pill--{{ move.movement_type }}">{{ move.get_movement_type_display }}</span></td>
+            <td class="store-stock-col-qty" data-label="Qty"><span class="shelf-delta shelf-delta--{{ move.movement_type }}">{% if move.movement_type == "out" %}−{% elif move.movement_type == "in" %}+{% endif %}{{ move.quantity|floatformat:"-3" }}</span></td>
             <td class="store-stock-col-qty" data-label="Left">{{ move.balance_after|floatformat:"-3" }}</td>
             <td data-label="Supplier">
               {% if move.supplier_name %}
@@ -302,6 +331,124 @@
       </form>
     </div>
   </div>
+
+{% if shelf_manage %}
+<div
+  class="workspace-modal stock-shelf-modal"
+  data-modal="shelf-edit"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-shelf-edit-close></div>
+  <div
+    class="workspace-modal-dialog stock-print-dialog shelf-register-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shelf-edit-title"
+  >
+    <div class="workspace-modal-head shelf-register-head">
+      <div class="shelf-register-head-copy">
+        <span class="shelf-register-icon" aria-hidden="true">
+          <i data-lucide="pencil"></i>
+        </span>
+        <div>
+          <h2 id="shelf-edit-title">Edit shelf item</h2>
+          <p class="stock-print-lead">Change the name, category, unit or low-stock alert. Quantities only move via Shelf stock in / out.</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-shelf-edit-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form method="post" enctype="multipart/form-data" class="store-stock-meta-grid shelf-stock-register" data-shelf-edit-form>
+      {% csrf_token %}{% if shelf_shop_field %}<input type="hidden" name="shop" value="{{ shop.pk }}">{% endif %}{% if shelf_needs_staff_id %}<input type="hidden" name="login_code" data-shelf-login-code>{% endif %}
+      <input type="hidden" name="action" value="edit">
+      <input type="hidden" name="shelf_item_id" data-shelf-edit-id>
+      <label class="store-stock-field">
+        <span>Name</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="package" aria-hidden="true"></i>
+          <input type="text" name="name" maxlength="200" required data-shelf-edit-name>
+        </div>
+      </label>
+      <div class="store-stock-field" data-shelf-category-field>
+        <span>Category <em>optional</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="tag" aria-hidden="true"></i>
+          <input
+            type="text"
+            name="category"
+            maxlength="120"
+            placeholder="e.g. Groceries"
+            autocomplete="off"
+            list="shelf-edit-category-source"
+            data-shelf-edit-category
+          >
+        </div>
+        <datalist id="shelf-edit-category-source">
+          {% for cat in shelf_categories %}<option value="{{ cat }}">{% endfor %}
+        </datalist>
+      </div>
+      <label class="store-stock-field">
+        <span>Unit</span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="ruler" aria-hidden="true"></i>
+          <select name="unit" data-shelf-edit-unit>
+            {% for unit in shelf_unit_choices %}
+            <option value="{{ unit }}">{{ unit }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </label>
+      <label class="store-stock-field">
+        <span>Low stock alert <em>optional</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="bell" aria-hidden="true"></i>
+          <input
+            type="number"
+            name="low_stock_threshold"
+            min="0"
+            step="any"
+            inputmode="decimal"
+            placeholder="0"
+            data-shelf-edit-threshold
+          >
+        </div>
+      </label>
+      <div class="store-stock-field store-stock-field--full">
+        <span>Replace image <em>optional — leave blank to keep the current one</em></span>
+        <div class="store-stock-input-wrap">
+          <i data-lucide="image" aria-hidden="true"></i>
+          <input
+            type="file"
+            name="image"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            aria-label="New shelf item image"
+          >
+        </div>
+        <label class="shelf-edit-clear" data-shelf-edit-clear-wrap hidden>
+          <input type="checkbox" name="clear_image" value="1">
+          <img data-shelf-edit-thumb alt="" width="28" height="28">
+          <span>Remove the current image</span>
+        </label>
+      </div>
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-shelf-edit-close>Cancel</button>
+        <button type="submit" class="store-stock-btn store-stock-btn--primary shelf-register-submit">
+          <i data-lucide="pencil" aria-hidden="true"></i>
+          Save changes
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 <script>
 (function () {
   var root = document.querySelector("[data-shelf-stock]");
@@ -363,5 +510,74 @@
   if (staff) {
     staff.addEventListener("input", function () { staff.setCustomValidity(""); });
   }
+
+  // Edit shelf item popup (company-store-manager page only).
+  var editModal = document.querySelector("[data-modal='shelf-edit']");
+  var editForm = editModal && editModal.querySelector("[data-shelf-edit-form]");
+  if (editModal && editForm) {
+    var closeEdit = function () {
+      editModal.hidden = true;
+      editModal.setAttribute("aria-hidden", "true");
+      var anyOpen = document.querySelector(".workspace-modal:not([hidden])");
+      document.body.classList.toggle("workspace-modal-open", Boolean(anyOpen));
+    };
+    document.querySelectorAll("[data-shelf-edit]").forEach(function (btn) {
+      btn.addEventListener("click", function (event) {
+        event.preventDefault();
+        editForm.reset();
+        editForm.querySelector("[data-shelf-edit-id]").value =
+          btn.getAttribute("data-item-id") || "";
+        editForm.querySelector("[data-shelf-edit-name]").value =
+          btn.getAttribute("data-name") || "";
+        editForm.querySelector("[data-shelf-edit-category]").value =
+          btn.getAttribute("data-category") || "";
+        var unitSel = editForm.querySelector("[data-shelf-edit-unit]");
+        var unit = btn.getAttribute("data-unit") || "";
+        if (
+          unit &&
+          !Array.prototype.some.call(unitSel.options, function (opt) {
+            return opt.value === unit;
+          })
+        ) {
+          var extra = document.createElement("option");
+          extra.value = unit;
+          extra.textContent = unit;
+          unitSel.appendChild(extra);
+        }
+        unitSel.value = unit;
+        editForm.querySelector("[data-shelf-edit-threshold]").value =
+          btn.getAttribute("data-threshold") || "";
+        var clearWrap = editForm.querySelector("[data-shelf-edit-clear-wrap]");
+        var thumb = editForm.querySelector("[data-shelf-edit-thumb]");
+        var imageUrl = btn.getAttribute("data-image-url") || "";
+        if (clearWrap && thumb) {
+          clearWrap.hidden = !imageUrl;
+          if (imageUrl) thumb.src = imageUrl;
+          else thumb.removeAttribute("src");
+        }
+        editModal.hidden = false;
+        editModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("workspace-modal-open");
+        try {
+          window.lucide && window.lucide.createIcons && window.lucide.createIcons();
+        } catch (_err) {
+          /* ignore */
+        }
+        window.setTimeout(function () {
+          editForm.querySelector("[data-shelf-edit-name]").focus();
+        }, 40);
+      });
+    });
+    editModal.querySelectorAll("[data-shelf-edit-close]").forEach(function (el) {
+      el.addEventListener("click", function (event) {
+        event.preventDefault();
+        closeEdit();
+      });
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !editModal.hidden) closeEdit();
+    });
+  }
+
 })();
 </script>

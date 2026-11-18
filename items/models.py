@@ -1014,6 +1014,7 @@ class ShelfItem(models.Model):
         upload_to=shelf_item_image_path, blank=True, null=True
     )
     is_archived = models.BooleanField(default=False, db_index=True)
+    is_suspended = models.BooleanField(default=False, db_index=True)
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
         on_delete=models.SET_NULL,

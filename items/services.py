@@ -2651,7 +2651,15 @@ def actionable_shops_for_profile(profile):
 
     base = Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
     if profile.role in SHOP_ASSIGNABLE_ROLES:
-        return list(base.filter(assigned_employees=profile))
+        assigned = list(base.filter(assigned_employees=profile))
+        if assigned:
+            return assigned
+        # Role-picker acting shop — a session-only stand-in allocation for
+        # multi-role staff acting in a shop-scoped role with no assignment.
+        acting = getattr(profile, "acting_shop_id", None)
+        if acting:
+            return list(base.filter(pk=acting))
+        return assigned
     return list(base)
 
 

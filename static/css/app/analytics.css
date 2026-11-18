@@ -380,6 +380,14 @@
   font-weight: 600;
 }
 
+.ax-col-bar {
+  fill: color-mix(in srgb, var(--teal) 82%, var(--surface));
+}
+
+.ax-col-bar:hover {
+  fill: var(--teal);
+}
+
 .ax-chart-legend .is-expense::before,
 .ax-chart-legend .is-payments::before {
   background: var(--accent-deep);

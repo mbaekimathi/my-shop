@@ -47,7 +47,7 @@ def _make_profile(employee_id, role, password):
 class LedgerMovementPageTests(TestCase):
     def setUp(self):
         self.manager = _make_profile(
-            "830055", EmployeeRole.STORE_MANAGER, "mgr-pass"
+            "830055", EmployeeRole.COMPANY_STORE_MANAGER, "mgr-pass"
         )
         self.support = _make_profile(
             "840055", EmployeeRole.IT_SUPPORT, "it-pass"

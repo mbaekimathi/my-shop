@@ -30,6 +30,39 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - `ShelfItem` (per shop, name/unit/qty, no price) is never sold at the POS and
   never appears on the shop floor — shelf stock is managed only from Stock
   Management / the shop's Shelf stock page.
+- Shelf items can be **edited** (name/category/unit/low-stock alert/image —
+  qty still only moves via in/out) and **suspended** (`ShelfItem.is_suspended`)
+  from the Store Manager Shelf stock page's Manage column
+  (`shelf_manage` + `data-modal="shelf-edit"` in
+  `shops/partials/shelf_stock_body.html`). Suspended items drop off every list
+  and can't stock in/out/trade/transfer; `?mode=suspended` on
+  `store_shelf_stock` (sidebar "Suspended items") lists them with an unsuspend
+  action. `update_shelf_item` / `set_shelf_item_suspended` /
+  `list_suspended_shelf_items` live in `items/shelf_stock_services.py`;
+  `apply_shelf_action` handles `edit` / `suspend` / `unsuspend`. Re-registering
+  the same name or a stock-in-by-name unsuspends the item.
+- **Shelf stock audits** live on their own Store Manager page — `?mode=audits`
+  on `store_shelf_stock` (sidebar "Shelf stock audits",
+  `shops/partials/shelf_stock_audits.html`, `shelf_audits` +
+  `shelf_audit_movements`) — every `ShelfStockMovement` for the filtered
+  period (`?range=day|period|month|year` + `date`/`date_from`/`date_to`/
+  `month`/`year`, parsed via `items.views._report_range_bounds`, listed by
+  `shelf_movements_in_period`). The Store Manager Shelf stock page shows only
+  the "On the shelf" list — only the shop floor page keeps the
+  "Recent changes" panel (`shelf_movements`, last 30).
+- The **Shelf stock report** (`?mode=report` on `store_shelf_stock`) is the
+  period report built by `build_shelf_stock_report`
+  (`items/shelf_stock_services.py`): per item it shows Start / In /
+  Transfers / Trades / Out / Close — start and close are each item's
+  `balance_after` at the period bounds, registers count as "in", and
+  transfers/trades show net signed qty (received−sent, trade-in−trade-out).
+  Same range filters as audits plus an `?item=<pk>` picker; `?download=1`
+  streams a branded PDF via `build_stock_report_pdf` (`_shelf_report_download`
+  in `employees/store_stock_views.py`). `transfer_shelf_item` stamps
+  `reason='transfer'` on both legs so the Transfers column works (older
+  legs fall back to the auto "Sent to"/"Received from" note); IN movements
+  may carry `trade_in`/`transfer` reasons, OUT movements any
+  `StockOutReason`.
 - The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
   sellable items only; shelf-only mode returns an empty catalog.
 - Per-item sale deduction: `Item.deduct_stock_on_sale` — when off,
@@ -99,12 +132,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `shops/services.py`); `as_requirements_dict()` / `as_shelf_requirements_dict()`
   feed the `data-stock-requirements` JSON the bulk JS reads.
 - Enforcement: shop-floor item movements in `items/services.py`; central
-  Store Manager stock in `items/store_stock_services.py`
+  Company Store Manager stock in `items/store_stock_services.py`
   (`parse_store_stock_qty_lines` / `parse_store_trade_lines` `require_price`,
   `parse_supplier_payment_details` / `parse_stock_out_details`
   `field_prefix="shelf_"` for shelf posts); shelf single-line/bulk in
-  `items/shelf_stock_services.py` (`_shelf_requirement`). Store Manager shelf
-  pages enforce the `shelf_*` flags; trade-in honours the matching
+  `items/shelf_stock_services.py` (`_shelf_requirement`). Company Store Manager
+  shelf pages enforce the `shelf_*` flags; trade-in honours the matching
   buying-price flag via a per-line `price_<id>` unit value.
 - Tests that write `CompanyStockSettings` directly must call
   `_invalidate_stock_settings_cache()` afterwards — the cached row survives
@@ -396,6 +429,24 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   may not modify Super Admin accounts (edit/suspend/delete). The same rules are
   enforced for queued offline syncs in `sync_handlers._sync_update_employee_access`.
 
+## Store manager roles
+- `company_store_manager` (**Company Store Manager**, home `/company-store-manager/`)
+  is the former `store_manager` role: company-wide (`COMPANY_WIDE_SHOP_ROLES`),
+  sees every active shop without allocation, and owns the central-store pages
+  (`/company-store-manager/…`, `store_stock_views.py`, gated by
+  `role_required(COMPANY_STORE_MANAGER)` — company only).
+- `shop_store_manager` (**Shop Store Manager**, home `/shop-store-manager/`) is
+  the shop-linked variant: in `SHOP_ASSIGNABLE_ROLES`, so it works only inside
+  allocated `assigned_shops` — `actionable_shops_for_profile`, floor access, and
+  the allocation-gated stock-management / analytics modules all scope to the
+  delegated shops. No central-store access.
+- Both share the `STORE_MANAGER_ALLOWED_KEYS` default allow-list via
+  `STORE_MANAGER_ROLES` (`employees/module_permissions.py`); explicit HR
+  permission rows still override.
+- Data migration `employees/migrations/0017_*` rewrites `role` +
+  `extra_roles` CSV `store_manager` → `company_store_manager` (widens the
+  MySQL ENUM first, then shrinks to the final set).
+
 ## Multi-role employees
 - `EmployeeProfile.role` stays the **primary** role; `extra_roles` is a CSV
   CharField of additional granted roles (helpers `split_extra_roles` /
@@ -418,9 +469,23 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   role auto-drops it from `extra_roles`, and `assigned_shops` are only
   cleared when NO granted role is shop-scoped (`SHOP_ALLOCATION_ROLES`).
   Non-super-admin actors cannot grant `super_admin` as an extra role either.
+- **Acting shop (unallocated shop-scoped picks)**: when the picked role is
+  shop-scoped (`SHOP_ASSIGNABLE_ROLES`) and the employee has no allocated
+  active shops, the role picker shows a second "Choose a shop" step; the pick
+  is stored in `employee_acting_shop` (`access.SESSION_ACTING_SHOP_KEY`) and
+  exposed as `profile.acting_shop_id` (memory only) by `_apply_acting_shop`.
+  Consumers treat it as a stand-in allocation **only while the profile has no
+  active assignments**: `actionable_shops_for_profile` (items/services.py),
+  `get_shop_for_profile` + `profile_allocated_to_shop` (shops/session.py) —
+  so dashboard sidebars, `employee_may_any` analytics/stock gating, and
+  allocation-level endpoints (`_require_allocated_shop_access`,
+  `_require_shop_read_access`) work for the acting shop. Picking a
+  non-shop-scoped role (or logout) clears the key; staff-code authorisations
+  load fresh profiles so they never see it.
 - `chat` sessions share the key: `chat/auth.py::current_employee` honours
   `employee_active_role` when it is one of the employee's granted roles.
-- Tests: `employees/tests_multi_role.py`.
+- Tests: `employees/tests_multi_role.py` (`ActingShopRolePickTests` covers the
+  shop step).
 
 ## Receipt return / cancel permission
 - Cancel IS a return: `cancel_pending_shop_receipt` restocks the remaining

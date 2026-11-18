@@ -815,7 +815,11 @@ def _handle_hr_management_post(request, profile, page_number):
         )
 
         if target.user_id == actor.user_id:
-            if form_data["role"] != EmployeeRole.SUPER_ADMIN:
+            if (
+                target.role == EmployeeRole.SUPER_ADMIN
+                and EmployeeRole.SUPER_ADMIN
+                not in {form_data["role"], *(form_data.get("extra_roles") or [])}
+            ):
                 form_errors.append("You cannot remove your own Super Admin role.")
             if form_data["employee_id"] != actor.employee_id:
                 form_errors.append("You cannot change your own employee ID.")

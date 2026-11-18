@@ -1999,6 +1999,25 @@ a.hr-perm-card:hover .hr-perm-card-arrow {
   width: auto;
 }
 
+.role-extras-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.55rem 0.9rem;
+  margin-top: 0.3rem;
+}
+
+.role-extras-option {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+}
+
+.role-extras-option .perm-switch-state {
+  text-align: left;
+}
+
 
 .workspace-modal-form .field input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
 .workspace-modal-form .field select {

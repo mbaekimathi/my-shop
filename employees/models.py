@@ -20,7 +20,8 @@ class EmployeeRole(models.TextChoices):
     SUPER_ADMIN = "super_admin", "Super Admin"
     COMPANY_MANAGER = "company_manager", "Company Manager"
     SHOP_MANAGER = "shop_manager", "Shop Manager"
-    STORE_MANAGER = "store_manager", "Store Manager"
+    COMPANY_STORE_MANAGER = "company_store_manager", "Company Store Manager"
+    SHOP_STORE_MANAGER = "shop_store_manager", "Shop Store Manager"
     SHOP_CASHIER = "shop_cashier", "Shop Cashier"
     IT_SUPPORT = "it_support", "IT Support"
     RIDER = "rider", "Rider"
@@ -31,6 +32,7 @@ SHOP_ASSIGNABLE_ROLES = frozenset(
     {
         EmployeeRole.EMPLOYEE,
         EmployeeRole.SHOP_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
         EmployeeRole.SHOP_CASHIER,
     }
 )
@@ -48,7 +50,8 @@ FULL_STOCK_WORKFLOW_ROLES = frozenset(
     {
         EmployeeRole.SUPER_ADMIN,
         EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.STORE_MANAGER,
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
         EmployeeRole.IT_SUPPORT,
     }
 )
@@ -58,7 +61,7 @@ COMPANY_WIDE_SHOP_ROLES = frozenset(
     {
         EmployeeRole.SUPER_ADMIN,
         EmployeeRole.COMPANY_MANAGER,
-        EmployeeRole.STORE_MANAGER,
+        EmployeeRole.COMPANY_STORE_MANAGER,
         EmployeeRole.IT_SUPPORT,
     }
 )
@@ -158,7 +161,10 @@ class EmployeeProfile(models.Model):
 
     def role_values(self) -> list:
         """Every role this employee may act as — primary plus extras."""
-        granted = {self.role, *self.extra_role_list()}
+        # ``db_role`` is the stored primary; ``role`` may be the session's
+        # swapped-in active role (see access._apply_active_role).
+        primary = getattr(self, "db_role", None) or self.role
+        granted = {primary, *self.extra_role_list()}
         return [value for value in EmployeeRole.values if value in granted]
 
     @property

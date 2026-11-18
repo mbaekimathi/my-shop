@@ -73,7 +73,8 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
         "set_role_employee",
         "set_role_shop_cashier",
         "set_role_shop_manager",
-        "set_role_store_manager",
+        "set_role_company_store_manager",
+        "set_role_shop_store_manager",
         "set_role_company_manager",
         "set_role_it_support",
         "set_role_rider",
@@ -91,8 +92,9 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
             {
                 "description": (
                     "Choose role and status from the lists below. "
-                    "Delegate one or more shops for Employee, Shop Manager, and Shop Cashier. "
-                    "Store Manager sees all shops without allocation."
+                    "Delegate one or more shops for Employee, Shop Manager, "
+                    "Shop Store Manager, and Shop Cashier. "
+                    "Company Store Manager sees all shops without allocation."
                 ),
                 "fields": ("role", "status", "assigned_shops"),
             },
@@ -161,10 +163,19 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
         updated = queryset.update(role=EmployeeRole.SHOP_MANAGER)
         self.message_user(request, f"{updated} employee(s) set to Shop Manager.")
 
-    @admin.action(description="Set role → Store Manager")
-    def set_role_store_manager(self, request, queryset):
-        updated = queryset.update(role=EmployeeRole.STORE_MANAGER)
-        self.message_user(request, f"{updated} employee(s) set to Store Manager.")
+    @admin.action(description="Set role → Company Store Manager")
+    def set_role_company_store_manager(self, request, queryset):
+        updated = queryset.update(role=EmployeeRole.COMPANY_STORE_MANAGER)
+        self.message_user(
+            request, f"{updated} employee(s) set to Company Store Manager."
+        )
+
+    @admin.action(description="Set role → Shop Store Manager")
+    def set_role_shop_store_manager(self, request, queryset):
+        updated = queryset.update(role=EmployeeRole.SHOP_STORE_MANAGER)
+        self.message_user(
+            request, f"{updated} employee(s) set to Shop Store Manager."
+        )
 
     @admin.action(description="Set role → Company Manager")
     def set_role_company_manager(self, request, queryset):

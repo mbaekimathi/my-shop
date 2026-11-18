@@ -4875,7 +4875,7 @@ a.wa-fab { text-decoration: none; }
   max-width: 22rem;
 }
 
-/* ---- Store Manager workspace (WhatsApp dashboard + tools) ---- */
+/* ---- Company Store Manager workspace (WhatsApp dashboard + tools) ---- */
 .sm-app .wa-app__shell {
   grid-template-columns: 1fr;
 }

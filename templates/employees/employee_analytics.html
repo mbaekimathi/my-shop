@@ -15,7 +15,7 @@
       <div class="stock-stats">
         <p class="stock-stat">
           <strong>{{ stats.sales.amount_label }}</strong>
-          <span>all-time sales</span>
+          <span>{{ stats.period_label }}</span>
         </p>
         <p class="stock-stat">
           <strong>{{ stats.receipts_total }}</strong>
@@ -23,13 +23,20 @@
         </p>
       </div>
     </div>
+    <form class="ax-filters" method="get" data-analytics-filters>
+      {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=False %}
+      <button type="submit" class="ax-apply">Apply</button>
+    </form>
   </header>
 
   <div class="workspace-grid workspace-grid--profile">
     <article class="workspace-card workspace-card--accent">
       <i data-lucide="banknote" aria-hidden="true"></i>
       <h3>{{ stats.sales.amount_label }}</h3>
-      <p>Sales · {{ stats.sales.docs }} sale{{ stats.sales.docs|pluralize }}</p>
+      <p>
+        Sales · {{ stats.sales.docs }} sale{{ stats.sales.docs|pluralize }}
+        {% if stats.sales_hint %}· <span class="ax-trend is-{{ stats.sales_hint_tone }}">{{ stats.sales_hint }}</span>{% endif %}
+      </p>
     </article>
     <article class="workspace-card workspace-card--status-pending">
       <i data-lucide="clock-3" aria-hidden="true"></i>
@@ -60,9 +67,9 @@
       <div>
         <h2>Trends</h2>
         <p>
-          Last 12 months
-          {% if stats.peak_month and stats.peak_month.docs %}
-          · best: {{ stats.peak_month.label }} ({{ stats.peak_month.amount_label }})
+          {{ stats.trend_subtitle }}
+          {% if stats.peak and stats.peak.docs %}
+          · best: {{ stats.peak.label }} ({{ stats.peak.amount_label }})
           {% endif %}
         </p>
       </div>
@@ -71,8 +78,8 @@
   <div class="ax-charts ax-charts--trend" aria-label="Visual trends">
     <section class="ax-chart-card ax-chart-card--wide">
       <header class="ax-chart-head">
-        <h3>Sales by month</h3>
-        <span>Last 12 months</span>
+        <h3>{{ stats.trend_title }}</h3>
+        <span>{{ stats.trend_subtitle }}</span>
       </header>
       {% if stats.trend_line and not stats.trend_line.empty %}
       <div class="ax-line-wrap">
@@ -80,7 +87,7 @@
           class="ax-line-chart"
           viewBox="0 0 {{ stats.trend_line.width }} {{ stats.trend_line.height }}"
           role="img"
-          aria-label="Sales by month"
+          aria-label="{{ stats.trend_title }}"
         >
           <path class="ax-line-area" d="{{ stats.trend_line.sales_area }}"></path>
           <polyline
@@ -108,47 +115,55 @@
         </div>
       </div>
       {% else %}
-      <p class="ax-empty">No sales in the last 12 months yet.</p>
+      <p class="ax-empty">No sales in this period yet.</p>
       {% endif %}
     </section>
 
     <section class="ax-chart-card">
       <header class="ax-chart-head">
-        <h3>Receipt mix</h3>
-        <span>By status</span>
+        <h3>Time trend</h3>
+        <span>Receipts · {{ stats.trend_subtitle }}</span>
       </header>
-      {% if stats.status_donut.slices %}
-      <div class="ax-donut-wrap">
-        <div
-          class="ax-donut ax-donut--status"
-          style="background: conic-gradient({{ stats.status_donut.gradient }})"
+      {% if stats.time_columns and not stats.time_columns.empty %}
+      <div class="ax-line-wrap">
+        <svg
+          class="ax-line-chart"
+          viewBox="0 0 {{ stats.time_columns.width }} {{ stats.time_columns.height }}"
           role="img"
-          aria-label="Receipts by status {{ stats.status_donut.total }}"
+          aria-label="Receipts over time"
         >
-          <div class="ax-donut-hole">
-            <strong>{{ stats.receipts_total }}</strong>
-            <span>Receipts</span>
-          </div>
-        </div>
-        <ul class="ax-donut-legend ax-donut-legend--status">
-          {% for slice in stats.status_donut.slices %}
-          <li class="is-{{ slice.tone }}">
-            <span>{{ slice.label }}</span>
-            <strong>{{ slice.display }}</strong>
-            <em>{{ slice.pct }}</em>
-          </li>
+          {% for bar in stats.time_columns.bars %}
+          <rect
+            class="ax-col-bar"
+            x="{{ bar.x }}"
+            y="{{ bar.y }}"
+            width="{{ bar.w }}"
+            height="{{ bar.h }}"
+            rx="2"
+          ><title>{{ bar.label }} — {{ bar.display }} receipts</title></rect>
           {% endfor %}
-        </ul>
+          {% for label in stats.time_columns.labels %}
+          <text
+            class="ax-line-label"
+            x="{{ label.x }}"
+            y="{{ stats.time_columns.label_y }}"
+            text-anchor="middle"
+          >{{ label.text }}</text>
+          {% endfor %}
+        </svg>
+        <div class="ax-chart-legend">
+          <span class="is-now">Receipts</span>
+        </div>
       </div>
       {% else %}
-      <p class="ax-empty">No receipts yet.</p>
+      <p class="ax-empty">No receipts in this period yet.</p>
       {% endif %}
     </section>
 
     <section class="ax-chart-card">
       <header class="ax-chart-head">
-        <h3>Top items</h3>
-        <span>By revenue</span>
+        <h3>Items trend</h3>
+        <span>Top by revenue</span>
       </header>
       {% if stats.top_bars %}
       <ul class="ax-bars">
@@ -173,4 +188,27 @@
   </div>
 </section>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    document.querySelectorAll("[data-analytics-filters]").forEach((form) => {
+      const rangeSelect = form.querySelector("[data-analytics-range]");
+      const rangeFields = [...form.querySelectorAll("[data-range-field]")];
+      const syncRange = () => {
+        const range = rangeSelect?.value || "day";
+        rangeFields.forEach((field) => {
+          const match = field.getAttribute("data-range-field") === range;
+          field.hidden = !match;
+          field.disabled = !match;
+          field.required = match;
+        });
+      };
+      rangeSelect?.addEventListener("change", syncRange);
+      syncRange();
+    });
+  })();
+</script>
 {% endblock %}

@@ -2421,7 +2421,7 @@ class StoreManagerStockTests(ChatTestCase):
         )
         insert_employee_profile(
             pk=20, employee_id="300001", user_id=self.manager_user.pk,
-            role="store_manager", status="active",
+            role="company_store_manager", status="active",
         )
         insert_employee_profile(
             pk=21, employee_id="300002", user_id=self.helper_user.pk,
@@ -2455,7 +2455,7 @@ class StoreManagerStockTests(ChatTestCase):
         resp = self.login_store_manager()
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(
-            resp["Location"], reverse("chat:role_home", args=["store-manager"])
+            resp["Location"], reverse("chat:role_home", args=["company-store-manager"])
         )
         page = self.client.get(resp["Location"])
         self.assertEqual(page.status_code, 200)
@@ -2889,7 +2889,7 @@ class ChatPermissionGateTests(ChatTestCase):
         assign_employee_shop(employee_pk=2, shop_id=self.shop_a.pk)
         insert_employee_profile(
             pk=3, employee_id="300001", user_id=None,
-            role="store_manager", status="active",
+            role="company_store_manager", status="active",
         )
         self.item = Item.objects.create(
             category="Grocery", name="Perm Beans",

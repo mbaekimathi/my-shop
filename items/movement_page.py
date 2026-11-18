@@ -5,10 +5,10 @@ Renders the same movements UX as the stock-management movements page
 flow through the shop-floor ``StockMovement`` pipeline:
 
 - ``"shelf"``: :class:`ShelfStockMovement` / :class:`ShelfItem` — per-shop
-  shelf stock (used by the store-manager shelf page and the
+  shelf stock (used by the company-store-manager shelf page and the
   stock-management Shelf stock tab).
 - ``"store"``: :class:`StoreStockMovement` / :class:`Item` — the central
-  store item ledger (store-manager Item stock movement page).
+  store item ledger (company-store-manager Item stock movement page).
 
 The page mirrors ``items/movement_report.html``: Time range, View by
 (Period summary / Timeline), Type multi-filter, item scope (All /

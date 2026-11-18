@@ -211,7 +211,7 @@ class StoreStockItemToggleViewTests(TestCase):
             phone_country_code="+254",
             phone_number="700007712",
             status=EmployeeStatus.ACTIVE,
-            role=EmployeeRole.STORE_MANAGER,
+            role=EmployeeRole.COMPANY_STORE_MANAGER,
         )
         self.item = Item.objects.create(
             name="Toggle Flour",
@@ -225,7 +225,7 @@ class StoreStockItemToggleViewTests(TestCase):
     def test_toggle_endpoint_updates_flag(self):
         self.client.login(username="770012", password="pass")
         response = self.client.post(
-            "/store-manager/item-stock/toggle/",
+            "/company-store-manager/item-stock/toggle/",
             {"item_id": self.item.pk, "enabled": "0"},
         )
         self.assertEqual(response.status_code, 200)
@@ -236,7 +236,7 @@ class StoreStockItemToggleViewTests(TestCase):
         self.assertFalse(self.item.stock_count_enabled)
 
         response = self.client.post(
-            "/store-manager/item-stock/toggle/",
+            "/company-store-manager/item-stock/toggle/",
             {"item_id": self.item.pk, "enabled": "1"},
         )
         self.assertEqual(response.status_code, 200)
@@ -246,7 +246,7 @@ class StoreStockItemToggleViewTests(TestCase):
     def test_toggle_endpoint_rejects_bad_item(self):
         self.client.login(username="770012", password="pass")
         response = self.client.post(
-            "/store-manager/item-stock/toggle/",
+            "/company-store-manager/item-stock/toggle/",
             {"item_id": "999999", "enabled": "0"},
         )
         self.assertEqual(response.status_code, 400)

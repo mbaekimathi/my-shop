@@ -2,14 +2,17 @@
 
 Semantics match the permissions UI:
 - Missing row ⇒ allowed (default allow) for most roles
-- Store Manager missing row ⇒ store-ops allow-list only (default deny elsewhere)
+- Store manager roles (company / shop) missing row ⇒ store-ops allow-list
+  only (default deny elsewhere)
 - Rider missing row ⇒ deny all modules (empty dashboard for now)
 - Explicit allowed=True / allowed=False always wins over role defaults
 - Super Admin always allowed (cannot be locked out of the system)
 - HR staff always keep access to hr-management/permissions so they can recover
-- Shop-scoped roles (employee / shop_manager / shop_cashier)
-  must be allocated to at least one active shop to open stock-management or analytics
-- Store Manager sees all shops (not shop-allocation scoped) but is limited to
+- Shop-scoped roles (employee / shop_manager / shop_store_manager /
+  shop_cashier) must be allocated to at least one active shop to open
+  stock-management or analytics
+- Company Store Manager sees all shops (not shop-allocation scoped); Shop
+  Store Manager is limited to allocated shops — both are limited to
   store-ops modules via STORE_MANAGER_ALLOWED_KEYS
 """
 
@@ -36,7 +39,8 @@ NO_SHOP_ALLOCATION_MESSAGE = (
     "You must be allocated to at least one shop to use this module."
 )
 
-# Store Manager: only store / floor ops. Explicit HR rows still override.
+# Store managers (company + shop): only store / floor ops.
+# Explicit HR rows still override.
 STORE_MANAGER_ALLOWED_KEYS = frozenset(
     {
         # Item Management — company catalog.
@@ -80,8 +84,16 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
     }
 )
 
-# Home / sidebar module shortcuts for Store Manager (empty for now).
+# Home / sidebar module shortcuts for Company Store Manager (empty for now).
 STORE_MANAGER_DASHBOARD_MODULES = frozenset()
+
+# Roles sharing the store-ops allow-list as their permission default.
+STORE_MANAGER_ROLES = frozenset(
+    {
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
+    }
+)
 
 
 def role_default_permission(profile, module_slug: str, submodule_slug: str) -> bool:
@@ -90,7 +102,7 @@ def role_default_permission(profile, module_slug: str, submodule_slug: str) -> b
     if role == EmployeeRole.RIDER:
         # Rider dashboard is empty for now — no modules by default.
         return False
-    if role == EmployeeRole.STORE_MANAGER:
+    if role in STORE_MANAGER_ROLES:
         return (module_slug, submodule_slug) in STORE_MANAGER_ALLOWED_KEYS
     return True
 

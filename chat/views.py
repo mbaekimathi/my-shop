@@ -24,7 +24,7 @@ from . import store_stock as store_stock_ops
 from .auth import (
     api_rider_required,
     api_shop_required,
-    api_store_manager_required,
+    api_company_store_manager_required,
     authenticate_employee,
     authenticate_shop,
     can_view_all_shops,
@@ -458,7 +458,7 @@ def role_home_view(request, slug):
         "role_icon": role_icon(role),
         "role_slug": expected,
     }
-    if role == "store_manager":
+    if role == "company_store_manager":
         context.update(
             {
                 "items_url": reverse("chat:api_store_items"),
@@ -578,10 +578,10 @@ def api_rider_complete(request, delivery_id: int):
     )
 
 
-@api_store_manager_required
+@api_company_store_manager_required
 @require_GET
 def api_store_items(request):
-    """Item typeahead + central-store qty for the Store Manager cart."""
+    """Item typeahead + central-store qty for the Company Store Manager cart."""
     denied = _perm_denied(
         request.chat_employee["id"],
         ("stock-management", "view"),
@@ -599,7 +599,7 @@ def api_store_items(request):
     )
 
 
-@api_store_manager_required
+@api_company_store_manager_required
 @require_GET
 def api_store_employees(request):
     """Active employee typeahead for delivered-by / received-by."""
@@ -622,7 +622,7 @@ def api_store_employees(request):
     )
 
 
-@api_store_manager_required
+@api_company_store_manager_required
 @require_POST
 def api_store_stock_in(request):
     """Record qty into the central store (does not change shop floor stock)."""
@@ -665,7 +665,7 @@ def api_store_stock_in(request):
     )
 
 
-@api_store_manager_required
+@api_company_store_manager_required
 @require_POST
 def api_store_stock_out(request):
     """Record qty leaving the central store (must not exceed on-hand)."""
@@ -706,7 +706,7 @@ def api_store_stock_out(request):
     )
 
 
-@api_store_manager_required
+@api_company_store_manager_required
 @require_POST
 def api_store_trade(request):
     """One-way central-store trade with a person (trade in / trade out)."""
@@ -758,7 +758,7 @@ def api_store_trade(request):
     )
 
 
-@api_store_manager_required
+@api_company_store_manager_required
 @require_GET
 def api_store_feed(request):
     """WhatsApp-style reference feed of recent store stock in/out cards."""
@@ -779,7 +779,7 @@ def api_store_feed(request):
     )
 
 
-@api_store_manager_required
+@api_company_store_manager_required
 @require_GET
 def api_store_report(request):
     """Filtered central-store movement ledger."""

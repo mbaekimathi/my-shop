@@ -29,6 +29,7 @@
         class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}{% if item.live_badge and item.badge %} has-live-badge{% endif %}"
         href="{{ item.href }}"
         data-workspace-nav
+        {% if item.new_tab %}target="_blank" rel="noopener"{% endif %}
         {% if item.nav_key %}data-nav-key="{{ item.nav_key }}"{% endif %}
         {% if item.nav_key == "stock-transfers" %}data-stock-transfer-nav{% endif %}
         {% if item.nav_key == "hr-approvals" %}data-hr-approvals-nav{% endif %}

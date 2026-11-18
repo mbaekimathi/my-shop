@@ -1389,6 +1389,28 @@ class DashboardSidebarLinkTests(TestCase):
         )
         self.assertIn("tab=shelf", shelf["href"])
 
+    def test_shop_manager_dashboard_matches_it_support_links(self):
+        it_labels = [
+            item["label"]
+            for item in sidebar_for_role_dashboard(EmployeeRole.IT_SUPPORT)[
+                "primary"
+            ]
+        ]
+        manager_sidebar = sidebar_for_role_dashboard(EmployeeRole.SHOP_MANAGER)
+        manager_labels = [item["label"] for item in manager_sidebar["primary"]]
+        self.assertEqual(manager_labels, it_labels)
+        self.assertNotIn("Stock Management", manager_labels)
+        self.assertNotIn("Communications", manager_labels)
+        self.assertIn("Item stock management", manager_labels)
+        self.assertIn("Marketing links", manager_labels)
+        self.assertIn("Chatbot", manager_labels)
+        item = next(
+            item
+            for item in manager_sidebar["primary"]
+            if item["label"] == "Item stock management"
+        )
+        self.assertIn("/shop-manager/stock-management/", item["href"])
+
     def test_it_support_dashboard_hides_item_link_in_shelf_only_mode(self):
         from shops.models import Shop
         from shops.services import set_company_pos_setting
@@ -3217,6 +3239,27 @@ class MarketingLinksPageTests(TestCase):
         self.assertEqual(shop["variants"][0]["key"], "local")
         self.assertTrue(shop["variants"][0]["qr"].startswith("data:image/png;base64,"))
 
+    def test_shop_manager_can_open_marketing_links(self):
+        user = User.objects.create_user(
+            username="850012",
+            password="mkt-mgr-pass",
+            email="mgr-marketing@test.local",
+            first_name="SHOP",
+            last_name="MANAGER",
+            is_active=True,
+        )
+        EmployeeProfile.objects.create(
+            user=user,
+            employee_id="850012",
+            phone_country_code="+254",
+            phone_number="700000952",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_MANAGER,
+        )
+        self.client.force_login(user)
+        response = self.client.get("/it-support/marketing/")
+        self.assertEqual(response.status_code, 200)
+
     @override_settings(IS_HOSTED=True, DARAJA_CALLBACK_BASE_URL="https://shops.example.com")
     def test_marketing_links_include_hosted_qr(self):
         from shops.services import get_company_profile
@@ -3382,7 +3425,7 @@ class ShopAllocationModuleGateTests(TestCase):
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
 class StoreManagerRoleTests(TestCase):
-    """Store Manager is a separate role limited to store management capabilities."""
+    """Company Store Manager is a separate role limited to store management capabilities."""
 
     def setUp(self):
         from employees.module_permissions import employee_may, profile_has_shop_allocation
@@ -3411,7 +3454,7 @@ class StoreManagerRoleTests(TestCase):
             phone_country_code="+254",
             phone_number="700000931",
             status=EmployeeStatus.ACTIVE,
-            role=EmployeeRole.STORE_MANAGER,
+            role=EmployeeRole.COMPANY_STORE_MANAGER,
         )
         self.shop_a = Shop.objects.create(
             name="STORE MGR SHOP A",
@@ -3433,11 +3476,11 @@ class StoreManagerRoleTests(TestCase):
         )
 
     def test_role_label_and_portal_home(self):
-        self.assertEqual(self.manager.get_role_display(), "Store Manager")
+        self.assertEqual(self.manager.get_role_display(), "Company Store Manager")
         self.client.login(username="830031", password=self.password)
-        response = self.client.get("/store-manager/")
+        response = self.client.get("/company-store-manager/")
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Store workspace")
+        self.assertContains(response, "Company store workspace")
 
     def test_sees_all_shops_without_allocation(self):
         self.assertFalse(self.manager.assigned_shops.exists())
@@ -3447,11 +3490,11 @@ class StoreManagerRoleTests(TestCase):
         self.assertEqual(shop_ids, {self.shop_a.pk, self.shop_b.pk})
 
     def test_dashboard_only_store_modules(self):
-        slugs = {m["slug"] for m in self.get_dashboard_modules(EmployeeRole.STORE_MANAGER)}
+        slugs = {m["slug"] for m in self.get_dashboard_modules(EmployeeRole.COMPANY_STORE_MANAGER)}
         self.assertEqual(slugs, set())
 
         sidebar = self.sidebar_for_role_dashboard(
-            EmployeeRole.STORE_MANAGER, profile=self.manager
+            EmployeeRole.COMPANY_STORE_MANAGER, profile=self.manager
         )
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertEqual(labels, ["Item stock", "Suppliers"])
@@ -3528,13 +3571,13 @@ class StoreManagerRoleTests(TestCase):
         self.assertEqual(shop_row.quantity, shop_qty_before)
 
         self.client.login(username="830031", password=self.password)
-        page = self.client.get("/store-manager/store-stock-in/")
+        page = self.client.get("/company-store-manager/store-stock-in/")
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Store stock in")
         self.assertContains(page, "STORE BOLT")
         self.assertContains(page, f'name="qty_{item.pk}"')
         posted = self.client.post(
-            "/store-manager/store-stock-in/",
+            "/company-store-manager/store-stock-in/",
             {
                 f"qty_{item.pk}": "1",
                 f"price_{item.pk}": "12.00",
@@ -3552,17 +3595,17 @@ class StoreManagerRoleTests(TestCase):
         self.assertEqual(item.stock, company_stock_before)
         self.assertEqual(shop_row.quantity, shop_qty_before)
 
-        out_page = self.client.get("/store-manager/store-stock-out/")
+        out_page = self.client.get("/company-store-manager/store-stock-out/")
         self.assertEqual(out_page.status_code, 200)
         self.assertContains(out_page, "STORE BOLT")
         self.assertContains(out_page, f'name="qty_{item.pk}"')
 
-        report = self.client.get("/store-manager/store-report/")
+        report = self.client.get("/company-store-manager/store-report/")
         self.assertEqual(report.status_code, 200)
         self.assertContains(report, "Store report")
         self.assertContains(report, "STORE BOLT")
         filtered = self.client.get(
-            "/store-manager/store-report/",
+            "/company-store-manager/store-report/",
             {"range": "all", "item_id": item.pk, "type": "in"},
         )
         self.assertEqual(filtered.status_code, 200)
@@ -3592,19 +3635,19 @@ class StoreManagerRoleTests(TestCase):
 
         self.client.login(username="830031", password=self.password)
 
-        page = self.client.get("/store-manager/item-stock/")
+        page = self.client.get("/company-store-manager/item-stock/")
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Item stock trade")
         self.assertContains(page, 'data-modal="store-stock-trade"')
 
-        trade_page = self.client.get("/store-manager/store-stock-trade/")
+        trade_page = self.client.get("/company-store-manager/store-stock-trade/")
         self.assertEqual(trade_page.status_code, 200)
         self.assertContains(trade_page, "Item stock trade")
         self.assertContains(trade_page, 'name="trade_kind"')
         self.assertContains(trade_page, f'name="qty_{item.pk}"')
 
         posted = self.client.post(
-            "/store-manager/store-stock-trade/",
+            "/company-store-manager/store-stock-trade/",
             {
                 "trade_kind": "trade_out",
                 f"qty_{item.pk}": "2",
@@ -3625,7 +3668,7 @@ class StoreManagerRoleTests(TestCase):
         self.assertEqual(out_move.supplier_phone, "0722000000")
 
         posted = self.client.post(
-            "/store-manager/store-stock-trade/",
+            "/company-store-manager/store-stock-trade/",
             {
                 "trade_kind": "trade_in",
                 f"qty_{other.pk}": "3",
@@ -3646,7 +3689,7 @@ class StoreManagerRoleTests(TestCase):
 
         # A trade without a direction is rejected.
         no_kind = self.client.post(
-            "/store-manager/store-stock-trade/",
+            "/company-store-manager/store-stock-trade/",
             {f"qty_{item.pk}": "1"},
         )
         self.assertEqual(no_kind.status_code, 200)
@@ -3656,14 +3699,14 @@ class StoreManagerRoleTests(TestCase):
 
         # An empty trade is rejected.
         empty = self.client.post(
-            "/store-manager/store-stock-trade/",
+            "/company-store-manager/store-stock-trade/",
             {"trade_kind": "trade_out"},
         )
         self.assertEqual(empty.status_code, 200)
 
         # Giving more than the store holds is rejected.
         too_much = self.client.post(
-            "/store-manager/store-stock-trade/",
+            "/company-store-manager/store-stock-trade/",
             {"trade_kind": "trade_out", f"qty_{item.pk}": "999"},
         )
         self.assertEqual(too_much.status_code, 200)
@@ -3685,7 +3728,7 @@ class StoreManagerRoleTests(TestCase):
         from employees.workspace import sidebar_for_analytics
 
         sidebar = sidebar_for_analytics(
-            EmployeeRole.STORE_MANAGER, active_view="items", profile=self.manager
+            EmployeeRole.COMPANY_STORE_MANAGER, active_view="items", profile=self.manager
         )
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertNotIn("Overview", labels)
@@ -3700,10 +3743,10 @@ class StoreManagerRoleTests(TestCase):
         self.assertNotIn("Suppliers", labels)
 
         self.client.login(username="830031", password=self.password)
-        response = self.client.get("/store-manager/analytics/")
+        response = self.client.get("/company-store-manager/analytics/")
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/store-manager/analytics/items/", response.url)
-        items = self.client.get("/store-manager/analytics/items/")
+        self.assertIn("/company-store-manager/analytics/items/", response.url)
+        items = self.client.get("/company-store-manager/analytics/items/")
         self.assertEqual(items.status_code, 200)
 
     def test_default_permissions_are_store_only(self):
@@ -3723,19 +3766,130 @@ class StoreManagerRoleTests(TestCase):
 
     def test_company_modules_are_blocked(self):
         self.client.login(username="830031", password=self.password)
-        shop_mgmt = self.client.get("/store-manager/shop-management/")
-        settings = self.client.get("/store-manager/")  # home ok
-        whatsapp = self.client.get("/store-manager/whatsapp/")
-        item_mgmt = self.client.get("/store-manager/item-management/")
+        shop_mgmt = self.client.get("/company-store-manager/shop-management/")
+        settings = self.client.get("/company-store-manager/")  # home ok
+        whatsapp = self.client.get("/company-store-manager/whatsapp/")
+        item_mgmt = self.client.get("/company-store-manager/item-management/")
         self.assertEqual(shop_mgmt.status_code, 302)
         self.assertEqual(settings.status_code, 200)
         self.assertEqual(whatsapp.status_code, 302)
         self.assertEqual(item_mgmt.status_code, 200)
 
     def test_shop_manager_role_still_exists(self):
-        self.assertNotEqual(EmployeeRole.SHOP_MANAGER, EmployeeRole.STORE_MANAGER)
+        self.assertNotEqual(EmployeeRole.SHOP_MANAGER, EmployeeRole.COMPANY_STORE_MANAGER)
         self.assertEqual(EmployeeRole.SHOP_MANAGER.label, "Shop Manager")
-        self.assertEqual(EmployeeRole.STORE_MANAGER.label, "Store Manager")
+        self.assertEqual(EmployeeRole.COMPANY_STORE_MANAGER.label, "Company Store Manager")
+
+
+@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+class ShopStoreManagerRoleTests(TestCase):
+    """Shop Store Manager shares the store-ops allow-list but is scoped to
+    allocated shops (no central store, no unallocated shops)."""
+
+    def setUp(self):
+        from employees.module_permissions import employee_may, profile_has_shop_allocation
+        from employees.workspace import get_dashboard_modules, sidebar_for_role_dashboard
+        from items.services import actionable_shops_for_profile
+        from shops.models import Shop
+
+        self.employee_may = employee_may
+        self.profile_has_shop_allocation = profile_has_shop_allocation
+        self.actionable_shops_for_profile = actionable_shops_for_profile
+        self.get_dashboard_modules = get_dashboard_modules
+        self.sidebar_for_role_dashboard = sidebar_for_role_dashboard
+
+        self.password = "shop-store-mgr-pass"
+        self.user = User.objects.create_user(
+            username="840031",
+            password=self.password,
+            email="shop-store-mgr@test.local",
+            first_name="SHOP STORE",
+            last_name="MANAGER",
+            is_active=True,
+        )
+        self.manager = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840031",
+            phone_country_code="+254",
+            phone_number="700000941",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_STORE_MANAGER,
+        )
+        self.shop_a = Shop.objects.create(
+            name="SHOP STORE MGR A",
+            location="NAIROBI",
+            email="shop-store-mgr-a@test.local",
+            phone_number="0700000941",
+            login_code="840131",
+            password_hash="x",
+            created_by=self.manager,
+        )
+        self.shop_b = Shop.objects.create(
+            name="SHOP STORE MGR B",
+            location="MOMBASA",
+            email="shop-store-mgr-b@test.local",
+            phone_number="0700000942",
+            login_code="840132",
+            password_hash="x",
+            created_by=self.manager,
+        )
+
+    def test_role_label_and_portal_home(self):
+        self.assertEqual(self.manager.get_role_display(), "Shop Store Manager")
+        self.client.login(username="840031", password=self.password)
+        response = self.client.get("/shop-store-manager/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Shop store workspace")
+
+    def test_limited_to_allocated_shops(self):
+        self.assertFalse(self.profile_has_shop_allocation(self.manager))
+        self.assertEqual(self.actionable_shops_for_profile(self.manager), [])
+
+        self.manager.assigned_shops.add(self.shop_a)
+        self.assertTrue(self.profile_has_shop_allocation(self.manager))
+        self.assertEqual(
+            self.actionable_shops_for_profile(self.manager), [self.shop_a]
+        )
+
+    def test_default_permissions_match_company_store_manager(self):
+        may = self.employee_may
+        self.assertTrue(may(self.manager, "item-management", "view"))
+        self.assertTrue(may(self.manager, "item-management", "edit"))
+        self.assertTrue(may(self.manager, "stock-management", "in"))
+        self.assertTrue(may(self.manager, "stock-management", "out"))
+        self.assertTrue(may(self.manager, "analytics", "stock"))
+        self.assertTrue(may(self.manager, "my-shop", "sale"))
+        self.assertTrue(may(self.manager, "my-shop", "workspace"))
+        self.assertFalse(may(self.manager, "shop-management", "view"))
+        self.assertFalse(may(self.manager, "settings", "home"))
+        self.assertFalse(may(self.manager, "hr-management", "home"))
+
+    def test_dashboard_shows_shop_scoped_modules_only(self):
+        self.manager.assigned_shops.add(self.shop_a)
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertIn("Item Management", labels)
+        self.assertIn("Stock Management", labels)
+        self.assertIn("Analytics", labels)
+        self.assertIn("Suppliers", labels)
+        # No central-store entry links.
+        self.assertNotIn("Item stock", labels)
+        self.assertNotIn("Shelf stock", labels)
+
+    def test_central_store_pages_are_company_only(self):
+        self.client.login(username="840031", password=self.password)
+        for url in (
+            "/company-store-manager/item-stock/",
+            "/company-store-manager/store-stock-in/",
+            "/company-store-manager/store-stock-out/",
+            "/company-store-manager/store-report/",
+            "/company-store-manager/shelf-stock/",
+        ):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 302, url)
+            self.assertIn("/shop-store-manager/", response["Location"], url)
 
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])

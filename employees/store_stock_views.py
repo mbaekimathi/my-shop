@@ -1,4 +1,4 @@
-"""Store Manager central store stock in/out pages (no shop stock changes)."""
+"""Company Store Manager central store stock in/out pages (no shop stock changes)."""
 
 from __future__ import annotations
 
@@ -67,10 +67,10 @@ def _shelf_only_redirect(request):
     messages.info(request, "Shelf mode is on — item store stock is not tracked.")
     if shelf_mode_shops():
         return redirect("employees:store_shelf_stock")
-    return redirect("employees:role_store_manager")
+    return redirect("employees:role_company_store_manager")
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_GET
 def store_stock_items(request):
     """Item stock home: current central-store quantity per catalog item."""
@@ -112,13 +112,13 @@ def store_stock_items(request):
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
             "page_sidebar": sidebar_for_store_stock(
-                EmployeeRole.STORE_MANAGER, profile=profile, active="items"
+                EmployeeRole.COMPANY_STORE_MANAGER, profile=profile, active="items"
             ),
         },
     )
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_GET
 def store_stock_movement(request):
     """Item stock movement log — the raw in/out ledger for the central store."""
@@ -163,7 +163,7 @@ def store_stock_movement(request):
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
             "page_sidebar": sidebar_for_store_stock(
-                EmployeeRole.STORE_MANAGER, profile=profile, active="movement"
+                EmployeeRole.COMPANY_STORE_MANAGER, profile=profile, active="movement"
             ),
         }
     )
@@ -252,7 +252,7 @@ def _render_store_stock_page(request, *, mode: str):
             "item_count": len(items),
             "employee_search_url": reverse("employees:store_stock_employee_search"),
             "page_sidebar": sidebar_for_store_stock(
-                EmployeeRole.STORE_MANAGER,
+                EmployeeRole.COMPANY_STORE_MANAGER,
                 profile=profile,
                 active="in" if is_in else "out",
             ),
@@ -260,19 +260,19 @@ def _render_store_stock_page(request, *, mode: str):
     )
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_http_methods(["GET", "POST"])
 def store_stock_in(request):
     return _render_store_stock_page(request, mode=StoreStockMovementType.IN)
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_http_methods(["GET", "POST"])
 def store_stock_out(request):
     return _render_store_stock_page(request, mode=StoreStockMovementType.OUT)
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_http_methods(["GET", "POST"])
 def store_stock_trade(request):
     """Item stock trade: give items to or receive items from one person."""
@@ -287,7 +287,7 @@ def store_stock_trade(request):
         messages.error(
             request, "You do not have permission to record store trades."
         )
-        return redirect("employees:role_store_manager")
+        return redirect("employees:role_company_store_manager")
 
     if request.method == "POST":
         try:
@@ -355,7 +355,7 @@ def store_stock_trade(request):
             "submit_label": "Record trade",
             "stock_req": _stock_requirements(),
             "page_sidebar": sidebar_for_store_stock(
-                EmployeeRole.STORE_MANAGER, profile=profile, active="trade"
+                EmployeeRole.COMPANY_STORE_MANAGER, profile=profile, active="trade"
             ),
         },
     )
@@ -373,28 +373,124 @@ def shelf_mode_shops():
     ]
 
 
-SHELF_PAGE_MODES = ("stock", "in", "out", "trade", "movements", "report")
+SHELF_PAGE_MODES = (
+    "stock", "in", "out", "trade", "movements", "report", "audits", "suspended",
+)
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+def _shelf_report_download(*, shop, report, filter_context):
+    """PDF download of the per-item shelf report (same engine as stock reports)."""
+    import re
+
+    from django.http import HttpResponse
+    from django.utils import timezone
+
+    from items.services import build_stock_report_pdf
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    logo_path = ""
+    if getattr(company, "logo", None):
+        try:
+            logo_path = company.logo.path
+        except Exception:
+            logo_path = ""
+
+    period_label = (
+        (filter_context.get("report_period_label") or "").strip() or "—"
+    )
+    headers = [
+        "Item", "Unit", "Start", "In", "Transfers", "Trades", "Out", "Close",
+    ]
+    rows = []
+    for row in report["rows"]:
+        label = row["name"]
+        if row["category"]:
+            label = f"{label} · {row['category']}"
+        flags = []
+        if row["is_suspended"]:
+            flags.append("suspended")
+        if row["is_archived"]:
+            flags.append("archived")
+        if flags:
+            label = f"{label} ({', '.join(flags)})"
+        rows.append(
+            [
+                label,
+                row["unit"] or "—",
+                row["start_display"],
+                row["in_display"],
+                row["transfers_display"],
+                row["trades_display"],
+                row["out_display"],
+                row["close_display"],
+            ]
+        )
+    if rows:
+        totals = report["totals"]
+        rows.append(
+            [
+                "Total",
+                "",
+                totals["start_display"],
+                totals["in_display"],
+                totals["transfers_display"],
+                totals["trades_display"],
+                totals["out_display"],
+                totals["close_display"],
+            ]
+        )
+
+    pdf_bytes = build_stock_report_pdf(
+        company_name=company_name,
+        page_mode="report",
+        period_label=period_label,
+        event_filter_label="Shelf stock",
+        view_label="By item",
+        shop_label=shop.name,
+        logo_path=logo_path,
+        company_phone=(getattr(company, "phone_number", None) or "").strip(),
+        company_email=(getattr(company, "email", None) or "").strip(),
+        company_location=(getattr(company, "location", None) or "").strip(),
+        report_headers=headers,
+        report_rows=rows,
+    )
+    safe_period = (
+        re.sub(r"[^\w\-]+", "-", period_label, flags=re.UNICODE)
+        .strip("-")
+        .lower()
+        or "export"
+    )
+    stamp = timezone.localtime(timezone.now()).strftime("%Y-%m-%d-%H%M")
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="shelf-stock-report-{safe_period}-{stamp}.pdf"'
+    )
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_http_methods(["GET", "POST"])
 def store_shelf_stock(request):
-    """Store Manager: register and adjust shelf stock for any shop in Shelf mode."""
+    """Company Store Manager: register and adjust shelf stock for any shop in Shelf mode."""
     from decimal import Decimal
 
     from items.shelf_stock_services import (
         SHELF_UNIT_CHOICES,
         apply_shelf_action,
         list_shelf_items,
-        recent_shelf_movements,
+        list_suspended_shelf_items,
         record_shelf_movement,
         shelf_categories,
+        shelf_movements_in_period,
     )
 
     profile = get_profile_for_request(request)
     if not employee_may(profile, "my-shop", "shelf_stock"):
         messages.error(request, "You do not have permission to manage shelf stock.")
-        return redirect("employees:role_store_manager")
+        return redirect("employees:role_company_store_manager")
 
     shops = shelf_mode_shops()
     mode = (request.POST.get("mode") or request.GET.get("mode") or "stock").strip().lower()
@@ -600,7 +696,7 @@ def store_shelf_stock(request):
                 "shelf_unit_choices": SHELF_UNIT_CHOICES,
                 "shelf_categories": shelf_categories(),
                 "page_sidebar": sidebar_for_store_stock(
-                    EmployeeRole.STORE_MANAGER,
+                    EmployeeRole.COMPANY_STORE_MANAGER,
                     profile=profile,
                     active="shelf-movements",
                 ),
@@ -611,42 +707,135 @@ def store_shelf_stock(request):
     if shop is None and shops:
         shop = shops[0]
     shelf_items = list_shelf_items(shop=shop) if shop else []
+    suspended_items = (
+        list_suspended_shelf_items(shop=shop)
+        if shop and mode == "suspended"
+        else []
+    )
     pos = None
     if shop is not None:
         from shops.services import get_effective_pos_settings
 
         pos = get_effective_pos_settings(shop)
+    meta = {
+        "title": "Shelf stock",
+        "headline": "Shelf stock",
+        "summary": (
+            "Register the stock on each shop's shelves and add or remove "
+            "quantities by hand. Shelf items are not sold, so they do "
+            "not show on the shop page."
+        ),
+        "icon": "layers",
+    }
+    if mode == "suspended":
+        meta = {
+            "title": "Suspended shelf items",
+            "headline": "Suspended shelf items",
+            "summary": (
+                "Shelf items paused at this shop — they can't be stocked in "
+                "or out until you unsuspend them."
+            ),
+            "icon": "circle-pause",
+        }
+    elif mode == "report":
+        meta = {
+            "title": "Shelf stock report",
+            "headline": "Shelf stock report",
+            "summary": (
+                "Opening, movement and closing shelf stock for the period "
+                "you pick — filter by day, period, month, year or item, "
+                "then download the report."
+            ),
+            "icon": "bar-chart-3",
+        }
+    elif mode == "audits":
+        meta = {
+            "title": "Shelf stock audits",
+            "headline": "Shelf stock audits",
+            "summary": (
+                "Every shelf transaction for this shop in the period you "
+                "pick — filter by day, period, month or year."
+            ),
+            "icon": "clipboard-list",
+        }
+    audit_filter = {}
+    audit_range = "day"
+    shelf_audit_movements = []
+    shelf_report = None
+    shelf_report_download_url = ""
+    if shop is not None and mode in ("audits", "report"):
+        from items.views import _report_range_bounds
+
+        audit_range, audit_start, audit_end, audit_filter = _report_range_bounds(
+            request
+        )
+        if mode == "audits":
+            shelf_audit_movements = shelf_movements_in_period(
+                shop=shop, day_start=audit_start, day_end=audit_end
+            )
+        else:
+            from items.shelf_stock_services import build_shelf_stock_report
+
+            raw_item = (request.GET.get("item") or "").strip()
+            shelf_report = build_shelf_stock_report(
+                shop=shop,
+                day_start=audit_start,
+                day_end=audit_end,
+                item_id=int(raw_item) if raw_item.isdigit() else None,
+            )
+            if (request.GET.get("download") or "").strip() == "1":
+                return _shelf_report_download(
+                    shop=shop,
+                    report=shelf_report,
+                    filter_context=audit_filter,
+                )
+            from urllib.parse import urlencode
+
+            download_params = [
+                ("mode", "report"),
+                ("shop", str(shop.pk)),
+                ("range", audit_range),
+            ]
+            for key in ("date", "date_from", "date_to", "month", "year"):
+                value = (request.GET.get(key) or "").strip()
+                if value:
+                    download_params.append((key, value))
+            if shelf_report["selected_item_id"] is not None:
+                download_params.append(
+                    ("item", str(shelf_report["selected_item_id"]))
+                )
+            download_params.append(("download", "1"))
+            shelf_report_download_url = f"?{urlencode(download_params)}"
     return render(
         request,
         "employees/store_shelf_stock.html",
         {
             "profile": profile,
-            "meta": {
-                "title": "Shelf stock",
-                "headline": "Shelf stock",
-                "summary": (
-                    "Register the stock on each shop's shelves and add or remove "
-                    "quantities by hand. Shelf items are not sold, so they do "
-                    "not show on the shop page."
-                ),
-                "icon": "layers",
-            },
+            "meta": meta,
             "shelf_mode": mode,
             "shops": shops,
             "shop": shop,
             "shelf_items": shelf_items,
+            "suspended_items": suspended_items,
+            "suspended_item_count": len(suspended_items),
+            "shelf_manage": mode == "stock",
             "shelf_item_count": len(shelf_items),
             "shelf_low_count": sum(1 for row in shelf_items if row["is_low"]),
             "shelf_total_display": str(
                 sum((row["quantity"] for row in shelf_items), start=Decimal("0"))
             ),
-            "shelf_movements": (
-                recent_shelf_movements(
-                    shop=shop, limit=500 if mode == "movements" else 30
-                )
-                if shop
-                else []
-            ),
+            "shelf_audits": mode == "audits",
+            "shelf_audit_movements": shelf_audit_movements,
+            "shelf_audit_count": len(shelf_audit_movements),
+            "shelf_report": shelf_report,
+            "shelf_report_download_url": shelf_report_download_url,
+            "report_range_label": {
+                "day": "Single day",
+                "period": "Period",
+                "month": "Month",
+                "year": "Year",
+            }[audit_range],
+            **audit_filter,
             "item_stock_tracking": bool(getattr(pos, "enable_stock_tracking", False)),
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
@@ -655,7 +844,7 @@ def store_shelf_stock(request):
             "shelf_unit_choices": SHELF_UNIT_CHOICES,
             "shelf_categories": shelf_categories(),
             "page_sidebar": sidebar_for_store_stock(
-                EmployeeRole.STORE_MANAGER,
+                EmployeeRole.COMPANY_STORE_MANAGER,
                 profile=profile,
                 active=f"shelf-{mode}",
             ),
@@ -663,7 +852,7 @@ def store_shelf_stock(request):
     )
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_GET
 def store_stock_report(request):
     denied = _shelf_only_redirect(request)
@@ -702,7 +891,7 @@ def store_stock_report(request):
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
             "page_sidebar": sidebar_for_store_stock(
-                EmployeeRole.STORE_MANAGER, profile=profile, active="report"
+                EmployeeRole.COMPANY_STORE_MANAGER, profile=profile, active="report"
             ),
             **{
                 key: page[key]
@@ -721,7 +910,7 @@ def store_stock_report(request):
     )
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_http_methods(["POST"])
 def store_stock_item_count_toggle(request):
     """Enable/disable stock counting on sale for one item (item-stock page)."""
@@ -767,7 +956,7 @@ def store_stock_item_count_toggle(request):
     )
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_GET
 def store_stock_item_search(request):
     denied = _store_stock_read_denied(request)
@@ -781,7 +970,7 @@ def store_stock_item_search(request):
     return JsonResponse({"ok": True, "results": results})
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_GET
 def store_stock_employee_search(request):
     denied = _store_stock_read_denied(request)

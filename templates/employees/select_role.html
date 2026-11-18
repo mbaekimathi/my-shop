@@ -52,6 +52,44 @@
     </div>
 
     <div class="auth-card auth-card--portal" data-animate="rise">
+      {% if shop_step %}
+      <header class="auth-head">
+        <p class="auth-eyebrow">{{ company_name|default:"MY-SHOP" }} access</p>
+        <h1>Choose a shop</h1>
+        <p>
+          You have no shop allocated for the
+          <strong>{{ shop_step.role_label }}</strong> role. Pick the shop to
+          work in for this session.
+        </p>
+      </header>
+
+      <div class="role-pick-list" role="list">
+        {% for shop in shop_step.shops %}
+        <form method="post" class="role-pick-form" role="listitem">
+          {% csrf_token %}
+          {% if next_url %}
+          <input type="hidden" name="next" value="{{ next_url }}">
+          {% endif %}
+          <input type="hidden" name="role" value="{{ shop_step.role }}">
+          <input type="hidden" name="shop" value="{{ shop.pk }}">
+          <button type="submit" class="role-pick">
+            <span class="role-pick-icon" aria-hidden="true">
+              <i data-lucide="store"></i>
+            </span>
+            <span class="role-pick-copy">
+              <strong>{{ shop.name }}</strong>
+              <em>{{ shop.location }}</em>
+            </span>
+            <i class="role-pick-go" data-lucide="chevron-right" aria-hidden="true"></i>
+          </button>
+        </form>
+        {% endfor %}
+      </div>
+
+      <p class="auth-switch auth-switch--compact">
+        <a href="{% url 'employees:select_role' %}">&larr; Back to roles</a>
+      </p>
+      {% else %}
       <header class="auth-head">
         <p class="auth-eyebrow">{{ company_name|default:"MY-SHOP" }} access</p>
         <h1>Choose your role</h1>
@@ -91,6 +129,7 @@
         </form>
         {% endfor %}
       </div>
+      {% endif %}
 
       <p class="auth-switch auth-switch--compact">
         Not you?

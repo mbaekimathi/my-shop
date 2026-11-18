@@ -112,7 +112,8 @@ def _sync_create_sale(employee: EmployeeProfile, payload: dict) -> dict:
     if employee.role not in (
         EmployeeRole.SHOP_CASHIER,
         EmployeeRole.SHOP_MANAGER,
-        EmployeeRole.STORE_MANAGER,
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
         EmployeeRole.SUPER_ADMIN,
     ):
         raise SyncOperationError("Your role cannot create sales.", "forbidden")
@@ -175,7 +176,8 @@ def _sync_complete_shop_checkout(
         if employee.role not in (
             EmployeeRole.SHOP_CASHIER,
             EmployeeRole.SHOP_MANAGER,
-            EmployeeRole.STORE_MANAGER,
+            EmployeeRole.COMPANY_STORE_MANAGER,
+            EmployeeRole.SHOP_STORE_MANAGER,
             EmployeeRole.SUPER_ADMIN,
             EmployeeRole.COMPANY_MANAGER,
             EmployeeRole.IT_SUPPORT,

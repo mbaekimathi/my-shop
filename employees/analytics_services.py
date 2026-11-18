@@ -2168,6 +2168,65 @@ def _trend_line_chart(
     }
 
 
+def _column_chart(
+    rows: list[tuple[str, Decimal | int | float]],
+    *,
+    width: int = 640,
+    height: int = 160,
+) -> dict:
+    """Compact vertical column chart for count-style series."""
+    if not rows:
+        return {
+            "width": width,
+            "height": height,
+            "bars": [],
+            "labels": [],
+            "empty": True,
+        }
+    vals = [float(Decimal(row[1] or 0)) for row in rows]
+    hi = max(vals) or 1.0
+    pad_top, pad_bottom, pad_x = 10, 24, 8
+    plot_h = height - pad_top - pad_bottom
+    plot_w = width - pad_x * 2
+    n = len(rows)
+    slot = plot_w / n
+    bar_w = max(2.0, min(24.0, slot * 0.62))
+    bars = []
+    for i, value in enumerate(vals):
+        h = max(0.0, (value / hi) * plot_h)
+        x = pad_x + i * slot + (slot - bar_w) / 2
+        y = pad_top + plot_h - h
+        bars.append(
+            {
+                "x": f"{x:.1f}",
+                "y": f"{y:.1f}",
+                "w": f"{bar_w:.1f}",
+                "h": f"{h:.1f}",
+                "label": rows[i][0],
+                "display": f"{int(round(value)):,}",
+            }
+        )
+    label_indexes = {0, n - 1}
+    if n >= 3:
+        label_indexes.add(n // 2)
+    if n >= 5:
+        label_indexes.add(n // 4)
+        label_indexes.add((3 * n) // 4)
+    labels = [
+        {"x": f"{pad_x + i * slot + slot / 2:.1f}", "text": rows[i][0]}
+        for i in sorted(label_indexes)
+    ]
+    return {
+        "width": width,
+        "height": height,
+        "bars": bars,
+        "labels": labels,
+        "label_y": height - 6,
+        "empty": all(v == 0 for v in vals),
+        "max_display": f"{int(round(hi)):,}",
+    }
+
+
 def _shop_movement_chart(
     rows: list[dict],
     *,

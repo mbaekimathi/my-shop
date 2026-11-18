@@ -309,17 +309,6 @@
             <i data-lucide="arrow-left" aria-hidden="true"></i>
             Back
           </a>
-          {% if is_open or last_closed %}
-          <a
-            class="btn btn--ghost"
-            href="{{ day_report_url }}"
-            target="_blank"
-            rel="noopener"
-          >
-            <i data-lucide="file-text" aria-hidden="true"></i>
-            Day report (PDF)
-          </a>
-          {% endif %}
           <button type="submit" class="btn btn--primary" data-day-submit disabled>
             <i data-lucide="{% if is_open %}lock{% else %}unlock{% endif %}" aria-hidden="true"></i>
             {% if is_open %}Close shop{% else %}Open shop{% endif %}
@@ -328,80 +317,6 @@
       </div>
     </form>
 
-    <details class="shop-day-history">
-      <summary>
-        <span class="shop-day-history-label">
-          <i data-lucide="history" aria-hidden="true"></i>
-          Day history
-        </span>
-        {% if day_session_count %}<span class="shop-day-history-count">{{ day_session_count }}</span>{% endif %}
-      </summary>
-
-      {% if day_sessions %}
-      <div class="item-table-wrap shop-day-table-wrap">
-        <table class="shop-day-table">
-          <thead>
-            <tr>
-              <th>Day</th>
-              <th>Opening</th>
-              <th>Closing</th>
-              <th>Diff</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in day_sessions %}
-            <tr{% if row.is_open %} class="is-open"{% endif %}>
-              <td data-label="Day">
-                {% if row.is_open %}
-                <span class="shop-day-pill is-open">Open</span>
-                {% else %}
-                <span class="shop-day-pill is-closed">Closed</span>
-                {% endif %}
-                <strong>{{ row.opened_at|date:"d M · H:i" }}</strong>
-                {% if row.closed_at %}
-                <span class="shop-day-table-sub">to {{ row.closed_at|date:"H:i" }}</span>
-                {% endif %}
-              </td>
-              <td class="shop-day-table-balances" data-label="Opening">
-                <strong class="shop-day-table-total">{{ row.opening_total|floatformat:0 }}</strong>
-                <span>
-                  {% if balance_channels.cash %}C {{ row.opening_cash|floatformat:0 }}{% endif %}
-                  {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
-                  {% if balance_channels.mpesa %}M {{ row.opening_mpesa|floatformat:0 }}{% endif %}
-                  {% if balance_channels.card %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}K {{ row.opening_card|floatformat:0 }}{% endif %}
-                </span>
-              </td>
-              <td class="shop-day-table-balances" data-label="Closing">
-                {% if row.closed_at %}
-                <strong class="shop-day-table-total">{{ row.closing_total|floatformat:0 }}</strong>
-                <span>
-                  {% if balance_channels.cash %}C {{ row.closing_cash|floatformat:0 }}{% endif %}
-                  {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
-                  {% if balance_channels.mpesa %}M {{ row.closing_mpesa|floatformat:0 }}{% endif %}
-                  {% if balance_channels.card %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}K {{ row.closing_card|floatformat:0 }}{% endif %}
-                </span>
-                {% else %}
-                <span class="shop-day-table-sub">Expected {{ row.expected_total|floatformat:0 }}</span>
-                {% endif %}
-              </td>
-              <td data-label="Diff">
-                {% if row.closed_at and row.total_variance is not None %}
-                <strong class="shop-day-variance{% if row.total_variance > 0 %} is-over{% elif row.total_variance < 0 %} is-under{% endif %}">
-                  {% if row.total_variance > 0 %}+{% endif %}{{ row.total_variance|floatformat:0 }}
-                </strong>
-                {% else %}
-                <span class="shop-day-table-sub">—</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <p class="shop-day-history-empty">No days recorded yet.</p>
-      {% endif %}
-    </details>
   </div>
 </section>
 {% endblock %}

@@ -6,8 +6,8 @@ hasher). Verified sessions store the shop id under a namespaced session key
 independent of any MY-SHOP cookies.
 
 Employees sign in with their 6-digit staff ID + password. Admins and IT
-land on the all-shops view; store managers get the central-store workspace;
-other roles get a role home (tools appear as they are added).
+land on the all-shops view; company store managers get the central-store
+workspace; other roles get a role home (tools appear as they are added).
 """
 
 import re
@@ -30,7 +30,8 @@ ALL_EMPLOYEE_ROLES = {
     "super_admin",
     "company_manager",
     "shop_manager",
-    "store_manager",
+    "company_store_manager",
+    "shop_store_manager",
     "shop_cashier",
     "it_support",
     "rider",
@@ -51,7 +52,8 @@ ROLE_URL_SEGMENTS = {
     "super_admin": "super-admin",
     "company_manager": "company-manager",
     "shop_manager": "shop-manager",
-    "store_manager": "store-manager",
+    "company_store_manager": "company-store-manager",
+    "shop_store_manager": "shop-store-manager",
     "shop_cashier": "shop-cashier",
     "it_support": "it-support",
     "rider": "rider",
@@ -64,7 +66,8 @@ ROLE_LABELS = {
     "super_admin": "Super Admin",
     "company_manager": "Company Manager",
     "shop_manager": "Shop Manager",
-    "store_manager": "Store Manager",
+    "company_store_manager": "Company Store Manager",
+    "shop_store_manager": "Shop Store Manager",
     "shop_cashier": "Shop Cashier",
     "it_support": "IT Support",
     "rider": "Rider",
@@ -75,7 +78,8 @@ ROLE_ICONS = {
     "super_admin": "shield-check",
     "company_manager": "building-2",
     "shop_manager": "store",
-    "store_manager": "warehouse",
+    "company_store_manager": "warehouse",
+    "shop_store_manager": "store",
     "shop_cashier": "scan-barcode",
     "it_support": "monitor-cog",
     "rider": "bike",
@@ -141,8 +145,8 @@ def authenticate_employee(employee_id: str, password: str):
     """Return the active staff profile on valid credentials, else None.
 
     Any active MY-SHOP employee role may sign in. Admins / IT are routed to
-    all-shops; store managers get the central-store workspace; other roles
-    land on their role home.
+    all-shops; company store managers get the central-store workspace;
+    other roles land on their role home.
     """
     code = re.sub(r"\D+", "", employee_id or "")
     password = password or ""
@@ -304,8 +308,8 @@ def api_shop_required(view):
     return wrapper
 
 
-def api_store_manager_required(view):
-    """API guard — Store Manager employee session required."""
+def api_company_store_manager_required(view):
+    """API guard — Company Store Manager employee session required."""
 
     @wraps(view)
     def wrapper(request, *args, **kwargs):
@@ -314,9 +318,10 @@ def api_store_manager_required(view):
             return JsonResponse(
                 {"ok": False, "error": "authentication required"}, status=401
             )
-        if employee.get("role") != "store_manager":
+        if employee.get("role") != "company_store_manager":
             return JsonResponse(
-                {"ok": False, "error": "store manager access required"}, status=403
+                {"ok": False, "error": "company store manager access required"},
+                status=403,
             )
         request.chat_employee = employee
         return view(request, *args, **kwargs)

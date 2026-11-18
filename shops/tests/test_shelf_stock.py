@@ -812,7 +812,7 @@ class StoreManagerShelfStockTests(TestCase):
             phone_country_code="+254",
             phone_number="700000941",
             status=EmployeeStatus.ACTIVE,
-            role=EmployeeRole.STORE_MANAGER,
+            role=EmployeeRole.COMPANY_STORE_MANAGER,
         )
         self.shop = Shop.objects.create(
             name="STORE SHELF SHOP",
@@ -836,12 +836,12 @@ class StoreManagerShelfStockTests(TestCase):
         self.url = reverse("employees:store_shelf_stock")
 
     def test_store_manager_registers_shelf_items_for_a_shop(self):
-        response = self.client.get("/store-manager/")
+        response = self.client.get("/company-store-manager/")
         self.assertNotContains(response, self.url)
         self.assertContains(self.client.get(self.url), "Shelf mode is off")
 
         set_company_pos_setting(field="stock_mode_shelf", enabled=True)
-        self.assertContains(self.client.get("/store-manager/"), self.url)
+        self.assertContains(self.client.get("/company-store-manager/"), self.url)
         page = self.client.get(self.url)
         self.assertContains(page, "STORE SHELF SHOP")
 
@@ -877,8 +877,12 @@ class StoreManagerShelfStockTests(TestCase):
         # Registering is name/category/unit + optional image — no qty fields.
         body = page.content.decode()
         self.assertNotIn('name="opening_qty"', body)
-        self.assertNotIn('name="low_stock_threshold"', body)
         self.assertIn('name="image"', body)
+        # The Manage column edits details (incl. the low-stock alert) and
+        # suspends items from the same page.
+        self.assertIn('data-modal="shelf-edit"', body)
+        self.assertIn('data-shelf-edit-form', body)
+        self.assertIn('name="low_stock_threshold"', body)
 
     def test_register_shelf_item_accepts_optional_image(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -939,18 +943,18 @@ class StoreManagerShelfStockTests(TestCase):
             report_url,
         )
 
-        page = self.client.get("/store-manager/")
+        page = self.client.get("/company-store-manager/")
         self.assertContains(page, items_url)
         for url in item_urls:
             self.assertEqual(self.client.get(url).status_code, 200)
 
         set_company_pos_setting(field="stock_mode_shelf", enabled=True)
-        page = self.client.get("/store-manager/")
+        page = self.client.get("/company-store-manager/")
         self.assertNotContains(page, items_url)
         for url in item_urls:
             response = self.client.get(url)
             self.assertEqual(response.status_code, 302)
-            self.assertIn("/store-manager/shelf-stock/", response["Location"])
+            self.assertIn("/company-store-manager/shelf-stock/", response["Location"])
         self.assertContains(page, self.url)
         payload = self.client.get(
             reverse("employees:store_stock_item_search")
@@ -959,7 +963,7 @@ class StoreManagerShelfStockTests(TestCase):
 
         # Both mode: items are tracked again — item links and pages return.
         set_company_pos_setting(field="stock_mode_both", enabled=True)
-        page = self.client.get("/store-manager/")
+        page = self.client.get("/company-store-manager/")
         self.assertContains(page, items_url)
         for url in item_urls:
             self.assertEqual(self.client.get(url).status_code, 200)
@@ -968,7 +972,7 @@ class StoreManagerShelfStockTests(TestCase):
     def test_dashboard_links_item_and_shelf_stock_per_mode(self):
         items_url = reverse("employees:store_stock_items")
 
-        page = self.client.get("/store-manager/")
+        page = self.client.get("/company-store-manager/")
         self.assertContains(page, "Item stock")
         self.assertContains(page, items_url)
         self.assertNotContains(page, self.url)
@@ -978,7 +982,7 @@ class StoreManagerShelfStockTests(TestCase):
             self.url,
             {"action": "register", "name": "Gunny bags", "opening_qty": "20", "shop": self.shop.pk},
         )
-        page = self.client.get("/store-manager/")
+        page = self.client.get("/company-store-manager/")
         self.assertContains(page, items_url)
         self.assertContains(page, self.url)
         self.assertContains(page, "Shelf stock")
@@ -987,10 +991,204 @@ class StoreManagerShelfStockTests(TestCase):
 
         # Shelf-only: the item stock link disappears, shelf stays.
         set_company_pos_setting(field="stock_mode_shelf", enabled=True)
-        page = self.client.get("/store-manager/")
+        page = self.client.get("/company-store-manager/")
         self.assertContains(page, self.url)
         self.assertNotContains(page, items_url)
         self.assertNotContains(page, "Item stock")
+
+    def test_edit_and_suspend_shelf_items(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        shelf = ShelfItem.objects.create(
+            shop=self.shop,
+            name="GUNNY BAGS",
+            category="PACKAGING",
+            unit="BAGS",
+            quantity=Decimal("9"),
+            low_stock_threshold=Decimal("2"),
+            created_by=self.manager,
+        )
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, "GUNNY BAGS")
+        self.assertContains(page, 'data-shelf-edit')
+        self.assertContains(page, 'data-modal="shelf-edit"')
+        self.assertContains(page, 'value="suspend"')
+        # The sidebar carries a Suspended items link for the shop.
+        self.assertContains(page, "Suspended items")
+        self.assertContains(page, "mode=suspended")
+
+        # Editing updates the details — the quantity never moves by hand.
+        response = self.client.post(
+            self.url,
+            {
+                "shop": self.shop.pk,
+                "action": "edit",
+                "shelf_item_id": shelf.pk,
+                "name": "gunny bags small",
+                "category": "packaging supplies",
+                "unit": "pcs",
+                "low_stock_threshold": "4",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.name, "GUNNY BAGS SMALL")
+        self.assertEqual(shelf.category, "PACKAGING SUPPLIES")
+        self.assertEqual(shelf.unit, "PCS")
+        self.assertEqual(shelf.low_stock_threshold, Decimal("4"))
+        self.assertEqual(shelf.quantity, Decimal("9"))
+
+        # Renaming onto an existing item is rejected.
+        ShelfItem.objects.create(
+            shop=self.shop, name="SISAL ROPE", created_by=self.manager
+        )
+        self.client.post(
+            self.url,
+            {
+                "shop": self.shop.pk,
+                "action": "edit",
+                "shelf_item_id": shelf.pk,
+                "name": "sisal rope",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.name, "GUNNY BAGS SMALL")
+
+        # Suspending drops the item off the shelf list and blocks moves.
+        self.client.post(
+            self.url,
+            {
+                "shop": self.shop.pk,
+                "action": "suspend",
+                "shelf_item_id": shelf.pk,
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertTrue(shelf.is_suspended)
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        # Off the item rows — its name still shows in the movement log.
+        self.assertNotContains(page, f'data-shelf-row="{shelf.pk}"')
+        self.assertNotContains(page, f'data-item-id="{shelf.pk}"')
+        self.assertContains(page, "SISAL ROPE")
+        self.client.post(
+            self.url,
+            {
+                "shop": self.shop.pk,
+                "action": "in",
+                "shelf_item_id": shelf.pk,
+                "qty": "2",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("9"))
+
+        # The suspended page lists it; unsuspending puts it back.
+        page = self.client.get(
+            f"{self.url}?mode=suspended&shop={self.shop.pk}"
+        )
+        self.assertContains(page, "Suspended shelf items")
+        self.assertContains(page, "GUNNY BAGS SMALL")
+        self.assertContains(page, 'value="unsuspend"')
+        self.client.post(
+            self.url,
+            {
+                "mode": "suspended",
+                "shop": self.shop.pk,
+                "action": "unsuspend",
+                "shelf_item_id": shelf.pk,
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertFalse(shelf.is_suspended)
+        self.assertContains(
+            self.client.get(f"{self.url}?shop={self.shop.pk}"),
+            "GUNNY BAGS SMALL",
+        )
+
+    def test_stock_page_audits_list_all_transactions_for_the_period(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Gunny bags",
+                "opening_qty": "9",
+                "shop": self.shop.pk,
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.client.post(
+            self.url,
+            {
+                "action": "in",
+                "shop": self.shop.pk,
+                "shelf_item_id": shelf.pk,
+                "qty": "2",
+                "price": "40",
+                "note": "audit-top-up",
+            },
+        )
+        self.client.post(
+            self.url,
+            {
+                "action": "out",
+                "shop": self.shop.pk,
+                "shelf_item_id": shelf.pk,
+                "qty": "1",
+                "note": "audit-removal",
+            },
+        )
+
+        # The audits live on their own page (sidebar link ?mode=audits); the
+        # stock page shows only the On the shelf list — no Recent changes.
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, f"{self.url}?mode=audits")
+        self.assertContains(page, "On the shelf")
+        self.assertNotContains(page, "Recent changes")
+        self.assertNotContains(page, "data-stock-report-filters")
+
+        # The audits page lists today's register + in + out transactions by
+        # default.
+        page = self.client.get(
+            f"{self.url}?shop={self.shop.pk}&mode=audits"
+        )
+        self.assertContains(page, "Shelf stock audits")
+        self.assertNotContains(page, "Recent changes")
+        self.assertContains(page, 'name="range"')
+        self.assertContains(page, "audit-top-up")
+        self.assertContains(page, "audit-removal")
+
+        # Backdate one movement: today's filter drops it, the matching
+        # period brings it back, and the year filter shows everything.
+        from datetime import timedelta
+
+        from django.utils import timezone as dj_timezone
+
+        moved = ShelfStockMovement.objects.get(
+            shelf_item=shelf, note="audit-top-up"
+        )
+        past = dj_timezone.now() - timedelta(days=40)
+        ShelfStockMovement.objects.filter(pk=moved.pk).update(
+            created_at=past
+        )
+
+        page = self.client.get(
+            f"{self.url}?shop={self.shop.pk}&mode=audits"
+        )
+        self.assertNotContains(page, "audit-top-up")
+        self.assertContains(page, "audit-removal")
+
+        page = self.client.get(
+            f"{self.url}?shop={self.shop.pk}&mode=audits&range=period"
+            f"&date_from={past.date():%Y-%m-%d}&date_to={past.date():%Y-%m-%d}"
+        )
+        self.assertContains(page, "audit-top-up")
+        self.assertNotContains(page, "audit-removal")
+
+        page = self.client.get(
+            f"{self.url}?shop={self.shop.pk}&mode=audits&range=year&year={past.year}"
+        )
+        self.assertContains(page, "audit-top-up")
+        self.assertContains(page, "audit-removal")
 
     def test_item_stock_page_lists_central_store_qty_and_tabs(self):
         item = Item.objects.create(
@@ -1058,6 +1256,7 @@ class StoreManagerShelfStockTests(TestCase):
         self.assertContains(stock_page, f"{self.url}?mode=out")
         self.assertContains(stock_page, f"{self.url}?mode=movements")
         self.assertContains(stock_page, f"{self.url}?mode=report")
+        self.assertContains(stock_page, f"{self.url}?mode=audits")
         self.assertNotContains(stock_page, reverse("employees:store_stock_items"))
 
         # Stock in: batch form posts qty_<id> lines like the item pages.
@@ -1204,7 +1403,7 @@ class StoreManagerShelfStockTests(TestCase):
         )
 
     def test_both_mode_adds_item_and_shelf_tabs_to_item_management(self):
-        page_url = "/store-manager/item-management/"
+        page_url = "/company-store-manager/item-management/"
 
         page = self.client.get(page_url)
         self.assertNotContains(page, 'href="?tab=shelf"')

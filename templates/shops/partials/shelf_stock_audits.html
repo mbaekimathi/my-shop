@@ -1,0 +1,129 @@
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-audit-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-audit-title">Shelf stock audits</h3>
+        <p>
+          {{ report_range_label }} · {{ report_period_label }} — every shelf
+          transaction for {{ shop.name }} in this period
+          ({{ shelf_audit_count }}).
+        </p>
+      </div>
+    </div>
+    <form method="get" class="shelf-audit-filters" data-stock-report-filters>
+      <input type="hidden" name="mode" value="audits">
+      {% if shelf_shop_field %}<input type="hidden" name="shop" value="{{ shop.pk }}">{% endif %}
+      <label class="store-stock-field shelf-audit-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="day"{% if report_range == "day" %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == "period" %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == "month" %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == "year" %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="day"{% if report_range != "day" %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" required aria-label="Select day">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" required aria-label="Period start">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" required aria-label="Period end">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="month"{% if report_range != "month" %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" required aria-label="Select month">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="year"{% if report_range != "year" %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          required
+          aria-label="Select year"
+        >
+      </label>
+      <button type="submit" class="store-stock-btn store-stock-btn--primary shelf-audit-apply">Apply</button>
+    </form>
+    {% if shelf_audit_movements %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Change</th>
+            <th scope="col" class="store-stock-col-qty">Qty</th>
+            <th scope="col" class="store-stock-col-qty">Left</th>
+            <th scope="col">Supplier</th>
+            <th scope="col">By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for move in shelf_audit_movements %}
+          <tr class="store-stock-row">
+            <td data-label="When">{{ move.created_at|date:"d M Y H:i" }}</td>
+            <td data-label="Shelf item">{{ move.shelf_item.name }}{% if move.note %} <span class="store-stock-item-cat-mobile">{{ move.note }}</span>{% endif %}</td>
+            <td data-label="Change"><span class="store-stock-type-pill store-stock-type-pill--{{ move.movement_type }}">{{ move.get_movement_type_display }}</span>{% if move.reason %} · {{ move.get_reason_display }}{% if move.note %} — {{ move.note }}{% endif %}{% endif %}{% if move.refund %} · refund {{ move.refund }}{% if move.refund_amount %} ({{ move.refund_amount }}){% endif %}{% endif %}</td>
+            <td class="store-stock-col-qty" data-label="Qty"><span class="shelf-delta shelf-delta--{{ move.movement_type }}">{% if move.movement_type == "out" %}−{% elif move.movement_type == "in" %}+{% endif %}{{ move.quantity|floatformat:"-3" }}</span></td>
+            <td class="store-stock-col-qty" data-label="Left">{{ move.balance_after|floatformat:"-3" }}</td>
+            <td data-label="Supplier">
+              {% if move.supplier_name %}
+              <div class="store-stock-people">
+                <span>{{ move.supplier_name }}</span>
+                <span>
+                  {% if move.supplier_phone %}{{ move.supplier_phone }}{% endif %}
+                  {% if move.payment_status %}<em class="store-stock-type-pill store-stock-type-pill--{{ move.payment_status }}">{{ move.get_payment_status_display }}</em>{% endif %}
+                  {% if move.buying_price is not None %}<em>Buy {{ move.buying_price|floatformat:2 }}</em>{% endif %}
+                </span>
+              </div>
+              {% else %}—{% endif %}
+            </td>
+            <td data-label="By">{% if move.created_by %}{{ move.created_by.user.get_full_name|default:move.created_by.user.username }}{% else %}Shop portal{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="clipboard-list" aria-hidden="true"></i>
+      <p><strong>No transactions in this period.</strong> Pick another range above to audit a different window.</p>
+    </div>
+    {% endif %}
+  </section>
+
+<script>
+(function () {
+  // Audit period filter: show only the fields for the picked range.
+  var auditForm = document.querySelector("[data-stock-report-filters]");
+  if (auditForm) {
+    var rangeSelect = auditForm.querySelector("[data-stock-report-range]");
+    var rangeFields = Array.prototype.slice.call(
+      auditForm.querySelectorAll("[data-range-field]")
+    );
+    var syncRangeFields = function (range) {
+      rangeFields.forEach(function (field) {
+        var match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.querySelectorAll("input").forEach(function (input) {
+          input.disabled = !match;
+        });
+      });
+    };
+    if (rangeSelect) {
+      rangeSelect.addEventListener("change", function () {
+        syncRangeFields(rangeSelect.value);
+      });
+      syncRangeFields(rangeSelect.value);
+    }
+  }
+})();
+</script>

@@ -6,6 +6,7 @@ from django.shortcuts import redirect
 from django.urls import reverse
 
 from .models import (
+    SHOP_ASSIGNABLE_ROLES,
     EmployeeProfile,
     EmployeeRole,
     EmployeeStatus,
@@ -14,6 +15,7 @@ from .models import (
 
 SESSION_PROFILE_KEY = "employee_profile_meta"
 SESSION_ACTIVE_ROLE_KEY = "employee_active_role"
+SESSION_ACTING_SHOP_KEY = "employee_acting_shop"
 REQUEST_PROFILE_ATTR = "_employee_profile_cache"
 REQUEST_META_ATTR = "_employee_meta_cache"
 
@@ -22,7 +24,8 @@ ROLE_HOME_URL_NAMES = {
     EmployeeRole.SUPER_ADMIN: "employees:role_super_admin",
     EmployeeRole.COMPANY_MANAGER: "employees:role_company_manager",
     EmployeeRole.SHOP_MANAGER: "employees:role_shop_manager",
-    EmployeeRole.STORE_MANAGER: "employees:role_store_manager",
+    EmployeeRole.COMPANY_STORE_MANAGER: "employees:role_company_store_manager",
+    EmployeeRole.SHOP_STORE_MANAGER: "employees:role_shop_store_manager",
     EmployeeRole.SHOP_CASHIER: "employees:role_shop_cashier",
     EmployeeRole.IT_SUPPORT: "employees:role_it_support",
     EmployeeRole.RIDER: "employees:role_rider",
@@ -33,7 +36,8 @@ ROLE_URL_SEGMENTS = {
     EmployeeRole.SUPER_ADMIN: "super-admin",
     EmployeeRole.COMPANY_MANAGER: "company-manager",
     EmployeeRole.SHOP_MANAGER: "shop-manager",
-    EmployeeRole.STORE_MANAGER: "store-manager",
+    EmployeeRole.COMPANY_STORE_MANAGER: "company-store-manager",
+    EmployeeRole.SHOP_STORE_MANAGER: "shop-store-manager",
     EmployeeRole.SHOP_CASHIER: "shop-cashier",
     EmployeeRole.IT_SUPPORT: "it-support",
     EmployeeRole.RIDER: "rider",
@@ -103,6 +107,15 @@ def session_active_role(request, available_roles):
     return None
 
 
+def session_acting_shop_id(request):
+    """Shop picked on the role picker for an unallocated shop-scoped role."""
+    session = getattr(request, "session", None)
+    if session is None:
+        return ""
+    value = session.get(SESSION_ACTING_SHOP_KEY)
+    return str(value or "").strip()
+
+
 def _apply_active_role(request, profile) -> None:
     """Swap ``profile.role`` to the session's active role, in memory only.
 
@@ -120,6 +133,25 @@ def _apply_active_role(request, profile) -> None:
     active = session_active_role(request, available)
     if active:
         profile.role = active
+    _apply_acting_shop(request, profile)
+
+
+def _apply_acting_shop(request, profile) -> None:
+    """Expose the role picker's shop as ``profile.acting_shop_id``, in memory only.
+
+    Multi-role staff who act in a shop-scoped role with no allocated shops pick
+    a shop on the role picker; the pick is session-only and is never written to
+    the DB. Stale picks are dropped once the session's role is not shop-scoped.
+    """
+    session = getattr(request, "session", None)
+    if session is None:
+        return
+    if profile.role not in SHOP_ASSIGNABLE_ROLES:
+        session.pop(SESSION_ACTING_SHOP_KEY, None)
+        return
+    acting = session_acting_shop_id(request)
+    if acting:
+        profile.acting_shop_id = acting
 
 
 def refresh_effective_role(request) -> None:
@@ -205,6 +237,7 @@ def clear_profile_session(request):
     if SESSION_PROFILE_KEY in request.session:
         del request.session[SESSION_PROFILE_KEY]
     request.session.pop(SESSION_ACTIVE_ROLE_KEY, None)
+    request.session.pop(SESSION_ACTING_SHOP_KEY, None)
     if hasattr(request, REQUEST_META_ATTR):
         delattr(request, REQUEST_META_ATTR)
     if hasattr(request, REQUEST_PROFILE_ATTR):

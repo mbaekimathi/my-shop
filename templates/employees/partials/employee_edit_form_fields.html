@@ -120,10 +120,11 @@
     pattern="\d{6}"
     maxlength="6"
     minlength="6"
-    autocomplete="username"
+    autocomplete="off"
     placeholder="6-digit code e.g. 102845"
     data-employee-id
     data-check-url="{% url 'employees:check_employee_id' %}"
+    data-check-exclude="{% if edit_employee %}{{ edit_employee.employee_id }}{% else %}{{ form_data.employee_id }}{% endif %}"
     aria-describedby="edit-employee-id-status"
   >
   <p class="field-hint" id="edit-employee-id-status" data-employee-id-status role="status" aria-live="polite"></p>
@@ -145,15 +146,17 @@
   </p>
   <div class="role-extras-grid">
     {% for value, label in role_choices %}
-    <label class="field field--checkbox role-extras-option">
+    <label class="perm-switch role-extras-option{% if not form_data.extra_roles or value not in form_data.extra_roles %} is-denied{% endif %}">
       <input
         type="checkbox"
+        class="perm-switch-input"
         name="extra_roles"
         value="{{ value }}"
         {% if form_data.extra_roles and value in form_data.extra_roles %}checked{% endif %}
         data-extra-role-option
       >
-      <span>{{ label }}</span>
+      <span class="perm-switch-ui" aria-hidden="true"></span>
+      <span class="perm-switch-state">{{ label }}</span>
     </label>
     {% endfor %}
   </div>

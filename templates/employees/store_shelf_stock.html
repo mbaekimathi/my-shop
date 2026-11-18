@@ -40,6 +40,17 @@
     </div>
     <form method="get" class="shelf-stock-staff-field">
       {% if shelf_mode != "stock" %}<input type="hidden" name="mode" value="{{ shelf_mode }}">{% endif %}
+      {% if shelf_audits or shelf_mode == "report" %}
+      <input type="hidden" name="range" value="{{ report_range }}">
+      <input type="hidden" name="date" value="{{ report_date_value }}">
+      <input type="hidden" name="date_from" value="{{ report_date_from }}">
+      <input type="hidden" name="date_to" value="{{ report_date_to }}">
+      <input type="hidden" name="month" value="{{ report_month_value }}">
+      <input type="hidden" name="year" value="{{ report_year_value|slice:':4' }}">
+      {% endif %}
+      {% if shelf_mode == "report" and shelf_report.selected_item_id %}
+      <input type="hidden" name="item" value="{{ shelf_report.selected_item_id }}">
+      {% endif %}
       <label class="store-stock-field">
         <span>Shop</span>
         <div class="store-stock-input-wrap">
@@ -391,70 +402,173 @@
     </div>
     {% endif %}
   </form>
-  {% elif shelf_mode == "movements" %}
-  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-history-title">
-    <div class="store-stock-panel-head">
-      <div>
-        <h3 id="shelf-history-title">Stock movement</h3>
-        <p>Shelf stock changes for {{ shop.name }}, newest first.</p>
-      </div>
-    </div>
-    {% if shelf_movements %}
-    <div class="store-stock-table-wrap">
-      <table class="store-stock-table">
-        <thead>
-          <tr>
-            <th scope="col">When</th>
-            <th scope="col">Shelf item</th>
-            <th scope="col">Change</th>
-            <th scope="col" class="store-stock-col-qty">Qty</th>
-            <th scope="col" class="store-stock-col-qty">Left</th>
-            <th scope="col">Supplier</th>
-            <th scope="col">By</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for move in shelf_movements %}
-          <tr class="store-stock-row">
-            <td data-label="When">{{ move.created_at|date:"d M Y H:i" }}</td>
-            <td data-label="Shelf item">{{ move.shelf_item.name }}{% if move.note %} <span class="store-stock-item-cat-mobile">{{ move.note }}</span>{% endif %}</td>
-            <td data-label="Change">{{ move.get_movement_type_display }}{% if move.reason %} · {{ move.get_reason_display }}{% if move.note %} — {{ move.note }}{% endif %}{% endif %}{% if move.refund %} · refund {{ move.refund }}{% if move.refund_amount %} ({{ move.refund_amount }}){% endif %}{% endif %}</td>
-            <td class="store-stock-col-qty" data-label="Qty">{% if move.movement_type == "out" %}−{% elif move.movement_type == "in" %}+{% endif %}{{ move.quantity|floatformat:"-3" }}</td>
-            <td class="store-stock-col-qty" data-label="Left">{{ move.balance_after|floatformat:"-3" }}</td>
-            <td data-label="Supplier">
-              {% if move.supplier_name %}
-              <div class="store-stock-people">
-                <span>{{ move.supplier_name }}</span>
-                <span>
-                  {% if move.supplier_phone %}{{ move.supplier_phone }}{% endif %}
-                  {% if move.payment_status %}<em class="store-stock-type-pill store-stock-type-pill--{{ move.payment_status }}">{{ move.get_payment_status_display }}</em>{% endif %}
-                  {% if move.buying_price is not None %}<em>Buy {{ move.buying_price|floatformat:2 }}</em>{% endif %}
-                </span>
-              </div>
-              {% else %}—{% endif %}
-            </td>
-            <td data-label="By">{% if move.created_by %}{{ move.created_by.user.get_full_name|default:move.created_by.user.username }}{% else %}Shop portal{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <div class="store-stock-empty">
-      <i data-lucide="arrow-down-up" aria-hidden="true"></i>
-      <p><strong>No movements yet.</strong> Shelf stock changes for {{ shop.name }} will appear here.</p>
-    </div>
-    {% endif %}
-  </section>
   {% elif shelf_mode == "report" %}
   <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-report-title">
     <div class="store-stock-panel-head">
       <div>
         <h3 id="shelf-report-title">Stock report</h3>
-        <p>{{ shelf_item_count }} shelf item{{ shelf_item_count|pluralize }} · {{ shelf_total_display }} on shelf{% if shelf_low_count %} · {{ shelf_low_count }} low{% endif %} — {{ shop.name }}.</p>
+        <p>
+          {{ report_range_label }} · {{ report_period_label }} — opening,
+          movement and closing shelf stock for {{ shop.name }}{% if shelf_report.selected_item_id %}, one item only{% endif %}.
+        </p>
       </div>
     </div>
-    {% if shelf_items %}
+    <form method="get" class="shelf-audit-filters" data-stock-report-filters>
+      <input type="hidden" name="mode" value="report">
+      <input type="hidden" name="shop" value="{{ shop.pk }}">
+      <label class="store-stock-field shelf-audit-field">
+        <span>Time</span>
+        <select name="range" data-stock-report-range aria-label="Time range">
+          <option value="day"{% if report_range == "day" %} selected{% endif %}>Day</option>
+          <option value="period"{% if report_range == "period" %} selected{% endif %}>Period</option>
+          <option value="month"{% if report_range == "month" %} selected{% endif %}>Month</option>
+          <option value="year"{% if report_range == "year" %} selected{% endif %}>Year</option>
+        </select>
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="day"{% if report_range != "day" %} hidden{% endif %}>
+        <span>Date</span>
+        <input type="date" name="date" value="{{ report_date_value }}" required aria-label="Select day">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>From</span>
+        <input type="date" name="date_from" value="{{ report_date_from }}" required aria-label="Period start">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="period"{% if report_range != "period" %} hidden{% endif %}>
+        <span>To</span>
+        <input type="date" name="date_to" value="{{ report_date_to }}" required aria-label="Period end">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="month"{% if report_range != "month" %} hidden{% endif %}>
+        <span>Month</span>
+        <input type="month" name="month" value="{{ report_month_value }}" required aria-label="Select month">
+      </label>
+      <label class="store-stock-field shelf-audit-field" data-range-field="year"{% if report_range != "year" %} hidden{% endif %}>
+        <span>Year</span>
+        <input
+          type="number"
+          name="year"
+          min="2000"
+          max="2100"
+          step="1"
+          value="{{ report_year_value|slice:':4' }}"
+          required
+          aria-label="Select year"
+        >
+      </label>
+      <label class="store-stock-field shelf-audit-field">
+        <span>Item</span>
+        <select name="item" aria-label="Filter by shelf item">
+          <option value="">All items</option>
+          {% for opt in shelf_report.item_options %}
+          <option value="{{ opt.id }}"{% if opt.id == shelf_report.selected_item_id %} selected{% endif %}>{{ opt.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="store-stock-btn store-stock-btn--primary shelf-audit-apply">Apply</button>
+      {% if shelf_report_download_url %}
+      <a class="store-stock-btn store-stock-btn--ghost" href="{{ shelf_report_download_url }}">
+        <i data-lucide="download" aria-hidden="true"></i> Download PDF
+      </a>
+      {% endif %}
+    </form>
+    {% if shelf_report.rows %}
+    <div class="store-stock-table-wrap">
+      <table class="store-stock-table">
+        <thead>
+          <tr>
+            <th scope="col">Shelf item</th>
+            <th scope="col">Unit</th>
+            <th scope="col" class="store-stock-col-qty" title="Starting stock">Start</th>
+            <th scope="col" class="store-stock-col-qty" title="Stock in">In</th>
+            <th scope="col" class="store-stock-col-qty" title="Transfers in − transfers out">Transfers</th>
+            <th scope="col" class="store-stock-col-qty" title="Trades in − trades out">Trades</th>
+            <th scope="col" class="store-stock-col-qty" title="Stock out">Out</th>
+            <th scope="col" class="store-stock-col-qty" title="Closing stock">Close</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in shelf_report.rows %}
+          <tr class="store-stock-row">
+            <td data-label="Shelf item">
+              <div class="store-stock-item-cell">
+                <span class="store-stock-item-head">
+                  {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
+                  <span class="store-stock-item-name">{{ row.name }}</span>
+                </span>
+                <span class="store-stock-item-cat-mobile">
+                  {% if row.category %}{{ row.category }}{% endif %}
+                  {% if row.is_suspended %} · Suspended{% endif %}
+                  {% if row.is_archived %} · Archived{% endif %}
+                </span>
+              </div>
+            </td>
+            <td data-label="Unit">{{ row.unit|default:"—" }}</td>
+            <td class="store-stock-col-qty" data-label="Starting stock">{{ row.start_display }}</td>
+            <td class="store-stock-col-qty" data-label="Stock in"><span class="shelf-delta shelf-delta--in">{{ row.in_display }}</span></td>
+            <td class="store-stock-col-qty" data-label="Stock transfers"><span class="shelf-delta{% if row.transfers > 0 %} shelf-delta--in{% elif row.transfers < 0 %} shelf-delta--out{% endif %}">{{ row.transfers_display }}</span></td>
+            <td class="store-stock-col-qty" data-label="Stock trades"><span class="shelf-delta{% if row.trades > 0 %} shelf-delta--in{% elif row.trades < 0 %} shelf-delta--out{% endif %}">{{ row.trades_display }}</span></td>
+            <td class="store-stock-col-qty" data-label="Stock out"><span class="shelf-delta shelf-delta--out">{{ row.out_display }}</span></td>
+            <td class="store-stock-col-qty" data-label="Closing stock"><strong>{{ row.close_display }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="store-stock-row">
+            <td data-label="Shelf item"><strong>Total</strong></td>
+            <td data-label="Unit"></td>
+            <td class="store-stock-col-qty" data-label="Starting stock"><strong>{{ shelf_report.totals.start_display }}</strong></td>
+            <td class="store-stock-col-qty" data-label="Stock in"><strong>{{ shelf_report.totals.in_display }}</strong></td>
+            <td class="store-stock-col-qty" data-label="Stock transfers"><strong>{{ shelf_report.totals.transfers_display }}</strong></td>
+            <td class="store-stock-col-qty" data-label="Stock trades"><strong>{{ shelf_report.totals.trades_display }}</strong></td>
+            <td class="store-stock-col-qty" data-label="Stock out"><strong>{{ shelf_report.totals.out_display }}</strong></td>
+            <td class="store-stock-col-qty" data-label="Closing stock"><strong>{{ shelf_report.totals.close_display }}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <div class="store-stock-empty">
+      <i data-lucide="bar-chart-3" aria-hidden="true"></i>
+      <p><strong>Nothing to report.</strong> Register shelf stock on the Current stock tab first.</p>
+    </div>
+    {% endif %}
+  </section>
+
+<script>
+(function () {
+  // Report period filter: show only the fields for the picked range.
+  var reportForm = document.querySelector("[data-stock-report-filters]");
+  if (reportForm) {
+    var rangeSelect = reportForm.querySelector("[data-stock-report-range]");
+    var rangeFields = Array.prototype.slice.call(
+      reportForm.querySelectorAll("[data-range-field]")
+    );
+    var syncRangeFields = function (range) {
+      rangeFields.forEach(function (field) {
+        var match = field.getAttribute("data-range-field") === range;
+        field.hidden = !match;
+        field.querySelectorAll("input").forEach(function (input) {
+          input.disabled = !match;
+        });
+      });
+    };
+    if (rangeSelect) {
+      rangeSelect.addEventListener("change", function () {
+        syncRangeFields(rangeSelect.value);
+      });
+      syncRangeFields(rangeSelect.value);
+    }
+  }
+})();
+</script>
+  {% elif shelf_mode == "suspended" %}
+  <section class="store-stock-panel store-stock-panel--list" aria-labelledby="shelf-suspended-title">
+    <div class="store-stock-panel-head">
+      <div>
+        <h3 id="shelf-suspended-title">Suspended items</h3>
+        <p>{{ suspended_item_count }} suspended shelf item{{ suspended_item_count|pluralize }} — {{ shop.name }}. Unsuspend to put an item back on the shelf list.</p>
+      </div>
+    </div>
+    {% if suspended_items %}
     <div class="store-stock-table-wrap">
       <table class="store-stock-table">
         <thead>
@@ -464,11 +578,11 @@
             <th scope="col">Unit</th>
             <th scope="col" class="store-stock-col-qty">Last buy price</th>
             <th scope="col" class="store-stock-col-qty">On shelf</th>
-            <th scope="col">Status</th>
+            <th scope="col">Manage</th>
           </tr>
         </thead>
         <tbody>
-          {% for row in shelf_items %}
+          {% for row in suspended_items %}
           <tr class="store-stock-row">
             <td data-label="Shelf item">
               <div class="store-stock-item-cell">
@@ -482,9 +596,23 @@
             <td data-label="Unit">{{ row.unit|default:"—" }}</td>
             <td class="store-stock-col-qty" data-label="Last buy price">{{ row.last_buying_price_display|default:"—" }}</td>
             <td class="store-stock-col-qty" data-label="On shelf">
-              <span class="store-stock-balance-pill"{% if row.is_low %} data-shelf-low{% endif %}>{{ row.quantity_display }}</span>
+              <span class="store-stock-balance-pill">{{ row.quantity_display }}</span>
             </td>
-            <td data-label="Status">{% if row.is_low %}<span class="store-stock-type-pill store-stock-type-pill--out">Low</span>{% else %}OK{% endif %}</td>
+            <td data-label="Manage">
+              <form
+                method="post"
+                class="shelf-stock-archive"
+                onsubmit="return confirm('Put “{{ row.name|escapejs }}” back on the shelf list?');"
+              >
+                {% csrf_token %}
+                <input type="hidden" name="shop" value="{{ shop.pk }}">
+                <input type="hidden" name="mode" value="suspended">
+                <input type="hidden" name="shelf_item_id" value="{{ row.id }}">
+                <button type="submit" name="action" value="unsuspend" class="store-stock-btn store-stock-btn--ghost" aria-label="Unsuspend {{ row.name }}" title="Unsuspend {{ row.name }}">
+                  <i data-lucide="play" aria-hidden="true"></i> Unsuspend
+                </button>
+              </form>
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -492,11 +620,13 @@
     </div>
     {% else %}
     <div class="store-stock-empty">
-      <i data-lucide="bar-chart-3" aria-hidden="true"></i>
-      <p><strong>Nothing to report.</strong> Register shelf stock on the Current stock tab first.</p>
+      <i data-lucide="circle-pause" aria-hidden="true"></i>
+      <p><strong>No suspended items.</strong> Suspend a shelf item from the Shelf stock tab and it shows up here.</p>
     </div>
     {% endif %}
   </section>
+  {% elif shelf_mode == "audits" %}
+  {% include "shops/partials/shelf_stock_audits.html" %}
   {% else %}
   {% include "shops/partials/shelf_stock_body.html" with shelf_readonly=True %}
   {% endif %}

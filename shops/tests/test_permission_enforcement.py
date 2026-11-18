@@ -3,7 +3,7 @@
 Each test flips one ``EmployeeModulePermission`` row to ``allowed=False`` and
 proves the matching page / API / service refuses the action on surfaces that
 previously skipped the matrix: the POS sales API, the offline-sync sale replay,
-the Store Manager central-store pages, and the floor stock-take submit.
+the Company Store Manager central-store pages, and the floor stock-take submit.
 """
 
 from __future__ import annotations
@@ -120,11 +120,11 @@ class SyncCreateSalePermissionTests(TestCase):
 
 
 class StoreStockPermissionTests(TestCase):
-    """Store Manager pages must follow ``stock-management/*`` toggles."""
+    """Company Store Manager pages must follow ``stock-management/*`` toggles."""
 
     def setUp(self):
         self.profile = _profile(
-            employee_id="410004", role=EmployeeRole.STORE_MANAGER
+            employee_id="410004", role=EmployeeRole.COMPANY_STORE_MANAGER
         )
         self.client.force_login(self.profile.user)
         self.item = Item.objects.create(

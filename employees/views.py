@@ -90,6 +90,7 @@ from shops.views import shop_management
 
 from .access import (
     SESSION_ACTIVE_ROLE_KEY,
+    SESSION_ACTING_SHOP_KEY,
     active_employee_required,
     get_profile,
     get_profile_for_request,
@@ -105,7 +106,7 @@ from .analytics_views import analytics_dashboard
 from communications.views import communications_dashboard
 from .countries import COUNTRY_DIAL_CODES
 from .hr_views import hr_management_page
-from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, FULL_STOCK_WORKFLOW_ROLES, SHOP_ALLOCATION_ROLES, join_extra_roles
+from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, FULL_STOCK_WORKFLOW_ROLES, SHOP_ALLOCATION_ROLES, SHOP_ASSIGNABLE_ROLES, join_extra_roles
 from .pagination import page_url, pagination_links, redirect_query_page
 from .services import (
     EMPLOYEE_ID_RE,
@@ -686,7 +687,7 @@ def check_employee_id(request):
         return _employee_id_json_response(
             {
                 "available": True,
-                "message": f"Employee code {code} is available.",
+                "message": f"Employee code {code} is already assigned to this employee.",
             }
         )
 
@@ -728,17 +729,6 @@ def employee_select_role(request):
             return redirect(next_url)
         return redirect_to_role_home(profile)
 
-    if request.method == "POST":
-        chosen = (request.POST.get("role") or "").strip()
-        if chosen not in roles:
-            messages.error(request, "Choose one of your assigned roles.")
-        else:
-            request.session[SESSION_ACTIVE_ROLE_KEY] = chosen
-            refresh_effective_role(request)
-            if next_url:
-                return redirect(next_url)
-            return redirect(role_home_url_name(chosen))
-
     role_cards = [
         {
             "value": value,
@@ -753,6 +743,46 @@ def employee_select_role(request):
         }
         for value in roles
     ]
+
+    if request.method == "POST":
+        chosen = (request.POST.get("role") or "").strip()
+        if chosen not in roles:
+            messages.error(request, "Choose one of your assigned roles.")
+        else:
+            shop_choices = _role_pick_shop_choices(profile, chosen)
+            picked_shop_id = (request.POST.get("shop") or "").strip()
+            picked_shop = next(
+                (s for s in shop_choices if str(s.pk) == picked_shop_id),
+                None,
+            )
+            if shop_choices and picked_shop is None:
+                # Shop-scoped role with no allocation — ask which shop to work in.
+                if picked_shop_id:
+                    messages.error(request, "Choose a shop to work in.")
+                return render(
+                    request,
+                    "employees/select_role.html",
+                    {
+                        "profile": profile,
+                        "role_cards": role_cards,
+                        "next_url": next_url,
+                        "shop_step": {
+                            "role": chosen,
+                            "role_label": EmployeeRole(chosen).label,
+                            "shops": shop_choices,
+                        },
+                    },
+                )
+            request.session[SESSION_ACTIVE_ROLE_KEY] = chosen
+            if picked_shop is not None:
+                request.session[SESSION_ACTING_SHOP_KEY] = str(picked_shop.pk)
+            else:
+                request.session.pop(SESSION_ACTING_SHOP_KEY, None)
+            refresh_effective_role(request)
+            if next_url:
+                return redirect(next_url)
+            return redirect(role_home_url_name(chosen))
+
     return render(
         request,
         "employees/select_role.html",
@@ -761,6 +791,25 @@ def employee_select_role(request):
             "role_cards": role_cards,
             "next_url": next_url,
         },
+    )
+
+
+def _role_pick_shop_choices(profile, role):
+    """Shops offered when a shop-scoped role pick has no allocated shops.
+
+    Allocated employees are already scoped by their assignment, so the acting
+    shop only applies while the profile has no active shop allocations.
+    """
+    if role not in SHOP_ASSIGNABLE_ROLES:
+        return []
+    if profile.assigned_shops.filter(
+        is_hidden=False, is_suspended=False
+    ).exists():
+        return []
+    from shops.models import Shop
+
+    return list(
+        Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
     )
 
 
@@ -868,7 +917,10 @@ def role_employee(request):
 
 @role_required(EmployeeRole.EMPLOYEE)
 def employee_my_analytics(request):
+    from .analytics_services import _date_filter_context
+
     profile = get_profile_for_request(request)
+    date_filter = _date_filter_context(request)
     return render(
         request,
         "employees/employee_analytics.html",
@@ -885,7 +937,10 @@ def employee_my_analytics(request):
             },
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "stats": build_employee_analytics(profile),
+            "stats": build_employee_analytics(
+                profile, date_filter=date_filter
+            ),
+            **date_filter,
             "page_sidebar": sidebar_for_role_dashboard(
                 EmployeeRole.EMPLOYEE,
                 profile=profile,
@@ -1095,9 +1150,14 @@ def role_shop_manager(request):
     return _render_role_page(request, EmployeeRole.SHOP_MANAGER)
 
 
-@role_required(EmployeeRole.STORE_MANAGER)
-def role_store_manager(request):
-    return _render_role_page(request, EmployeeRole.STORE_MANAGER)
+@role_required(EmployeeRole.COMPANY_STORE_MANAGER)
+def role_company_store_manager(request):
+    return _render_role_page(request, EmployeeRole.COMPANY_STORE_MANAGER)
+
+
+@role_required(EmployeeRole.SHOP_STORE_MANAGER)
+def role_shop_store_manager(request):
+    return _render_role_page(request, EmployeeRole.SHOP_STORE_MANAGER)
 
 
 @role_required(EmployeeRole.SHOP_CASHIER)
@@ -1713,7 +1773,11 @@ def _main_website_guide(request, company, main_shop):
     }
 
 
-@role_required(EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
+@role_required(
+    EmployeeRole.IT_SUPPORT,
+    EmployeeRole.SUPER_ADMIN,
+    EmployeeRole.SHOP_MANAGER,
+)
 @require_http_methods(["GET", "POST"])
 def marketing_links(request):
     from shops.models import Shop
