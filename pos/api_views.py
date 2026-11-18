@@ -54,6 +54,11 @@ def sale_create_api(request):
     ):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
+    from employees.module_permissions import employee_may
+
+    if not employee_may(profile, "my-shop", "sale"):
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
     except json.JSONDecodeError:

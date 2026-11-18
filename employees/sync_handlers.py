@@ -112,6 +112,13 @@ def _sync_create_sale(employee: EmployeeProfile, payload: dict) -> dict:
     ):
         raise SyncOperationError("Your role cannot create sales.", "forbidden")
 
+    from employees.module_permissions import employee_may
+
+    if not employee_may(employee, "my-shop", "sale"):
+        raise SyncOperationError(
+            "You do not have permission to create sales.", "forbidden"
+        )
+
     try:
         sale = create_sale_from_payload(employee, payload, source=SaleSource.OFFLINE)
     except SaleValidationError as exc:

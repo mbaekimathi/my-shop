@@ -11,7 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from employees.access import get_profile_for_request, role_required
 from employees.models import EmployeeRole
-from employees.module_permissions import employee_may
+from employees.module_permissions import employee_may, require_module_permission
 from employees.workspace import sidebar_for_store_stock
 from items.models import (
     ShelfStockMovementType,
@@ -78,6 +78,11 @@ def store_stock_items(request):
     if denied is not None:
         return denied
     profile = get_profile_for_request(request)
+    denied = require_module_permission(
+        request, profile, "stock-management", "view"
+    )
+    if denied is not None:
+        return denied
     items = list_store_stock_items()
     return render(
         request,
@@ -123,6 +128,11 @@ def store_stock_movement(request):
     from items.movement_page import build_movement_ledger_page
 
     profile = get_profile_for_request(request)
+    denied = require_module_permission(
+        request, profile, "stock-management", "movements"
+    )
+    if denied is not None:
+        return denied
     response, context = build_movement_ledger_page(
         request,
         source="store",
@@ -166,6 +176,11 @@ def _render_store_stock_page(request, *, mode: str):
         return denied
     profile = get_profile_for_request(request)
     is_in = mode == StoreStockMovementType.IN
+    denied = require_module_permission(
+        request, profile, "stock-management", "in" if is_in else "out"
+    )
+    if denied is not None:
+        return denied
 
     if request.method == "POST":
         stock_req = _stock_requirements()
@@ -265,6 +280,14 @@ def store_stock_trade(request):
     if denied is not None:
         return denied
     profile = get_profile_for_request(request)
+    if not (
+        employee_may(profile, "stock-management", "in")
+        or employee_may(profile, "stock-management", "out")
+    ):
+        messages.error(
+            request, "You do not have permission to record store trades."
+        )
+        return redirect("employees:role_store_manager")
 
     if request.method == "POST":
         try:
@@ -276,6 +299,11 @@ def store_stock_trade(request):
                     False,
                 ),
             )
+            required = "in" if kind == StockOutReason.TRADE_IN else "out"
+            if not employee_may(profile, "stock-management", required):
+                raise ValidationError(
+                    "You do not have permission to record that trade."
+                )
             movements = record_store_trade(
                 actor=profile,
                 kind=kind,
@@ -642,6 +670,11 @@ def store_stock_report(request):
     if denied is not None:
         return denied
     profile = get_profile_for_request(request)
+    denied = require_module_permission(
+        request, profile, "stock-management", "report"
+    )
+    if denied is not None:
+        return denied
     page = build_store_stock_report(request=request)
     return render(
         request,
@@ -700,6 +733,15 @@ def store_stock_item_count_toggle(request):
             },
             status=400,
         )
+    denied = require_module_permission(
+        request,
+        get_profile_for_request(request),
+        "item-management",
+        "edit",
+        as_json=True,
+    )
+    if denied is not None:
+        return denied
     try:
         item_id = int(request.POST.get("item_id") or 0)
     except (TypeError, ValueError):
@@ -728,6 +770,9 @@ def store_stock_item_count_toggle(request):
 @role_required(EmployeeRole.STORE_MANAGER)
 @require_GET
 def store_stock_item_search(request):
+    denied = _store_stock_read_denied(request)
+    if denied is not None:
+        return denied
     results = (
         search_store_items(query=request.GET.get("q") or "", limit=12)
         if item_stock_tracking_enabled()
@@ -739,5 +784,22 @@ def store_stock_item_search(request):
 @role_required(EmployeeRole.STORE_MANAGER)
 @require_GET
 def store_stock_employee_search(request):
+    denied = _store_stock_read_denied(request)
+    if denied is not None:
+        return denied
     results = search_active_employees(query=request.GET.get("q") or "", limit=12)
     return JsonResponse({"ok": True, "results": results})
+
+
+def _store_stock_read_denied(request):
+    """JSON 403 when the profile has no stock-management capability at all."""
+    profile = get_profile_for_request(request)
+    if any(
+        employee_may(profile, "stock-management", key)
+        for key in ("view", "in", "out")
+    ):
+        return None
+    return JsonResponse(
+        {"ok": False, "error": "You do not have permission for this action."},
+        status=403,
+    )

@@ -3,56 +3,36 @@ Shelf-mode stock panel for stock_management.html. Rendered inside the page's
 outer stock form, so rows use row-scoped field names (shelf_qty_<id> etc.) and
 shelf_action="action:<id>" submit buttons instead of nested forms.
 
-Mirrors the item stock in/out page: every shelf item is listed in a collapsed
-matrix row; expanding a row reveals its fields; the floating submit card posts
-all filled rows in one in_bulk/out_bulk submission. New shelf items are
-registered through the "New shelf item" modal (data-modal-open="shelf-stock").
+Mirrors the item stock in/out page: shelf items list in category-grouped
+matrix rows; expanding a row reveals its fields; the floating submit card
+posts all filled rows in one in_bulk/out_bulk submission.
 {% endcomment %}
-<section class="store-stock-panel store-stock-panel--list stock-shelf-panel" aria-labelledby="stock-shelf-title" data-shelf-stock>
+<section class="store-stock-panel store-stock-panel--list stock-shelf-panel" aria-label="Shelf items" data-shelf-stock>
   {% if shelf_shop %}<input type="hidden" name="shelf_shop_id" value="{{ shelf_shop.pk }}">{% endif %}
-  <div class="store-stock-panel-head store-stock-panel-head--list">
-    <div>
-      <h3 id="stock-shelf-title">Shelf items — {% if shelf_shop %}{{ shelf_shop.name }}{% else %}All shops{% endif %}</h3>
-      <p>
-        Expand an item, type a quantity{% if stock_mode == 'in' %} and buying
-        price{% endif %}, then submit from the panel — or
-        <strong>Send</strong> it to another shelf shop.
-      </p>
-    </div>
-    {% if can_shelf_stock %}
-    <button
-      type="button"
-      class="store-stock-btn store-stock-btn--ghost shelf-new-item-btn"
-      data-modal-open="shelf-stock"
-    >
-      <i data-lucide="package-plus" aria-hidden="true"></i>
-      New shelf item
-    </button>
-    {% endif %}
-  </div>
 
   {% if shelf_items %}
-  <section class="stock-category" data-item-category-group>
-    <header class="stock-category-head">
-      <div class="stock-category-title-wrap">
-        <span class="stock-category-mark" aria-hidden="true"></span>
-        <h3 class="stock-category-title">Shelf items</h3>
-      </div>
-      <span class="stock-category-count" data-category-count>{{ shelf_items|length }}</span>
-    </header>
-    <div class="stock-matrix-scroll">
-      <div class="stock-matrix-wrap" data-item-list>
+  <div class="stock-matrix-wrap" data-item-list>
+    {% regroup shelf_items by category as shelf_groups %}
+    {% for group in shelf_groups %}
+    <section class="stock-category" data-item-category-group>
+      <header class="stock-category-head">
+        <div class="stock-category-title-wrap">
+          <span class="stock-category-mark" aria-hidden="true"></span>
+          <h3 class="stock-category-title" data-category-label>{{ group.grouper|default:"Uncategorized" }}</h3>
+        </div>
+        <span class="stock-category-count" data-category-count>{{ group.list|length }}</span>
+      </header>
+      <div class="stock-matrix-scroll">
         <table class="stock-matrix stock-matrix--single stock-matrix--action">
           <thead>
             <tr>
-              <th scope="col" class="stock-matrix-item-col">Shelf item</th>
+              <th scope="col" class="stock-matrix-item-col">Item</th>
               <th scope="col" class="stock-matrix-shop-col">On shelf</th>
-              <th scope="col" class="stock-matrix-shop-col">Last buy</th>
               <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
             </tr>
           </thead>
           <tbody>
-            {% for row in shelf_items %}
+            {% for row in group.list %}
             <tr
               class="stock-matrix-row stock-matrix-row--action{% if row.quantity == 0 %} is-empty-stock{% endif %}"
               data-item-row
@@ -75,9 +55,6 @@ registered through the "New shelf item" modal (data-modal-open="shelf-stock").
                   {% if row.is_low %}data-shelf-low title="At or below the low stock alert ({{ row.low_stock_threshold_display }})"{% endif %}
                 >{{ row.quantity_display }}</span>
               </td>
-              <td class="stock-matrix-shop-col">
-                <span class="stock-matrix-qty">{{ row.last_buying_price_display|default:"—" }}</span>
-              </td>
               <td class="stock-matrix-action-col">
                 <button type="button" class="stock-matrix-chevron" data-shelf-row-toggle aria-label="Open {{ row.name }}">
                   <i data-lucide="chevron-down" aria-hidden="true"></i>
@@ -85,11 +62,11 @@ registered through the "New shelf item" modal (data-modal-open="shelf-stock").
               </td>
             </tr>
             <tr class="stock-matrix-form-row" data-shelf-row-inputs data-stock-item-inputs hidden>
-              <td colspan="4">
+              <td colspan="3">
                 <div class="stock-item-inputs stock-item-inputs--matrix">
                   <div class="stock-in-field-row">
                     <label class="stock-inline-field">
-                      <span>{% if stock_mode == 'out' %}Qty to remove{% else %}Qty to stock in{% endif %}</span>
+                      <span>{% if stock_mode == 'out' %}Qty to stock out{% else %}Qty to stock in{% endif %}</span>
                       <input
                         type="text"
                         name="shelf_qty_{{ row.id }}"
@@ -115,7 +92,7 @@ registered through the "New shelf item" modal (data-modal-open="shelf-stock").
                         name="shelf_price_{{ row.id }}"
                         min="0"
                         step="0.01"
-                        placeholder="0"
+                        placeholder="{% if row.last_buying_price %}{{ row.last_buying_price_display }}{% else %}0{% endif %}"
                         inputmode="decimal"
                         aria-label="Buying price for {{ row.name }}"
                       >
@@ -175,8 +152,9 @@ registered through the "New shelf item" modal (data-modal-open="shelf-stock").
           </tbody>
         </table>
       </div>
-    </div>
-  </section>
+    </section>
+    {% endfor %}
+  </div>
   {% if stock_mode == 'in' or stock_mode == 'out' %}
   {% if stock_tab != 'shelf' and not shelf_only %}
   {# Both-mode shops append this panel under the items matrix, where the
@@ -204,7 +182,7 @@ registered through the "New shelf item" modal (data-modal-open="shelf-stock").
   <div class="item-search-empty" data-item-no-results hidden>
     <i data-lucide="search-x" aria-hidden="true"></i>
     <p><strong>No shelf items match your search.</strong></p>
-    {% if stock_mode == 'in' and can_shelf_stock %}
+    {% if can_shelf_stock %}
     <button
       type="button"
       class="store-stock-btn store-stock-btn--ghost"

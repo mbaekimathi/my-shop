@@ -492,6 +492,11 @@ def create_transfer(me, destination, raw_lines, staff_code="",
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "stock_requests"),
+        ("stock-management", "request"),
+    )
     if destination is None:
         raise StockError("Select a shop to transfer to.")
     if destination.pk == me.pk:
@@ -562,6 +567,11 @@ def create_stock_in(me, raw_lines, *, supplier_name: str, supplier_phone: str,
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "buy_stock"),
+        ("stock-management", "in"),
+    )
     stock_req = get_stock_requirements()
     name = (supplier_name or "").strip()
     dial, national = parse_supplier_phone(supplier_phone)
@@ -728,6 +738,11 @@ def respond_to_transfer(me, movement_id, decision, received, reason="",
         employee_id = verify_employee_code(
             staff_code, me, require_member=True
         )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "respond_stock_request"),
+        ("stock-management", "request"),
+    )
     sender_id, receiver_id = movement.shop_id, movement.requested_from_shop_id
     if not sender_id or not receiver_id:
         raise StockError("This stock transfer is missing shop details.")
@@ -1058,6 +1073,27 @@ def member_employee_id(code: str, shop) -> int | None:
     return emp_id
 
 
+def assert_employee_may(employee_id, *keys):
+    """Raise StockError when the HR permission matrix blocks every key.
+
+    ``keys`` are ``(module_slug, submodule_slug)`` pairs — the same ones the
+    MY-SHOP views and services gate on — and the action is allowed when the
+    authorising employee may use ANY of them. ``employee_id`` is a profile pk
+    (from ``verify_employee_code`` or the signed-in chat employee); a falsy or
+    unknown pk skips the check (authentication was already enforced upstream).
+    """
+    if not employee_id:
+        return
+    from employees.models import EmployeeProfile
+    from employees.module_permissions import employee_may
+
+    profile = EmployeeProfile.objects.filter(pk=employee_id).first()
+    if profile is not None and not any(
+        employee_may(profile, module, submodule) for module, submodule in keys
+    ):
+        raise StockError("You do not have permission for this action.")
+
+
 def employee_label(emp_pk) -> str:
     """Display name for an employee profile, used in card footers."""
     if not emp_pk:
@@ -1152,6 +1188,7 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    assert_employee_may(employee_id, ("my-shop", kind))
     if kind in ("sale", "credit"):
         require_shop_day_for_sale(me, pos=pos)
 
@@ -2082,6 +2119,11 @@ def confirm_receipt(
     employee_id = verify_employee_code(
         staff_code, shop, require_member=True
     )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "receipts"),
+        ("analytics", "confirm-receipts"),
+    )
     receipt = (
         ShopReceipt.objects.select_for_update()
         .filter(pk=receipt_id, shop_id=shop.pk)
@@ -2204,6 +2246,11 @@ def return_receipt_items(
         employee_id = verify_employee_code(
             staff_code, shop, require_member=True
         )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "return_receipt"),
+        ("analytics", "return-receipts"),
+    )
     reason = (reason or "").strip()
     if not reason:
         raise StockError("Enter a reason for the return.")
@@ -2559,6 +2606,12 @@ def cancel_pending_receipt(
         employee_id = verify_employee_code(
             staff_code, shop, require_member=True
         )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "return_receipt"),
+        ("analytics", "return-receipts"),
+        ("analytics", "confirm-receipts"),
+    )
     receipt = (
         ShopReceipt.objects.select_for_update()
         .filter(pk=receipt_id, shop_id=shop.pk)
@@ -2627,6 +2680,11 @@ def confirm_receipts_bulk(
 ) -> dict:
     employee_id = verify_employee_code(
         staff_code, shop, require_member=True
+    )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "receipts"),
+        ("analytics", "confirm-receipts"),
     )
     pos = effective_pos_settings(shop)
     results = []
@@ -2916,6 +2974,7 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    assert_employee_may(employee_id, ("my-shop", kind))
     if kind == "trade_out":
         require_shop_day_for_sale(me, pos=pos)
 
@@ -3260,6 +3319,7 @@ def create_expenses(me, *, lines=None, category="", name="", amount=None,
         employee_id = verify_employee_code(
             staff_code, me, require_member=require_member
         )
+    assert_employee_may(employee_id, ("my-shop", "register_expense"))
     if payload is not None:
         parsed = parse_expense_lines(payload)
     elif lines is not None:

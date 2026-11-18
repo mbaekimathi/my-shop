@@ -73,6 +73,15 @@ def _err(message: str, status: int = 400) -> JsonResponse:
     return JsonResponse({"ok": False, "error": message}, status=status)
 
 
+def _perm_denied(employee_id, *keys):
+    """JSON 403 when the HR permission matrix blocks every key."""
+    try:
+        stock_ops.assert_employee_may(employee_id, *keys)
+    except stock_ops.StockError as exc:
+        return _err(str(exc), 403)
+    return None
+
+
 def _needs_member_confirmation(request, shop) -> bool:
     """Staff acting on a shop they aren't allocated to need a member's code.
 
@@ -573,6 +582,14 @@ def api_rider_complete(request, delivery_id: int):
 @require_GET
 def api_store_items(request):
     """Item typeahead + central-store qty for the Store Manager cart."""
+    denied = _perm_denied(
+        request.chat_employee["id"],
+        ("stock-management", "view"),
+        ("stock-management", "in"),
+        ("stock-management", "out"),
+    )
+    if denied is not None:
+        return denied
     q = request.GET.get("q") or ""
     return JsonResponse(
         {
@@ -586,6 +603,14 @@ def api_store_items(request):
 @require_GET
 def api_store_employees(request):
     """Active employee typeahead for delivered-by / received-by."""
+    denied = _perm_denied(
+        request.chat_employee["id"],
+        ("stock-management", "view"),
+        ("stock-management", "in"),
+        ("stock-management", "out"),
+    )
+    if denied is not None:
+        return denied
     return JsonResponse(
         {
             "ok": True,
@@ -601,6 +626,11 @@ def api_store_employees(request):
 @require_POST
 def api_store_stock_in(request):
     """Record qty into the central store (does not change shop floor stock)."""
+    denied = _perm_denied(
+        request.chat_employee["id"], ("stock-management", "in")
+    )
+    if denied is not None:
+        return denied
     data = _json_body(request)
     try:
         stock_req = store_stock_ops.get_stock_requirements()
@@ -639,6 +669,11 @@ def api_store_stock_in(request):
 @require_POST
 def api_store_stock_out(request):
     """Record qty leaving the central store (must not exceed on-hand)."""
+    denied = _perm_denied(
+        request.chat_employee["id"], ("stock-management", "out")
+    )
+    if denied is not None:
+        return denied
     data = _json_body(request)
     try:
         stock_req = store_stock_ops.get_stock_requirements()
@@ -676,6 +711,18 @@ def api_store_stock_out(request):
 def api_store_trade(request):
     """One-way central-store trade with a person (trade in / trade out)."""
     data = _json_body(request)
+    denied = _perm_denied(
+        request.chat_employee["id"],
+        (
+            "stock-management",
+            "in"
+            if str(data.get("trade_kind") or "").strip().lower()
+            == store_stock_ops.REASON_TRADE_IN
+            else "out",
+        ),
+    )
+    if denied is not None:
+        return denied
     try:
         stock_req = store_stock_ops.get_stock_requirements()
         kind, lines = store_stock_ops.parse_store_trade_lines(
@@ -715,6 +762,13 @@ def api_store_trade(request):
 @require_GET
 def api_store_feed(request):
     """WhatsApp-style reference feed of recent store stock in/out cards."""
+    denied = _perm_denied(
+        request.chat_employee["id"],
+        ("stock-management", "movements"),
+        ("stock-management", "view"),
+    )
+    if denied is not None:
+        return denied
     return JsonResponse(
         {
             "ok": True,
@@ -729,6 +783,11 @@ def api_store_feed(request):
 @require_GET
 def api_store_report(request):
     """Filtered central-store movement ledger."""
+    denied = _perm_denied(
+        request.chat_employee["id"], ("stock-management", "report")
+    )
+    if denied is not None:
+        return denied
     report = store_stock_ops.build_store_stock_report(request.GET)
     return JsonResponse({"ok": True, **report})
 

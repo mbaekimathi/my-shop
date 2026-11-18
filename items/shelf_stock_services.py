@@ -84,7 +84,7 @@ def list_shelf_items(*, shop=None, shops=None) -> list[dict]:
     if shop is not None:
         qs = qs.filter(shop=shop).order_by("category", "name")
     elif shops is not None:
-        qs = qs.filter(shop__in=shops).order_by("shop__name", "category", "name")
+        qs = qs.filter(shop__in=shops).order_by("category", "shop__name", "name")
     else:
         raise ValidationError("Pick a shelf-mode shop.")
     items = list(qs)
