@@ -66,6 +66,7 @@ all filled cells in one in_bulk/out_bulk submission.
                   data-shelf-cell
                   data-shelf-id="{{ cell.id }}"
                   data-shelf-stock="{{ cell.qty }}"
+                  data-shelf-cost="{{ cell.unit_cost|default:'' }}"
                   data-shop-name="{{ shop.name }}"
                 >
                   <span

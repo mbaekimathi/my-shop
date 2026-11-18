@@ -1241,7 +1241,14 @@
     return String(item.selling_price || "");
   };
 
-  const buildShopCell = (item, shop, stockQty, sellingPrice = "") => {
+  const unitCostFor = (item, index) => {
+    if (Array.isArray(item.shop_costs) && item.shop_costs[index] != null) {
+      return String(item.shop_costs[index] || "");
+    }
+    return String(item.unit_cost || "");
+  };
+
+  const buildShopCell = (item, shop, stockQty, sellingPrice = "", unitCost = "") => {
     const prev = money(item.last_buying_price);
     const track = item.track_serial ? "1" : "0";
     const shopLabel = escapeHtml(shop.name || "Shop");
@@ -1320,6 +1327,7 @@
         data-shop-id="${shop.id}"
         data-shop-name="${shopLabel}"
         data-item-stock="${stockQty}"
+        data-unit-cost="${escapeHtml(String(unitCost || item.unit_cost || ""))}"
         data-track-serial="${track}"
       >
         <span class="stock-list-stock${qtyClass(item, stockQty)}" data-stock-display-qty>${visibleQty(item, stockQty)}</span>
@@ -1349,7 +1357,13 @@
         : viewShops.map(() => stock);
       const cells = viewShops
         .map((shop, index) =>
-          buildShopCell(item, shop, quantities[index] || 0, sellingPriceFor(item, index))
+          buildShopCell(
+            item,
+            shop,
+            quantities[index] || 0,
+            sellingPriceFor(item, index),
+            unitCostFor(item, index)
+          )
         )
         .join("");
       const header = document.createElement("tr");

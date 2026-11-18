@@ -8578,7 +8578,11 @@ def _shelf_view_matrix(shops):
     from decimal import Decimal
     from collections import OrderedDict
 
-    from .models import ShelfItem, ShelfStockMovement
+    from .models import (
+        ShelfItem,
+        ShelfStockMovement,
+        ShelfStockMovementType,
+    )
     from .shelf_stock_services import _qty_display
 
     shops = [shop for shop in shops if shop is not None]
@@ -8589,14 +8593,41 @@ def _shelf_view_matrix(shops):
         .order_by("category", "name", "pk")
     )
     last_price = {}
-    for shelf_item_id, price in (
-        ShelfStockMovement.objects.filter(
-            shelf_item__in=items, buying_price__isnull=False
-        )
-        .order_by("shelf_item_id", "-created_at", "-id")
-        .values_list("shelf_item_id", "buying_price")
+    movement_map = {}
+    for shelf_item_id, mtype, qty, price in (
+        ShelfStockMovement.objects.filter(shelf_item__in=items)
+        .order_by("shelf_item_id", "created_at", "id")
+        .values_list("shelf_item_id", "movement_type", "quantity", "buying_price")
     ):
-        last_price.setdefault(shelf_item_id, price)
+        movement_map.setdefault(shelf_item_id, []).append((mtype, qty, price))
+        if price is not None:
+            last_price[shelf_item_id] = price
+
+    def _avg_unit_cost(movements):
+        """Weighted-average cost of the on-hand stock: inbound qtys pool at
+        their buying price, outbound qtys draw the pool down at the running
+        average — the same basis ShopStock.average_cost tracks for items."""
+        pool_qty = Decimal("0")
+        pool_cost = Decimal("0")
+        for mtype, qty, price in movements:
+            qty = qty or Decimal("0")
+            if mtype == ShelfStockMovementType.OUT:
+                if pool_qty > 0:
+                    take = min(qty, pool_qty)
+                    pool_cost -= take * (pool_cost / pool_qty)
+                    pool_qty -= take
+                    if pool_qty <= 0:
+                        pool_qty = Decimal("0")
+                        pool_cost = Decimal("0")
+            else:
+                if price is not None and price > 0:
+                    pool_cost += qty * price
+                elif pool_qty > 0:
+                    pool_cost += qty * (pool_cost / pool_qty)
+                pool_qty += qty
+        if pool_qty <= 0:
+            return Decimal("0")
+        return (pool_cost / pool_qty).quantize(Decimal("0.01"))
     shop_index = {shop.pk: idx for idx, shop in enumerate(shops)}
     merged = OrderedDict()
     for item in items:
@@ -8619,6 +8650,7 @@ def _shelf_view_matrix(shops):
             entry["unit"] = item.unit
         threshold = item.low_stock_threshold or Decimal("0")
         price = last_price.get(item.pk)
+        unit_cost = _avg_unit_cost(movement_map.get(item.pk, []))
         entry["cells"][shop_index[item.shop_id]] = {
             "id": item.pk,
             "qty": item.quantity,
@@ -8630,6 +8662,7 @@ def _shelf_view_matrix(shops):
             "last_buying_price_display": (
                 str(price) if price is not None else ""
             ),
+            "unit_cost": unit_cost,
         }
         entry["total"] += item.quantity
 

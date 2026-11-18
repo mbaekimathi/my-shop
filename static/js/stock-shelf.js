@@ -290,6 +290,14 @@
   const floatClear = floatRoot?.querySelector("[data-shelf-float-clear]");
   const floatToggle = floatRoot?.querySelector("[data-shelf-float-toggle]");
   const floatSubmit = floatRoot?.querySelector("[data-shelf-float-submit]");
+  const floatMode = floatRoot?.dataset.stockFloatMode || "";
+  const floatTotal = floatRoot?.querySelector("[data-shelf-float-total]");
+  const floatTotalCaption = floatRoot?.querySelector(
+    "[data-shelf-float-total-caption]"
+  );
+  const floatTotalValue = floatRoot?.querySelector(
+    "[data-shelf-float-total-value]"
+  );
 
   // Shelf variant owns its collapse toggle (the item flow binds the shared
   // data-stock-float-toggle itself when that variant is rendered).
@@ -374,32 +382,139 @@
         cell
           .querySelector('[name^="shelf_price_"]')
           ?.value.trim() || "";
-      lines.push({ id, name, shopName, qty, price });
+      const cost = cell.getAttribute("data-shelf-cost") || "";
+      lines.push({ id, name, shopName, qty, price, cost });
     });
     return lines;
   };
+
+  const numLabel = (value) =>
+    Number(value || 0).toLocaleString(undefined, {
+      maximumFractionDigits: 2,
+    });
+
+  const unitsLabel = (units) =>
+    `${numLabel(units)} unit${units === 1 ? "" : "s"}`;
 
   const renderShelfFloat = () => {
     if (!floatLines || !floatEmpty) return;
     const lines = collectShelfLines();
     floatEmpty.hidden = lines.length > 0;
     floatLines.hidden = lines.length === 0;
-    floatLines.innerHTML = lines
-      .map(
-        (line) =>
-          `<li>
-            <span title="${esc(line.name)}${
-              line.shopName ? ` · ${esc(line.shopName)}` : ""
-            }">${esc(line.name)}${
-              line.shopName ? ` · ${esc(line.shopName)}` : ""
-            }${line.price ? ` @ ${esc(line.price)}` : ""}</span>
-            <strong>×${esc(line.qty)}</strong>
-            <button type="button" data-shelf-float-remove data-shelf-id="${esc(
-              line.id
-            )}" aria-label="Clear ${esc(line.name)}">×</button>
-          </li>`
-      )
+
+    // One card per item name — its per-shop cells nest underneath.
+    const groups = [];
+    lines.forEach((line) => {
+      let group = groups.find((g) => g.name === line.name);
+      if (!group) {
+        group = { name: line.name, lines: [] };
+        groups.push(group);
+      }
+      group.lines.push(line);
+    });
+
+    let grandUnits = 0;
+    let grandAmount = 0;
+    let anyPrice = false;
+    let anyEstimated = false;
+
+    floatLines.innerHTML = groups
+      .map((group) => {
+        const units = group.lines.reduce((sum, l) => sum + l.qty, 0);
+        let amount = 0;
+        let estimated = false;
+        group.lines.forEach((l) => {
+          const typed = Number(l.price);
+          const cost = Number(l.cost);
+          if (Number.isFinite(typed) && typed > 0) {
+            anyPrice = true;
+            amount += typed * l.qty;
+          } else if (Number.isFinite(cost) && cost > 0) {
+            estimated = true;
+            anyEstimated = true;
+            amount += cost * l.qty;
+          }
+        });
+        grandUnits += units;
+        grandAmount += amount;
+        const rows = group.lines
+          .map((line) => {
+            const typed = Number(line.price);
+            const cost = Number(line.cost);
+            const hasTyped = Number.isFinite(typed) && typed > 0;
+            const hasEst =
+              !hasTyped && Number.isFinite(cost) && cost > 0;
+            const lineTotal = hasTyped
+              ? typed * line.qty
+              : hasEst
+                ? cost * line.qty
+                : 0;
+            const unitPrice = line.price || line.cost;
+            return `<li>
+                <span class="stock-float-line-meta">${esc(line.shopName)}${
+                  unitPrice ? ` · @ ${esc(unitPrice)}` : ""
+                }</span>
+                <span class="stock-float-line-amount"><strong>×${esc(
+                  line.qty
+                )}</strong>${
+                  lineTotal > 0
+                    ? ` ${hasEst ? "≈" : "="} KSh ${numLabel(lineTotal)}`
+                    : ""
+                }</span>
+                <button type="button" data-shelf-float-remove data-shelf-id="${esc(
+                  line.id
+                )}" aria-label="Clear ${esc(line.name)} at ${esc(
+                  line.shopName
+                )}">×</button>
+              </li>`;
+          })
+          .join("");
+        return `<li class="stock-float-group">
+            <div class="stock-float-group-head">
+              <span class="stock-float-line-label">
+                <span class="stock-float-line-title">${esc(group.name)}</span>
+                <span class="stock-float-line-meta">${
+                  group.lines.length
+                } shop${group.lines.length === 1 ? "" : "s"} · ${unitsLabel(
+                  units
+                )}</span>
+              </span>
+              ${
+                amount > 0
+                  ? `<strong class="stock-float-group-total">${
+                      estimated ? "≈ " : ""
+                    }KSh ${numLabel(amount)}</strong>`
+                  : ""
+              }
+              <button
+                type="button"
+                data-shelf-float-remove-item
+                data-shelf-ids="${group.lines
+                  .map((l) => esc(l.id))
+                  .join(",")}"
+                aria-label="Clear ${esc(group.name)} from all shops"
+              >×</button>
+            </div>
+            <ul class="stock-float-group-lines">${rows}</ul>
+          </li>`;
+      })
       .join("");
+
+    if (floatTotal && floatTotalCaption && floatTotalValue) {
+      floatTotal.hidden = lines.length === 0;
+      if (anyEstimated && grandAmount > 0) {
+        floatTotalCaption.textContent = `${
+          floatMode === "out" ? "Est. loss" : "Est. total"
+        } · ${unitsLabel(grandUnits)}`;
+        floatTotalValue.textContent = `≈ KSh ${numLabel(grandAmount)}`;
+      } else if (anyPrice && grandAmount > 0) {
+        floatTotalCaption.textContent = `Total · ${unitsLabel(grandUnits)}`;
+        floatTotalValue.textContent = `KSh ${numLabel(grandAmount)}`;
+      } else {
+        floatTotalCaption.textContent = "Total";
+        floatTotalValue.textContent = unitsLabel(grandUnits);
+      }
+    }
     if (floatClear) floatClear.hidden = lines.length === 0;
     // Disabled only while JS is running — a no-JS post still reaches the
     // server, which validates and reports an empty submit.
@@ -422,6 +537,15 @@
     (layout || shelfPanel)?.addEventListener("input", renderShelfFloat);
     (layout || shelfPanel)?.addEventListener("change", renderShelfFloat);
     floatLines.addEventListener("click", (event) => {
+      const groupBtn = event.target.closest("[data-shelf-float-remove-item]");
+      if (groupBtn) {
+        (groupBtn.getAttribute("data-shelf-ids") || "")
+          .split(",")
+          .filter(Boolean)
+          .forEach(clearLine);
+        renderShelfFloat();
+        return;
+      }
       const btn = event.target.closest("[data-shelf-float-remove]");
       if (!btn) return;
       clearLine(btn.getAttribute("data-shelf-id"));

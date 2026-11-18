@@ -496,13 +496,14 @@ def build_stock_catalog_page(
     shop_qty_map = {}
     from_qty_map = {}
     multi_qty_map = {}
+    multi_cost_map = {}
+    unit_cost_map = {}
     if item_ids and shop_id and not use_multi_shop:
-        shop_qty_map = {
-            item_id: qty
-            for item_id, qty in ShopStock.objects.filter(
-                shop_id=shop_id, item_id__in=item_ids
-            ).values_list("item_id", "quantity")
-        }
+        for item_id, qty, avg_cost in ShopStock.objects.filter(
+            shop_id=shop_id, item_id__in=item_ids
+        ).values_list("item_id", "quantity", "average_cost"):
+            shop_qty_map[item_id] = qty
+            unit_cost_map[item_id] = avg_cost
     if item_ids and requested_from_shop_id:
         from_qty_map = {
             item_id: qty
@@ -511,10 +512,11 @@ def build_stock_catalog_page(
             ).values_list("item_id", "quantity")
         }
     if item_ids and view_shop_ids:
-        for item_id, sid, qty in ShopStock.objects.filter(
+        for item_id, sid, qty, avg_cost in ShopStock.objects.filter(
             shop_id__in=view_shop_ids, item_id__in=item_ids
-        ).values_list("item_id", "shop_id", "quantity"):
+        ).values_list("item_id", "shop_id", "quantity", "average_cost"):
             multi_qty_map.setdefault(item_id, {})[sid] = _quantize_qty(qty)
+            multi_cost_map.setdefault(item_id, {})[sid] = avg_cost
 
     last_buying = {}
     if mode == "in" and item_ids:
@@ -568,6 +570,11 @@ def build_stock_catalog_page(
             "last_buying_price": (
                 format(price, "f") if price is not None else None
             ),
+            "unit_cost": (
+                format(unit_cost_map[item.pk], "f")
+                if item.pk in unit_cost_map
+                else None
+            ),
             "selling_price": format(selling, "f") if selling else None,
         }
         if use_multi_shop:
@@ -595,6 +602,10 @@ def build_stock_catalog_page(
                     format(item.resolve_list_price(shop_override), "f")
                 )
             row["selling_prices"] = selling_prices
+            row["shop_costs"] = [
+                format(multi_cost_map.get(item.pk, {}).get(sid) or 0, "f")
+                for sid in view_shop_ids
+            ]
         if use_multi_shop:
             hidden_by_shop = [
                 item_stock_is_hidden(

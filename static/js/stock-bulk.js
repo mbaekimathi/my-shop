@@ -768,6 +768,13 @@
     const heldEl = floatRoot?.querySelector("[data-stock-float-held]");
     const heldCountEl = floatRoot?.querySelector("[data-stock-float-held-count]");
     const linesEl = floatRoot?.querySelector("[data-stock-float-lines]");
+    const totalEl = floatRoot?.querySelector("[data-stock-float-total]");
+    const totalCaptionEl = floatRoot?.querySelector(
+      "[data-stock-float-total-caption]"
+    );
+    const totalValueEl = floatRoot?.querySelector(
+      "[data-stock-float-total-value]"
+    );
     const clearBtn = floatRoot?.querySelector("[data-stock-float-clear]");
     const submitBtn = floatRoot?.querySelector("[data-stock-float-submit]");
     const shopLabelEl = floatRoot?.querySelector("[data-stock-float-shop-label]");
@@ -1091,6 +1098,10 @@
             shopId: cell.dataset.shopId,
             shopName: cell.dataset.shopName || "Shop",
             quantity: qty,
+            price: (
+              cell.querySelector("[data-stock-buying-price]")?.value || ""
+            ).trim(),
+            cost: (cell.getAttribute("data-unit-cost") || "").trim(),
           };
         })
         .filter(Boolean);
@@ -1584,18 +1595,124 @@
       if (emptyEl) emptyEl.hidden = ready.length > 0;
       if (linesEl) {
         linesEl.hidden = ready.length === 0;
-        linesEl.innerHTML = ready
-          .map(
-            (item) =>
-              `<li>
-                <span title="${item.name} · ${item.shopName}">${item.name} · ${
-                mode === "request" ? `from ${item.shopName}` : item.shopName
-              }</span>
-                <strong>×${item.quantity}</strong>
-                <button type="button" data-stock-float-remove data-item-id="${item.id}" data-shop-id="${item.shopId}" aria-label="Clear ${item.name} at ${item.shopName}">×</button>
-              </li>`
-          )
+        const groups = [];
+        ready.forEach((item) => {
+          let group = groups.find((g) => g.id === item.id);
+          if (!group) {
+            group = { id: item.id, name: item.name, lines: [] };
+            groups.push(group);
+          }
+          group.lines.push(item);
+        });
+
+        const unitsLabel = (units) =>
+          `${moneyLabel(units)} unit${units === 1 ? "" : "s"}`;
+        let grandUnits = 0;
+        let grandAmount = 0;
+        let anyPrice = false;
+        let anyEstimated = false;
+
+        linesEl.innerHTML = groups
+          .map((group) => {
+            const name = escapeConfirmText(group.name);
+            const units = group.lines.reduce((sum, l) => sum + l.quantity, 0);
+            let amount = 0;
+            let estimated = false;
+            group.lines.forEach((l) => {
+              const typed = Number(l.price);
+              const cost = Number(l.cost);
+              if (Number.isFinite(typed) && typed > 0) {
+                anyPrice = true;
+                amount += typed * l.quantity;
+              } else if (Number.isFinite(cost) && cost > 0) {
+                estimated = true;
+                anyEstimated = true;
+                amount += cost * l.quantity;
+              }
+            });
+            grandUnits += units;
+            grandAmount += amount;
+            const rows = group.lines
+              .map((item) => {
+                const shop = escapeConfirmText(item.shopName);
+                const typed = Number(item.price);
+                const cost = Number(item.cost);
+                const hasTyped = Number.isFinite(typed) && typed > 0;
+                const hasEst =
+                  !hasTyped && Number.isFinite(cost) && cost > 0;
+                const lineTotal = hasTyped
+                  ? typed * item.quantity
+                  : hasEst
+                    ? cost * item.quantity
+                    : 0;
+                const unitPrice = item.price || item.cost;
+                const meta = [
+                  mode === "request" ? `From ${shop}` : shop,
+                  unitPrice ? `@ ${escapeConfirmText(unitPrice)}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return `<li>
+                    <span class="stock-float-line-meta">${meta}</span>
+                    <span class="stock-float-line-amount"><strong>×${
+                      item.quantity
+                    }</strong>${
+                      lineTotal > 0
+                        ? ` ${hasEst ? "≈" : "="} KSh ${moneyLabel(lineTotal)}`
+                        : ""
+                    }</span>
+                    <button type="button" data-stock-float-remove data-item-id="${escapeConfirmText(
+                      item.id
+                    )}" data-shop-id="${escapeConfirmText(
+                      item.shopId
+                    )}" aria-label="Clear ${name} at ${shop}">×</button>
+                  </li>`;
+              })
+              .join("");
+            return `<li class="stock-float-group">
+                <div class="stock-float-group-head">
+                  <span class="stock-float-line-label" title="${name}">
+                    <span class="stock-float-line-title">${name}</span>
+                    <span class="stock-float-line-meta">${
+                      group.lines.length
+                    } shop${group.lines.length === 1 ? "" : "s"} · ${unitsLabel(
+                      units
+                    )}</span>
+                  </span>
+                  ${
+                    amount > 0
+                      ? `<strong class="stock-float-group-total">${
+                          estimated ? "≈ " : ""
+                        }KSh ${moneyLabel(amount)}</strong>`
+                      : ""
+                  }
+                  <button
+                    type="button"
+                    data-stock-float-remove-group
+                    data-item-id="${escapeConfirmText(group.id)}"
+                    aria-label="Clear ${name} from all shops"
+                  >×</button>
+                </div>
+                <ul class="stock-float-group-lines">${rows}</ul>
+              </li>`;
+          })
           .join("");
+
+        if (totalEl && totalCaptionEl && totalValueEl) {
+          totalEl.hidden = ready.length === 0;
+          if (anyEstimated && grandAmount > 0) {
+            totalCaptionEl.textContent = `${
+              mode === "out" ? "Est. loss" : "Est. total"
+            } · ${unitsLabel(grandUnits)}`;
+            totalValueEl.textContent = `≈ KSh ${moneyLabel(grandAmount)}`;
+          } else if (anyPrice && grandAmount > 0) {
+            totalCaptionEl.textContent = `Total · ${unitsLabel(grandUnits)}`;
+            totalValueEl.textContent = `KSh ${moneyLabel(grandAmount)}`;
+          } else {
+            totalCaptionEl.textContent = "Total";
+            totalValueEl.textContent = unitsLabel(grandUnits);
+          }
+        }
       }
       const parked = document.querySelector("[data-stock-parked]");
       const held = parked
@@ -2262,6 +2379,16 @@
     });
 
     floatRoot?.addEventListener("click", (event) => {
+      const groupBtn = event.target.closest("[data-stock-float-remove-group]");
+      if (groupBtn) {
+        event.preventDefault();
+        const itemId = groupBtn.getAttribute("data-item-id");
+        cells()
+          .filter((c) => c.dataset.itemId === itemId)
+          .forEach(clearCell);
+        renderSummary();
+        return;
+      }
       const removeBtn = event.target.closest("[data-stock-float-remove]");
       if (!removeBtn) return;
       event.preventDefault();

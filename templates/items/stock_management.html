@@ -1096,7 +1096,7 @@
   {% if shops %}
   {% if shelf_register_shops or stock_tab != 'shelf' and not shelf_only %}
   <aside
-    class="stock-float stock-float--{{ stock_mode }}"
+    class="stock-float stock-float--{{ stock_mode }} stock-float--fill"
     data-stock-float
     data-stock-float-mode="{{ stock_mode }}"
     aria-live="polite"
@@ -1168,6 +1168,10 @@
           </p>
         </div>
         <ul class="stock-float-lines" data-shelf-float-lines hidden></ul>
+        <p class="stock-float-total" data-shelf-float-total hidden>
+          <span data-shelf-float-total-caption></span>
+          <strong data-shelf-float-total-value></strong>
+        </p>
         {% if stock_mode == 'in' or stock_mode == 'out' %}
         <button
           class="stock-float-submit"
@@ -1201,6 +1205,10 @@
         </p>
 
         <ul class="stock-float-lines" data-stock-float-lines hidden></ul>
+        <p class="stock-float-total" data-stock-float-total hidden>
+          <span data-stock-float-total-caption></span>
+          <strong data-stock-float-total-value></strong>
+        </p>
 
         {% if stock_mode == 'in' %}
         <div class="stock-float-apply" data-stock-float-apply>
@@ -1800,10 +1808,10 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
+<script defer src="{% static 'js/stock-catalog.js' %}?v=20261118-avg-cost"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=7"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/stock-bulk.js' %}?v=20261115-shelf-tab"></script>
+<script defer src="{% static 'js/stock-bulk.js' %}?v=20261118-loss-est"></script>
 <script
   defer
   src="{% static 'js/serial-scan.js' %}?v=9"
@@ -1812,5 +1820,5 @@
 {% if stock_mode == 'view' %}
 <script defer src="{% static 'js/stock-print.js' %}?v=13"></script>
 {% endif %}
-<script defer src="{% static 'js/stock-shelf.js' %}?v=8"></script>
+<script defer src="{% static 'js/stock-shelf.js' %}?v=12"></script>
 {% endblock %}
