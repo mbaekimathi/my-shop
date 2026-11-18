@@ -417,7 +417,7 @@ def build_employee_performance(
     sales = receipts.filter(kind=ShopReceiptKind.SALE)
     receipts_list = (
         ShopReceipt.objects.filter(created_by=profile)
-        .select_related("shop")
+        .select_related("shop", "created_by__user")
         .only(
             "id",
             "receipt_number",
@@ -427,6 +427,10 @@ def build_employee_performance(
             "status",
             "total",
             "created_at",
+            "created_by",
+            "created_by__user__first_name",
+            "created_by__user__last_name",
+            "created_by__user__username",
         )
     )
     if receipt_status:
@@ -518,8 +522,11 @@ def build_employee_performance(
     receipts_page = Paginator(
         receipts_list.order_by("-created_at", "-id"), per_page
     ).get_page(page)
+    from shops.services import employee_display_name
+
     all_receipts = [
         {
+            "id": receipt.pk,
             "number": receipt.receipt_number,
             "shop": receipt.shop.name if receipt.shop_id else "—",
             "kind": receipt.get_kind_display(),
@@ -527,6 +534,7 @@ def build_employee_performance(
             "status_pill": pill_by_status.get(receipt.status, "serial"),
             "total": _money_ksh(receipt.total),
             "when": receipt.created_at,
+            "printed_by": employee_display_name(receipt.created_by),
         }
         for receipt in receipts_page.object_list
     ]

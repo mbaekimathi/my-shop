@@ -3804,3 +3804,128 @@ class RiderRoleTests(TestCase):
         stock = self.client.get("/rider/stock-management/")
         self.assertEqual(stock.status_code, 302)
         self.assertIn("/rider/", stock.url)
+
+
+class EmployeeHomeReceiptPreviewTests(TestCase):
+    def setUp(self):
+        from decimal import Decimal
+
+        self.Decimal = Decimal
+        self.password = "emp-home-pass"
+        self.user = User.objects.create_user(
+            username="860041",
+            password=self.password,
+            email="emp-home@test.local",
+            first_name="MARY",
+            last_name="PRINTS",
+            is_active=True,
+        )
+        self.employee = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="860041",
+            phone_country_code="+254",
+            phone_number="700009941",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.EMPLOYEE,
+        )
+        other_user = User.objects.create_user(
+            username="860042",
+            password=self.password,
+            email="emp-other@test.local",
+            is_active=True,
+        )
+        self.other = EmployeeProfile.objects.create(
+            user=other_user,
+            employee_id="860042",
+            phone_country_code="+254",
+            phone_number="700009942",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.EMPLOYEE,
+        )
+        self.shop = Shop.objects.create(
+            name="EMP HOME SHOP",
+            location="NAIROBI",
+            email="emp-home-shop@test.local",
+            phone_number="0700009941",
+            login_code="850241",
+            password_hash="x",
+            created_by=self.employee,
+        )
+        self.receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="EMP-HOME-1",
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.CONFIRMED,
+            total=Decimal("120.00"),
+            amount_paid=Decimal("120.00"),
+            created_by=self.employee,
+            client_name="WALK IN",
+        )
+        ShopReceiptLine.objects.create(
+            receipt=self.receipt,
+            item_name="TEST WIDGET",
+            quantity=Decimal("2.000"),
+            unit_price=Decimal("60.00"),
+            line_total=Decimal("120.00"),
+        )
+        self.other_receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="EMP-HOME-2",
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.ACTIVE,
+            total=Decimal("40.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.other,
+        )
+
+    def test_home_lists_printed_by_and_view_button(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/employee/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Printed by")
+        self.assertContains(response, "MARY PRINTS")
+        self.assertContains(
+            response,
+            f'data-detail-url="/employee/receipts/{self.receipt.pk}/"',
+        )
+
+    def test_receipt_detail_returns_payload_for_own_receipt(self):
+        self.client.force_login(self.user)
+        response = self.client.get(f"/employee/receipts/{self.receipt.pk}/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["receipt"]["receipt_number"], "EMP-HOME-1")
+        self.assertEqual(payload["receipt"]["status"], "confirmed")
+        self.assertEqual(payload["receipt"]["status_label"], "Confirmed")
+        self.assertEqual(payload["receipt"]["cashier"], "MARY PRINTS")
+        self.assertEqual(
+            payload["receipt"]["lines"][0]["item_name"], "TEST WIDGET"
+        )
+
+    def test_receipt_detail_rejects_other_employees_receipt(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/employee/receipts/{self.other_receipt.pk}/"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_receipt_detail_requires_employee_role(self):
+        self.client.force_login(self.other.user)
+        admin_user = User.objects.create_user(
+            username="860043",
+            password=self.password,
+            email="emp-admin@test.local",
+            is_active=True,
+        )
+        EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="860043",
+            phone_country_code="+254",
+            phone_number="700009943",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        self.client.force_login(admin_user)
+        response = self.client.get(f"/employee/receipts/{self.receipt.pk}/")
+        self.assertEqual(response.status_code, 302)

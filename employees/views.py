@@ -810,6 +810,42 @@ def employee_my_analytics(request):
     )
 
 
+@role_required(EmployeeRole.EMPLOYEE)
+@require_GET
+def employee_receipt_detail(request, receipt_id):
+    """Receipt preview payload for the eye-icon modal on the employee home.
+
+    Scoped to receipts the signed-in employee created.
+    """
+    from shops.models import ShopReceipt
+    from shops.services import get_shop_receipt_detail
+
+    profile = get_profile_for_request(request)
+    try:
+        receipt = (
+            ShopReceipt.objects.select_related("shop")
+            .only("id", "shop_id")
+            .get(pk=receipt_id, created_by=profile)
+        )
+    except ShopReceipt.DoesNotExist:
+        return JsonResponse(
+            {"ok": False, "error": "Receipt not found."}, status=404
+        )
+    try:
+        payload = get_shop_receipt_detail(
+            shop=receipt.shop, receipt_id=receipt.pk, source="pos"
+        )
+    except ValidationError as exc:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": exc.messages[0] if exc.messages else "Receipt not found.",
+            },
+            status=404,
+        )
+    return JsonResponse(payload)
+
+
 @role_required(EmployeeRole.SUPER_ADMIN)
 def role_super_admin(request, page=None):
     redirect_response = redirect_query_page(

@@ -923,12 +923,13 @@
 }
 
 /* Expandable shelf rows reuse the item stock-matrix classes; the expanded
-   row keeps the compact single-line field strip. */
-.stock-matrix-form-row .shelf-stock-move {
+   row keeps the same stock-item-inputs layout plus a small actions row. */
+.shelf-row-actions {
+  grid-column: 1 / -1;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  gap: 0.5rem;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 /* An expanded inputs row hides together with its filtered-out head row. */

@@ -745,6 +745,11 @@ urlpatterns = [
         name="employee_my_analytics",
     ),
     path(
+        "employee/receipts/<int:receipt_id>/",
+        views.employee_receipt_detail,
+        name="employee_receipt_detail",
+    ),
+    path(
         "<role_segment:role_segment>/<slug:module_slug>/",
         views.workspace_module,
         name="workspace_module",

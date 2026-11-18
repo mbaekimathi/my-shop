@@ -9,10 +9,17 @@
   // Search-gated lists (e.g. the shelf stock panel on in/out) reveal rows
   // only while a query is typed — the full list never dumps on the page.
   const gated = Boolean(itemList && itemList.hasAttribute("data-search-gated"));
-  // Progressive catalog APIs own search/filter — except on a gated list,
-  // where the catalog UI is not rendered (e.g. the shelf tab).
+  // Progressive catalog APIs own search/filter — but only where their
+  // catalog root is actually rendered. The stock-management page carries the
+  // catalog api marker even on the shelf tab, where no catalog root exists.
+  const catalogRendered = Boolean(
+    document.querySelector(
+      "[data-catalog-root], [data-item-catalog-root], [data-stock-catalog-root]"
+    )
+  );
   if (
     !gated &&
+    catalogRendered &&
     (itemPanel.hasAttribute("data-catalog-api") ||
       itemPanel.hasAttribute("data-stock-catalog-api") ||
       itemPanel.hasAttribute("data-item-catalog-api"))

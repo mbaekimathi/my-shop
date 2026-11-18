@@ -158,8 +158,10 @@
           <th scope="col">Receipt</th>
           <th scope="col">Shop</th>
           <th scope="col">Type</th>
+          <th scope="col">Printed by</th>
           <th scope="col" class="item-col--status">Status</th>
           <th scope="col">Total</th>
+          <th scope="col"><span class="visually-hidden">View</span></th>
         </tr>
       </thead>
       <tbody>
@@ -169,10 +171,23 @@
           <td data-label="Receipt"><code>{{ receipt.number }}</code></td>
           <td data-label="Shop">{{ receipt.shop }}</td>
           <td data-label="Type">{{ receipt.kind }}</td>
+          <td data-label="Printed by">{{ receipt.printed_by|default:"—" }}</td>
           <td class="item-cell--status" data-label="Status">
             <span class="status-pill status-pill--{{ receipt.status_pill }}">{{ receipt.status }}</span>
           </td>
           <td data-label="Total">{{ receipt.total }}</td>
+          <td data-label="View">
+            <button
+              type="button"
+              class="workspace-icon-btn"
+              data-receipt-view
+              data-detail-url="{% url 'employees:employee_receipt_detail' receipt_id=receipt.id %}"
+              aria-label="View receipt {{ receipt.number }}"
+              title="View receipt"
+            >
+              <i data-lucide="eye" aria-hidden="true"></i>
+            </button>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -204,7 +219,34 @@
 </div>
 {% endblock %}
 
+{% block workspace_overlays %}
+{{ block.super }}
+<div class="workspace-modal shop-receipt-modal" data-employee-receipt-modal hidden>
+  <div class="workspace-modal-backdrop" data-receipt-modal-close></div>
+  <div
+    class="workspace-modal-dialog shop-receipt-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="employee-receipt-modal-title"
+  >
+    <div class="workspace-modal-head shop-receipt-modal-head">
+      <div>
+        <p class="shop-receipt-modal-kicker">MY-SHOP · Receipt preview</p>
+        <h2 id="employee-receipt-modal-title" data-receipt-modal-title>Receipt</h2>
+      </div>
+      <button type="button" class="workspace-icon-btn" data-receipt-modal-close aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="shop-receipt-modal-body" data-receipt-modal-body>
+      <p class="shop-receipts-status">Loading receipt…</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/employee-home.js' %}?v=1"></script>
+<script defer src="{% static 'js/employee-home.js' %}?v=20261118-receipt-preview"></script>
 {% endblock %}

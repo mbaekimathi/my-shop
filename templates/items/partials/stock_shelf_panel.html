@@ -2,6 +2,11 @@
 Shelf-mode stock panel for stock_management.html. Rendered inside the page's
 outer stock form, so rows use row-scoped field names (shelf_qty_<id> etc.) and
 shelf_action="action:<id>" submit buttons instead of nested forms.
+
+Mirrors the item stock in/out page: every shelf item is listed in a collapsed
+matrix row; expanding a row reveals its fields; the floating submit card posts
+all filled rows in one in_bulk/out_bulk submission. New shelf items are
+registered through the "New shelf item" modal (data-modal-open="shelf-stock").
 {% endcomment %}
 <section class="store-stock-panel store-stock-panel--list stock-shelf-panel" aria-labelledby="stock-shelf-title" data-shelf-stock>
   {% if shelf_shop %}<input type="hidden" name="shelf_shop_id" value="{{ shelf_shop.pk }}">{% endif %}
@@ -9,307 +14,169 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
     <div>
       <h3 id="stock-shelf-title">Shelf items — {% if shelf_shop %}{{ shelf_shop.name }}{% else %}All shops{% endif %}</h3>
       <p>
-        Shelf mode is on for {% if shelf_shop %}this shop{% else %}these shops{% endif %}.
-        Expand an item, type a quantity, then submit below — or
+        Expand an item, type a quantity{% if stock_mode == 'in' %} and buying
+        price{% endif %}, then submit from the panel — or
         <strong>Send</strong> it to another shelf shop.
       </p>
     </div>
+    {% if can_shelf_stock %}
+    <button
+      type="button"
+      class="store-stock-btn store-stock-btn--ghost shelf-new-item-btn"
+      data-modal-open="shelf-stock"
+    >
+      <i data-lucide="package-plus" aria-hidden="true"></i>
+      New shelf item
+    </button>
+    {% endif %}
   </div>
-
-  {% if stock_mode == 'in' %}
-  <div class="shelf-quick-add" data-shelf-quick-add>
-    <div class="shelf-quick-add-fields">
-      {% if not shelf_shop %}
-      <label class="shelf-quick-add-field">
-        <span>Shop</span>
-        <select
-          class="store-stock-qty-input shelf-quick-add-unit"
-          name="shelf_new_shop_id"
-          aria-label="Shop to stock the item into"
-        >
-          {% for shop in shelf_transfer_shops %}
-          <option value="{{ shop.pk }}"{% if forloop.first %} selected{% endif %}>{{ shop.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      {% endif %}
-      <label class="shelf-quick-add-field shelf-quick-add-field--name">
-        <span>Item <em>search or type a new name</em></span>
-        <input
-          class="store-stock-qty-input shelf-quick-add-name"
-          type="text"
-          name="shelf_new_name"
-          list="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}"
-          maxlength="200"
-          placeholder="e.g. Sugar 50kg bag"
-          autocomplete="off"
-          aria-label="Shelf item — pick an existing item or type a new name"
-        >
-        <datalist id="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}">
-          {% for row in shelf_items %}
-          <option value="{{ row.name }}">{% if not shelf_shop %}{{ row.shop_name }} · {% endif %}{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
-          {% endfor %}
-        </datalist>
-      </label>
-      <label class="shelf-quick-add-field">
-        <span>Unit <em>new items</em></span>
-        <select
-          class="store-stock-qty-input shelf-quick-add-unit"
-          name="shelf_new_unit"
-          aria-label="Unit — used when the name is a new shelf item"
-        >
-          {% for unit in shelf_unit_choices %}
-          <option value="{{ unit }}"{% if forloop.first %} selected{% endif %}>{{ unit }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="shelf-quick-add-field">
-        <span>Qty</span>
-        <input
-          class="store-stock-qty-input"
-          type="number"
-          name="shelf_new_qty"
-          min="0"
-          step="any"
-          inputmode="decimal"
-          placeholder="0"
-          aria-label="Quantity to stock in"
-        >
-      </label>
-      <label class="shelf-quick-add-field">
-        <span>Buy price{% if stock_req.shelf_require_buying_price_on_in %} *{% endif %}</span>
-        <input
-          class="store-stock-qty-input"
-          type="number"
-          name="shelf_new_price"
-          min="0"
-          step="any"
-          inputmode="decimal"
-          placeholder="Unit price"
-          aria-label="Unit buying price"
-        >
-      </label>
-      <label class="shelf-quick-add-field">
-        <span>Note</span>
-        <input
-          class="store-stock-qty-input shelf-quick-add-note"
-          type="text"
-          name="shelf_new_note"
-          maxlength="255"
-          placeholder="Optional"
-          aria-label="Note"
-        >
-      </label>
-      <button
-        type="submit"
-        name="shelf_action"
-        value="in_new"
-        class="store-stock-btn store-stock-btn--primary shelf-quick-add-btn"
-      >
-        <i data-lucide="package-plus" aria-hidden="true"></i>
-        Stock in
-      </button>
-    </div>
-    <p class="shelf-quick-add-hint">
-      Pick an item from the list or type a new name — new names are added to
-      the shelf list, then stocked in.
-    </p>
-  </div>
-  {% endif %}
-
-  {% if stock_mode == 'out' %}
-  <div class="shelf-quick-add" data-shelf-quick-add>
-    <div class="shelf-quick-add-fields">
-      {% if not shelf_shop %}
-      <label class="shelf-quick-add-field">
-        <span>Shop</span>
-        <select
-          class="store-stock-qty-input shelf-quick-add-unit"
-          name="shelf_new_shop_id"
-          aria-label="Shop to remove the item from"
-        >
-          {% for shop in shelf_transfer_shops %}
-          <option value="{{ shop.pk }}"{% if forloop.first %} selected{% endif %}>{{ shop.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      {% endif %}
-      <label class="shelf-quick-add-field shelf-quick-add-field--name">
-        <span>Item <em>search the shelf list</em></span>
-        <input
-          class="store-stock-qty-input shelf-quick-add-name"
-          type="text"
-          name="shelf_new_name"
-          list="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}"
-          maxlength="200"
-          placeholder="e.g. Sugar 50kg bag"
-          autocomplete="off"
-          aria-label="Shelf item to remove stock from"
-        >
-        <datalist id="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}">
-          {% for row in shelf_items %}
-          <option value="{{ row.name }}">{% if not shelf_shop %}{{ row.shop_name }} · {% endif %}{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
-          {% endfor %}
-        </datalist>
-      </label>
-      <label class="shelf-quick-add-field">
-        <span>Qty</span>
-        <input
-          class="store-stock-qty-input"
-          type="number"
-          name="shelf_new_qty"
-          min="0"
-          step="any"
-          inputmode="decimal"
-          placeholder="0"
-          aria-label="Quantity to remove"
-        >
-      </label>
-      <label class="shelf-quick-add-field">
-        <span>Note</span>
-        <input
-          class="store-stock-qty-input shelf-quick-add-note"
-          type="text"
-          name="shelf_new_note"
-          maxlength="255"
-          placeholder="Optional"
-          aria-label="Note"
-        >
-      </label>
-      <button
-        type="submit"
-        name="shelf_action"
-        value="out_new"
-        class="store-stock-btn store-stock-btn--primary shelf-quick-add-btn"
-      >
-        <i data-lucide="package-minus" aria-hidden="true"></i>
-        Remove
-      </button>
-    </div>
-    <p class="shelf-quick-add-hint">
-      Pick an item from the list, enter a quantity, then
-      <strong>Remove</strong> to take it off the shelf.
-    </p>
-  </div>
-  {% endif %}
 
   {% if shelf_items %}
-  <div
-    class="stock-matrix-wrap"
-    data-item-list
-    {% if stock_mode == 'in' or stock_mode == 'out' %}data-search-gated{% endif %}
-  >
-    <table class="stock-matrix stock-matrix--single stock-matrix--action">
-      <thead>
-        <tr>
-          <th scope="col" class="stock-matrix-item-col">Shelf item</th>
-          <th scope="col" class="stock-matrix-shop-col">On shelf</th>
-          <th scope="col" class="stock-matrix-shop-col">Last buy</th>
-          <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in shelf_items %}
-        <tr
-          class="stock-matrix-row stock-matrix-row--action{% if row.quantity == 0 %} is-empty-stock{% endif %}"
-          data-item-row
-          data-search-text="{{ row.search_text }}{% if not shelf_shop %} {{ row.shop_name|lower }}{% endif %}"
-          data-shop-name="{{ row.shop_name }}"
-        >
-          <th scope="row" class="stock-matrix-item-col">
-            <button type="button" class="stock-matrix-toggle" data-shelf-row-toggle aria-expanded="false">
-              <div class="stock-matrix-item">
-                <strong>{{ row.name }}</strong>
-                {% if row.unit %}<span class="stock-item-badge">{{ row.unit }}</span>{% endif %}
-                {% if not shelf_shop %}<span class="stock-item-badge">{{ row.shop_name }}</span>{% endif %}
-                {% if row.is_low %}<span class="stock-item-badge">Low stock</span>{% endif %}
-              </div>
-            </button>
-          </th>
-          <td class="stock-matrix-shop-col">
-            <span
-              class="stock-matrix-qty{% if row.quantity == 0 %} is-empty{% endif %}"
-              {% if row.is_low %}data-shelf-low title="At or below the low stock alert ({{ row.low_stock_threshold_display }})"{% endif %}
-            >{{ row.quantity_display }}</span>
-          </td>
-          <td class="stock-matrix-shop-col">
-            <span class="stock-matrix-qty">{{ row.last_buying_price_display|default:"—" }}</span>
-          </td>
-          <td class="stock-matrix-action-col">
-            <button type="button" class="stock-matrix-chevron" data-shelf-row-toggle aria-label="Open {{ row.name }}">
-              <i data-lucide="chevron-down" aria-hidden="true"></i>
-            </button>
-          </td>
-        </tr>
-        <tr class="stock-matrix-form-row" data-shelf-row-inputs hidden>
-          <td colspan="4">
-            <div class="shelf-stock-move shelf-row-fields">
-              <input
-                class="store-stock-qty-input"
-                type="text"
-                name="shelf_qty_{{ row.id }}"
-                min="0"
-                step="any"
-                inputmode="decimal"
-                placeholder="Qty"
-                aria-label="Quantity for {{ row.name }}"
-              >
-              {% if stock_mode == 'in' %}
-              <input
-                class="store-stock-qty-input shelf-stock-price"
-                type="text"
-                name="shelf_price_{{ row.id }}"
-                min="0"
-                step="any"
-                inputmode="decimal"
-                placeholder="Buy price{% if stock_req.shelf_require_buying_price_on_in %}*{% endif %}"
-                aria-label="Buying price for {{ row.name }}"
-              >
-              {% endif %}
-              <input
-                type="text"
-                name="shelf_note_{{ row.id }}"
-                maxlength="255"
-                placeholder="Note (optional)"
-                autocomplete="off"
-                class="store-stock-qty-input shelf-stock-note"
-                aria-label="Note for {{ row.name }}"
-              >
-              {% if shelf_transfer_shops %}
-              <select
-                class="store-stock-qty-input shelf-stock-target"
-                name="shelf_target_{{ row.id }}"
-                aria-label="Send {{ row.name }} to"
-                data-shelf-target
-              >
-                {% for target in shelf_transfer_shops %}
-                {% if target.pk != row.shop_id %}
-                <option
-                  value="{{ target.pk }}"
-                  {% if requested_from_shop and requested_from_shop.pk == target.pk %}selected{% endif %}
-                >{{ target.name }}</option>
-                {% endif %}
-                {% endfor %}
-              </select>
-              <button type="submit" name="shelf_action" value="transfer:{{ row.id }}" class="store-stock-btn store-stock-btn--primary">Send</button>
-              {% endif %}
-              <button
-                type="submit"
-                name="shelf_action"
-                value="archive:{{ row.id }}"
-                class="store-stock-btn store-stock-btn--ghost"
-                aria-label="Remove {{ row.name }} from the shelf list"
-                data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?"
-              >
-                <i data-lucide="trash-2" aria-hidden="true"></i>
-              </button>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  <section class="stock-category" data-item-category-group>
+    <header class="stock-category-head">
+      <div class="stock-category-title-wrap">
+        <span class="stock-category-mark" aria-hidden="true"></span>
+        <h3 class="stock-category-title">Shelf items</h3>
+      </div>
+      <span class="stock-category-count" data-category-count>{{ shelf_items|length }}</span>
+    </header>
+    <div class="stock-matrix-scroll">
+      <div class="stock-matrix-wrap" data-item-list>
+        <table class="stock-matrix stock-matrix--single stock-matrix--action">
+          <thead>
+            <tr>
+              <th scope="col" class="stock-matrix-item-col">Shelf item</th>
+              <th scope="col" class="stock-matrix-shop-col">On shelf</th>
+              <th scope="col" class="stock-matrix-shop-col">Last buy</th>
+              <th scope="col" class="stock-matrix-action-col"><span class="visually-hidden">Action</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in shelf_items %}
+            <tr
+              class="stock-matrix-row stock-matrix-row--action{% if row.quantity == 0 %} is-empty-stock{% endif %}"
+              data-item-row
+              data-search-text="{{ row.search_text }}{% if not shelf_shop %} {{ row.shop_name|lower }}{% endif %}"
+              data-shop-name="{{ row.shop_name }}"
+            >
+              <th scope="row" class="stock-matrix-item-col">
+                <button type="button" class="stock-matrix-toggle" data-shelf-row-toggle aria-expanded="false">
+                  <div class="stock-matrix-item">
+                    <strong>{{ row.name }}</strong>
+                    {% if row.unit %}<span class="stock-item-badge">{{ row.unit }}</span>{% endif %}
+                    {% if not shelf_shop %}<span class="stock-item-badge">{{ row.shop_name }}</span>{% endif %}
+                    {% if row.is_low %}<span class="stock-item-badge">Low stock</span>{% endif %}
+                  </div>
+                </button>
+              </th>
+              <td class="stock-matrix-shop-col">
+                <span
+                  class="stock-matrix-qty{% if row.quantity == 0 %} is-empty{% endif %}"
+                  {% if row.is_low %}data-shelf-low title="At or below the low stock alert ({{ row.low_stock_threshold_display }})"{% endif %}
+                >{{ row.quantity_display }}</span>
+              </td>
+              <td class="stock-matrix-shop-col">
+                <span class="stock-matrix-qty">{{ row.last_buying_price_display|default:"—" }}</span>
+              </td>
+              <td class="stock-matrix-action-col">
+                <button type="button" class="stock-matrix-chevron" data-shelf-row-toggle aria-label="Open {{ row.name }}">
+                  <i data-lucide="chevron-down" aria-hidden="true"></i>
+                </button>
+              </td>
+            </tr>
+            <tr class="stock-matrix-form-row" data-shelf-row-inputs data-stock-item-inputs hidden>
+              <td colspan="4">
+                <div class="stock-item-inputs stock-item-inputs--matrix">
+                  <div class="stock-in-field-row">
+                    <label class="stock-inline-field">
+                      <span>{% if stock_mode == 'out' %}Qty to remove{% else %}Qty to stock in{% endif %}</span>
+                      <input
+                        type="text"
+                        name="shelf_qty_{{ row.id }}"
+                        min="0.001"
+                        step="0.001"
+                        placeholder="0"
+                        inputmode="decimal"
+                        aria-label="Quantity for {{ row.name }}"
+                      >
+                    </label>
+                    {% if stock_mode == 'in' %}
+                    <label class="stock-inline-field">
+                      <span class="stock-inline-label-row">
+                        <span>Unit buying price{% if stock_req.shelf_require_buying_price_on_in %} *{% endif %}</span>
+                        {% if row.last_buying_price %}
+                        <em class="stock-prev-price">Prev {{ row.last_buying_price_display }}</em>
+                        {% else %}
+                        <em class="stock-prev-price is-empty">No previous</em>
+                        {% endif %}
+                      </span>
+                      <input
+                        type="text"
+                        name="shelf_price_{{ row.id }}"
+                        min="0"
+                        step="0.01"
+                        placeholder="0"
+                        inputmode="decimal"
+                        aria-label="Buying price for {{ row.name }}"
+                      >
+                    </label>
+                    {% endif %}
+                    <label class="stock-inline-field">
+                      <span>Note</span>
+                      <input
+                        type="text"
+                        name="shelf_note_{{ row.id }}"
+                        maxlength="255"
+                        placeholder="Optional"
+                        autocomplete="off"
+                        aria-label="Note for {{ row.name }}"
+                      >
+                    </label>
+                    {% if shelf_transfer_shops %}
+                    <label class="stock-inline-field">
+                      <span>Send to</span>
+                      <select
+                        name="shelf_target_{{ row.id }}"
+                        aria-label="Send {{ row.name }} to"
+                        data-shelf-target
+                      >
+                        {% for target in shelf_transfer_shops %}
+                        {% if target.pk != row.shop_id %}
+                        <option
+                          value="{{ target.pk }}"
+                          {% if requested_from_shop and requested_from_shop.pk == target.pk %}selected{% endif %}
+                        >{{ target.name }}</option>
+                        {% endif %}
+                        {% endfor %}
+                      </select>
+                    </label>
+                    {% endif %}
+                  </div>
+                  <div class="shelf-row-actions">
+                    {% if shelf_transfer_shops %}
+                    <button type="submit" name="shelf_action" value="transfer:{{ row.id }}" class="store-stock-btn store-stock-btn--primary">Send</button>
+                    {% endif %}
+                    <button
+                      type="submit"
+                      name="shelf_action"
+                      value="archive:{{ row.id }}"
+                      class="store-stock-btn store-stock-btn--ghost"
+                      aria-label="Remove {{ row.name }} from the shelf list"
+                      data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?"
+                    >
+                      <i data-lucide="trash-2" aria-hidden="true"></i>
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
   {% if stock_mode == 'in' or stock_mode == 'out' %}
   {% if stock_tab != 'shelf' and not shelf_only %}
   {# Both-mode shops append this panel under the items matrix, where the
@@ -326,6 +193,7 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
         name="shelf_action"
         value="{% if stock_mode == 'in' %}in_bulk{% else %}out_bulk{% endif %}"
         class="store-stock-btn store-stock-btn--primary"
+        data-shelf-bulk-submit
       >
         <i data-lucide="{% if stock_mode == 'in' %}package-plus{% else %}package-minus{% endif %}" aria-hidden="true"></i>
         {% if stock_mode == 'in' %}Stock in entered{% else %}Remove entered{% endif %}
@@ -333,19 +201,19 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
     </div>
   </div>
   {% endif %}
-  <div class="store-stock-empty" data-item-search-idle hidden>
-    <i data-lucide="search" aria-hidden="true"></i>
-    <p>
-      <strong>{{ shelf_items|length }} shelf item{{ shelf_items|length|pluralize }}.</strong>
-      Search by name above to find the item to update.
-    </p>
-  </div>
-  <div class="store-stock-empty" data-item-no-results hidden>
+  <div class="item-search-empty" data-item-no-results hidden>
     <i data-lucide="search-x" aria-hidden="true"></i>
-    <p>
-      <strong>No shelf items match.</strong>
-      {% if stock_mode == 'in' %}Type a new name above and stock it in.{% endif %}
-    </p>
+    <p><strong>No shelf items match your search.</strong></p>
+    {% if stock_mode == 'in' and can_shelf_stock %}
+    <button
+      type="button"
+      class="store-stock-btn store-stock-btn--ghost"
+      data-modal-open="shelf-stock"
+    >
+      <i data-lucide="package-plus" aria-hidden="true"></i>
+      Register it as a new shelf item
+    </button>
+    {% endif %}
   </div>
   {% endif %}
   {% else %}

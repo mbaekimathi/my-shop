@@ -1117,6 +1117,30 @@
   }
 }
 
+.shop-receipt-text-label {
+  margin: 0 0 0.45rem;
+  color: var(--mist-dim);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.shop-receipt-text {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 16rem;
+  overflow: auto;
+}
+
 .shop-receipt-card--confirm > .shop-receipt-muted {
   margin: 0 0 0.65rem;
 }

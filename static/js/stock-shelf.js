@@ -262,11 +262,6 @@
         return;
       }
       event.preventDefault();
-      const quickAdd = target.closest("[data-shelf-quick-add]");
-      if (quickAdd) {
-        quickAdd.querySelector('button[name="shelf_action"]')?.click();
-        return;
-      }
       const inputsRow = target.closest("tr[data-shelf-row-inputs]");
       if (!inputsRow) return;
       (
@@ -374,31 +369,6 @@
             ?.value.trim() || "";
         lines.push({ id, name, shopName, qty, price, note });
       });
-    const stripQty = (
-      document.querySelector('[name="shelf_new_qty"]')?.value || ""
-    ).trim();
-    if (stripQty && Number(stripQty) > 0) {
-      const stripName =
-        (
-          document.querySelector('[name="shelf_new_name"]')?.value || ""
-        ).trim() || "New item";
-      const stripPrice =
-        (
-          document.querySelector('[name="shelf_new_price"]')?.value || ""
-        ).trim() || "";
-      const stripShop =
-        document
-          .querySelector('[name="shelf_new_shop_id"]')
-          ?.selectedOptions?.[0]?.textContent.trim() || "";
-      lines.push({
-        id: "new",
-        name: stripName,
-        shopName: stripShop,
-        qty: stripQty,
-        price: stripPrice,
-        note: "",
-      });
-    }
     return lines;
   };
 
@@ -428,16 +398,19 @@
     // Disabled only while JS is running — a no-JS post still reaches the
     // server, which validates and reports an empty submit.
     if (floatSubmit) floatSubmit.disabled = lines.length === 0;
+    // Highlight filled head rows like the item stock matrix.
+    document
+      .querySelectorAll('[data-shelf-row-inputs] input[name^="shelf_qty_"]')
+      .forEach((qtyInput) => {
+        const headRow = qtyInput.closest("tr")?.previousElementSibling;
+        headRow?.classList.toggle(
+          "is-filled",
+          Number(qtyInput.value.trim()) > 0
+        );
+      });
   };
 
   const clearLine = (id) => {
-    if (id === "new") {
-      ["shelf_new_qty", "shelf_new_price", "shelf_new_note"].forEach((name) => {
-        const field = document.querySelector(`[name="${name}"]`);
-        if (field) field.value = "";
-      });
-      return;
-    }
     const inputsRow = document
       .querySelector(
         `[data-shelf-row-inputs] input[name="shelf_qty_${id}"]`
@@ -462,7 +435,7 @@
     floatClear?.addEventListener("click", () => {
       document
         .querySelectorAll(
-          '[data-shelf-row-inputs] input[name^="shelf_"], [data-shelf-quick-add] input'
+          '[data-shelf-row-inputs] input[name^="shelf_"]'
         )
         .forEach((field) => {
           field.value = "";

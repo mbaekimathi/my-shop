@@ -1801,7 +1801,7 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261111-stock-take-hide-scope"></script>
-<script defer src="{% static 'js/item-search.js' %}?v=6"></script>
+<script defer src="{% static 'js/item-search.js' %}?v=7"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
 <script defer src="{% static 'js/stock-bulk.js' %}?v=20261115-shelf-tab"></script>
 <script
@@ -1812,5 +1812,5 @@
 {% if stock_mode == 'view' %}
 <script defer src="{% static 'js/stock-print.js' %}?v=13"></script>
 {% endif %}
-<script defer src="{% static 'js/stock-shelf.js' %}?v=6"></script>
+<script defer src="{% static 'js/stock-shelf.js' %}?v=7"></script>
 {% endblock %}

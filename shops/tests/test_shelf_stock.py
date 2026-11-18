@@ -260,8 +260,7 @@ class ShelfStockTests(TestCase):
         )
         page = self.client.get(url)
         self.assertEqual(page.status_code, 200)
-        self.assertContains(page, 'name="shelf_new_name"')
-        self.assertContains(page, 'value="in_new"')
+        self.assertContains(page, 'data-modal-open="shelf-stock"')
 
         response = self.client.post(
             url,
@@ -374,37 +373,37 @@ class ShelfStockTests(TestCase):
         )
         page = self.client.get(url)
         self.assertEqual(page.status_code, 200)
-        self.assertContains(page, 'name="shelf_new_name"')
-        self.assertContains(page, 'value="in_new"')
-        self.assertContains(page, "data-search-gated")
-        self.assertContains(page, "data-item-search-idle")
+        self.assertContains(page, 'data-modal-open="shelf-stock"')
+        self.assertNotContains(page, "data-search-gated")
+        self.assertNotContains(page, "data-item-search-idle")
         self.assertNotContains(page, "Pick a shelf-mode shop above")
 
         # Rows follow the item stock-in pattern: collapsed heads that expand
         # to reveal the fields, with the floating submit card collecting the
         # lines — no per-row Add/Remove buttons on the in/out tabs.
+        self.assertContains(page, "data-item-category-group")
         self.assertContains(page, "data-shelf-row-toggle")
         self.assertContains(page, "data-shelf-row-inputs")
+        self.assertContains(page, "data-stock-item-inputs")
         self.assertContains(page, "stock-matrix-row--action")
         self.assertContains(page, "data-shelf-float-submit")
         self.assertContains(page, "data-shelf-float-lines")
         self.assertNotContains(page, 'value="in:')
         self.assertNotContains(page, 'value="out:')
 
-        # The stock-out tab gates the list the same way; the current-stock
+        # The stock-out tab lists items the same way; the current-stock
         # view still lists every shelf item.
         out_page = self.client.get(
             f"{stock_management_url(admin.role, 'out', shop_id=self.shop.pk)}"
             "&tab=shelf"
         )
-        self.assertContains(out_page, "data-search-gated")
         self.assertContains(out_page, "data-shelf-row-toggle")
         self.assertContains(out_page, 'value="out_bulk"')
         view_page = self.client.get(
             f"{stock_management_url(admin.role, 'view', shop_id=self.shop.pk)}"
             "&tab=shelf"
         )
-        self.assertNotContains(view_page, "data-search-gated")
+        self.assertContains(view_page, "MAIZE FLOUR 2KG")
 
     def test_stock_out_by_name_via_stock_management(self):
         set_company_pos_setting(field="stock_mode_shelf", enabled=True)
@@ -432,7 +431,7 @@ class ShelfStockTests(TestCase):
         )
         page = self.client.get(url)
         self.assertEqual(page.status_code, 200)
-        self.assertContains(page, 'value="out_new"')
+        self.assertContains(page, 'data-modal-open="shelf-stock"')
 
         shelf = ShelfItem.objects.get(shop=self.shop)
         response = self.client.post(
@@ -649,12 +648,12 @@ class ShelfStockTests(TestCase):
         # No shop pick needed — every shelf-mode shop's items are listed.
         self.assertContains(page, "SALT 1KG")
         self.assertContains(page, "SUGAR 2KG")
-        self.assertContains(page, 'name="shelf_new_shop_id"')
+        self.assertContains(page, 'data-modal-open="shelf-stock"')
         self.assertContains(page, "data-shelf-float-submit")
         self.assertNotContains(page, "Pick a shelf-mode shop above")
 
-        # One bulk post stocks into rows from different shops, and the strip
-        # line carries its own shop pick.
+        # One bulk post stocks into rows from different shops, and a posted
+        # strip line still carries its own shop pick.
         response = self.client.post(
             url,
             {
