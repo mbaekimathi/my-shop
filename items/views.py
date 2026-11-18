@@ -1540,9 +1540,36 @@ def _stock_shelf_post(
             request.POST.get("shelf_shop_id") or request.POST.get("shop") or ""
         ).strip()
     )
-    if shelf_shop is None or not _shop_shelf_mode_enabled(shelf_shop):
+    if shelf_shop is not None and not _shop_shelf_mode_enabled(shelf_shop):
         messages.error(request, "That shop is not in Shelf mode.")
         return _next()
+
+    shelf_scope_ids = {
+        shop.pk for shop in shops_by_id.values() if _shop_shelf_mode_enabled(shop)
+    }
+
+    def _resolve_post_shop():
+        """All-shops posts carry no shelf_shop_id — the row's shelf item (or
+        the strip's shop pick) supplies the target shop instead."""
+        if action in ("in", "out", "archive", "transfer") and row_id.isdigit():
+            from .models import ShelfItem
+
+            item = (
+                ShelfItem.objects.filter(pk=row_id)
+                .select_related("shop")
+                .first()
+            )
+            if item is not None and item.shop_id in shelf_scope_ids:
+                return item.shop
+            return None
+        if action in ("in_new", "out_new"):
+            pick = shops_by_id.get(
+                (request.POST.get("shelf_new_shop_id") or "").strip()
+            )
+            if pick is not None and _shop_shelf_mode_enabled(pick):
+                return pick
+            return None
+        return None
 
     if action in ("in_bulk", "out_bulk"):
         from .models import ShelfStockMovementType
@@ -1567,10 +1594,14 @@ def _stock_shelf_post(
         strip_name = (request.POST.get("shelf_new_name") or "").strip()
         strip_qty = (request.POST.get("shelf_new_qty") or "").strip()
         if strip_name or strip_qty:
+            strip_shop = shops_by_id.get(
+                (request.POST.get("shelf_new_shop_id") or "").strip()
+            )
             lines.append(
                 {
                     "name": strip_name,
                     "unit": request.POST.get("shelf_new_unit"),
+                    "shop": strip_shop or shelf_shop,
                     "qty": strip_qty,
                     "price": request.POST.get("shelf_new_price"),
                     "note": request.POST.get("shelf_new_note") or "",
@@ -1585,7 +1616,11 @@ def _stock_shelf_post(
             else ShelfStockMovementType.OUT
         )
         result = apply_shelf_stock_lines(
-            shop=shelf_shop, actor=profile, mode=move_mode, lines=lines
+            shop=shelf_shop,
+            actor=profile,
+            mode=move_mode,
+            lines=lines,
+            allowed_shop_ids=shelf_scope_ids,
         )
         for error in result["errors"]:
             messages.error(request, error)
@@ -1597,6 +1632,12 @@ def _stock_shelf_post(
                 f"({result['total'].normalize():f} units).",
             )
         return _next(shelf_shop)
+
+    if shelf_shop is None:
+        shelf_shop = _resolve_post_shop()
+    if shelf_shop is None:
+        messages.error(request, "Pick a shelf-mode shop above.")
+        return _next()
 
     if action in ("in", "out", "archive", "transfer") and not row_id.isdigit():
         messages.error(request, "Pick a shelf item first.")
@@ -9187,6 +9228,19 @@ def stock_management(request, profile, meta, module, page_sidebar):
             shelf_transfer_shops = [
                 shop for shop in shelf_register_shops if shop.pk != shelf_shop.pk
             ]
+        elif (
+            shelf_tab
+            and mode in ("in", "out")
+            and shelf_register_shops
+        ):
+            # All-shops shelf scope: list every shelf item across the
+            # shelf-mode shops — each row carries its own shop, and the
+            # quick-add strip asks which shop to stock into.
+            shelf_items = list_shelf_items(shops=shelf_register_shops)
+            shelf_movements = recent_shelf_movements(
+                shops=shelf_register_shops, limit=20
+            )
+            shelf_transfer_shops = list(shelf_register_shops)
 
     # IT support item pages are item-stock only — shelf stock is managed from
     # the Shelf stock tab. shelf_only stays so a shelf-only shop still shows

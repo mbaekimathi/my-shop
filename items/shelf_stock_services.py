@@ -79,12 +79,15 @@ def parse_shelf_qty(raw, *, allow_zero=False, label="Quantity") -> Decimal:
     return qty
 
 
-def list_shelf_items(*, shop) -> list[dict]:
-    items = list(
-        ShelfItem.objects.filter(shop=shop, is_archived=False).order_by(
-            "category", "name"
-        )
-    )
+def list_shelf_items(*, shop=None, shops=None) -> list[dict]:
+    qs = ShelfItem.objects.filter(is_archived=False).select_related("shop")
+    if shop is not None:
+        qs = qs.filter(shop=shop).order_by("category", "name")
+    elif shops is not None:
+        qs = qs.filter(shop__in=shops).order_by("shop__name", "category", "name")
+    else:
+        raise ValidationError("Pick a shelf-mode shop.")
+    items = list(qs)
     last_price = {}
     for shelf_item_id, price in (
         ShelfStockMovement.objects.filter(
@@ -102,6 +105,8 @@ def list_shelf_items(*, shop) -> list[dict]:
             {
                 "id": item.pk,
                 "name": item.name,
+                "shop_id": item.shop_id,
+                "shop_name": item.shop.name,
                 "category": item.category,
                 "unit": item.unit,
                 "quantity": item.quantity,
@@ -119,12 +124,17 @@ def list_shelf_items(*, shop) -> list[dict]:
     return rows
 
 
-def recent_shelf_movements(*, shop, limit: int = 30) -> list[ShelfStockMovement]:
-    return list(
-        ShelfStockMovement.objects.filter(shelf_item__shop=shop)
-        .select_related("shelf_item", "created_by__user")
-        .order_by("-created_at", "-id")[:limit]
+def recent_shelf_movements(
+    *, shop=None, shops=None, limit: int = 30
+) -> list[ShelfStockMovement]:
+    qs = ShelfStockMovement.objects.select_related(
+        "shelf_item", "shelf_item__shop", "created_by__user"
     )
+    if shop is not None:
+        qs = qs.filter(shelf_item__shop=shop)
+    elif shops is not None:
+        qs = qs.filter(shelf_item__shop__in=shops)
+    return list(qs.order_by("-created_at", "-id")[:limit])
 
 
 @transaction.atomic
@@ -534,12 +544,17 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
     raise ValidationError("Unknown shelf action.")
 
 
-def apply_shelf_stock_lines(*, shop, actor, mode, lines) -> dict:
+def apply_shelf_stock_lines(
+    *, shop=None, actor, mode, lines, allowed_shop_ids=None
+) -> dict:
     """Stock in/out many shelf lines in one post.
 
     Each ``line`` is either a table row (``shelf_item_id`` + qty/price/note)
-    or the quick-add strip (``name`` + unit/qty/price/note). Per-line errors
-    are collected and returned with a done count and total moved.
+    or the quick-add strip (``name`` + ``shop`` + unit/qty/price/note).
+    ``shop`` may be None on an all-shops page — the row's shelf item (or the
+    line's ``shop`` pick) then carries the target shop. ``allowed_shop_ids``
+    bounds the scope when given. Per-line errors are collected and returned
+    with a done count and total moved.
     """
     if mode not in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
         raise ValidationError("Choose stock in or stock out.")
@@ -558,9 +573,17 @@ def apply_shelf_stock_lines(*, shop, actor, mode, lines) -> dict:
                 if price_required and not str(line.get("price") or "").strip():
                     raise ValidationError("Enter the unit buying price.")
             if name:
+                line_shop = line.get("shop") or shop
+                if line_shop is None:
+                    raise ValidationError("Pick the shop for this item.")
+                if (
+                    allowed_shop_ids is not None
+                    and line_shop.pk not in allowed_shop_ids
+                ):
+                    raise ValidationError("That shop is not in your shelf scope.")
                 if mode == ShelfStockMovementType.IN:
                     _item, movement, _registered = stock_in_shelf_item_by_name(
-                        shop=shop,
+                        shop=line_shop,
                         actor=actor,
                         name=name,
                         unit=line.get("unit") or "",
@@ -572,7 +595,7 @@ def apply_shelf_stock_lines(*, shop, actor, mode, lines) -> dict:
                     )
                 else:
                     _item, movement = stock_out_shelf_item_by_name(
-                        shop=shop,
+                        shop=line_shop,
                         actor=actor,
                         name=name,
                         qty=line.get("qty"),
@@ -581,9 +604,27 @@ def apply_shelf_stock_lines(*, shop, actor, mode, lines) -> dict:
             elif not str(line.get("shelf_item_id") or "").strip():
                 raise ValidationError("Enter the shelf item name.")
             else:
+                item = (
+                    ShelfItem.objects.filter(
+                        pk=line.get("shelf_item_id"), is_archived=False
+                    )
+                    .select_related("shop")
+                    .first()
+                )
+                if item is None or (
+                    shop is not None and item.shop_id != shop.pk
+                ):
+                    raise ValidationError("Shelf item not found for this shop.")
+                if (
+                    allowed_shop_ids is not None
+                    and item.shop_id not in allowed_shop_ids
+                ):
+                    raise ValidationError(
+                        "Shelf item is not in your shop scope."
+                    )
                 movement = record_shelf_movement(
-                    shop=shop,
-                    shelf_item_id=line.get("shelf_item_id"),
+                    shop=item.shop,
+                    shelf_item_id=item.pk,
                     mode=mode,
                     qty=line.get("qty"),
                     actor=actor,

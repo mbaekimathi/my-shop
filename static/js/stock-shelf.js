@@ -363,6 +363,7 @@
           headRow
             ?.querySelector(".stock-matrix-item strong")
             ?.textContent.trim() || `Item ${id}`;
+        const shopName = headRow?.getAttribute("data-shop-name") || "";
         const price =
           inputsRow
             .querySelector(`input[name="shelf_price_${id}"]`)
@@ -371,7 +372,7 @@
           inputsRow
             .querySelector(`input[name="shelf_note_${id}"]`)
             ?.value.trim() || "";
-        lines.push({ id, name, qty, price, note });
+        lines.push({ id, name, shopName, qty, price, note });
       });
     const stripQty = (
       document.querySelector('[name="shelf_new_qty"]')?.value || ""
@@ -385,9 +386,14 @@
         (
           document.querySelector('[name="shelf_new_price"]')?.value || ""
         ).trim() || "";
+      const stripShop =
+        document
+          .querySelector('[name="shelf_new_shop_id"]')
+          ?.selectedOptions?.[0]?.textContent.trim() || "";
       lines.push({
         id: "new",
         name: stripName,
+        shopName: stripShop,
         qty: stripQty,
         price: stripPrice,
         note: "",
@@ -405,8 +411,11 @@
       .map(
         (line) =>
           `<li>
-            <span title="${esc(line.name)}">${esc(line.name)}${
-              line.price ? ` @ ${esc(line.price)}` : ""
+            <span title="${esc(line.name)}${
+              line.shopName ? ` · ${esc(line.shopName)}` : ""
+            }">${esc(line.name)}${
+              line.shopName ? ` · ${esc(line.shopName)}` : ""
+            }${line.price ? ` @ ${esc(line.price)}` : ""
             }${line.note ? ` · ${esc(line.note)}` : ""}</span>
             <strong>×${esc(line.qty)}</strong>
             <button type="button" data-shelf-float-remove data-shelf-id="${esc(

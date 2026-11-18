@@ -364,12 +364,12 @@
       <i data-lucide="archive" aria-hidden="true"></i>
       <p>This shop tracks shelf stock instead of item stock.</p>
     </div>
-    {% elif stock_tab == 'shelf' and shelf_shop %}
+    {% elif stock_tab == 'shelf' and shelf_register_shops %}
     {% include "items/partials/stock_shelf_panel.html" %}
     {% elif stock_tab == 'shelf' %}
     <div class="dashboard-placeholder">
       <i data-lucide="archive" aria-hidden="true"></i>
-      <p>Pick a shelf-mode shop above to manage its shelf items.</p>
+      <p>No shops in your scope run shelf stock.</p>
     </div>
     {% elif shelf_scope_pick %}
     <div class="dashboard-placeholder">
@@ -1094,7 +1094,7 @@
 
   {% if stock_mode == 'in' or stock_mode == 'out' or stock_mode == 'request' %}
   {% if shops %}
-  {% if shelf_shop or stock_tab != 'shelf' and not shelf_only %}
+  {% if shelf_register_shops or stock_tab != 'shelf' and not shelf_only %}
   <aside
     class="stock-float stock-float--{{ stock_mode }}"
     data-stock-float
@@ -1136,7 +1136,7 @@
           {% if stock_tab == 'shelf' or shelf_only %}
           <p class="stock-float-shop-readout">
             <span>Shop</span>
-            <strong>{% if shelf_shop %}{{ shelf_shop.name }}{% else %}Pick a shelf-mode shop{% endif %}</strong>
+            <strong>{% if shelf_shop %}{{ shelf_shop.name }}{% else %}All shelf shops{% endif %}</strong>
           </p>
           {% elif stock_mode == 'request' %}
           <p class="stock-float-shop-readout">

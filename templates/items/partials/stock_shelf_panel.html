@@ -4,13 +4,14 @@ outer stock form, so rows use row-scoped field names (shelf_qty_<id> etc.) and
 shelf_action="action:<id>" submit buttons instead of nested forms.
 {% endcomment %}
 <section class="store-stock-panel store-stock-panel--list stock-shelf-panel" aria-labelledby="stock-shelf-title" data-shelf-stock>
-  <input type="hidden" name="shelf_shop_id" value="{{ shelf_shop.pk }}">
+  {% if shelf_shop %}<input type="hidden" name="shelf_shop_id" value="{{ shelf_shop.pk }}">{% endif %}
   <div class="store-stock-panel-head store-stock-panel-head--list">
     <div>
-      <h3 id="stock-shelf-title">Shelf items — {{ shelf_shop.name }}</h3>
+      <h3 id="stock-shelf-title">Shelf items — {% if shelf_shop %}{{ shelf_shop.name }}{% else %}All shops{% endif %}</h3>
       <p>
-        Shelf mode is on for this shop. Expand an item, type a quantity, then
-        submit below — or <strong>Send</strong> it to another shelf shop.
+        Shelf mode is on for {% if shelf_shop %}this shop{% else %}these shops{% endif %}.
+        Expand an item, type a quantity, then submit below — or
+        <strong>Send</strong> it to another shelf shop.
       </p>
     </div>
   </div>
@@ -18,21 +19,35 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
   {% if stock_mode == 'in' %}
   <div class="shelf-quick-add" data-shelf-quick-add>
     <div class="shelf-quick-add-fields">
+      {% if not shelf_shop %}
+      <label class="shelf-quick-add-field">
+        <span>Shop</span>
+        <select
+          class="store-stock-qty-input shelf-quick-add-unit"
+          name="shelf_new_shop_id"
+          aria-label="Shop to stock the item into"
+        >
+          {% for shop in shelf_transfer_shops %}
+          <option value="{{ shop.pk }}"{% if forloop.first %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
       <label class="shelf-quick-add-field shelf-quick-add-field--name">
         <span>Item <em>search or type a new name</em></span>
         <input
           class="store-stock-qty-input shelf-quick-add-name"
           type="text"
           name="shelf_new_name"
-          list="shelf-quick-items-{{ shelf_shop.pk }}"
+          list="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}"
           maxlength="200"
           placeholder="e.g. Sugar 50kg bag"
           autocomplete="off"
           aria-label="Shelf item — pick an existing item or type a new name"
         >
-        <datalist id="shelf-quick-items-{{ shelf_shop.pk }}">
+        <datalist id="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}">
           {% for row in shelf_items %}
-          <option value="{{ row.name }}">{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
+          <option value="{{ row.name }}">{% if not shelf_shop %}{{ row.shop_name }} · {% endif %}{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
           {% endfor %}
         </datalist>
       </label>
@@ -105,21 +120,35 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
   {% if stock_mode == 'out' %}
   <div class="shelf-quick-add" data-shelf-quick-add>
     <div class="shelf-quick-add-fields">
+      {% if not shelf_shop %}
+      <label class="shelf-quick-add-field">
+        <span>Shop</span>
+        <select
+          class="store-stock-qty-input shelf-quick-add-unit"
+          name="shelf_new_shop_id"
+          aria-label="Shop to remove the item from"
+        >
+          {% for shop in shelf_transfer_shops %}
+          <option value="{{ shop.pk }}"{% if forloop.first %} selected{% endif %}>{{ shop.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
       <label class="shelf-quick-add-field shelf-quick-add-field--name">
         <span>Item <em>search the shelf list</em></span>
         <input
           class="store-stock-qty-input shelf-quick-add-name"
           type="text"
           name="shelf_new_name"
-          list="shelf-quick-items-{{ shelf_shop.pk }}"
+          list="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}"
           maxlength="200"
           placeholder="e.g. Sugar 50kg bag"
           autocomplete="off"
           aria-label="Shelf item to remove stock from"
         >
-        <datalist id="shelf-quick-items-{{ shelf_shop.pk }}">
+        <datalist id="shelf-quick-items-{{ shelf_shop.pk|default:'all' }}">
           {% for row in shelf_items %}
-          <option value="{{ row.name }}">{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
+          <option value="{{ row.name }}">{% if not shelf_shop %}{{ row.shop_name }} · {% endif %}{% if row.unit %}{{ row.unit }} · {% endif %}{{ row.quantity_display }} on shelf</option>
           {% endfor %}
         </datalist>
       </label>
@@ -184,13 +213,15 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
         <tr
           class="stock-matrix-row stock-matrix-row--action{% if row.quantity == 0 %} is-empty-stock{% endif %}"
           data-item-row
-          data-search-text="{{ row.search_text }}"
+          data-search-text="{{ row.search_text }}{% if not shelf_shop %} {{ row.shop_name|lower }}{% endif %}"
+          data-shop-name="{{ row.shop_name }}"
         >
           <th scope="row" class="stock-matrix-item-col">
             <button type="button" class="stock-matrix-toggle" data-shelf-row-toggle aria-expanded="false">
               <div class="stock-matrix-item">
                 <strong>{{ row.name }}</strong>
                 {% if row.unit %}<span class="stock-item-badge">{{ row.unit }}</span>{% endif %}
+                {% if not shelf_shop %}<span class="stock-item-badge">{{ row.shop_name }}</span>{% endif %}
                 {% if row.is_low %}<span class="stock-item-badge">Low stock</span>{% endif %}
               </div>
             </button>
@@ -262,10 +293,12 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
                     data-shelf-target
                   >
                     {% for target in shelf_transfer_shops %}
+                    {% if target.pk != row.shop_id %}
                     <option
                       value="{{ target.pk }}"
                       {% if requested_from_shop and requested_from_shop.pk == target.pk %}selected{% endif %}
                     >{{ target.name }}</option>
+                    {% endif %}
                     {% endfor %}
                   </select>
                 </label>
@@ -341,7 +374,7 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
   <div class="store-stock-panel-head">
     <div>
       <h3 id="stock-shelf-history-title">Recent shelf changes</h3>
-      <p>Last {{ shelf_movements|length }} shelf stock changes for {{ shelf_shop.name }}.</p>
+      <p>Last {{ shelf_movements|length }} shelf stock changes{% if shelf_shop %} for {{ shelf_shop.name }}{% endif %}.</p>
     </div>
   </div>
   <div class="store-stock-table-wrap">
@@ -350,6 +383,7 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
         <tr>
           <th scope="col">When</th>
           <th scope="col">Shelf item</th>
+          {% if not shelf_shop %}<th scope="col">Shop</th>{% endif %}
           <th scope="col">Change</th>
           <th scope="col" class="store-stock-col-qty">Qty</th>
           <th scope="col" class="store-stock-col-qty">Left</th>
@@ -361,6 +395,7 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
         <tr class="store-stock-row">
           <td data-label="When">{{ move.created_at|date:"d M Y H:i" }}</td>
           <td data-label="Shelf item">{{ move.shelf_item.name }}{% if move.note %} <span class="store-stock-item-cat-mobile">{{ move.note }}</span>{% endif %}</td>
+          {% if not shelf_shop %}<td data-label="Shop">{{ move.shelf_item.shop.name }}</td>{% endif %}
           <td data-label="Change">{{ move.get_movement_type_display }}</td>
           <td class="store-stock-col-qty" data-label="Qty">{% if move.movement_type == "out" %}−{% elif move.movement_type == "in" %}+{% endif %}{{ move.quantity|floatformat:"-3" }}</td>
           <td class="store-stock-col-qty" data-label="Left">{{ move.balance_after|floatformat:"-3" }}</td>

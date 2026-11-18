@@ -607,6 +607,77 @@ class ShelfStockTests(TestCase):
         self.assertEqual(item_a.quantity, Decimal("3"))
         self.assertEqual(item_b.quantity, Decimal("3"))
 
+    def test_shelf_tab_all_shops_lists_and_posts_across_shops(self):
+        """With All shops selected, the shelf in tab lists every shelf-mode
+        shop's items — each row carries its own shop and bulk posts apply
+        per line."""
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        admin_user = User.objects.create_user(
+            username="800998", password="admin-pass", is_active=True
+        )
+        admin = EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="800998",
+            phone_country_code="+254",
+            phone_number="700000998",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        other = Shop.objects.create(
+            name="SECOND SHELF SHOP",
+            location="NAIROBI",
+            email="second-shelf2@test.local",
+            phone_number="0700000958",
+            login_code="830958",
+            password_hash="x",
+            created_by=admin,
+        )
+        item_a = ShelfItem.objects.create(
+            shop=self.shop, name="SALT 1KG", unit="PACKETS",
+            quantity=Decimal("5"), created_by=self.profile,
+        )
+        item_b = ShelfItem.objects.create(
+            shop=other, name="SUGAR 2KG", unit="PACKETS",
+            quantity=Decimal("4"), created_by=self.profile,
+        )
+        self.client.force_login(admin_user)
+        from employees.workspace import stock_management_url
+
+        url = f"{stock_management_url(admin.role, 'in')}&tab=shelf"
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
+        # No shop pick needed — every shelf-mode shop's items are listed.
+        self.assertContains(page, "SALT 1KG")
+        self.assertContains(page, "SUGAR 2KG")
+        self.assertContains(page, 'name="shelf_new_shop_id"')
+        self.assertContains(page, "data-shelf-float-submit")
+        self.assertNotContains(page, "Pick a shelf-mode shop above")
+
+        # One bulk post stocks into rows from different shops, and the strip
+        # line carries its own shop pick.
+        response = self.client.post(
+            url,
+            {
+                "shelf_action": "in_bulk",
+                f"shelf_qty_{item_a.pk}": "2",
+                f"shelf_price_{item_a.pk}": "40",
+                f"shelf_qty_{item_b.pk}": "3",
+                f"shelf_price_{item_b.pk}": "80",
+                "shelf_new_shop_id": str(other.pk),
+                "shelf_new_name": "honey 500g",
+                "shelf_new_qty": "1",
+                "shelf_new_price": "150",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        item_a.refresh_from_db()
+        item_b.refresh_from_db()
+        self.assertEqual(item_a.quantity, Decimal("7"))
+        self.assertEqual(item_b.quantity, Decimal("7"))
+        self.assertTrue(
+            ShelfItem.objects.filter(shop=other, name="HONEY 500G").exists()
+        )
+
     def test_portal_changes_require_permitted_staff_id(self):
         set_company_pos_setting(field="enable_shelf_mode", enabled=True)
         client = self._login()
