@@ -562,6 +562,8 @@ def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
     wanted = ("credits", "suppliers", "clients")
     if role == EmployeeRole.STORE_MANAGER:
         wanted = ()
+    elif role == EmployeeRole.EMPLOYEE:
+        wanted = ("credits",)
     by_slug = {row["slug"]: row for row in ANALYTICS_SECTIONS}
     links = []
     for slug in wanted:

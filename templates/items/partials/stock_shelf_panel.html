@@ -243,79 +243,66 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
         </tr>
         <tr class="stock-matrix-form-row" data-shelf-row-inputs hidden>
           <td colspan="4">
-            <div class="stock-item-inputs stock-item-inputs--matrix">
-              <div class="stock-in-field-row">
-                <label class="stock-inline-field">
-                  <span>{% if stock_mode == 'out' %}Qty to remove{% elif stock_mode == 'request' %}Qty to send{% else %}Qty to stock in{% endif %}</span>
-                  <input
-                    type="text"
-                    name="shelf_qty_{{ row.id }}"
-                    min="0.001"
-                    step="0.001"
-                    placeholder="0"
-                    inputmode="decimal"
-                    aria-label="Quantity for {{ row.name }}"
-                  >
-                </label>
-                {% if stock_mode == 'in' %}
-                <label class="stock-inline-field">
-                  <span>Unit buying price{% if stock_req.shelf_require_buying_price_on_in %} *{% endif %}</span>
-                  <input
-                    type="text"
-                    name="shelf_price_{{ row.id }}"
-                    min="0"
-                    step="0.01"
-                    placeholder="0"
-                    inputmode="decimal"
-                    aria-label="Buying price for {{ row.name }}"
-                  >
-                </label>
+            <div class="shelf-stock-move shelf-row-fields">
+              <input
+                class="store-stock-qty-input"
+                type="text"
+                name="shelf_qty_{{ row.id }}"
+                min="0"
+                step="any"
+                inputmode="decimal"
+                placeholder="Qty"
+                aria-label="Quantity for {{ row.name }}"
+              >
+              {% if stock_mode == 'in' %}
+              <input
+                class="store-stock-qty-input shelf-stock-price"
+                type="text"
+                name="shelf_price_{{ row.id }}"
+                min="0"
+                step="any"
+                inputmode="decimal"
+                placeholder="Buy price{% if stock_req.shelf_require_buying_price_on_in %}*{% endif %}"
+                aria-label="Buying price for {{ row.name }}"
+              >
+              {% endif %}
+              <input
+                type="text"
+                name="shelf_note_{{ row.id }}"
+                maxlength="255"
+                placeholder="Note (optional)"
+                autocomplete="off"
+                class="store-stock-qty-input shelf-stock-note"
+                aria-label="Note for {{ row.name }}"
+              >
+              {% if shelf_transfer_shops %}
+              <select
+                class="store-stock-qty-input shelf-stock-target"
+                name="shelf_target_{{ row.id }}"
+                aria-label="Send {{ row.name }} to"
+                data-shelf-target
+              >
+                {% for target in shelf_transfer_shops %}
+                {% if target.pk != row.shop_id %}
+                <option
+                  value="{{ target.pk }}"
+                  {% if requested_from_shop and requested_from_shop.pk == target.pk %}selected{% endif %}
+                >{{ target.name }}</option>
                 {% endif %}
-                <label class="stock-inline-field stock-inline-field--note">
-                  <span>Note{% if stock_mode == 'request' and stock_req.shelf_require_note_on_request %} *{% endif %}</span>
-                  <input
-                    type="text"
-                    name="shelf_note_{{ row.id }}"
-                    maxlength="255"
-                    placeholder="Optional"
-                    autocomplete="off"
-                    aria-label="Note for {{ row.name }}"
-                  >
-                </label>
-              </div>
-              <div class="stock-in-field-row">
-                {% if shelf_transfer_shops %}
-                <label class="stock-inline-field">
-                  <span>Send to</span>
-                  <select
-                    name="shelf_target_{{ row.id }}"
-                    aria-label="Send {{ row.name }} to"
-                    data-shelf-target
-                  >
-                    {% for target in shelf_transfer_shops %}
-                    {% if target.pk != row.shop_id %}
-                    <option
-                      value="{{ target.pk }}"
-                      {% if requested_from_shop and requested_from_shop.pk == target.pk %}selected{% endif %}
-                    >{{ target.name }}</option>
-                    {% endif %}
-                    {% endfor %}
-                  </select>
-                </label>
-                <button type="submit" name="shelf_action" value="transfer:{{ row.id }}" class="btn btn--primary">Send</button>
-                {% endif %}
-                <button
-                  type="submit"
-                  name="shelf_action"
-                  value="archive:{{ row.id }}"
-                  class="btn btn--ghost"
-                  aria-label="Remove {{ row.name }} from the shelf list"
-                  data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?"
-                >
-                  <i data-lucide="trash-2" aria-hidden="true"></i>
-                  Remove item
-                </button>
-              </div>
+                {% endfor %}
+              </select>
+              <button type="submit" name="shelf_action" value="transfer:{{ row.id }}" class="store-stock-btn store-stock-btn--primary">Send</button>
+              {% endif %}
+              <button
+                type="submit"
+                name="shelf_action"
+                value="archive:{{ row.id }}"
+                class="store-stock-btn store-stock-btn--ghost"
+                aria-label="Remove {{ row.name }} from the shelf list"
+                data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?"
+              >
+                <i data-lucide="trash-2" aria-hidden="true"></i>
+              </button>
             </div>
           </td>
         </tr>

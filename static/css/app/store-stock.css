@@ -922,8 +922,16 @@
   justify-content: flex-end;
 }
 
-/* Expandable shelf rows reuse the item stock-matrix classes; an expanded
-   inputs row hides together with its filtered-out head row. */
+/* Expandable shelf rows reuse the item stock-matrix classes; the expanded
+   row keeps the compact single-line field strip. */
+.stock-matrix-form-row .shelf-stock-move {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+/* An expanded inputs row hides together with its filtered-out head row. */
 tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
   display: none;
 }
