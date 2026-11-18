@@ -2857,3 +2857,170 @@ class RiderRoleTests(ChatTestCase):
         credit2.refresh_from_db()
         self.assertEqual(credit2.kind, "credit")
         self.assertEqual(credit2.amount_paid, Decimal("0"))
+
+
+class ChatPermissionGateTests(ChatTestCase):
+    """HR permission-matrix toggles apply inside MY-CHATBOT too.
+
+    The shop-floor pages and MY-SHOP services gate writes on
+    EmployeeModulePermission rows; the same toggle must block the parallel
+    chat write paths (sales, stock in, pending confirms, central-store ops).
+    """
+
+    EMPLOYEE_DDL = PendingConfirmTests.EMPLOYEE_DDL
+
+    def setUp(self):
+        super().setUp()
+        from django.contrib.auth.models import User
+
+        self.prepare_employee_fixtures()
+        manager_user = User.objects.create_user(username="perm-manager")
+        member_user = User.objects.create_user(
+            username="perm-member", first_name="Perm", last_name="Member"
+        )
+        insert_employee_profile(
+            pk=1, employee_id="100001", user_id=manager_user.pk,
+            role="company_manager", status="active",
+        )
+        insert_employee_profile(
+            pk=2, employee_id="654321", user_id=member_user.pk,
+            role="shop_attendant", status="active",
+        )
+        assign_employee_shop(employee_pk=2, shop_id=self.shop_a.pk)
+        insert_employee_profile(
+            pk=3, employee_id="300001", user_id=None,
+            role="store_manager", status="active",
+        )
+        self.item = Item.objects.create(
+            category="Grocery", name="Perm Beans",
+            minimum_selling_price=Decimal("100"),
+            shop_price=Decimal("150"), stock=Decimal("40"),
+            low_stock_notify=False, low_stock_threshold=0,
+            is_suspended=False,
+        )
+        self.stock = ShopStock.objects.create(
+            shop_id=self.shop_a.pk, item_id=self.item.pk,
+            quantity=Decimal("10"), low_stock_threshold=5,
+            average_cost=Decimal("80"),
+        )
+        session = self.client.session
+        session["chatbot_employee_id"] = 1
+        session["chatbot_shop_id"] = self.shop_a.pk
+        session.save()
+
+    def _deny(self, employee_pk, module, submodule):
+        from employees.models import EmployeeModulePermission, EmployeeProfile
+
+        return EmployeeModulePermission.objects.create(
+            employee=EmployeeProfile.objects.get(pk=employee_pk),
+            module_slug=module,
+            submodule_slug=submodule,
+            allowed=False,
+        )
+
+    def _sale_payload(self, **over):
+        data = {
+            "kind": "sale",
+            "payment_method": "cash",
+            "lines": [
+                {"item_id": self.item.pk, "quantity": "2", "serials": []}
+            ],
+        }
+        data.update(over)
+        return data
+
+    def _stockin_payload(self, **over):
+        data = {
+            "supplier_name": "ACME Traders",
+            "supplier_phone": "0712 345 678",
+            "lines": [
+                {"item_id": self.item.pk, "quantity": "2", "serials": []}
+            ],
+        }
+        data.update(over)
+        return data
+
+    def test_api_sale_denied_when_sale_toggle_off(self):
+        self._deny(1, "my-shop", "sale")
+        resp = self.client.post(
+            reverse("chat:api_sale"),
+            data=json.dumps(self._sale_payload()),
+            content_type="application/json",
+        )
+        data = resp.json()
+        self.assertFalse(data["ok"])
+        self.assertIn("permission", data["error"])
+        self.assertEqual(ShopReceipt.objects.count(), 0)
+
+    def test_api_sale_allowed_by_default(self):
+        resp = self.client.post(
+            reverse("chat:api_sale"),
+            data=json.dumps(self._sale_payload()),
+            content_type="application/json",
+        )
+        self.assertTrue(resp.json()["ok"], resp.json())
+
+    def test_assert_employee_may_fallback_key(self):
+        """OR semantics: buy_stock off but stock-management/in on → allowed."""
+        from . import stock as stock_ops
+
+        self._deny(1, "my-shop", "buy_stock")
+        stock_ops.assert_employee_may(
+            1, ("my-shop", "buy_stock"), ("stock-management", "in")
+        )
+        # Deny both → blocked.
+        self._deny(1, "stock-management", "in")
+        with self.assertRaises(stock_ops.StockError):
+            stock_ops.assert_employee_may(
+                1, ("my-shop", "buy_stock"), ("stock-management", "in")
+            )
+
+    def test_pending_confirm_denied_when_stockin_off(self):
+        """A member whose toggles are off cannot confirm a pending stock-in."""
+        resp = self.client.post(
+            reverse("chat:api_stock_in"),
+            data=json.dumps(self._stockin_payload()),
+            content_type="application/json",
+        )
+        self.assertTrue(resp.json()["pending"], resp.json())
+        msg = None
+        for row in Message.objects.order_by("-id"):
+            pa = (row.meta or {}).get("pending_action") or {}
+            if pa.get("status") == "pending":
+                msg = row
+                break
+        self.assertIsNotNone(msg)
+        self._deny(2, "my-shop", "buy_stock")
+        self._deny(2, "stock-management", "in")
+        confirm = self.client.post(
+            reverse("chat:api_pending_confirm", args=[msg.pk]),
+            data=json.dumps({"staff_code": "654321"}),
+            content_type="application/json",
+        )
+        data = confirm.json()
+        self.assertFalse(data["ok"])
+        self.assertIn("permission", data["error"])
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_api_store_stock_in_denied_when_toggle_off(self):
+        self._deny(3, "stock-management", "in")
+        session = self.client.session
+        session["chatbot_employee_id"] = 3
+        session.save()
+        resp = self.client.post(
+            reverse("chat:api_store_stock_in"),
+            data=json.dumps({
+                "lines": [{"item_id": self.item.pk, "quantity": "2"}],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(resp.json()["ok"])
+
+    def test_api_store_report_denied_when_toggle_off(self):
+        self._deny(3, "stock-management", "report")
+        session = self.client.session
+        session["chatbot_employee_id"] = 3
+        session.save()
+        resp = self.client.get(reverse("chat:api_store_report"))
+        self.assertEqual(resp.status_code, 403)

@@ -133,7 +133,14 @@ class AnalyticsSidebarTests(TestCase):
         )
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertEqual(
-            labels, ["Dashboard", "Overview", "Receipts", "Confirm receipts"]
+            labels,
+            [
+                "Dashboard",
+                "Overview",
+                "Receipts",
+                "Confirm receipts",
+                "Return receipt",
+            ],
         )
         self.assertTrue(sidebar["primary"][3]["active"])
 
