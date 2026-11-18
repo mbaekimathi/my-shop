@@ -165,7 +165,11 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
   {% endif %}
 
   {% if shelf_items %}
-  <div class="store-stock-table-wrap" data-item-list>
+  <div
+    class="store-stock-table-wrap"
+    data-item-list
+    {% if stock_mode == 'in' or stock_mode == 'out' %}data-search-gated{% endif %}
+  >
     <table class="store-stock-table">
       <thead>
         <tr>
@@ -265,6 +269,22 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
       </tbody>
     </table>
   </div>
+  {% if stock_mode == 'in' or stock_mode == 'out' %}
+  <div class="store-stock-empty" data-item-search-idle hidden>
+    <i data-lucide="search" aria-hidden="true"></i>
+    <p>
+      <strong>{{ shelf_items|length }} shelf item{{ shelf_items|length|pluralize }}.</strong>
+      Search by name above to find the item to update.
+    </p>
+  </div>
+  <div class="store-stock-empty" data-item-no-results hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <p>
+      <strong>No shelf items match.</strong>
+      {% if stock_mode == 'in' %}Type a new name above and stock it in.{% endif %}
+    </p>
+  </div>
+  {% endif %}
   {% else %}
   <div class="store-stock-empty">
     <i data-lucide="layers" aria-hidden="true"></i>

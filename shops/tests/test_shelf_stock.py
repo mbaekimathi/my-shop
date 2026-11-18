@@ -350,6 +350,10 @@ class ShelfStockTests(TestCase):
         """One shelf-mode shop: shop_id collapses to all-shops scope, but the
         shelf panel must still render on the stock-in tab."""
         set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        ShelfItem.objects.create(
+            shop=self.shop, name="MAIZE FLOUR 2KG", unit="PACKETS",
+            quantity=Decimal("5"), created_by=self.profile,
+        )
         admin_user = User.objects.create_user(
             username="800993", password="admin-pass", is_active=True
         )
@@ -372,7 +376,22 @@ class ShelfStockTests(TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, 'name="shelf_new_name"')
         self.assertContains(page, 'value="in_new"')
+        self.assertContains(page, "data-search-gated")
+        self.assertContains(page, "data-item-search-idle")
         self.assertNotContains(page, "Pick a shelf-mode shop above")
+
+        # The stock-out tab gates the list the same way; the current-stock
+        # view still lists every shelf item.
+        out_page = self.client.get(
+            f"{stock_management_url(admin.role, 'out', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+        self.assertContains(out_page, "data-search-gated")
+        view_page = self.client.get(
+            f"{stock_management_url(admin.role, 'view', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+        self.assertNotContains(view_page, "data-search-gated")
 
     def test_stock_out_by_name_via_stock_management(self):
         set_company_pos_setting(field="stock_mode_shelf", enabled=True)

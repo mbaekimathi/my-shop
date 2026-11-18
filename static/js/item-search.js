@@ -17,6 +17,10 @@
 
   const totalCount = Number(itemPanel.dataset.itemTotal) || 0;
   const categoryGroups = document.querySelectorAll("[data-item-category-group]");
+  // Search-gated lists (e.g. the shelf stock panel on in/out) reveal rows
+  // only while a query is typed — the full list never dumps on the page.
+  const gated = Boolean(itemList && itemList.hasAttribute("data-search-gated"));
+  const idleHint = document.querySelector("[data-item-search-idle]");
   let frame = 0;
 
   const normalize = (value) => (value || "").toLowerCase().trim();
@@ -87,13 +91,20 @@
       });
     } else {
       document.querySelectorAll("[data-item-row]").forEach((row) => {
-        const match = matchesQuery(row.dataset.searchText || "", tokens);
+        const match =
+          (!gated || hasQuery) &&
+          matchesQuery(row.dataset.searchText || "", tokens);
         row.hidden = !match;
         if (match) visibleCount += 1;
       });
     }
 
-    if (itemList) itemList.hidden = visibleCount === 0 && hasQuery;
+    if (itemList) {
+      itemList.hidden = gated
+        ? !hasQuery || visibleCount === 0
+        : visibleCount === 0 && hasQuery;
+    }
+    if (idleHint) idleHint.hidden = !gated || hasQuery;
     if (noResults) noResults.hidden = visibleCount > 0 || !hasQuery;
     updateCountLabel(visibleCount, hasQuery);
   };
@@ -109,7 +120,7 @@
   searchInput.addEventListener("input", scheduleFilter);
   searchInput.addEventListener("search", scheduleFilter);
 
-  if (searchInput.value.trim()) {
+  if (searchInput.value.trim() || gated) {
     filterItems();
   }
 })();
