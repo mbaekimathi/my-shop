@@ -380,6 +380,14 @@ class ShelfStockTests(TestCase):
         self.assertContains(page, "data-item-search-idle")
         self.assertNotContains(page, "Pick a shelf-mode shop above")
 
+        # Rows follow the item stock-in pattern: collapsed heads that expand
+        # to reveal the fields, with a single bulk submit — no per-row
+        # Add/Remove buttons on the in/out tabs.
+        self.assertContains(page, "data-shelf-row-toggle")
+        self.assertContains(page, "data-shelf-row-inputs")
+        self.assertNotContains(page, 'value="in:')
+        self.assertNotContains(page, 'value="out:')
+
         # The stock-out tab gates the list the same way; the current-stock
         # view still lists every shelf item.
         out_page = self.client.get(
@@ -387,6 +395,7 @@ class ShelfStockTests(TestCase):
             "&tab=shelf"
         )
         self.assertContains(out_page, "data-search-gated")
+        self.assertContains(out_page, "data-shelf-row-toggle")
         view_page = self.client.get(
             f"{stock_management_url(admin.role, 'view', shop_id=self.shop.pk)}"
             "&tab=shelf"

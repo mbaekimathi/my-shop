@@ -922,6 +922,49 @@
   justify-content: flex-end;
 }
 
+/* Expandable shelf rows (same pattern as the item stock matrix): the head
+   row is clickable, the inputs row opens beneath it. */
+.shelf-row-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shelf-row-toggle-icon {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+tr.store-stock-row--head.is-open .shelf-row-toggle-icon {
+  transform: rotate(180deg);
+}
+
+tr.store-stock-form-row > td {
+  background: color-mix(in srgb, var(--ss-accent) 4%, var(--surface));
+}
+
+tr.store-stock-form-row .shelf-stock-move {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* An expanded inputs row hides together with its filtered-out head row. */
+tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
+  display: none;
+}
+
 .shelf-quick-add {
   display: grid;
   gap: 0.45rem;

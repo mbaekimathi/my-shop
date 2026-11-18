@@ -267,10 +267,12 @@
         quickAdd.querySelector('button[name="shelf_action"]')?.click();
         return;
       }
-      target
-        .closest("tr")
-        ?.querySelector('button[name="shelf_action"][value^="in:"]')
-        ?.click();
+      const inputsRow = target.closest("tr[data-shelf-row-inputs]");
+      if (!inputsRow) return;
+      (
+        document.querySelector("[data-shelf-bulk-submit]") ||
+        inputsRow.querySelector('button[name="shelf_action"][value^="transfer:"]')
+      )?.click();
     });
 
     layout.addEventListener("submit", (event) => {
@@ -282,6 +284,24 @@
       }
     });
   }
+
+  // Expandable shelf rows (items-page pattern): clicking a row's head opens
+  // the inputs row beneath it; typed values persist while collapsed.
+  const shelfPanel = document.querySelector("[data-shelf-stock]");
+  shelfPanel?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-shelf-row-toggle]");
+    if (!btn) return;
+    const headRow = btn.closest("tr");
+    const inputsRow = headRow && headRow.nextElementSibling;
+    if (!inputsRow || !inputsRow.hasAttribute("data-shelf-row-inputs")) return;
+    const opening = inputsRow.hidden;
+    inputsRow.hidden = !opening;
+    headRow.classList.toggle("is-open", opening);
+    btn.setAttribute("aria-expanded", opening ? "true" : "false");
+    if (opening) {
+      inputsRow.querySelector("input, select")?.focus({ preventScroll: true });
+    }
+  });
 
   // Bulk stock in/out: keep a live count of rows (and the quick-add strip)
   // with a quantity typed, so hidden search-filtered rows still count.

@@ -9,8 +9,8 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
     <div>
       <h3 id="stock-shelf-title">Shelf items — {{ shelf_shop.name }}</h3>
       <p>
-        Shelf mode is on for this shop. Type a quantity, then
-        <strong>Add</strong>, <strong>Remove</strong>, or <strong>Send</strong> to another shelf shop.
+        Shelf mode is on for this shop. Expand an item, type a quantity, then
+        submit below — or <strong>Send</strong> it to another shelf shop.
       </p>
     </div>
   </div>
@@ -176,21 +176,27 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
           <th scope="col">Shelf item</th>
           <th scope="col" class="store-stock-col-qty">Last buy price</th>
           <th scope="col" class="store-stock-col-qty">On shelf</th>
-          <th scope="col" class="shelf-stock-col-change">Change</th>
-          {% if shelf_transfer_shops %}<th scope="col" class="shelf-stock-col-change">Send to</th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for row in shelf_items %}
-        <tr class="store-stock-row" data-item-row data-search-text="{{ row.search_text }}">
+        <tr class="store-stock-row store-stock-row--head" data-item-row data-search-text="{{ row.search_text }}">
           <td data-label="Item">
-            <div class="store-stock-item-cell">
-              <span class="store-stock-item-head">
-                {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
-                <span class="store-stock-item-name">{{ row.name }}</span>
+            <button
+              type="button"
+              class="shelf-row-toggle"
+              data-shelf-row-toggle
+              aria-expanded="false"
+            >
+              <span class="store-stock-item-cell">
+                <span class="store-stock-item-head">
+                  {% if row.image_url %}<img class="item-thumb" src="{{ row.image_url }}" alt="" width="32" height="32" loading="lazy">{% endif %}
+                  <span class="store-stock-item-name">{{ row.name }}</span>
+                </span>
+                {% if row.category or row.unit %}<span class="store-stock-item-cat-mobile">{% if row.category %}{{ row.category }}{% endif %}{% if row.category and row.unit %} · {% endif %}{% if row.unit %}{{ row.unit }}{% endif %}</span>{% endif %}
               </span>
-              {% if row.category or row.unit %}<span class="store-stock-item-cat-mobile">{% if row.category %}{{ row.category }}{% endif %}{% if row.category and row.unit %} · {% endif %}{% if row.unit %}{{ row.unit }}{% endif %}</span>{% endif %}
-            </div>
+              <i data-lucide="chevron-down" class="shelf-row-toggle-icon" aria-hidden="true"></i>
+            </button>
           </td>
           <td class="store-stock-col-qty" data-label="Last buy price">
             <span class="store-stock-balance-pill">{{ row.last_buying_price_display|default:"—" }}</span>
@@ -200,7 +206,9 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
               {{ row.quantity_display }}{% if row.unit %} {{ row.unit }}{% endif %}{% if row.is_low %} · low{% endif %}
             </span>
           </td>
-          <td class="shelf-stock-col-change" data-label="Change">
+        </tr>
+        <tr class="store-stock-row store-stock-form-row" data-shelf-row-inputs hidden>
+          <td colspan="3">
             <div class="shelf-stock-move">
               <input
                 class="store-stock-qty-input"
@@ -230,23 +238,7 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
                 class="store-stock-qty-input shelf-stock-note"
                 aria-label="Note for {{ row.name }}"
               >
-              <button type="submit" name="shelf_action" value="in:{{ row.id }}" class="store-stock-btn store-stock-btn--primary">Add</button>
-              <button type="submit" name="shelf_action" value="out:{{ row.id }}" class="store-stock-btn store-stock-btn--ghost">Remove</button>
-              <button
-                type="submit"
-                name="shelf_action"
-                value="archive:{{ row.id }}"
-                class="store-stock-btn store-stock-btn--ghost"
-                aria-label="Delete {{ row.name }} from the shelf list"
-                data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?"
-              >
-                <i data-lucide="trash-2" aria-hidden="true"></i>
-              </button>
-            </div>
-          </td>
-          {% if shelf_transfer_shops %}
-          <td class="shelf-stock-col-change" data-label="Send to">
-            <div class="shelf-stock-move">
+              {% if shelf_transfer_shops %}
               <select
                 class="store-stock-qty-input shelf-stock-target"
                 name="shelf_target_{{ row.id }}"
@@ -261,9 +253,19 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
                 {% endfor %}
               </select>
               <button type="submit" name="shelf_action" value="transfer:{{ row.id }}" class="store-stock-btn store-stock-btn--primary">Send</button>
+              {% endif %}
+              <button
+                type="submit"
+                name="shelf_action"
+                value="archive:{{ row.id }}"
+                class="store-stock-btn store-stock-btn--ghost"
+                aria-label="Delete {{ row.name }} from the shelf list"
+                data-shelf-confirm="Remove “{{ row.name }}” from the shelf list?"
+              >
+                <i data-lucide="trash-2" aria-hidden="true"></i>
+              </button>
             </div>
           </td>
-          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
@@ -272,7 +274,7 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
   {% if stock_mode == 'in' or stock_mode == 'out' %}
   <div class="store-stock-footer shelf-bulk-footer">
     <p class="store-stock-footer-summary" data-shelf-bulk-summary>
-      Search to find items, type a quantity on each, then
+      Search to find items, expand each and type a quantity, then
       {% if stock_mode == 'in' %}stock them all in{% else %}remove them all{% endif %}
       with one click.
     </p>
