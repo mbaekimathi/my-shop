@@ -2,6 +2,7 @@ from itertools import groupby
 import json
 import re
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -9,9 +10,10 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, DecimalField, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -85,6 +87,7 @@ from .services import (
     build_stock_request_dispatch_note,
     build_stock_request_goods_received,
     build_shop_day_prompt,
+    build_shop_day_report_pdf,
     close_shop_day,
     ITEM_ACTIVE_COUNT_CACHE_KEY,
     ITEM_ACTIVE_COUNT_CACHE_TTL,
@@ -95,12 +98,14 @@ from .services import (
     complete_shop_checkout,
     create_shop,
     day_session_balance_summary,
+    day_session_report_details,
     stock_mode_of,
     till_summary_payload,
     delete_shop,
     find_client_by_phone,
     format_kenya_phone,
     client_phone_for_receipt,
+    get_company_display_name,
     get_company_pos_settings,
     get_company_profile,
     get_company_stock_settings,
@@ -3191,6 +3196,22 @@ def my_shop_day_toggle(request, shop_id):
     can_record_drawing = profile is None or employee_may(
         profile, "my-shop", "register_expense"
     )
+    requested_back = (request.GET.get("back") or "").strip()
+    back_url = ""
+    if requested_back and url_has_allowed_host_and_scheme(
+        requested_back, allowed_hosts={request.get_host()}
+    ):
+        back_url = requested_back
+
+    def _day_url(view_name):
+        url = reverse(view_name, kwargs={"shop_id": shop.pk})
+        if back_url:
+            url = f"{url}?{urlencode({'back': back_url})}"
+        return url
+
+    def _day_redirect(view_name):
+        return redirect(_day_url(view_name))
+
     wants_json = (
         request.headers.get("X-Requested-With") == "XMLHttpRequest"
         or "application/json" in (request.headers.get("Accept") or "")
@@ -3263,7 +3284,7 @@ def my_shop_day_toggle(request, shop_id):
                         }
                     )
                 messages.success(request, result["message"])
-                return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
+                return _day_redirect("employees:my_shop_day_toggle")
         else:
             form_data = {
                 "cash_amount": (request.POST.get("cash_amount") or "").strip(),
@@ -3326,7 +3347,7 @@ def my_shop_day_toggle(request, shop_id):
                         }
                     )
                 messages.success(request, result["message"])
-                return redirect(next_view, shop_id=shop.pk)
+                return _day_redirect(next_view)
 
     # Refresh open state after failed post / for GET
     open_session = get_open_shop_day(shop)
@@ -3430,8 +3451,228 @@ def my_shop_day_toggle(request, shop_id):
             "drawing_errors": drawing_errors,
             "can_record_drawing": can_record_drawing and not stale_open,
             "balance_channels": balance_channels,
+            "back_url": back_url
+            or _shop_workspace_url(shop),
             "verify_login_code_url": reverse(
                 "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
+            ),
+            "day_report_url": reverse(
+                "employees:my_shop_day_report", kwargs={"shop_id": shop.pk}
+            ),
+            "drawings_url": _day_url(
+                "employees:my_shop_drawings"
+            ),
+        },
+    )
+
+
+def my_shop_day_report(request, shop_id):
+    """Day accounting report as PDF — live preview while open, final once closed."""
+    from django.utils import timezone
+
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "open_close", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    session = get_open_shop_day(shop) or get_last_closed_shop_day(shop)
+    if session is None:
+        messages.info(request, "No day recorded yet — open the shop first.")
+        return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
+
+    printed_by = ""
+    if profile is not None:
+        printed_by = profile.user.get_full_name() or profile.user.username
+    pdf_bytes = build_shop_day_report_pdf(
+        shop=shop,
+        session=session,
+        printed_by=printed_by,
+        company_name=get_company_display_name(),
+    )
+    stamp = timezone.localtime(session.opened_at).strftime("%Y%m%d")
+    filename = f"day-report-{slugify(shop.name) or 'shop'}-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_drawings(request, shop_id):
+    """Dedicated 'Draw from counter' page — records drawings on the open day."""
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
+    if denied:
+        return denied
+    denied = _require_my_shop_permission(
+        request, profile, "register_expense", portal_ok=True
+    )
+    if denied:
+        return denied
+
+    shops = _shops_for_floor(profile, shop)
+    open_session = get_open_shop_day(shop)
+    is_open = open_session is not None
+    stale_open = bool(
+        shop_day_floor_state(shop=shop).get("stale_open")
+    )
+    can_draw = is_open and not stale_open
+
+    requested_back = (request.GET.get("back") or "").strip()
+    back_url = ""
+    if requested_back and url_has_allowed_host_and_scheme(
+        requested_back, allowed_hosts={request.get_host()}
+    ):
+        back_url = requested_back
+
+    def _with_back(url):
+        if back_url:
+            return f"{url}?{urlencode({'back': back_url})}"
+        return url
+
+    def _drawings_redirect():
+        return redirect(
+            _with_back(
+                reverse(
+                    "employees:my_shop_drawings", kwargs={"shop_id": shop.pk}
+                )
+            )
+        )
+
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+        or (request.GET.get("format") or "").strip().lower() == "json"
+    )
+
+    balance_channels = shop_day_balance_channels(shop=shop)
+    open_summary = (
+        day_session_balance_summary(open_session) if open_session else {}
+    )
+
+    if request.method == "GET" and wants_json:
+        return JsonResponse(
+            {
+                "ok": True,
+                "is_open": can_draw,
+                "till": till_summary_payload(
+                    open_summary, channels=balance_channels
+                ),
+            }
+        )
+
+    drawing_errors = []
+    drawing_data = {
+        "cash_amount": "",
+        "mpesa_amount": "",
+        "card_amount": "",
+        "name": "",
+        "login_code": "",
+        "drawer_login_code": "",
+    }
+
+    if request.method == "POST":
+        if not can_draw:
+            error = (
+                "Close the leftover day first, then open today before drawing."
+                if stale_open
+                else "The shop day is closed — open it before recording a drawing."
+            )
+            if wants_json:
+                return JsonResponse(
+                    {"ok": False, "errors": [error]}, status=400
+                )
+            drawing_errors.append(error)
+        else:
+            drawing_data = {
+                "cash_amount": (
+                    request.POST.get("cash_amount") or ""
+                ).strip(),
+                "mpesa_amount": (
+                    request.POST.get("mpesa_amount") or ""
+                ).strip(),
+                "card_amount": (
+                    request.POST.get("card_amount") or ""
+                ).strip(),
+                "amount": (request.POST.get("amount") or "").strip(),
+                "name": (request.POST.get("name") or "").strip(),
+                "login_code": (
+                    request.POST.get("login_code") or ""
+                ).strip(),
+                "drawer_login_code": (
+                    request.POST.get("drawer_login_code") or ""
+                ).strip(),
+            }
+            try:
+                result = register_owner_drawing(
+                    shop=shop, profile=profile, payload=drawing_data
+                )
+            except ValidationError as exc:
+                drawing_errors = _validation_errors(exc)
+                if wants_json:
+                    return JsonResponse(
+                        {"ok": False, "errors": drawing_errors},
+                        status=400,
+                    )
+            else:
+                if wants_json:
+                    till = till_summary_payload(
+                        day_session_balance_summary(result["session"]),
+                        channels=balance_channels,
+                    )
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "message": result["message"],
+                            "action": "drawing",
+                            "till": till,
+                        }
+                    )
+                messages.success(request, result["message"])
+                return _drawings_redirect()
+
+    drawings_rows = (
+        day_session_report_details(open_session)["drawings"]
+        if open_session
+        else []
+    )
+    day_url = _with_back(
+        reverse("employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk})
+    )
+
+    return _render_my_shop_tool_page(
+        request,
+        shop=shop,
+        profile=profile,
+        shops=shops,
+        active="day_toggle",
+        title=f"Draw from counter — {shop.name}",
+        headline="Draw from counter",
+        summary=(
+            "Record a director drawing — it is deducted from the expected till."
+        ),
+        icon="hand-coins",
+        template_name="shops/my_shop_drawings.html",
+        extra_context={
+            "mode": "open",
+            "is_open": is_open,
+            "stale_open": stale_open,
+            "can_draw": can_draw,
+            "open_session": open_session,
+            "open_summary": open_summary,
+            "drawing_data": drawing_data,
+            "drawing_errors": drawing_errors,
+            "drawings_rows": drawings_rows,
+            "balance_channels": balance_channels,
+            "day_url": day_url,
+            "back_url": back_url or _shop_workspace_url(shop),
+            "verify_login_code_url": reverse(
+                "employees:my_shop_verify_login_code",
+                kwargs={"shop_id": shop.pk},
             ),
         },
     )

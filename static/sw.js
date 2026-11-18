@@ -1,5 +1,14 @@
 /* MY-SHOP service worker — offline shell with network-first when online */
-const CACHE_VERSION = "myshop-v42";
+const CACHE_VERSION = "myshop-v44";
+
+// Shop-floor workspace pages live in a separate cache that survives asset
+// version bumps — a SW update must not strand a till that is mid-outage.
+const PAGES_CACHE = "myshop-pages-v1";
+
+// Only the selling floor (/my-shop/<id>/) is page-cached: it is the surface
+// that must keep working through an internet drop. Other navigations are
+// never written to Cache Storage (per-navigation cache.put janks Chrome).
+const isShopFloorPage = (url) => /^\/my-shop\/\d+\/?$/.test(url.pathname);
 
 // Precache only the shared shell. Page-specific bundles (my-shop, catalogs,
 // printer) are cached on first use via networkFirst to keep install light.
@@ -167,7 +176,11 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
+        Promise.all(
+          keys
+            .filter((k) => k !== CACHE_VERSION && k !== PAGES_CACHE)
+            .map((k) => caches.delete(k))
+        )
       )
       .then(() => self.clients.claim())
   );
@@ -176,6 +189,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
+  }
+  if (event.data?.type === "CLEAR_PAGE_CACHE") {
+    // Page cache holds an authenticated screen — drop it on sign-out.
+    event.waitUntil(caches.delete(PAGES_CACHE));
   }
 });
 
@@ -281,15 +298,30 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (isNavigation(request)) {
-    // Network-first for HTML, but do not write navigations into Cache Storage.
+    // Network-first for HTML. The shop-floor workspace is additionally
+    // written to PAGES_CACHE so a till that was opened while online can be
+    // reloaded during an outage; the cached copy carries that session's
+    // Vary: Cookie, so a different signed-in session never sees it.
     event.respondWith(
-      fetch(request).catch(async () => {
-        const cached = await caches.match(request);
-        if (cached) return cached;
-        const fallback = await caches.match("/");
-        if (fallback) return fallback;
-        return new Response("Offline", { status: 503, statusText: "Offline" });
-      })
+      fetch(request)
+        .then(async (response) => {
+          if (response.ok && isShopFloorPage(url)) {
+            try {
+              const pages = await caches.open(PAGES_CACHE);
+              await pages.put(request, response.clone());
+            } catch (_) {
+              /* quota/full — the live response still wins */
+            }
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.match(request, { ignoreSearch: true });
+          if (cached) return cached;
+          const fallback = await caches.match("/");
+          if (fallback) return fallback;
+          return new Response("Offline", { status: 503, statusText: "Offline" });
+        })
     );
     return;
   }

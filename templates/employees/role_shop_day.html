@@ -1,0 +1,166 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="home" data-animate="rise">
+  <header class="home-hero">
+    <p class="home-kicker">{{ role_label }}</p>
+    <h2 class="home-title">
+      {% if meta.icon %}
+      <span class="home-title-icon" aria-hidden="true"><i data-lucide="{{ meta.icon }}"></i></span>
+      {% endif %}
+      {{ meta.headline }}
+    </h2>
+    {% if meta.summary %}
+    <p class="home-sub">{{ meta.summary }}</p>
+    {% endif %}
+  </header>
+
+  <section class="home-section" aria-labelledby="shop-day-list-title">
+    <h3 class="home-section-title" id="shop-day-list-title">Your shops</h3>
+    {% for row in day_shops %}
+    <article class="home-money-shop">
+      <h4 class="home-money-shop-name">
+        {{ row.shop.name }}
+        <span class="shop-day-badge{% if row.is_open and not row.stale_open %} is-open{% else %} is-closed{% endif %}">
+          <i data-lucide="{% if row.is_open and not row.stale_open %}radio{% elif row.stale_open %}alert-triangle{% else %}moon{% endif %}" aria-hidden="true"></i>
+          {% if row.stale_open %}
+          Yesterday — left open
+          {% elif row.own_session %}
+          Open
+          {% elif row.other_open %}
+          Open — {{ row.other_opener }}
+          {% else %}
+          Closed
+          {% endif %}
+        </span>
+        {% if row.open_session %}
+        <small>opened {{ row.open_session.opened_at|date:"M j, H:i" }} by {{ row.open_session.opened_by.user.get_full_name|default:row.open_session.opened_by.user.username }}</small>
+        {% endif %}
+      </h4>
+
+      {% if row.own_session and row.summary %}
+      <div class="home-money-stats">
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="sunrise"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Opened with</span>
+            <strong class="home-stat-value">KSh {{ row.summary.opening_total|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="receipt"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Sales collected</span>
+            <strong class="home-stat-value">KSh {{ row.summary.sales_total|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="wallet"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Expenses paid</span>
+            <strong class="home-stat-value">KSh {{ row.summary.expenses_paid|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="hand-coins"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Drawings</span>
+            <strong class="home-stat-value">KSh {{ row.summary.drawings_paid|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="truck"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Stock bought</span>
+            <strong class="home-stat-value">KSh {{ row.summary.suppliers_paid|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat home-stat--revenue">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="landmark"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">In till now</span>
+            <strong class="home-stat-value">KSh {{ row.summary.expected_total|floatformat:0 }}</strong>
+            <small>
+              {% if row.balance_channels.cash %}Cash {{ row.summary.expected_cash|floatformat:0 }}{% endif %}
+              {% if row.balance_channels.mpesa %} · M-Pesa {{ row.summary.expected_mpesa|floatformat:0 }}{% endif %}
+              {% if row.balance_channels.card %} · Card {{ row.summary.expected_card|floatformat:0 }}{% endif %}
+            </small>
+          </span>
+        </div>
+      </div>
+      {% elif row.other_open %}
+      <div class="shop-day-status">
+        <div class="shop-day-status-icon" aria-hidden="true">
+          <i data-lucide="user-check"></i>
+        </div>
+        <div>
+          <strong>Day open under {{ row.other_opener }}</strong>
+          <p>Till data appears here once a day is opened under your ID.</p>
+        </div>
+      </div>
+      {% else %}
+      <div class="shop-day-status">
+        <div class="shop-day-status-icon" aria-hidden="true">
+          <i data-lucide="door-closed"></i>
+        </div>
+        <div>
+          <strong>Shop is closed</strong>
+          <p>
+            {% if row.last_closed %}
+            Last close {{ row.last_closed.closed_at|date:"d M · H:i" }}
+            {% if row.balance_channels.cash %}
+            · Cash {{ row.last_closed.closing_cash|floatformat:0 }}
+            {% endif %}
+            {% if row.balance_channels.mpesa %}
+            · M-Pesa {{ row.last_closed.closing_mpesa|floatformat:0 }}
+            {% endif %}
+            {% if row.balance_channels.card %}
+            · Card {{ row.last_closed.closing_card|floatformat:0 }}
+            {% endif %}
+            {% else %}
+            No day recorded yet.
+            {% endif %}
+          </p>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="shop-day-actions">
+        {% if drawing_mode %}
+        {% if row.can_draw %}
+        <a class="btn btn--primary" href="{{ row.drawing_url }}">
+          <i data-lucide="hand-coins" aria-hidden="true"></i>
+          Record drawing
+        </a>
+        {% else %}
+        <a class="btn btn--primary" href="{{ row.toggle_url }}">
+          <i data-lucide="{{ row.action_icon }}" aria-hidden="true"></i>
+          {% if row.stale_open %}Close yesterday’s day{% elif row.is_open %}Close shop{% else %}Open shop first{% endif %}
+        </a>
+        {% endif %}
+        {% else %}
+        <a class="btn btn--primary" href="{{ row.toggle_url }}">
+          <i data-lucide="{{ row.action_icon }}" aria-hidden="true"></i>
+          {{ row.action_label }}
+        </a>
+        {% if row.can_draw %}
+        <a class="btn btn--ghost" href="{{ row.drawing_url }}">
+          <i data-lucide="hand-coins" aria-hidden="true"></i>
+          Record drawing
+        </a>
+        {% endif %}
+        {% endif %}
+      </div>
+    </article>
+    {% empty %}
+    <div class="home-empty">
+      <i data-lucide="store" aria-hidden="true"></i>
+      <p><strong>No shops assigned.</strong> Ask HR to allocate you to a shop before opening or closing a day.</p>
+    </div>
+    {% endfor %}
+  </section>
+</section>
+{% endblock %}

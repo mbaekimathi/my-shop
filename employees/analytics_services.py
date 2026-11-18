@@ -83,9 +83,9 @@ ANALYTICS_SECTIONS = (
     },
     {
         "slug": "balances",
-        "label": "Balances",
+        "label": "Cashiers",
         "icon": "scale",
-        "summary": "Live cashbox per shop — opening, sales, expenses paid, suppliers paid.",
+        "summary": "Cashier day report — openings, sales, paid out, and expected vs counted closing per cashier.",
     },
     {
         "slug": "sales",
@@ -3221,6 +3221,12 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
     filters["query"] = request.GET.urlencode()
     filters["search_query"] = (request.GET.get("q") or "").strip()
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
+    try:
+        filters["selected_employee_id"] = int(
+            request.GET.get("employee_id") or 0
+        )
+    except (TypeError, ValueError):
+        filters["selected_employee_id"] = 0
     filters["expense_category"] = (request.GET.get("category") or "").strip().lower()
     filters["supply_item_id"] = (request.GET.get("item_id") or "").strip()
     filters["supplier_status"] = _parse_supplier_status(request.GET.get("status"))
@@ -7967,6 +7973,8 @@ def _day_balance_data(filters) -> dict:
         ).only(
             "id",
             "shop_id",
+            "opened_by_id",
+            "closed_by_id",
             "opened_at",
             "closed_at",
             "opening_cash",
@@ -7986,6 +7994,8 @@ def _day_balance_data(filters) -> dict:
         ).only(
             "id",
             "shop_id",
+            "opened_by_id",
+            "closed_by_id",
             "opened_at",
             "closed_at",
             "opening_cash",
@@ -8210,6 +8220,8 @@ def _day_balance_data(filters) -> dict:
             {
                 "shop_id": session.shop_id,
                 "is_open": False,
+                "opened_by_id": session.opened_by_id,
+                "closed_by_id": session.closed_by_id,
                 "opened_at": session.opened_at,
                 "closed_at": session.closed_at,
                 "opening_cash": Decimal(session.opening_cash or 0),
@@ -8318,6 +8330,8 @@ def _day_balance_data(filters) -> dict:
             {
                 "shop_id": session.shop_id,
                 "is_open": True,
+                "opened_by_id": session.opened_by_id,
+                "closed_by_id": session.closed_by_id,
                 "opened_at": session.opened_at,
                 "closed_at": None,
                 "opening_cash": opening_cash,
@@ -9691,134 +9705,260 @@ def _strip_disabled_balance_channels(by_shop, totals, live_by_shop, flags) -> No
 
 
 def _build_balances(filters):
-    """Live cashbox per shop from open/close balances, sales, and paid outflows."""
+    """Cashiers report — day sessions rolled up by the cashier who opened them."""
+    from collections import defaultdict
+
     from django.utils import timezone
 
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    shops_by_id = {shop.pk: shop for shop in shops}
     flags = filters.get("pos_flags") or _pos_feature_flags()
+    start = filters["start"]
+
     day_balances = _day_balance_data(filters)
-    by_shop = day_balances["by_shop"]
-    totals = day_balances["totals"]
-    live_by_shop = day_balances.get("live_by_shop") or {}
-    _strip_disabled_balance_channels(by_shop, totals, live_by_shop, flags)
+    session_rows = [dict(row) for row in day_balances["session_rows"]]
 
-    live_cash_total = sum(
-        (Decimal(row.get("live_cash") or 0) for row in live_by_shop.values()),
-        _zero(),
-    )
-    live_mpesa_total = sum(
-        (Decimal(row.get("live_mpesa") or 0) for row in live_by_shop.values()),
-        _zero(),
-    )
-    live_card_total = sum(
-        (Decimal(row.get("live_card") or 0) for row in live_by_shop.values()),
-        _zero(),
-    )
-    live_total = sum(
-        (Decimal(row.get("live_total") or 0) for row in live_by_shop.values()),
-        _zero(),
-    )
-    open_shop_count = sum(1 for row in live_by_shop.values() if row.get("is_open"))
-    expenses_paid_live = sum(
-        (
-            Decimal(row.get("expenses_paid") or 0)
-            for row in live_by_shop.values()
-            if row.get("is_open")
-        ),
-        _zero(),
-    )
-    drawings_paid_live = sum(
-        (
-            Decimal(row.get("drawings_paid") or 0)
-            for row in live_by_shop.values()
-            if row.get("is_open")
-        ),
-        _zero(),
-    )
-    suppliers_paid_live = sum(
-        (
-            Decimal(row.get("suppliers_paid") or 0)
-            for row in live_by_shop.values()
-            if row.get("is_open")
-        ),
-        _zero(),
-    )
+    # Zero till channels the company disabled before totals are rolled up.
+    for flag_key, keys in _BALANCE_CHANNEL_KEYS.items():
+        if flags.get(flag_key, True):
+            continue
+        for row in session_rows:
+            for key in keys:
+                if key in row:
+                    row[key] = _zero()
 
-    live_metrics = [
+    # Cashier filter — a day belongs to whoever opened it.
+    selected_employee_id = int(filters.get("selected_employee_id") or 0)
+    filter_employees = list(
+        EmployeeProfile.objects.filter(status=EmployeeStatus.ACTIVE)
+        .select_related("user")
+        .only(
+            "id",
+            "employee_id",
+            "user_id",
+            "user__first_name",
+            "user__last_name",
+            "user__username",
+        )
+        .order_by("employee_id")[:300]
+    )
+    profiles = {profile.pk: profile for profile in filter_employees}
+    if selected_employee_id and selected_employee_id not in profiles:
+        selected_employee_id = 0
+
+    actor_ids = {
+        row.get("opened_by_id")
+        for row in session_rows
+        if row.get("opened_by_id")
+    } | {
+        row.get("closed_by_id")
+        for row in session_rows
+        if row.get("closed_by_id")
+    }
+    missing = actor_ids - set(profiles)
+    if missing:
+        profiles.update(
+            {
+                profile.pk: profile
+                for profile in EmployeeProfile.objects.filter(pk__in=missing)
+                .select_related("user")
+            }
+        )
+
+    def _cashier_name(profile_id):
+        profile = profiles.get(profile_id)
+        if profile is None:
+            return "—"
+        return profile.user.get_full_name() or profile.user.username or "—"
+
+    def _cashier_cell(profile_id):
+        profile = profiles.get(profile_id)
+        if profile is None:
+            return "—"
+        code = getattr(profile, "employee_id", "") or ""
+        return {
+            "label": _cashier_name(profile_id),
+            "sub": f"ID {code}" if code else "",
+        }
+
+    if selected_employee_id:
+        session_rows = [
+            row
+            for row in session_rows
+            if row.get("opened_by_id") == selected_employee_id
+        ]
+
+    total_keys = (
+        "expected_opening_cash",
+        "expected_opening_mpesa",
+        "expected_opening_card",
+        "opening_cash",
+        "opening_mpesa",
+        "opening_card",
+        "opening_cash_variance",
+        "opening_mpesa_variance",
+        "opening_card_variance",
+        "closing_cash",
+        "closing_mpesa",
+        "closing_card",
+        "cash_sales",
+        "mpesa_sales",
+        "card_sales",
+        "cash_refunds",
+        "mpesa_refunds",
+        "card_refunds",
+        "expenses_paid",
+        "drawings_paid",
+        "suppliers_paid",
+        "expected_cash",
+        "expected_mpesa",
+        "expected_card",
+        "cash_variance",
+        "mpesa_variance",
+        "card_variance",
+    )
+    totals = {key: _zero() for key in total_keys}
+    totals["open_sessions"] = 0
+    totals["close_sessions"] = 0
+
+    def _new_bucket():
+        return {
+            "sessions": 0,
+            "open_sessions": 0,
+            "shops": set(),
+            "opening_total": _zero(),
+            "sales_total": _zero(),
+            "expenses_paid": _zero(),
+            "drawings_paid": _zero(),
+            "suppliers_paid": _zero(),
+            "expected_total": _zero(),
+            "closing_total": _zero(),
+            "variance_total": _zero(),
+        }
+
+    cashier_totals: dict[int, dict] = defaultdict(_new_bucket)
+    for row in session_rows:
+        is_open = bool(row.get("is_open"))
+        if row.get("opened_at") is not None and row["opened_at"] >= start:
+            totals["open_sessions"] += 1
+        if not is_open:
+            totals["close_sessions"] += 1
+        for key in total_keys:
+            totals[key] += Decimal(row.get(key) or 0)
+        opening = (
+            Decimal(row.get("opening_cash") or 0)
+            + Decimal(row.get("opening_mpesa") or 0)
+            + Decimal(row.get("opening_card") or 0)
+        )
+        sales = (
+            Decimal(row.get("cash_sales") or 0)
+            + Decimal(row.get("mpesa_sales") or 0)
+            + Decimal(row.get("card_sales") or 0)
+        )
+        expected = (
+            Decimal(row.get("expected_cash") or 0)
+            + Decimal(row.get("expected_mpesa") or 0)
+            + Decimal(row.get("expected_card") or 0)
+        )
+        closing = _zero()
+        variance = _zero()
+        if not is_open:
+            closing = (
+                Decimal(row.get("closing_cash") or 0)
+                + Decimal(row.get("closing_mpesa") or 0)
+                + Decimal(row.get("closing_card") or 0)
+            )
+            variance = (
+                Decimal(row.get("cash_variance") or 0)
+                + Decimal(row.get("mpesa_variance") or 0)
+                + Decimal(row.get("card_variance") or 0)
+            )
+        bucket = cashier_totals[row.get("opened_by_id") or 0]
+        bucket["sessions"] += 1
+        bucket["open_sessions"] += 1 if is_open else 0
+        bucket["shops"].add(row["shop_id"])
+        bucket["opening_total"] += opening
+        bucket["sales_total"] += sales
+        bucket["expenses_paid"] += row["expenses_paid"]
+        bucket["drawings_paid"] += row["drawings_paid"]
+        bucket["suppliers_paid"] += row["suppliers_paid"]
+        bucket["expected_total"] += expected
+        bucket["closing_total"] += closing
+        bucket["variance_total"] += variance
+
+    sales_total = (
+        totals["cash_sales"] + totals["mpesa_sales"] + totals["card_sales"]
+    )
+    paid_out = (
+        totals["expenses_paid"]
+        + totals["drawings_paid"]
+        + totals["suppliers_paid"]
+    )
+    expected_total = (
+        totals["expected_cash"]
+        + totals["expected_mpesa"]
+        + totals["expected_card"]
+    )
+    closing_total = (
+        totals["closing_cash"]
+        + totals["closing_mpesa"]
+        + totals["closing_card"]
+    )
+    variance_total = (
+        totals["cash_variance"]
+        + totals["mpesa_variance"]
+        + totals["card_variance"]
+    )
+    open_count = sum(1 for row in session_rows if row.get("is_open"))
+    cashier_count = len(cashier_totals)
+
+    metrics = [
         _metric(
-            "Total",
-            _money_ksh(live_total),
-            hint=f"{open_shop_count} shop{'s' if open_shop_count != 1 else ''} open",
-            tone="bad" if live_total < 0 else "good",
+            "Day sessions",
+            f"{len(session_rows)}",
+            hint=(
+                f"{cashier_count} cashier{'s' if cashier_count != 1 else ''}"
+                + (f" · {open_count} still open" if open_count else "")
+            ),
         ),
         _metric(
-            "Cash",
-            _money_ksh(live_cash_total),
-            hint="Open + cash sales − paid out",
-            tone="bad" if live_cash_total < 0 else "neutral",
+            "Sales collected",
+            _money_ksh(sales_total),
+            hint="Cash · M-Pesa · card",
         ),
         _metric(
-            "M-Pesa",
-            _money_ksh(live_mpesa_total),
-            hint="Open + M-Pesa sales",
-            tone="bad" if live_mpesa_total < 0 else "neutral",
+            "Paid out",
+            _money_ksh(paid_out),
+            hint="Expenses · drawings · suppliers",
+            tone="warn" if paid_out > 0 else "neutral",
         ),
         _metric(
-            "Card",
-            _money_ksh(live_card_total),
-            hint="Open + card sales",
-            tone="bad" if live_card_total < 0 else "neutral",
+            "Expected closing",
+            _money_ksh(expected_total),
+            hint="Opening + sales − paid out",
         ),
         _metric(
-            "Expenses paid (open)",
-            _money_ksh(expenses_paid_live),
-            hint="Operating costs from till",
-            tone="warn" if expenses_paid_live > 0 else "neutral",
+            "Counted closing",
+            _money_ksh(closing_total),
+            hint=(
+                f"{totals['close_sessions']} day"
+                f"{'s' if totals['close_sessions'] != 1 else ''} counted"
+            ),
         ),
         _metric(
-            "Drawings paid (open)",
-            _money_ksh(drawings_paid_live),
-            hint="Owner equity — not expense",
-            tone="warn" if drawings_paid_live > 0 else "neutral",
-        ),
-        _metric(
-            "Suppliers paid (open)",
-            _money_ksh(suppliers_paid_live),
-            hint="Stock payments today",
-            tone="warn" if suppliers_paid_live > 0 else "neutral",
+            "Close variance",
+            _money_ksh(variance_total),
+            hint="Counted − expected",
+            tone=_variance_tone(variance_total),
         ),
     ]
-    live_metric_group = {
-        "label": "Live cashbox",
-        "icon": "wallet",
-        "tone": "live",
-        "wide": True,
-        "rows": [
-            {
-                "label": "In till",
-                "metrics": [
-                    live_metrics[1],  # Cash first for cash|M-Pesa compare
-                    live_metrics[2],
-                    live_metrics[3],
-                    live_metrics[0],
-                ],
-            },
-            {
-                "label": "Paid out",
-                "metrics": [
-                    live_metrics[4],
-                    live_metrics[5],
-                    live_metrics[6],
-                ],
-            },
-        ],
-    }
+
     cash_metrics = [
         _metric(
             "Expected opening cash",
             _money_ksh(totals["expected_opening_cash"]),
-            hint="Yesterday's closing cash",
+            hint="Previous closing cash",
         ),
         _metric(
             "Actual opening cash",
@@ -9852,7 +9992,7 @@ def _build_balances(filters):
         _metric(
             "Expected opening M-Pesa",
             _money_ksh(totals["expected_opening_mpesa"]),
-            hint="Yesterday's closing M-Pesa",
+            hint="Previous closing M-Pesa",
         ),
         _metric(
             "Actual opening M-Pesa",
@@ -9884,7 +10024,7 @@ def _build_balances(filters):
         _metric(
             "Expected opening Card",
             _money_ksh(totals["expected_opening_card"]),
-            hint="Yesterday's closing Card",
+            hint="Previous closing Card",
         ),
         _metric(
             "Actual opening Card",
@@ -9912,455 +10052,50 @@ def _build_balances(filters):
             tone=_variance_tone(totals["card_variance"]),
         ),
     ]
-    metrics = live_metrics + cash_metrics + mpesa_metrics + card_metrics
 
-    shops_sorted = sorted(
-        shops,
-        key=lambda shop: (
-            0 if live_by_shop.get(shop.pk, {}).get("is_open") else 1,
-            -Decimal(live_by_shop.get(shop.pk, {}).get("live_total") or 0),
-            shop.name.lower(),
-        ),
-    )
-
-    # Columns interleaved Cash | M-Pesa | Card at each stage for side-by-side compare.
-    live_columns = [
-        "Shop",
-        "Status",
-        {
-            "label": "Open cash",
-            "band": "cash-open",
-            "band_start": True,
-        },
-        {"label": "Open M-Pesa", "band": "mpesa-open"},
-        {"label": "Open Card", "band": "card-open"},
-        {"label": "Cash sales", "band": "cash-open", "band_start": True},
-        {"label": "M-Pesa sales", "band": "mpesa-open"},
-        {"label": "Card sales", "band": "card-open"},
-        {"label": "Expenses paid", "band": "cash-open", "band_start": True},
-        {"label": "Drawings paid", "band": "cash-open"},
-        {"label": "Suppliers paid", "band": "cash-open"},
-        {
-            "label": "Live cash",
-            "band": "cash-close",
-            "band_start": True,
-        },
-        {"label": "Live M-Pesa", "band": "mpesa-close"},
-        {"label": "Live Card", "band": "card-close"},
-        {"label": "Close cash", "band": "cash-close", "band_start": True},
-        {"label": "Close M-Pesa", "band": "mpesa-close"},
-        {"label": "Close Card", "band": "card-close"},
-        {
-            "label": "Live total",
-            "band": "cash-close",
-            "band_start": True,
-        },
+    cashier_columns = [
+        "Cashier",
+        "Shops",
+        "Days",
+        "Opened",
+        "Sales",
+        "Expenses paid",
+        "Drawings paid",
+        "Suppliers paid",
+        "Expected close",
+        "Counted close",
+        "Close variance",
     ]
-
-    live_rows = []
-    for shop in shops_sorted:
-        live = live_by_shop.get(shop.pk)
-        if not live:
-            continue
-        is_open = bool(live.get("is_open"))
-        status_label = "Open" if is_open else "Closed"
-        close_cash = live.get("closing_cash")
-        close_mpesa = live.get("closing_mpesa")
-        close_card = live.get("closing_card")
-        live_rows.append(
-            [
-                shop.name,
-                {
-                    "label": status_label,
-                    "tone": "good" if is_open else "neutral",
-                },
-                _money_ksh(live.get("opening_cash") or 0)
-                if is_open
-                else "—",
-                _money_ksh(live.get("opening_mpesa") or 0)
-                if is_open
-                else "—",
-                _money_ksh(live.get("opening_card") or 0)
-                if is_open
-                else "—",
-                _money_ksh(live.get("cash_sales") or 0) if is_open else "—",
-                _money_ksh(live.get("mpesa_sales") or 0) if is_open else "—",
-                _money_ksh(live.get("card_sales") or 0) if is_open else "—",
-                _money_ksh(live.get("expenses_paid") or 0) if is_open else "—",
-                _money_ksh(live.get("drawings_paid") or 0) if is_open else "—",
-                _money_ksh(live.get("suppliers_paid") or 0) if is_open else "—",
-                {
-                    "label": _money_ksh(live.get("live_cash") or 0),
-                    "tone": "bad"
-                    if Decimal(live.get("live_cash") or 0) < 0
-                    else "good",
-                },
-                {
-                    "label": _money_ksh(live.get("live_mpesa") or 0),
-                    "tone": "bad"
-                    if Decimal(live.get("live_mpesa") or 0) < 0
-                    else "good",
-                },
-                {
-                    "label": _money_ksh(live.get("live_card") or 0),
-                    "tone": "bad"
-                    if Decimal(live.get("live_card") or 0) < 0
-                    else "good",
-                },
-                _money_ksh(close_cash)
-                if close_cash is not None and not is_open
-                else ("—" if is_open else _money_ksh(0)),
-                _money_ksh(close_mpesa)
-                if close_mpesa is not None and not is_open
-                else ("—" if is_open else _money_ksh(0)),
-                _money_ksh(close_card)
-                if close_card is not None and not is_open
-                else ("—" if is_open else _money_ksh(0)),
-                {
-                    "label": _money_ksh(live.get("live_total") or 0),
-                    "tone": "bad"
-                    if Decimal(live.get("live_total") or 0) < 0
-                    else "good",
-                },
-            ]
-        )
-
-    if live_rows:
-        live_rows.append(
-            [
-                "Total",
-                f"{open_shop_count} open",
-                "—",
-                "—",
-                "—",
-                "—",
-                "—",
-                "—",
-                _money_ksh(expenses_paid_live),
-                _money_ksh(drawings_paid_live),
-                _money_ksh(suppliers_paid_live),
-                _money_ksh(live_cash_total),
-                _money_ksh(live_mpesa_total),
-                _money_ksh(live_card_total),
-                "—",
-                "—",
-                "—",
-                {
-                    "label": _money_ksh(live_total),
-                    "tone": "good",
-                },
-            ]
-        )
-
-    summary_columns = [
-        "Shop",
-        {
-            "label": "Exp. open cash",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "cash-open",
-            "band_start": True,
-        },
-        {
-            "label": "Exp. open M-Pesa",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "mpesa-open",
-        },
-        {
-            "label": "Exp. open Card",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "card-open",
-        },
-        {
-            "label": "Open cash",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "cash-open",
-            "band_start": True,
-        },
-        {
-            "label": "Open M-Pesa",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "mpesa-open",
-        },
-        {
-            "label": "Open Card",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "card-open",
-        },
-        {
-            "label": "Open cash var",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "cash-open",
-            "band_start": True,
-        },
-        {
-            "label": "Open M-Pesa var",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "mpesa-open",
-        },
-        {
-            "label": "Open Card var",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "card-open",
-        },
-        {
-            "label": "Exp. close cash",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "cash-close",
-            "band_start": True,
-        },
-        {
-            "label": "Exp. close M-Pesa",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "mpesa-close",
-        },
-        {
-            "label": "Exp. close Card",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "card-close",
-        },
-        {
-            "label": "Close cash",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "cash-close",
-            "band_start": True,
-        },
-        {
-            "label": "Close M-Pesa",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "mpesa-close",
-        },
-        {
-            "label": "Close Card",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "card-close",
-        },
-        {
-            "label": "Close cash var",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "cash-close",
-            "band_start": True,
-        },
-        {
-            "label": "Close M-Pesa var",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "mpesa-close",
-        },
-        {
-            "label": "Close Card var",
-            "pair": True,
-            "pair_qty": "Days",
-            "pair_amt": "Amt",
-            "band": "card-close",
-        },
-    ]
-
-    def _pair(
-        shop_id: int,
-        sessions_key: str,
-        amount_key: str,
-        *,
-        variance: bool = False,
+    cashier_rows = []
+    for employee_id, bucket in sorted(
+        cashier_totals.items(),
+        key=lambda item: (-item[1]["sales_total"], _cashier_name(item[0])),
     ):
-        entry = by_shop.get(shop_id, {})
-        qty = int(entry.get(sessions_key) or 0)
-        amount = Decimal(entry.get(amount_key) or 0)
-        tone = _variance_tone(amount) if variance else "neutral"
-        return _qty_amount_cell(
-            qty,
-            amount,
-            title=f"{qty} · {_money_ksh(amount)}",
-            tone=tone,
-        )
-
-    summary_rows = []
-    period_shops = sorted(
-        shops,
-        key=lambda shop: (
-            -Decimal(by_shop.get(shop.pk, {}).get("closing_cash") or 0),
-            shop.name.lower(),
-        ),
-    )
-    for shop in period_shops:
-        entry = by_shop.get(shop.pk)
-        if not entry:
-            continue
-        if not (
-            entry["open_sessions"]
-            or entry["close_sessions"]
-            or entry["opening_cash"]
-            or entry["closing_cash"]
-            or entry["opening_mpesa"]
-            or entry["closing_mpesa"]
-            or entry["opening_card"]
-            or entry["closing_card"]
-        ):
-            continue
-        summary_rows.append(
+        cashier_rows.append(
             [
-                shop.name,
-                _pair(shop.pk, "open_sessions", "expected_opening_cash"),
-                _pair(shop.pk, "open_sessions", "expected_opening_mpesa"),
-                _pair(shop.pk, "open_sessions", "expected_opening_card"),
-                _pair(shop.pk, "open_sessions", "opening_cash"),
-                _pair(shop.pk, "open_sessions", "opening_mpesa"),
-                _pair(shop.pk, "open_sessions", "opening_card"),
-                _pair(
-                    shop.pk,
-                    "open_sessions",
-                    "opening_cash_variance",
-                    variance=True,
-                ),
-                _pair(
-                    shop.pk,
-                    "open_sessions",
-                    "opening_mpesa_variance",
-                    variance=True,
-                ),
-                _pair(
-                    shop.pk,
-                    "open_sessions",
-                    "opening_card_variance",
-                    variance=True,
-                ),
-                _pair(shop.pk, "close_sessions", "expected_cash"),
-                _pair(shop.pk, "close_sessions", "expected_mpesa"),
-                _pair(shop.pk, "close_sessions", "expected_card"),
-                _pair(shop.pk, "close_sessions", "closing_cash"),
-                _pair(shop.pk, "close_sessions", "closing_mpesa"),
-                _pair(shop.pk, "close_sessions", "closing_card"),
-                _pair(
-                    shop.pk,
-                    "close_sessions",
-                    "cash_variance",
-                    variance=True,
-                ),
-                _pair(
-                    shop.pk,
-                    "close_sessions",
-                    "mpesa_variance",
-                    variance=True,
-                ),
-                _pair(
-                    shop.pk,
-                    "close_sessions",
-                    "card_variance",
-                    variance=True,
-                ),
+                _cashier_cell(employee_id or None),
+                str(len(bucket["shops"])),
+                str(bucket["sessions"]),
+                _money_ksh(bucket["opening_total"]),
+                _money_ksh(bucket["sales_total"]),
+                _money_ksh(bucket["expenses_paid"]),
+                _money_ksh(bucket["drawings_paid"]),
+                _money_ksh(bucket["suppliers_paid"]),
+                _money_ksh(bucket["expected_total"]),
+                _money_ksh(bucket["closing_total"]),
+                {
+                    "label": _money_ksh(bucket["variance_total"]),
+                    "tone": _variance_tone(bucket["variance_total"]),
+                },
             ]
         )
 
-    if summary_rows:
-        summary_rows.append(
-            [
-                "Total",
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["expected_opening_cash"]
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["expected_opening_mpesa"]
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["expected_opening_card"]
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["opening_cash"]
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["opening_mpesa"]
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"], totals["opening_card"]
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"],
-                    totals["opening_cash_variance"],
-                    tone=_variance_tone(totals["opening_cash_variance"]),
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"],
-                    totals["opening_mpesa_variance"],
-                    tone=_variance_tone(totals["opening_mpesa_variance"]),
-                ),
-                _qty_amount_cell(
-                    totals["open_sessions"],
-                    totals["opening_card_variance"],
-                    tone=_variance_tone(totals["opening_card_variance"]),
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"], totals["expected_cash"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"], totals["expected_mpesa"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"], totals["expected_card"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"], totals["closing_cash"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"], totals["closing_mpesa"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"], totals["closing_card"]
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"],
-                    totals["cash_variance"],
-                    tone=_variance_tone(totals["cash_variance"]),
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"],
-                    totals["mpesa_variance"],
-                    tone=_variance_tone(totals["mpesa_variance"]),
-                ),
-                _qty_amount_cell(
-                    totals["close_sessions"],
-                    totals["card_variance"],
-                    tone=_variance_tone(totals["card_variance"]),
-                ),
-            ]
-        )
-
-    shops_by_id = {shop.pk: shop for shop in shops}
     session_columns = [
+        "Cashier",
         "Shop",
         "Opened",
         "Closed",
+        "Closed by",
         "Exp. open cash",
         "Exp. open M-Pesa",
         "Exp. open Card",
@@ -10386,9 +10121,9 @@ def _build_balances(filters):
         "Close M-Pesa var",
         "Close Card var",
     ]
-    session_rows = []
+    session_table_rows = []
     for row in sorted(
-        day_balances["session_rows"],
+        session_rows,
         key=lambda item: item["closed_at"] or item["opened_at"] or timezone.now(),
         reverse=True,
     ):
@@ -10397,8 +10132,10 @@ def _build_balances(filters):
         opened = timezone.localtime(row["opened_at"]).strftime("%d %b %H:%M")
         if row.get("is_open") or row["closed_at"] is None:
             closed = "Open"
+            closed_by = "—"
         else:
             closed = timezone.localtime(row["closed_at"]).strftime("%d %b %H:%M")
+            closed_by = _cashier_name(row.get("closed_by_id"))
         cash_var = row["cash_variance"]
         mpesa_var = row["mpesa_variance"]
         card_var = row["card_variance"]
@@ -10406,11 +10143,13 @@ def _build_balances(filters):
         open_mpesa_var = row["opening_mpesa_variance"]
         open_card_var = row["opening_card_variance"]
         is_open_row = bool(row.get("is_open"))
-        session_rows.append(
+        session_table_rows.append(
             [
+                _cashier_cell(row.get("opened_by_id")),
                 shop_name,
                 opened,
                 closed,
+                closed_by,
                 _money_ksh(row["expected_opening_cash"]),
                 _money_ksh(row["expected_opening_mpesa"]),
                 _money_ksh(row["expected_opening_card"]),
@@ -10460,17 +10199,19 @@ def _build_balances(filters):
             ]
         )
 
+    headline = "Cashiers report"
+    if selected_employee_id:
+        headline = f"Cashiers report — {_cashier_name(selected_employee_id)}"
     return {
-        "headline": "Day balances",
+        "headline": headline,
         "lead": (
-            "Live cashbox = opening + sales − expenses paid − owner drawings − suppliers paid. "
-            "Closed shops show last recorded closing balances. "
-            "Period variances compare expected vs actual open/close counts."
+            "Day sessions grouped by the cashier who opened each day — openings, "
+            "sales collected, money paid out, and expected vs counted closing. "
+            "Pick a cashier above to isolate one person's days."
         ),
         "alerts": [],
         "metrics": metrics,
         "metric_groups": [
-            live_metric_group,
             _till_metric_group(
                 label="Cash till (period)",
                 icon="banknote",
@@ -10493,40 +10234,31 @@ def _build_balances(filters):
         "insights": [],
         "tables": [
             _table(
-                "Live cashbox by shop",
-                live_columns,
-                live_rows,
-                empty="No open or recently closed shop days to show a live cashbox.",
+                "Cashiers (period)",
+                cashier_columns,
+                cashier_rows,
+                empty="No day sessions for this period.",
                 footnote=(
-                    "Open shops: live cash = opening cash + cash sales − expenses paid "
-                    "− owner drawings − suppliers paid; live M-Pesa = opening M-Pesa + M-Pesa sales. "
-                    "Owner drawings reduce cash but are equity, not operating expense. "
-                    "Closed shops: live amounts are the last recorded closing balances. "
-                    "Cash and M-Pesa columns sit side by side at each stage for easier compare."
+                    "A day belongs to the cashier who opened it; the closer is shown "
+                    "per session below. Counted close sums each closed day's counted "
+                    "till; variance is counted − expected."
                 ),
-                shop_grid=True,
-            ),
-            _table(
-                "Balances by shop (period)",
-                summary_columns,
-                summary_rows,
-                empty="No shop day open/close records for this period.",
-                footnote=(
-                    "Expected opening = previous day's closing balance. "
-                    "Expected closing cash = opening + cash sales − expenses paid "
-                    "− owner drawings − suppliers paid. Expected closing M-Pesa = opening + M-Pesa sales. "
-                    "Variance = actual − expected. Cash and M-Pesa sit side by side at each stage."
-                ),
-                shop_grid=True,
             ),
             _table(
                 "Day sessions",
                 session_columns,
-                session_rows,
+                session_table_rows,
                 empty="No shop day sessions in this period.",
+                footnote=(
+                    "Expected opening = previous day's closing balance. Expected "
+                    "closing cash = opening + cash sales − expenses paid − owner "
+                    "drawings − suppliers paid. Variance = actual − expected."
+                ),
                 table_class="ax-table--sessions",
             ),
         ],
+        "filter_employees": filter_employees,
+        "selected_employee_id": selected_employee_id,
     }
 
 

@@ -57,6 +57,7 @@ urlpatterns = [
         name="registration_submitted",
     ),
     path("pending/", views.pending_approval, name="pending"),
+    path("select-role/", views.employee_select_role, name="select_role"),
     path("dashboard/", views.dashboard, name="dashboard"),
     path("profile/", views.employee_profile, name="profile"),
     path("settings/", views.legacy_settings_redirect, name="settings"),

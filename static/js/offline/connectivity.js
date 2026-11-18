@@ -79,9 +79,11 @@ function updateConnectivityIndicators() {
   document.querySelectorAll("[data-offline-bar]").forEach((bar) => {
     const pending = bar.querySelector("[data-sync-pending]");
     const hasPending = pending && !pending.hidden;
+    const stuck = bar.querySelector("[data-sync-stuck]");
+    const hasStuck = stuck && !stuck.hidden;
     const syncError = bar.querySelector("[data-offline-sync-error]");
     const hasError = syncError && !syncError.hidden;
-    bar.hidden = !hasPending && !hasError;
+    bar.hidden = !hasPending && !hasStuck && !hasError;
   });
 
   refreshLucideIcons();

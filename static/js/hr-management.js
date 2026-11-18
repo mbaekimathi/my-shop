@@ -100,6 +100,40 @@
 
 
 
+  // The primary role can never also be an additional role — keep the
+  // matching checkbox unchecked + disabled as the role select changes.
+  const syncEditExtraRoles = (extraRoles) => {
+
+    const role = editForm?.querySelector('[name="role"]')?.value || "";
+
+    editForm?.querySelectorAll('[name="extra_roles"]').forEach((box) => {
+
+      if (Array.isArray(extraRoles)) box.checked = extraRoles.includes(box.value);
+
+      if (box.value === role) {
+
+        box.checked = false;
+
+        box.disabled = true;
+
+      } else {
+
+        box.disabled = false;
+
+      }
+
+    });
+
+  };
+
+  editForm?.querySelector('[name="role"]')?.addEventListener("change", () => {
+
+    syncEditExtraRoles();
+
+  });
+
+
+
   const setCountryFields = (iso, dial) => {
 
     const dialInput = editForm?.querySelector("[data-dial-input]");
@@ -283,6 +317,18 @@
       setField("employee_id", dataset.employeeId);
 
       setField("role", dataset.role);
+
+      syncEditExtraRoles(
+
+        (dataset.extraRoles || "")
+
+          .split(",")
+
+          .map((value) => value.trim())
+
+          .filter(Boolean)
+
+      );
 
       setField("password", "");
 

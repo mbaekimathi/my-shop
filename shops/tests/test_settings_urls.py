@@ -57,6 +57,23 @@ class RoleScopedSettingsUrlTests(TestCase):
         response = client.get("/it-support/settings/company-profile/")
         self.assertEqual(response.status_code, 200)
 
+    def test_company_pos_renders_grouped_list_view(self):
+        client = self._login_employee()
+        response = client.get("/it-support/settings/company-pos/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-pos-filter')
+        self.assertContains(response, "pos-settings-groups--list")
+        self.assertContains(response, 'id="pos-group-tax"')
+        self.assertContains(response, 'id="pos-group-session-timeout"')
+        self.assertContains(response, 'id="pos-group-shop-floor-sidebar"')
+        self.assertContains(response, 'data-field="enable_employee_session_timeout"')
+        self.assertContains(response, 'data-field="enable_shop_session_timeout"')
+        self.assertContains(response, 'data-employee-timeout-input')
+        self.assertContains(response, 'data-shop-timeout-input')
+        self.assertContains(response, 'href="#pos-group-tax"')
+        self.assertContains(response, 'data-pos-enabled-count')
+        self.assertContains(response, 'data-pos-group')
+
     def test_wrong_role_segment_redirects_to_session_role(self):
         client = self._login_employee()
         response = client.get("/employee/settings/")

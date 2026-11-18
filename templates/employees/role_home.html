@@ -66,12 +66,31 @@
     <article class="home-money-shop">
       <h4 class="home-money-shop-name">
         {{ row.shop.name }}
+        <span class="shop-day-badge{% if row.is_open and not row.stale_open %} is-open{% elif row.other_open and not row.stale_open %} is-open{% else %} is-closed{% endif %}">
+          <i data-lucide="{% if row.is_open and not row.stale_open %}radio{% elif row.other_open and not row.stale_open %}radio{% elif row.stale_open %}alert-triangle{% else %}moon{% endif %}" aria-hidden="true"></i>
+          {% if row.stale_open %}
+          Yesterday — left open
+          {% elif row.is_open %}
+          Open
+          {% elif row.other_open %}
+          Open — {{ row.other_opener }}
+          {% else %}
+          Closed
+          {% endif %}
+        </span>
         {% if row.session %}
-        <small>day opened {{ row.session.opened_at|date:"M j, H:i" }}</small>
+        <small>opened {{ row.session.opened_at|date:"M j, H:i" }} by {{ row.session.opened_by.user.get_full_name|default:row.session.opened_by.user.username }}</small>
         {% endif %}
       </h4>
-      {% if row.display %}
+      {% if row.is_open and row.balance %}
       <div class="home-money-stats">
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="sunrise"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Opened with</span>
+            <strong class="home-stat-value">KSh {{ row.balance.opening_total|floatformat:0 }}</strong>
+          </span>
+        </div>
         <div class="home-stat">
           <span class="home-stat-icon" aria-hidden="true"><i data-lucide="receipt"></i></span>
           <span class="home-stat-text">
@@ -86,18 +105,37 @@
           <span class="home-stat-icon" aria-hidden="true"><i data-lucide="wallet"></i></span>
           <span class="home-stat-text">
             <span class="home-stat-label">Expenses paid</span>
-            <strong class="home-stat-value">KSh {{ row.display.expenses_paid }}</strong>
+            <strong class="home-stat-value">KSh {{ row.balance.expenses_paid|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="hand-coins"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Drawings</span>
+            <strong class="home-stat-value">KSh {{ row.balance.drawings_paid|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="truck"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Stock bought</span>
+            <strong class="home-stat-value">KSh {{ row.balance.suppliers_paid|floatformat:0 }}</strong>
           </span>
         </div>
         <div class="home-stat home-stat--revenue">
-          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="trending-up"></i></span>
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="landmark"></i></span>
           <span class="home-stat-text">
-            <span class="home-stat-label">Total revenue</span>
-            <strong class="home-stat-value">KSh {{ row.display.revenue }}</strong>
-            <small>sales − expenses</small>
+            <span class="home-stat-label">In till now</span>
+            <strong class="home-stat-value">KSh {{ row.balance.expected_total|floatformat:0 }}</strong>
+            <small>
+              {% if row.balance_channels.cash %}Cash {{ row.balance.expected_cash|floatformat:0 }}{% endif %}
+              {% if row.balance_channels.mpesa %} · M-Pesa {{ row.balance.expected_mpesa|floatformat:0 }}{% endif %}
+              {% if row.balance_channels.card %} · Card {{ row.balance.expected_card|floatformat:0 }}{% endif %}
+            </small>
           </span>
         </div>
       </div>
+      {% if row.display.methods %}
       <table class="home-money-table">
         <thead>
           <tr>
@@ -114,11 +152,60 @@
           {% endfor %}
         </tbody>
       </table>
+      {% endif %}
+      <div class="shop-day-actions">
+        {% if row.can_open_close %}
+        <a class="btn btn--primary" href="{{ row.day_url }}">
+          <i data-lucide="{% if row.stale_open %}alert-triangle{% else %}door-closed{% endif %}" aria-hidden="true"></i>
+          {% if row.stale_open %}Close yesterday’s day{% else %}Close shop{% endif %}
+        </a>
+        {% endif %}
+        {% if row.can_draw %}
+        <a class="btn btn--ghost" href="{{ row.drawings_url }}">
+          <i data-lucide="hand-coins" aria-hidden="true"></i>
+          Record drawing
+        </a>
+        {% endif %}
+        <a class="btn btn--ghost" href="{{ row.day_report_url }}" target="_blank" rel="noopener">
+          <i data-lucide="file-text" aria-hidden="true"></i>
+          Day report (PDF)
+        </a>
+      </div>
+      {% elif row.other_open %}
+      <div class="home-empty">
+        <i data-lucide="user-check" aria-hidden="true"></i>
+        <p>
+          <strong>Day open under {{ row.other_opener }}.</strong>
+          Till data appears here once a day is opened under your ID.
+        </p>
+      </div>
+      {% if row.can_open_close %}
+      <div class="shop-day-actions">
+        <a class="btn btn--primary" href="{{ row.day_url }}">
+          <i data-lucide="{% if row.stale_open %}alert-triangle{% else %}door-closed{% endif %}" aria-hidden="true"></i>
+          {% if row.stale_open %}Close yesterday’s day{% else %}Close shop{% endif %}
+        </a>
+      </div>
+      {% endif %}
       {% else %}
       <div class="home-empty">
         <i data-lucide="door-open" aria-hidden="true"></i>
-        <p><strong>Day not open.</strong> Open the shop day to start tracking sales money.</p>
+        <p>
+          <strong>Day not open.</strong>
+          {% if row.last_closed %}
+          Last close {{ row.last_closed.closed_at|date:"d M · H:i" }} —
+          {% endif %}
+          Open the shop day to start tracking sales money.
+        </p>
       </div>
+      {% if row.can_open_close %}
+      <div class="shop-day-actions">
+        <a class="btn btn--primary" href="{{ row.day_url }}">
+          <i data-lucide="door-open" aria-hidden="true"></i>
+          Open shop
+        </a>
+      </div>
+      {% endif %}
       {% endif %}
     </article>
     {% endfor %}

@@ -185,7 +185,7 @@ def current_employee(request):
 
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT id, role FROM employees_employeeprofile "
+            "SELECT id, role, extra_roles FROM employees_employeeprofile "
             "WHERE id=%s AND status='active' LIMIT 1",
             [emp_id],
         )
@@ -194,7 +194,16 @@ def current_employee(request):
         request.session.pop(SESSION_EMPLOYEE_KEY, None)
         request.session.pop("chatbot_employee_role", None)
         return None
-    return {"id": row[0], "role": row[1]}
+    role = row[1]
+    # Honour the MY-SHOP portal's per-session role pick when it shares this
+    # session — the picked role must still be one the employee is granted.
+    granted = {role, *{
+        r for r in (row[2] or "").split(",") if r in ALL_EMPLOYEE_ROLES
+    }}
+    active = request.session.get("employee_active_role")
+    if active in granted:
+        role = active
+    return {"id": row[0], "role": role}
 
 
 def employee_allocated_to_shop(profile_id: int, shop_id: int) -> bool:

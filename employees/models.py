@@ -64,6 +64,22 @@ COMPANY_WIDE_SHOP_ROLES = frozenset(
 )
 
 
+def split_extra_roles(raw) -> list:
+    """Ordered, de-duplicated valid role keys from a CSV string."""
+    seen = {value.strip() for value in (raw or "").split(",")}
+    return [value for value in EmployeeRole.values if value in seen]
+
+
+def join_extra_roles(values, *, exclude=None) -> str:
+    """CSV for storage — enum order, de-duped, minus *exclude* (the primary role)."""
+    if isinstance(values, str):
+        values = values.split(",")
+    keep = {
+        value.strip() for value in (values or []) if value.strip() != exclude
+    }
+    return ",".join(value for value in EmployeeRole.values if value in keep)
+
+
 class EmployeeProfile(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -90,6 +106,15 @@ class EmployeeProfile(models.Model):
         default=EmployeeRole.EMPLOYEE,
         db_index=True,
     )
+    extra_roles = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text=(
+            "Additional roles this employee may sign in as "
+            "(comma-separated role keys)."
+        ),
+    )
     assigned_shops = models.ManyToManyField(
         "shops.Shop",
         blank=True,
@@ -101,6 +126,14 @@ class EmployeeProfile(models.Model):
         default="",
         editable=False,
         help_text="Most recent employee session key (diagnostic only; sessions are concurrent).",
+    )
+    sidebar_prefs = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Per-employee dashboard sidebar link visibility "
+            "(link key → true/false; missing keys default to shown)."
+        ),
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -118,6 +151,23 @@ class EmployeeProfile(models.Model):
     @property
     def is_active_employee(self):
         return self.status == EmployeeStatus.ACTIVE
+
+    def extra_role_list(self) -> list:
+        """Additional granted roles (excludes the primary role)."""
+        return split_extra_roles(self.extra_roles)
+
+    def role_values(self) -> list:
+        """Every role this employee may act as — primary plus extras."""
+        granted = {self.role, *self.extra_role_list()}
+        return [value for value in EmployeeRole.values if value in granted]
+
+    @property
+    def has_multiple_roles(self) -> bool:
+        return len(self.role_values()) > 1
+
+    @property
+    def extra_role_display(self) -> str:
+        return ", ".join(EmployeeRole(value).label for value in self.extra_role_list())
 
     @property
     def role_label(self):

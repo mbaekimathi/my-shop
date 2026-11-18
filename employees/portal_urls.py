@@ -146,6 +146,16 @@ urlpatterns = [
         name="my_shop_day_toggle",
     ),
     path(
+        "my-shop/<int:shop_id>/day/report/",
+        shop_views.my_shop_day_report,
+        name="my_shop_day_report",
+    ),
+    path(
+        "my-shop/<int:shop_id>/drawings/",
+        shop_views.my_shop_drawings,
+        name="my_shop_drawings",
+    ),
+    path(
         "my-shop/<int:shop_id>/verify-login-code/",
         shop_views.my_shop_verify_login_code,
         name="my_shop_verify_login_code",
@@ -335,6 +345,11 @@ urlpatterns = [
         name="store_stock_employee_search",
     ),
     path("shop-cashier/", views.role_shop_cashier, name="role_shop_cashier"),
+    path(
+        "shop-cashier/settings/",
+        views.cashier_settings,
+        name="role_shop_cashier_settings",
+    ),
     path("it-support/", views.role_it_support, name="role_it_support"),
     path("rider/", views.role_rider, name="role_rider"),
     path(
@@ -753,6 +768,11 @@ urlpatterns = [
         "employee/receipts/<int:receipt_id>/",
         views.employee_receipt_detail,
         name="employee_receipt_detail",
+    ),
+    path(
+        "<role_segment:role_segment>/shop-day/",
+        views.role_shop_day,
+        name="role_shop_day",
     ),
     path(
         "<role_segment:role_segment>/<slug:module_slug>/",

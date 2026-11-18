@@ -31,12 +31,12 @@
       <h3>{{ stats.sales.amount_label }}</h3>
       <p>Sales · {{ stats.sales.docs }} sale{{ stats.sales.docs|pluralize }}</p>
     </article>
-    <article class="workspace-card">
+    <article class="workspace-card workspace-card--status-pending">
       <i data-lucide="clock-3" aria-hidden="true"></i>
       <h3>{{ stats.pending.docs }}</h3>
       <p>Pending · {{ stats.pending.amount_label }}</p>
     </article>
-    <article class="workspace-card">
+    <article class="workspace-card workspace-card--status-confirmed">
       <i data-lucide="check-check" aria-hidden="true"></i>
       <h3>{{ stats.confirmed.docs }}</h3>
       <p>Confirmed · {{ stats.confirmed.amount_label }}</p>
@@ -46,7 +46,7 @@
       <h3>{{ stats.partial_return.docs }}</h3>
       <p>Partially returned · {{ stats.partial_return.amount_label }}</p>
     </article>
-    <article class="workspace-card">
+    <article class="workspace-card workspace-card--status-cancelled">
       <i data-lucide="x-circle" aria-hidden="true"></i>
       <h3>{{ stats.cancelled.docs }}</h3>
       <p>Cancelled · {{ stats.cancelled.amount_label }}</p>
@@ -58,7 +58,7 @@
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
-        <h2>Sales by month</h2>
+        <h2>Trends</h2>
         <p>
           Last 12 months
           {% if stats.peak_month and stats.peak_month.docs %}
@@ -68,64 +68,109 @@
       </div>
     </div>
   </header>
-  <div class="item-table-wrap">
-    <table class="item-table item-table--dense">
-      <thead>
-        <tr>
-          <th scope="col" class="item-col--item">Month</th>
-          <th scope="col">Sales</th>
-          <th scope="col">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in stats.months %}
-        <tr>
-          <td class="item-cell--item" data-label="Month"><strong>{{ row.label }}</strong></td>
-          <td data-label="Sales">{{ row.docs }}</td>
-          <td data-label="Total">{{ row.amount_label }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<section class="item-panel item-panel--dense" data-animate="rise" data-delay="2">
-  <header class="item-panel-head">
-    <div class="item-panel-head-top">
-      <div>
-        <h2>Top items</h2>
-        <p>What you sell best, ranked by revenue.</p>
+  <div class="ax-charts ax-charts--trend" aria-label="Visual trends">
+    <section class="ax-chart-card ax-chart-card--wide">
+      <header class="ax-chart-head">
+        <h3>Sales by month</h3>
+        <span>Last 12 months</span>
+      </header>
+      {% if stats.trend_line and not stats.trend_line.empty %}
+      <div class="ax-line-wrap">
+        <svg
+          class="ax-line-chart"
+          viewBox="0 0 {{ stats.trend_line.width }} {{ stats.trend_line.height }}"
+          role="img"
+          aria-label="Sales by month"
+        >
+          <path class="ax-line-area" d="{{ stats.trend_line.sales_area }}"></path>
+          <polyline
+            class="ax-line-sales"
+            points="{{ stats.trend_line.sales_points }}"
+            fill="none"
+          ></polyline>
+          <polyline
+            class="ax-line-cancelled"
+            points="{{ stats.trend_line.expense_points }}"
+            fill="none"
+          ></polyline>
+          {% for label in stats.trend_line.labels %}
+          <text
+            class="ax-line-label"
+            x="{{ label.x }}"
+            y="{{ stats.trend_line.label_y }}"
+            text-anchor="middle"
+          >{{ label.text }}</text>
+          {% endfor %}
+        </svg>
+        <div class="ax-chart-legend">
+          <span class="is-now">Sales</span>
+          <span class="is-cancelled">Cancelled</span>
+        </div>
       </div>
-    </div>
-  </header>
-  {% if stats.top_items %}
-  <div class="item-table-wrap">
-    <table class="item-table item-table--dense">
-      <thead>
-        <tr>
-          <th scope="col" class="item-col--item">Item</th>
-          <th scope="col">Qty sold</th>
-          <th scope="col">Revenue</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in stats.top_items %}
-        <tr>
-          <td class="item-cell--item" data-label="Item"><strong>{{ row.name }}</strong></td>
-          <td data-label="Qty sold">{{ row.qty_label }}</td>
-          <td data-label="Revenue">{{ row.amount_label }}</td>
-        </tr>
+      {% else %}
+      <p class="ax-empty">No sales in the last 12 months yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="ax-chart-card">
+      <header class="ax-chart-head">
+        <h3>Receipt mix</h3>
+        <span>By status</span>
+      </header>
+      {% if stats.status_donut.slices %}
+      <div class="ax-donut-wrap">
+        <div
+          class="ax-donut ax-donut--status"
+          style="background: conic-gradient({{ stats.status_donut.gradient }})"
+          role="img"
+          aria-label="Receipts by status {{ stats.status_donut.total }}"
+        >
+          <div class="ax-donut-hole">
+            <strong>{{ stats.receipts_total }}</strong>
+            <span>Receipts</span>
+          </div>
+        </div>
+        <ul class="ax-donut-legend ax-donut-legend--status">
+          {% for slice in stats.status_donut.slices %}
+          <li class="is-{{ slice.tone }}">
+            <span>{{ slice.label }}</span>
+            <strong>{{ slice.display }}</strong>
+            <em>{{ slice.pct }}</em>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <p class="ax-empty">No receipts yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="ax-chart-card">
+      <header class="ax-chart-head">
+        <h3>Top items</h3>
+        <span>By revenue</span>
+      </header>
+      {% if stats.top_bars %}
+      <ul class="ax-bars">
+        {% for bar in stats.top_bars %}
+        <li class="ax-bar{% if bar.negative %} is-negative{% endif %}">
+          <div class="ax-bar-meta">
+            <span class="ax-bar-label">{{ bar.label }}</span>
+            <strong class="ax-bar-value">{{ bar.display }}</strong>
+          </div>
+          <div class="ax-bar-track" aria-hidden="true">
+            <span class="ax-bar-fill" style="width: {{ bar.pct }}%"></span>
+          </div>
+        </li>
         {% endfor %}
-      </tbody>
-    </table>
+      </ul>
+      {% else %}
+      <p class="ax-empty">
+        No item sales yet. Items you sell on the shop floor will rank here.
+      </p>
+      {% endif %}
+    </section>
   </div>
-  {% else %}
-  <div class="dashboard-placeholder">
-    <i data-lucide="package" aria-hidden="true"></i>
-    <p><strong>No item sales yet.</strong> Items you sell on the shop floor will rank here.</p>
-  </div>
-  {% endif %}
 </section>
 </div>
 {% endblock %}

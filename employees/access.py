@@ -5,9 +5,15 @@ from django.contrib import messages
 from django.shortcuts import redirect
 from django.urls import reverse
 
-from .models import EmployeeProfile, EmployeeRole, EmployeeStatus
+from .models import (
+    EmployeeProfile,
+    EmployeeRole,
+    EmployeeStatus,
+    split_extra_roles,
+)
 
 SESSION_PROFILE_KEY = "employee_profile_meta"
+SESSION_ACTIVE_ROLE_KEY = "employee_active_role"
 REQUEST_PROFILE_ATTR = "_employee_profile_cache"
 REQUEST_META_ATTR = "_employee_meta_cache"
 
@@ -71,8 +77,60 @@ def get_profile_for_request(request):
     if cached is not None:
         return cached
     profile = get_profile(request.user)
+    if profile is not None:
+        _apply_active_role(request, profile)
     setattr(request, REQUEST_PROFILE_ATTR, profile)
     return profile
+
+
+def available_role_values(primary_role, extra_roles_raw) -> list:
+    """All roles granted to an employee (primary + extras), in enum order."""
+    granted = {primary_role, *split_extra_roles(extra_roles_raw)}
+    return [value for value in EmployeeRole.values if value in granted]
+
+
+def session_active_role(request, available_roles):
+    """The session's picked role if still granted — else None (stale picks
+    are dropped so a revoked role silently falls back to the primary role)."""
+    session = getattr(request, "session", None)
+    if session is None:
+        return None
+    active = session.get(SESSION_ACTIVE_ROLE_KEY)
+    if active in available_roles:
+        return active
+    if SESSION_ACTIVE_ROLE_KEY in session:
+        del session[SESSION_ACTIVE_ROLE_KEY]
+    return None
+
+
+def _apply_active_role(request, profile) -> None:
+    """Swap ``profile.role`` to the session's active role, in memory only.
+
+    The whole codebase reads ``profile.role`` for dashboards, permissions,
+    and role-scoped URLs — overriding it here makes the request behave as the
+    picked role without touching ~300 call sites. The DB value is preserved
+    on ``profile.db_role`` and is never written back: every save path for the
+    signed-in profile uses ``update_fields`` or sets ``role`` explicitly.
+    """
+    available = profile.role_values()
+    if len(available) < 2:
+        return
+    db_role = getattr(profile, "db_role", profile.role)
+    profile.db_role = db_role
+    active = session_active_role(request, available)
+    if active:
+        profile.role = active
+
+
+def refresh_effective_role(request) -> None:
+    """Drop cached profile/meta so the next read sees a newly picked role."""
+    for attr in (REQUEST_META_ATTR, REQUEST_PROFILE_ATTR):
+        if hasattr(request, attr):
+            delattr(request, attr)
+    user = getattr(request, "user", None)
+    if user is not None:
+        user.__dict__.pop("employee_profile", None)
+    get_employee_meta_for_request(request)
 
 
 def get_profile_meta(user):
@@ -81,7 +139,7 @@ def get_profile_meta(user):
         return None
     return (
         EmployeeProfile.objects.filter(user_id=user.pk)
-        .values("employee_id", "role", "status")
+        .values("employee_id", "role", "status", "extra_roles")
         .first()
     )
 
@@ -102,11 +160,16 @@ def get_employee_meta_for_request(request):
     if meta is None:
         return None
 
+    primary_role = meta["role"]
+    available = available_role_values(primary_role, meta["extra_roles"])
+    role = session_active_role(request, available) or primary_role
     meta = {
         "user_id": request.user.pk,
         "employee_id": meta["employee_id"],
-        "role": meta["role"],
+        "role": role,
+        "primary_role": primary_role,
         "status": meta["status"],
+        "available_roles": available,
     }
     session = getattr(request, "session", None)
     if session is not None and session.get(SESSION_PROFILE_KEY) != meta:
@@ -120,7 +183,9 @@ def store_profile_session(request, profile):
         "user_id": profile.user_id,
         "employee_id": profile.employee_id,
         "role": profile.role,
+        "primary_role": profile.role,
         "status": profile.status,
+        "available_roles": profile.role_values(),
     }
     setattr(request, REQUEST_META_ATTR, request.session[SESSION_PROFILE_KEY])
     setattr(request, REQUEST_PROFILE_ATTR, profile)
@@ -139,6 +204,7 @@ def employee_session_is_current(request) -> bool:
 def clear_profile_session(request):
     if SESSION_PROFILE_KEY in request.session:
         del request.session[SESSION_PROFILE_KEY]
+    request.session.pop(SESSION_ACTIVE_ROLE_KEY, None)
     if hasattr(request, REQUEST_META_ATTR):
         delattr(request, REQUEST_META_ATTR)
     if hasattr(request, REQUEST_PROFILE_ATTR):

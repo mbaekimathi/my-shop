@@ -3,13 +3,14 @@
  * Invalidates IndexedDB snapshots and notifies open catalogs to soft-refresh.
  */
 import {
+  CATALOG_CACHE_OFFLINE_TTL_SECONDS,
   CATALOG_CACHE_TTL_SECONDS,
   invalidateCatalogCaches,
   patchCachedShopCatalogStock,
   removeCachedShopSerials,
 } from "./store.js";
 
-export { CATALOG_CACHE_TTL_SECONDS };
+export { CATALOG_CACHE_OFFLINE_TTL_SECONDS, CATALOG_CACHE_TTL_SECONDS };
 
 const CHANNEL_NAME = "myshop-catalog";
 const EVENT_NAME = "myshop:catalog-invalidate";

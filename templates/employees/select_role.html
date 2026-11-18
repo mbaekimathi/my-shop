@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Choose your role — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+{% block body_class %}page-auth page-auth--portal{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/auth.css' %}?v=20261118-role-pick">
+{% endblock %}
+
+{% block body %}
+<div class="auth-shell auth-shell--portal">
+  <aside class="auth-visual" data-auth-visual>
+    <picture>
+      <source srcset="{% static 'img/hero-pos.webp' %}" type="image/webp">
+      <img
+        class="auth-visual-image"
+        src="{% static 'img/hero-pos.jpg' %}"
+        alt=""
+        width="1536"
+        height="1024"
+        decoding="async"
+      >
+    </picture>
+    <div class="auth-visual-scrim"></div>
+    <div class="auth-visual-content">
+      <div class="auth-visual-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <p class="brand brand--aside">{{ company_name|default:"MY-SHOP" }}</p>
+      </div>
+      <p class="auth-visual-kicker">Staff portal</p>
+      <p class="auth-visual-lead">
+        Your account has more than one role — pick the workspace to open.
+      </p>
+      <ul class="auth-visual-points">
+        <li>
+          <i data-lucide="repeat" aria-hidden="true"></i>
+          <span>Switch roles any time from the account menu</span>
+        </li>
+        <li>
+          <i data-lucide="shield-check" aria-hidden="true"></i>
+          <span>Each role only sees its own tools and data</span>
+        </li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="auth-main">
+    <div class="auth-toolbar auth-toolbar--end">
+      {% include "partials/connectivity_indicator.html" %}
+      {% include "partials/theme_toggle.html" %}
+    </div>
+
+    <div class="auth-card auth-card--portal" data-animate="rise">
+      <header class="auth-head">
+        <p class="auth-eyebrow">{{ company_name|default:"MY-SHOP" }} access</p>
+        <h1>Choose your role</h1>
+        <p>
+          Signed in as
+          <strong>{{ user.get_full_name|default:user.username }}</strong>
+          (ID {{ profile.employee_id }}). Pick the role to use for this session.
+        </p>
+      </header>
+
+      <div class="role-pick-list" role="list">
+        {% for role in role_cards %}
+        <form method="post" class="role-pick-form" role="listitem">
+          {% csrf_token %}
+          {% if next_url %}
+          <input type="hidden" name="next" value="{{ next_url }}">
+          {% endif %}
+          <input type="hidden" name="role" value="{{ role.value }}">
+          <button
+            type="submit"
+            class="role-pick{% if role.current %} is-current{% endif %}"
+            {% if role.current %}aria-current="true"{% endif %}
+          >
+            <span class="role-pick-icon" aria-hidden="true">
+              <i data-lucide="{{ role.icon }}"></i>
+            </span>
+            <span class="role-pick-copy">
+              <strong>{{ role.label }}</strong>
+              <em>{{ role.summary }}</em>
+            </span>
+            {% if role.current %}
+            <span class="role-pick-badge">Current</span>
+            {% else %}
+            <i class="role-pick-go" data-lucide="chevron-right" aria-hidden="true"></i>
+            {% endif %}
+          </button>
+        </form>
+        {% endfor %}
+      </div>
+
+      <p class="auth-switch auth-switch--compact">
+        Not you?
+        <a href="{% url 'employees:logout' %}">Sign out</a>
+      </p>
+    </div>
+  </main>
+</div>
+{% endblock %}

@@ -14,7 +14,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from .countries import COUNTRY_DIAL_CODES
-from .models import SHOP_ALLOCATION_ROLES, SHOP_ASSIGNABLE_ROLES, EmployeeProfile, EmployeeRole, EmployeeStatus
+from .models import SHOP_ALLOCATION_ROLES, SHOP_ASSIGNABLE_ROLES, EmployeeProfile, EmployeeRole, EmployeeStatus, join_extra_roles
 
 EMPLOYEE_ID_RE = re.compile(r"^\d{6}$")
 PHONE_RE = re.compile(r"^[\d\s\-()]{7,20}$")
@@ -29,6 +29,7 @@ EMPTY_EMPLOYEE_FORM = {
     "phone_country_iso": "KE",
     "phone_number": "",
     "employee_id": "",
+    "extra_roles": [],
 }
 
 EMPLOYEE_ID_CACHE_PREFIX = "emp_id_taken:"
@@ -213,6 +214,7 @@ def employee_edit_form_data_from_post(post) -> dict:
     """Extract employee edit fields from a POST body."""
     data = employee_form_data_from_post(post)
     data["role"] = post.get("role", "").strip()
+    data["extra_roles"] = post.getlist("extra_roles")
     return data
 
 
@@ -228,6 +230,7 @@ def employee_edit_form_data_from_profile(profile: EmployeeProfile) -> dict:
         "phone_number": profile.phone_number,
         "employee_id": profile.employee_id,
         "role": profile.role,
+        "extra_roles": profile.extra_role_list(),
     }
 
 
@@ -270,6 +273,16 @@ def validate_employee_update(
         errors.append("That employee ID is already registered.")
     if form_data["role"] not in valid_roles:
         errors.append("Select a valid role.")
+    extras = [
+        role
+        for role in dict.fromkeys(form_data.get("extra_roles") or [])
+        if role != form_data["role"]
+    ]
+    if any(role not in valid_roles for role in extras):
+        errors.append("Select valid additional roles.")
+    form_data["extra_roles"] = [
+        role for role in extras if role in valid_roles
+    ]
     if password or password_confirm:
         if len(password) < 6:
             errors.append(
@@ -319,6 +332,9 @@ def update_employee(
         profile.phone_country_code = form_data["phone_country_code"]
         profile.phone_number = form_data["phone_number"]
         profile.role = form_data["role"]
+        profile.extra_roles = join_extra_roles(
+            form_data.get("extra_roles"), exclude=form_data["role"]
+        )
 
         if remove_photo and profile.profile_photo:
             profile.profile_photo.delete(save=False)
@@ -334,11 +350,13 @@ def update_employee(
                 "phone_country_code",
                 "phone_number",
                 "role",
+                "extra_roles",
                 "profile_photo",
                 "updated_at",
             ]
         )
-        if form_data["role"] not in SHOP_ALLOCATION_ROLES:
+        granted = {form_data["role"], *profile.extra_role_list()}
+        if not granted & SHOP_ALLOCATION_ROLES:
             profile.assigned_shops.clear()
 
     if new_employee_id != previous_employee_id:
@@ -410,14 +428,15 @@ def build_employee_performance(
     tz = timezone.get_current_timezone()
     day_start = timezone.make_aware(datetime.combine(today, time.min), tz)
 
-    receipts = ShopReceipt.objects.filter(
-        created_by=profile,
-        status__in=COUNTED_RECEIPT_STATUSES,
+    receipts = ShopReceipt.objects.filter(created_by=profile)
+    sale_statuses = (
+        (receipt_status,) if receipt_status else COUNTED_RECEIPT_STATUSES
     )
-    sales = receipts.filter(kind=ShopReceiptKind.SALE)
+    sales = receipts.filter(
+        kind=ShopReceiptKind.SALE, status__in=sale_statuses
+    )
     receipts_list = (
-        ShopReceipt.objects.filter(created_by=profile)
-        .select_related("shop", "created_by__user")
+        receipts.select_related("shop", "created_by__user")
         .only(
             "id",
             "receipt_number",
@@ -434,7 +453,6 @@ def build_employee_performance(
         )
     )
     if receipt_status:
-        sales = sales.filter(status=receipt_status)
         receipts_list = receipts_list.filter(status=receipt_status)
     scoped_sales = sales
     if receipt_bounds is not None:
@@ -519,6 +537,11 @@ def build_employee_performance(
         ShopReceiptStatus.PARTIAL_RETURN: "active",
         ShopReceiptStatus.CANCELLED: "suspended",
     }
+    status_tone = {
+        ShopReceiptStatus.ACTIVE: "pending",
+        ShopReceiptStatus.CONFIRMED: "confirmed",
+        ShopReceiptStatus.CANCELLED: "cancelled",
+    }.get(receipt_status, "")
     receipts_page = Paginator(
         receipts_list.order_by("-created_at", "-id"), per_page
     ).get_page(page)
@@ -558,6 +581,7 @@ def build_employee_performance(
 
     return {
         "periods": periods,
+        "status_tone": status_tone,
         "all": by_key["all"],
         "all_caption": (
             f"sales · {period_label}" if period_label else "all-time sales"
@@ -634,18 +658,25 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
             end = date(year, month + 1, 1)
         months.append((start, end))
     tz = timezone.get_current_timezone()
+    counted_status = Q(status__in=COUNTED_RECEIPT_STATUSES)
+    cancelled_status = Q(status=ShopReceiptStatus.CANCELLED)
     kwargs = {}
     for idx, (start, end) in enumerate(months):
         start_dt = timezone.make_aware(datetime.combine(start, time.min), tz)
         end_dt = timezone.make_aware(datetime.combine(end, time.min), tz)
+        window = Q(created_at__gte=start_dt, created_at__lt=end_dt)
         kwargs[f"m{idx}_docs"] = Count(
-            "id", filter=Q(created_at__gte=start_dt, created_at__lt=end_dt)
+            "id", filter=window & counted_status
         )
         kwargs[f"m{idx}_amount"] = Coalesce(
-            Sum("total", filter=Q(created_at__gte=start_dt, created_at__lt=end_dt)),
+            Sum("total", filter=window & counted_status),
             Decimal("0.00"),
         )
-    month_agg = sales.aggregate(**kwargs)
+        kwargs[f"c{idx}_amount"] = Coalesce(
+            Sum("total", filter=window & cancelled_status),
+            Decimal("0.00"),
+        )
+    month_agg = receipts.filter(kind=ShopReceiptKind.SALE).aggregate(**kwargs)
     month_rows = [
         {
             "label": start.strftime("%b %Y"),
@@ -692,20 +723,51 @@ def build_employee_analytics(profile: EmployeeProfile) -> dict:
         .order_by("-revenue", "item_name")[:15]
     ]
 
+    from .analytics_services import (
+        _chart_bars,
+        _donut_slices,
+        _trend_line_chart,
+    )
+
+    pending = _bucket(ShopReceiptStatus.ACTIVE)
+    confirmed = _bucket(ShopReceiptStatus.CONFIRMED)
+    partial_return = _bucket(ShopReceiptStatus.PARTIAL_RETURN)
+    cancelled = _bucket(ShopReceiptStatus.CANCELLED)
+    trend_line = _trend_line_chart(
+        [
+            (row["label"], row["amount"], month_agg[f"c{i}_amount"])
+            for i, row in enumerate(month_rows)
+        ]
+    )
+    status_donut = _donut_slices(
+        [
+            ("Pending", pending["amount"], "pending"),
+            ("Confirmed", confirmed["amount"], "confirmed"),
+            ("Partially returned", partial_return["amount"], "partial"),
+            ("Cancelled", cancelled["amount"], "cancelled"),
+        ]
+    )
+    top_bars = _chart_bars(
+        [(row["name"], row["amount"]) for row in top_items]
+    )
+
     return {
         "sales": {
             "docs": int(sales_row["docs"] or 0),
             "amount": sales_row["amount"],
             "amount_label": _money_ksh(sales_row["amount"]),
         },
-        "pending": _bucket(ShopReceiptStatus.ACTIVE),
-        "confirmed": _bucket(ShopReceiptStatus.CONFIRMED),
-        "partial_return": _bucket(ShopReceiptStatus.PARTIAL_RETURN),
-        "cancelled": _bucket(ShopReceiptStatus.CANCELLED),
+        "pending": pending,
+        "confirmed": confirmed,
+        "partial_return": partial_return,
+        "cancelled": cancelled,
         "receipts_total": sum(
             int(row["docs"] or 0) for row in status_rows.values()
         ),
         "months": month_rows,
         "peak_month": peak_month,
         "top_items": top_items,
+        "trend_line": trend_line,
+        "status_donut": status_donut,
+        "top_bars": top_bars,
     }

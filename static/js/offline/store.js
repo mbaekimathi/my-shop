@@ -47,6 +47,16 @@ export async function queueAll() {
   });
 }
 
+export async function queueUpdate(item) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(QUEUE, "readwrite");
+    tx.objectStore(QUEUE).put(item);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function queueRemove(id) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -55,6 +65,37 @@ export async function queueRemove(id) {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+export async function queueRemoveMany(ids) {
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return 0;
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(QUEUE, "readwrite");
+    const store = tx.objectStore(QUEUE);
+    list.forEach((id) => store.delete(id));
+    tx.oncomplete = () => resolve(list.length);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** Re-arm ops that were marked stuck after repeated server rejections. */
+export async function queueRetryStuck() {
+  const items = await queueAll();
+  const stuck = (items || []).filter((op) => op?.stuck);
+  for (const op of stuck) {
+    await queueUpdate({ ...op, stuck: false, attempts: 0, lastError: "" });
+  }
+  return stuck.length;
+}
+
+/** Drop ops that were marked stuck — they will never be applied. */
+export async function queueDiscardStuck() {
+  const items = await queueAll();
+  const stuck = (items || []).filter((op) => op?.stuck);
+  await queueRemoveMany(stuck.map((op) => op.id));
+  return stuck.length;
 }
 
 export async function queueCount() {
@@ -90,6 +131,14 @@ export async function rebuildPendingSalesFromQueue(queue) {
   }
   for (const [shopId, entries] of byShop) {
     await cacheSet(pendingSalesKey(shopId), entries, 60 * 60 * 24 * 14);
+  }
+  // Shops whose queued sales all applied/discarded must not keep stale
+  // pending-qty entries — the floor would keep subtracting phantom stock.
+  const liveKeys = new Set([...byShop.keys()].map((id) => pendingSalesKey(id)));
+  for (const key of await cacheKeys()) {
+    if (String(key).startsWith(PENDING_SALES_PREFIX) && !liveKeys.has(key)) {
+      await cacheDelete(key);
+    }
   }
 }
 

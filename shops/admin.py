@@ -105,6 +105,10 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "receipt_qr_website",
         "show_maintainer_on_receipt",
         "maintainer_phone",
+        "enable_employee_session_timeout",
+        "employee_session_timeout_minutes",
+        "enable_shop_session_timeout",
+        "shop_session_timeout_minutes",
         "updated_at",
     )
     readonly_fields = ("updated_at",)

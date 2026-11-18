@@ -141,7 +141,9 @@
           {% endif %}
           <div>
             <strong>{{ user.get_full_name|default:user.username }}</strong>
-            <small>ID {{ person.employee_id }}</small>
+            <small>
+              ID {{ person.employee_id }}{% if workspace.role_options %} · {{ workspace.role_label }}{% endif %}
+            </small>
           </div>
         </div>
         <div class="workspace-user-dropdown-divider" role="separator"></div>
@@ -153,6 +155,16 @@
           <i data-lucide="circle-user" aria-hidden="true"></i>
           <span>My profile</span>
         </a>
+        {% if workspace.role_options %}
+        <a
+          class="workspace-user-dropdown-item"
+          role="menuitem"
+          href="{{ workspace.switch_role_url }}"
+        >
+          <i data-lucide="repeat" aria-hidden="true"></i>
+          <span>Switch role</span>
+        </a>
+        {% endif %}
         <a
           class="workspace-user-dropdown-item workspace-user-dropdown-item--danger"
           role="menuitem"

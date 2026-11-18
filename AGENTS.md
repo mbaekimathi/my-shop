@@ -35,9 +35,9 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Per-item sale deduction: `Item.deduct_stock_on_sale` — when off,
   sales/credit/trade-out don't decrement `ShopStock`/`Item.stock`, returns and
   trade-ins don't move them either, insufficient-stock checks are skipped, and
-  the item sells past zero. New items default it to
-  `CompanyPosSettings.enable_stock_tracking` (off while the company is in
-  shelf/no-item-stock mode). Toggle page: Stock Management → Settings → "Sale
+  the item sells past zero. New items register with it OFF and
+  `sale_tracking_custom=True` (`create_item`), so they never auto-follow the
+  company default — switch them on per item. Toggle page: Stock Management → Settings → "Sale
   stock tracking" (`?mode=sale-tracking`, shares the `settings` permission).
   Items never picked by hand (`sale_tracking_custom=False`) auto-follow the
   company default: `sync_sale_tracking_defaults()` (`items/services.py`)
@@ -124,6 +124,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `validate_item_payload` in `items/services.py`; tests in
   `ShopPriceIsolationTests`.
 
+## Cashiers report (Analytics → Cashiers, slug `balances`)
+- `_build_balances` is cashier-centric: `ShopDaySession`s in the filtered
+  period roll up by `opened_by` (a day belongs to whoever opened it; the
+  closer shows per row). `?employee_id=<pk>` narrows to one cashier —
+  parsed in `build_analytics_page` (`filters["selected_employee_id"]`), the
+  dropdown renders only for `section_slug == "balances"`.
+- `_day_balance_data` carries `opened_by_id`/`closed_by_id` on every
+  `session_rows` entry; per-cashier + grand totals are re-summed from those
+  rows (disabled till channels are zeroed via `_BALANCE_CHANNEL_KEYS`, and
+  `_apply_pos_visibility` still strips M-Pesa/Card-labelled columns when the
+  POS flags are off — keep channel names in labels).
+
 ## Expense payments (Analytics → Expenses → category)
 - `Expense` tracks `amount_paid` + `payment_status` (unpaid/partial/paid);
   `cash_amount`/`mpesa_amount`/`card_amount` are till splits set at
@@ -148,6 +160,25 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   employees keep access per the permission matrix. Tests:
   `shops/tests/test_pos_toggle_enforcement.py`.
 
+## Cashier settings (`/shop-cashier/settings/`)
+- Replaces "System settings" for `SHOP_CASHIER` profiles: footer sidebars
+  (`_footer_site_links`) and `sidebar_for_settings` link to
+  `cashier_settings_url()` labeled "Cashier settings" instead. The page needs
+  `settings/home` permission; it shadows `role_settings` for the cashier
+  segment (registered before `<role_segment>/settings/` in portal_urls).
+- "Dashboard sidebar" toggles are **per-employee**, stored as keys in
+  `EmployeeProfile.sidebar_prefs` JSON (missing key = shown) —
+  `CASHIER_SIDEBAR_LINKS` / `cashier_sidebar_pref_enabled` /
+  `set_cashier_sidebar_pref` (employees/workspace.py). POSTs reuse
+  `action=toggle_pos_setting` with `field=sidebar_<key>` so `pos-settings.js`
+  works unmodified; `_cashier_dashboard_links` drops hidden links (link-only,
+  same convention as the floor toggles).
+- The "Open & close" group edits the shared company rows
+  (`enable_open_close`, `CompanyWorkingHoursSettings.enabled`, per-shop
+  `ShopWorkingHoursSettings` times — same as Settings → POS) and is gated by
+  `settings/company-pos`. Template `employees/settings_cashier.html`. Tests:
+  `employees/tests_cashier_settings.py`.
+
 ## Action popups on role dashboards
 - Sidebar `_action` items render `data-modal-open`/`data-href`; `workspace_base.html`
   opens `[data-modal="<name>"]` when the modal exists on the page, else follows the
@@ -165,6 +196,60 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `enable_sidebar_buy_stock`) opens `shops/partials/buy_stock_modal.html` on
   `role_home.html` (stock-catalog.js + stock-bulk.js loaded when
   `buy_stock_modal`), plus a "Suppliers" link (`analytics/suppliers`).
+- Cashier dashboard + `role_shop_day` picker (`?mode=drawings` when reached via
+  the Drawings link) render per-shop **day cards**: status badge (Open /
+  "Yesterday — left open" / Closed), opened-with/sales/expenses/drawings/
+  stock-bought/in-till stats, and day actions (open/close, record drawing,
+  day-report PDF). Rows come from `cashier_day_summaries_context` +
+  `role_shop_day`. **Till data is scoped to the session the cashier opened**
+  (`open_session.opened_by_id == profile.pk`) — a day opened by a colleague
+  shows only "Open — <name>" / "Day open under <name>" with no figures; the
+  Drawings link and Record-drawing buttons also require an own session.
+  A **stale-open session keeps showing its own (yesterday's) figures** — that
+  is the intended "yesterday's data" display, paired with a "Close yesterday's
+  day" action.
+- The **Drawings** sidebar link only renders while at least one assigned shop
+  has an open day: single shop → `my_shop_drawings` (`/my-shop/<id>/drawings/`),
+  multi-shop → the `role_shop_day` picker. The dedicated drawings page is gated
+  by `my-shop/register_expense`, carries the live-till block + the
+  draw-from-counter form + a "Drawings today" log (rows come from
+  `day_session_report_details`, which exposes `drawer`/`by` parsed from the
+  stamped `OWNER DRAWING · <name>` expense name). Stale-open days show a
+  "close yesterday first" state instead of the form; closed days show an
+  "open the day" state. `my-shop-day.js` (v15) tolerates a missing
+  `[data-shop-day-form]` so the drawing form works standalone.
+- Open/close shop on role dashboards: single-shop cashiers link straight to
+  `my_shop_day_toggle`; multi-shop cashiers land on `role_shop_day`
+  (`/<role>/shop-day/`), a picker page listing each allocated shop's day state
+  with a button into the toggle page — both work at allocation level (no floor
+  unlock). `my_shop_day_toggle` accepts a `?back=` local path so its Back button
+  returns to the dashboard/picker instead of the floor workspace.
+- Owner drawings are equity, not expenses (`ExpenseCategory.OWNER_DRAWINGS` is
+  excluded from the expense form and rejected by `register_shop_expense`).
+  They're recorded only on the day page's "Draw from counter" section
+  (`#drawings`, gated `is_open and can_record_drawing` — `my-shop/register_expense`
+  perm, blocked on stale-open days): cash/M-Pesa/card amounts + the releasing
+  employee code + the drawer's code (the director/person taking the money);
+  `register_owner_drawing` deducts each channel from expected till in
+  `day_session_balance_summary`. The cashier dashboard has a "Drawings" link
+  (single shop → day page `#drawings`; multi → picker with per-shop "Record
+  drawing" buttons on open days).
+- Day accounting report PDF: `my_shop_day_report`
+  (`/my-shop/<id>/day/report/`, same `my-shop/open_close` gate, inline
+  `application/pdf`). `build_shop_day_report_pdf` + `day_session_report_details`
+  in `shops/services.py` — KPI strip + money-flow table (opening / sales /
+  returns / expenses / stock bought / drawings / expected, per channel) plus
+  per-line drawings, expenses, and paid stock-in rows. Reports the open
+  session ("Expected in till" preview) or the last closed one (counted
+  closing + variance). "Day report (PDF)" button sits in the day page close
+  form actions, opened in a new tab.
+- Open & close schedule (Settings → POS → Open & close): two modes under the
+  `enable_open_close` compulsory toggle — "anytime" (staff open/close whenever)
+  or "set" (per-shop opening/closing times). The mode is stored as
+  `CompanyWorkingHoursSettings.enabled` (`set_working_hours_enabled` flips only
+  that flag — configured days/times survive); per-shop times POST as
+  `action=set_open_close_times` → `update_shop_working_hours_from_post`.
+  Working days stay under Settings → Working hours.
 
 ## Wi‑Fi printing
 - Channels (Bluetooth/USB/Wi‑Fi) → `enable_print_*` flags; "Connect to printer"
@@ -224,12 +309,46 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   on the shop receipt settings page (gated by `shop_settings`). Tests:
   `shops/tests/test_print_agent.py`.
 
+## Offline shop floor
+- `/sw.js` + `static/js/offline/` (`store.js` IndexedDB queue, `connectivity.js`
+  ping detector, `sync.js` replay, `catalog-cache.js`, `staff.js`, `serials.js`)
+  keep `/my-shop/<id>/` selling through an outage. `offline_bar.html` (base.html)
+  boots `initOffline()` on every page.
+- **Cold-open offline**: `/my-shop/<id>/` navigations are `cache.put` into a
+  dedicated `PAGES_CACHE` (`myshop-pages-v1`, kept across `CACHE_VERSION`
+  bumps) — the only HTML ever cached. The stored response's `Vary: Cookie`
+  scopes it to the signing session; a logout link click posts
+  `CLEAR_PAGE_CACHE` to the SW (`init.js`). Other navigations stay uncached.
+- Catalog JSON pages persist in IndexedDB with the 12h
+  `CATALOG_CACHE_OFFLINE_TTL_SECONDS` (cache is only read offline / on network
+  error); queued sales decrement on-card stock via
+  `rebuildPendingSalesFromQueue` + `pendingQuantitiesForShop`.
+- Offline checkout: `queueOperation("complete_shop_checkout", …)` (same
+  `client_id` as the online attempt → idempotent replay). M-Pesa STK without a
+  completed `stk_payment_id` refuses to queue. Staff codes verify against a
+  24h `staff_verify:` cache; serials search a 12h per-item cache.
+- Replay: `syncNow()` chunks the queue at 50 ops/POST (server caps 100) to
+  `POST /employees/api/sync/` → `_sync_complete_shop_checkout` runs the real
+  `complete_shop_checkout` (staff code, permissions, open day, prices, serials,
+  stock all re-validated at sync time). Per-op `attempts`/`lastError` are
+  persisted; an op server-rejected 5× turns `stuck`, stops auto-replaying, and
+  shows as a red chip in the offline bar with **Retry failed** /
+  **Discard** (`retryStuckOps` / `discardStuckOps`). `CSRF` is read cookie-first
+  (a cached page's form token can be stale after re-login).
+- Known trade-offs: stock is only checked at replay (two tills can sell the
+  last unit offline — second replay fails); `require_shop_day_for_sale` runs at
+  sync time so a sale synced next morning lands on that day's session; queued
+  sales print nothing until synced. Tests:
+  `shops/tests/test_offline_shop_sync.py`.
+
 ## Performance notes
 - `static/sw.js` (served at `/sw.js` via `core.views.service_worker`): bump
   `CACHE_VERSION` on every edit. Runtime caching is deliberately narrow —
-  `/static/` is cache-first (all asset URLs carry `?v=` busts) and `/media/`
-  is network-first. Do NOT go back to `cache.put`-ing every same-origin GET:
-  per-request Cache Storage writes are a known Chrome jank/hang source.
+  `/static/` is cache-first (all asset URLs carry `?v=` busts), `/media/`
+  is network-first, and only `/my-shop/<id>/` navigations are page-cached
+  (`PAGES_CACHE`, for offline till reload). Do NOT go back to `cache.put`-ing
+  every same-origin GET: per-request Cache Storage writes are a known Chrome
+  jank/hang source.
 - HTML must never send `Cache-Control: no-store` (`core.middleware.
   NoCacheHtmlMiddleware` sends `no-cache` only) — `no-store` and
   `beforeunload` listeners both permanently block Chrome's back/forward
@@ -253,6 +372,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   sessions.
 - Session-key rotation is bridged by `RotatedSessionMiddleware` (old key →
   pointer → new key, 120s grace) so in-flight tabs survive login rotations.
+- **Idle session timeouts are opt-in** (Settings → POS → Session timeout, both
+  default OFF = session ends only on logout): `enable_employee_session_timeout`
+  / `employee_session_timeout_minutes` and `enable_shop_session_timeout` /
+  `shop_session_timeout_minutes` on `CompanyPosSettings` (company-wide; no
+  per-shop override, minutes 1–43200). Enforcement: `EmployeeIdleTimeoutMiddleware`
+  (stamp `_emp_idle_ts`; `EMPLOYEE_IDLE_TIMEOUT_SECONDS` env is only the fallback
+  when the settings row can't be read) and `ShopFloorSessionMiddleware` →
+  `_apply_shop_idle_timeout` (stamp `_shop_portal_idle_ts`; expired portal
+  sessions are cleared → floor views redirect to shop login). Activity =
+  navigations, non-poll mutations, and `X-MyShop-Activity`-stamped fetches
+  (session-guard.js); background polls only *detect* expiry.
+  Tests: `shops/tests/test_single_session.py`.
 - Note: one browser profile still shares one Django session cookie, so two
   *different* employee accounts cannot be signed in in the same browser profile
   at once — use separate browsers/profiles for that.
@@ -264,6 +395,32 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   employees still `pending_approval`, may not assign the Super Admin role, and
   may not modify Super Admin accounts (edit/suspend/delete). The same rules are
   enforced for queued offline syncs in `sync_handlers._sync_update_employee_access`.
+
+## Multi-role employees
+- `EmployeeProfile.role` stays the **primary** role; `extra_roles` is a CSV
+  CharField of additional granted roles (helpers `split_extra_roles` /
+  `join_extra_roles`, `profile.role_values()` = granted set, enum order).
+- The picked role is **per-session**: `employee_active_role` session key
+  (`access.SESSION_ACTIVE_ROLE_KEY`). `get_employee_meta_for_request` returns
+  `meta["role"]` = effective role (+ `primary_role`, `available_roles`);
+  `get_profile_for_request` mutates the request-cached `profile.role` in
+  memory (`profile.db_role` keeps the DB value) so every existing
+  `profile.role`/`meta["role"]` check follows the pick — never written back
+  (all signed-in-profile saves use `update_fields` or set `role` explicitly).
+  A revoked role silently falls back to the primary role.
+- Login: multi-role employees land on `employees:select_role`
+  (`/employees/select-role/`, template `employees/select_role.html`,
+  `?next=` preserved). Single-role users skip it. "Switch role" lives in the
+  workspace user-menu dropdown (`workspace.role_options` context).
+- Granting: HR Management → Edit employee → "Can also sign in as" checkboxes
+  (`extra_roles[]`; JS disables the box matching the primary role). The
+  approvals/access tables still set primary role only; changing a primary
+  role auto-drops it from `extra_roles`, and `assigned_shops` are only
+  cleared when NO granted role is shop-scoped (`SHOP_ALLOCATION_ROLES`).
+  Non-super-admin actors cannot grant `super_admin` as an extra role either.
+- `chat` sessions share the key: `chat/auth.py::current_employee` honours
+  `employee_active_role` when it is one of the employee's granted roles.
+- Tests: `employees/tests_multi_role.py`.
 
 ## Receipt return / cancel permission
 - Cancel IS a return: `cancel_pending_shop_receipt` restocks the remaining

@@ -17,6 +17,46 @@
 
   const enabledCountEl = root.querySelector("[data-pos-enabled-count]");
   const isCompanyPos = root.hasAttribute("data-company-pos-settings");
+  const filterInput = root.querySelector("[data-pos-filter]");
+  const filterEmptyEl = root.querySelector("[data-pos-filter-empty]");
+  const groupSections = Array.from(root.querySelectorAll("[data-pos-group]"));
+  const jumpLinks = Array.from(root.querySelectorAll("[data-pos-jump]"));
+
+  function applyPosFilter() {
+    if (!filterInput || !groupSections.length) return;
+    const query = (filterInput.value || "").trim().toLowerCase();
+    let anyVisible = false;
+    groupSections.forEach((section) => {
+      const groupTitle = (section.dataset.groupTitle || "").toLowerCase();
+      let visibleRows = 0;
+      section.querySelectorAll(".pos-settings-row").forEach((row) => {
+        const haystack = `${groupTitle} ${row.textContent}`.toLowerCase();
+        const match = !query || haystack.includes(query);
+        row.classList.toggle("is-filtered-out", !match);
+        if (match && !row.hidden) visibleRows += 1;
+      });
+      const empty = Boolean(query) && visibleRows === 0;
+      section.classList.toggle("is-filtered-empty", empty);
+      if (visibleRows > 0) anyVisible = true;
+    });
+    jumpLinks.forEach((link) => {
+      const target = root.querySelector(`#pos-group-${link.dataset.posJump}`);
+      link.classList.toggle(
+        "is-empty",
+        Boolean(query) &&
+          Boolean(target) &&
+          target.classList.contains("is-filtered-empty")
+      );
+    });
+    if (filterEmptyEl) {
+      filterEmptyEl.hidden = !(query && !anyVisible);
+    }
+  }
+
+  if (filterInput) {
+    filterInput.addEventListener("input", applyPosFilter);
+    filterInput.addEventListener("search", applyPosFilter);
+  }
   const stkToggle = root.querySelector("[data-stk-shop-toggle]");
   const stkState = root.querySelector("[data-stk-shop-state]");
   const stkHint = root.querySelector("[data-stk-shop-hint]");
@@ -40,22 +80,68 @@
   const taxInput = root.querySelector("[data-tax-percent-input]");
   const deliveryRow = root.querySelector("[data-delivery-amount-row]");
   const deliveryInput = root.querySelector("[data-delivery-amount-input]");
+  const employeeTimeoutRow = root.querySelector("[data-employee-timeout-row]");
+  const employeeTimeoutInput = root.querySelector(
+    "[data-employee-timeout-input]"
+  );
+  const shopTimeoutRow = root.querySelector("[data-shop-timeout-row]");
+  const shopTimeoutInput = root.querySelector("[data-shop-timeout-input]");
   const clientDataDependents = root.querySelectorAll("[data-client-data-dependent]");
+  const openCloseDependents = root.querySelectorAll("[data-open-close-dependent]");
+  const openCloseCompulsory = root.querySelector(
+    '[data-pos-toggle][data-field="enable_open_close"]'
+  );
+  const openCloseModeInputs = Array.from(
+    root.querySelectorAll("[data-open-close-mode-toggle]")
+  );
 
   function syncTaxRow(enabled) {
     if (!taxRow) return;
     taxRow.hidden = !enabled;
+    applyPosFilter();
   }
 
   function syncDeliveryRow(enabled) {
     if (!deliveryRow) return;
     deliveryRow.hidden = !enabled;
+    applyPosFilter();
+  }
+
+  function syncEmployeeTimeoutRow(enabled) {
+    if (!employeeTimeoutRow) return;
+    employeeTimeoutRow.hidden = !enabled;
+    applyPosFilter();
+  }
+
+  function syncShopTimeoutRow(enabled) {
+    if (!shopTimeoutRow) return;
+    shopTimeoutRow.hidden = !enabled;
+    applyPosFilter();
   }
 
   function syncClientDataDependents(enabled) {
     clientDataDependents.forEach((row) => {
       row.hidden = !enabled;
     });
+    applyPosFilter();
+  }
+
+  function openCloseMode() {
+    const setInput = openCloseModeInputs.find(
+      (el) => el.dataset.mode === "set"
+    );
+    return setInput && setInput.checked ? "set" : "anytime";
+  }
+
+  function syncOpenCloseDependents() {
+    const compulsoryOn = Boolean(openCloseCompulsory?.checked);
+    const setOn = openCloseMode() === "set";
+    openCloseDependents.forEach((row) => {
+      row.hidden = row.hasAttribute("data-open-close-times")
+        ? !(compulsoryOn && setOn)
+        : !compulsoryOn;
+    });
+    applyPosFilter();
   }
 
   function syncEmployeePermLinks(field, enabled) {
@@ -151,8 +237,17 @@
     if (input.dataset.field === "enable_cart_delivery") {
       syncDeliveryRow(input.checked);
     }
+    if (input.dataset.field === "enable_employee_session_timeout") {
+      syncEmployeeTimeoutRow(input.checked);
+    }
+    if (input.dataset.field === "enable_shop_session_timeout") {
+      syncShopTimeoutRow(input.checked);
+    }
     if (input.dataset.field === "enable_client_data") {
       syncClientDataDependents(input.checked);
+    }
+    if (input.dataset.field === "enable_open_close") {
+      syncOpenCloseDependents();
     }
     syncEmployeePermLinks(input.dataset.field, input.checked);
 
@@ -186,8 +281,17 @@
       if (input.dataset.field === "enable_cart_delivery") {
         syncDeliveryRow(enabled);
       }
+      if (input.dataset.field === "enable_employee_session_timeout") {
+        syncEmployeeTimeoutRow(enabled);
+      }
+      if (input.dataset.field === "enable_shop_session_timeout") {
+        syncShopTimeoutRow(enabled);
+      }
       if (input.dataset.field === "enable_client_data") {
         syncClientDataDependents(enabled);
+      }
+      if (input.dataset.field === "enable_open_close") {
+        syncOpenCloseDependents();
       }
       syncEmployeePermLinks(input.dataset.field, enabled);
       if (
@@ -221,8 +325,17 @@
         if (input.dataset.field === "enable_cart_delivery") {
           syncDeliveryRow(Boolean(data.enabled));
         }
+        if (input.dataset.field === "enable_employee_session_timeout") {
+          syncEmployeeTimeoutRow(Boolean(data.enabled));
+        }
+        if (input.dataset.field === "enable_shop_session_timeout") {
+          syncShopTimeoutRow(Boolean(data.enabled));
+        }
         if (input.dataset.field === "enable_client_data") {
           syncClientDataDependents(Boolean(data.enabled));
+        }
+        if (input.dataset.field === "enable_open_close") {
+          syncOpenCloseDependents();
         }
         syncEnabledCount();
         if (
@@ -245,8 +358,17 @@
         if (input.dataset.field === "enable_cart_delivery") {
           syncDeliveryRow(previous);
         }
+        if (input.dataset.field === "enable_employee_session_timeout") {
+          syncEmployeeTimeoutRow(previous);
+        }
+        if (input.dataset.field === "enable_shop_session_timeout") {
+          syncShopTimeoutRow(previous);
+        }
         if (input.dataset.field === "enable_client_data") {
           syncClientDataDependents(previous);
+        }
+        if (input.dataset.field === "enable_open_close") {
+          syncOpenCloseDependents();
         }
         syncEmployeePermLinks(input.dataset.field, previous);
         syncEnabledCount();
@@ -256,6 +378,52 @@
       }
     });
   });
+
+  openCloseModeInputs.forEach((input) => {
+    setStateLabel(input, input.checked);
+    input.addEventListener("change", async () => {
+      if (!input.checked) {
+        // One schedule mode must stay on; switch to the other to change it.
+        input.checked = true;
+        setStateLabel(input, true);
+        return;
+      }
+      const before = openCloseModeInputs.map((el) => el.checked);
+      openCloseModeInputs.forEach((el) => {
+        if (el !== input) {
+          el.checked = false;
+          setStateLabel(el, false);
+        }
+      });
+      setStateLabel(input, true);
+      syncOpenCloseDependents();
+      input.closest(".perm-switch")?.classList.add("is-saving");
+      try {
+        const data = await postSettings(
+          new URLSearchParams({
+            action: "set_open_close_mode",
+            mode: input.dataset.mode || "",
+          })
+        );
+        const setOn = data.open_close_mode === "set";
+        openCloseModeInputs.forEach((el) => {
+          el.checked = (el.dataset.mode === "set") === setOn;
+          setStateLabel(el, el.checked);
+        });
+        syncOpenCloseDependents();
+      } catch (error) {
+        openCloseModeInputs.forEach((el, index) => {
+          el.checked = before[index];
+          setStateLabel(el, el.checked);
+        });
+        syncOpenCloseDependents();
+        window.alert(error.message || "Could not save setting.");
+      } finally {
+        input.closest(".perm-switch")?.classList.remove("is-saving");
+      }
+    });
+  });
+  syncOpenCloseDependents();
 
   if (isCompanyPos && stkToggle) {
     setStkToggleLabel(stkToggle.checked);
@@ -370,4 +538,50 @@
       deliveryTimer = window.setTimeout(saveDeliveryAmount, 600);
     });
   }
+
+  function attachTimeoutSaver(input, action, postField, responseKey) {
+    if (!input) return;
+    let timer = 0;
+    let lastSaved = input.value;
+
+    const save = async () => {
+      const value = (input.value || "").trim();
+      if (!value || value === lastSaved) return;
+      input.classList.add("is-saving");
+      try {
+        const body = new URLSearchParams({ action });
+        body.set(postField, value);
+        const data = await postSettings(body);
+        lastSaved = String(parseInt(data[responseKey], 10));
+        input.value = lastSaved;
+        input.classList.remove("is-error");
+      } catch (error) {
+        input.classList.add("is-error");
+        window.alert(error.message || "Could not save session timeout.");
+        input.value = lastSaved;
+      } finally {
+        input.classList.remove("is-saving");
+      }
+    };
+
+    input.addEventListener("change", save);
+    input.addEventListener("blur", save);
+    input.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(save, 600);
+    });
+  }
+
+  attachTimeoutSaver(
+    employeeTimeoutInput,
+    "set_employee_session_timeout",
+    "employee_timeout_minutes",
+    "employee_session_timeout_minutes"
+  );
+  attachTimeoutSaver(
+    shopTimeoutInput,
+    "set_shop_session_timeout",
+    "shop_timeout_minutes",
+    "shop_session_timeout_minutes"
+  );
 })();

@@ -1014,11 +1014,91 @@
   align-items: center;
 }
 
+.pos-settings-row--times {
+  display: block;
+}
+
+.open-close-times-form {
+  display: block;
+}
+
+.open-close-times-form .working-hours-shops-wrap {
+  overflow-x: auto;
+}
+
+.open-close-times-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.65rem;
+}
+
 .pos-settings-copy p {
   margin: 0.2rem 0 0;
   color: var(--mist-soft);
   font-size: 0.74rem;
   line-height: 1.45;
+}
+
+/* Company POS settings — grouped single-column list view */
+.pos-settings-toolbar {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.15rem 1.1rem 0.35rem;
+}
+
+.pos-settings-toolbar .item-search-field {
+  max-width: 26rem;
+}
+
+.pos-settings-jump.perm-module-nav {
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+  gap: 0.4rem;
+}
+
+.pos-settings-jump .perm-module-nav-link {
+  min-height: 2rem;
+  padding: 0.28rem 0.7rem;
+  font-size: 0.78rem;
+}
+
+.pos-settings-jump .perm-module-nav-link.is-empty {
+  opacity: 0.45;
+}
+
+.pos-settings-filter-empty {
+  margin: 0;
+  color: var(--mist-dim);
+  font-size: 0.84rem;
+}
+
+@media (min-width: 960px) {
+  .item-panel--pos-settings .pos-settings-groups--list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.pos-settings-groups--list .pos-settings-group {
+  scroll-margin-top: 1.25rem;
+}
+
+.pos-settings-groups--list .pos-settings-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.pos-settings-groups--list .pos-settings-group-head .staff-count {
+  flex-shrink: 0;
+  font-size: 0.76rem !important;
+  white-space: nowrap;
+}
+
+.pos-settings-groups--list .pos-settings-row.is-filtered-out,
+.pos-settings-groups--list .pos-settings-group.is-filtered-empty {
+  display: none;
 }
 
 .pos-settings-employee-link a {

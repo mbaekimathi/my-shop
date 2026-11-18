@@ -1,18 +1,18 @@
 (() => {
   const root = document.querySelector("[data-shop-day]");
-  const form = root?.querySelector("[data-shop-day-form]");
-  if (!root || !form) return;
+  if (!root) return;
+  const form = root.querySelector("[data-shop-day-form]");
 
-  const codeInput = form.querySelector("[data-day-login-code]");
-  const stockInput = form.querySelector("[data-stock-confirmed]");
-  const statusEl = form.querySelector("[data-day-status]");
-  const submitBtn = form.querySelector("[data-day-submit]");
+  const codeInput = form?.querySelector("[data-day-login-code]");
+  const stockInput = form?.querySelector("[data-stock-confirmed]");
+  const statusEl = form?.querySelector("[data-day-status]");
+  const submitBtn = form?.querySelector("[data-day-submit]");
   const verifyUrl = root.getAttribute("data-verify-login-url") || "";
   const mode = root.getAttribute("data-mode") || "open";
   const tillRoot = root.querySelector("[data-till-live]");
-  const closeCashInput = form.querySelector("[data-close-cash-amount]");
-  const closeMpesaInput = form.querySelector("[data-close-mpesa-amount]");
-  const closeCardInput = form.querySelector("[data-close-card-amount]");
+  const closeCashInput = form?.querySelector("[data-close-cash-amount]");
+  const closeMpesaInput = form?.querySelector("[data-close-mpesa-amount]");
+  const closeCardInput = form?.querySelector("[data-close-card-amount]");
 
   let verified = false;
   let timer = null;
@@ -20,7 +20,7 @@
   let tillPollTimer = null;
 
   const getCsrf = () =>
-    form.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+    form?.querySelector("[name=csrfmiddlewaretoken]")?.value ||
     document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
     document.cookie
       .split("; ")
@@ -128,6 +128,7 @@
     closeCardInput.dataset.userEdited = "1";
   });
 
+  if (form) {
   const setStatus = (message, { ok = false, error = false } = {}) => {
     if (!statusEl) return;
     statusEl.textContent =
@@ -256,6 +257,7 @@
   syncSubmit();
   if ((codeInput?.value || "").trim().length === 6) {
     verifyCode();
+  }
   }
 
   const drawingForm = root.querySelector("[data-shop-day-drawing-form]");

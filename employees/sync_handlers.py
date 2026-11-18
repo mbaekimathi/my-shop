@@ -6,7 +6,12 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+from employees.models import (
+    EmployeeProfile,
+    EmployeeRole,
+    EmployeeStatus,
+    join_extra_roles,
+)
 from employees.services import mark_employee_id_taken
 
 EMPLOYEE_ID_RE = re.compile(r"^\d{6}$")
@@ -328,11 +333,16 @@ def _sync_update_employee_access(employee: EmployeeProfile, payload: dict) -> di
 
     target.role = new_role
     target.status = new_status
-    target.save(update_fields=["role", "status", "updated_at"])
-    if new_role not in {
+    remaining = [r for r in target.extra_role_list() if r != new_role]
+    new_extras = join_extra_roles(remaining)
+    if new_extras != target.extra_roles:
+        target.extra_roles = new_extras
+    target.save(update_fields=["role", "status", "extra_roles", "updated_at"])
+    if not {new_role, *target.extra_role_list()} & {
         EmployeeRole.EMPLOYEE,
         EmployeeRole.SHOP_MANAGER,
         EmployeeRole.SHOP_CASHIER,
+        EmployeeRole.IT_SUPPORT,
     }:
         target.assigned_shops.clear()
 

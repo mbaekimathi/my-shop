@@ -15,7 +15,12 @@
     </div>
   </td>
   <td data-label="ID"><code>{{ employee.employee_id }}</code></td>
-  <td data-label="Role">{{ employee.get_role_display }}</td>
+  <td data-label="Role">
+    {{ employee.get_role_display }}
+    {% if employee.extra_role_display %}
+    <small class="role-extra-hint">+ {{ employee.extra_role_display }}</small>
+    {% endif %}
+  </td>
   <td class="item-cell--status" data-label="Status">
     {% if employee.status == 'suspended' %}
     <span class="status-pill status-pill--suspended">Suspended</span>
@@ -41,6 +46,7 @@
         data-phone-number="{{ employee.phone_number }}"
         data-employee-id="{{ employee.employee_id }}"
         data-role="{{ employee.role }}"
+        data-extra-roles="{{ employee.extra_roles }}"
         data-profile-photo-url="{% if employee.profile_photo %}{{ employee.profile_photo.url }}{% endif %}"
       >
         <i data-lucide="pencil" aria-hidden="true"></i>

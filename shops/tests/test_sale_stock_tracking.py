@@ -220,7 +220,7 @@ class SaleStockTrackingTests(TestCase):
         self.assertFalse(rows[self.untracked.pk]["sale_stock_tracked"])
         self.assertTrue(rows[self.item.pk]["sale_stock_tracked"])
 
-    def test_new_item_defaults_sale_tracking_from_stock_mode(self):
+    def test_new_item_defaults_sale_tracking_off(self):
         from items.services import create_item
 
         payload = {
@@ -232,7 +232,8 @@ class SaleStockTrackingTests(TestCase):
             "pricing_mode": "single",
         }
         item = create_item(self.profile, payload, {})
-        self.assertTrue(item.deduct_stock_on_sale)
+        self.assertFalse(item.deduct_stock_on_sale)
+        self.assertTrue(item.sale_tracking_custom)
 
         pos = get_company_pos_settings()
         pos.enable_stock_tracking = False
@@ -243,6 +244,7 @@ class SaleStockTrackingTests(TestCase):
                 self.profile, {**payload, "name": "MODE OFF ITEM"}, {}
             )
             self.assertFalse(off_item.deduct_stock_on_sale)
+            self.assertTrue(off_item.sale_tracking_custom)
         finally:
             pos.enable_stock_tracking = True
             pos.save(update_fields=["enable_stock_tracking", "updated_at"])

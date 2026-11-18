@@ -1,10 +1,15 @@
 """Middleware for long-lived shop floor sessions."""
 
 import logging
+import time
 
 from django.contrib.sessions.middleware import SessionMiddleware
 
-from .session import SESSION_ROTATED_TO_KEY, write_rotation_pointer
+from .session import (
+    SESSION_ROTATED_TO_KEY,
+    SESSION_SHOP_PORTAL_IDLE_KEY,
+    write_rotation_pointer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +70,49 @@ class RotatedSessionMiddleware(SessionMiddleware):
         return response
 
 
+def _shop_idle_timeout_seconds():
+    """Configured shop idle limit; fail open to "no timeout" on errors."""
+    try:
+        from shops.services import shop_idle_timeout_seconds
+
+        return shop_idle_timeout_seconds()
+    except Exception:
+        return None
+
+
+def _apply_shop_idle_timeout(request, session, timeout):
+    """Clear the shop portal session when it idled past the configured limit.
+
+    Mirrors EmployeeIdleTimeoutMiddleware: only real interactions (page
+    loads, form posts, fetch calls stamped by session-guard.js) refresh the
+    idle clock — background polls can detect expiry but never postpone it.
+    Returns True when the session was cleared.
+    """
+    from employees.middleware import _reported_activity, _request_is_activity
+
+    now = int(time.time())
+    try:
+        last = int(session.get(SESSION_SHOP_PORTAL_IDLE_KEY) or 0)
+    except (TypeError, ValueError):
+        last = 0
+    reported = _reported_activity(request, now)
+    prior = max(last, reported)
+
+    if prior and now - prior > timeout:
+        from shops.session import clear_shop_portal_session
+
+        clear_shop_portal_session(request)
+        return True
+
+    candidate = now if _request_is_activity(request) else reported
+    if not prior:
+        # First portal request after login seeds the clock.
+        candidate = now
+    if candidate > last:
+        session[SESSION_SHOP_PORTAL_IDLE_KEY] = candidate
+    return False
+
+
 class ShopFloorSessionMiddleware:
     """
     Extend shop portal and employee-unlocked shop sessions on every request.
@@ -73,6 +121,10 @@ class ShopFloorSessionMiddleware:
     Views that use shop_floor_required do that, but lightweight endpoints (ping,
     static assets with session cookies, etc.) may not — so the session can still
     expire at SESSION_COOKIE_AGE (14 days by default) even for shop portal users.
+
+    When the company "Shop session" timeout is on, portal sessions that have
+    been idle past the configured minutes are cleared here; floor views then
+    bounce the request to the shop login page.
     """
 
     def __init__(self, get_response):
@@ -87,9 +139,14 @@ class ShopFloorSessionMiddleware:
                 persist_shop_portal_session,
             )
 
-            if is_shop_portal_session(request) or (
-                get_active_shop_id(request)
-                and getattr(request.user, "is_authenticated", False)
+            if is_shop_portal_session(request):
+                timeout = _shop_idle_timeout_seconds()
+                if timeout is None or not _apply_shop_idle_timeout(
+                    request, session, timeout
+                ):
+                    persist_shop_portal_session(request)
+            elif get_active_shop_id(request) and getattr(
+                request.user, "is_authenticated", False
             ):
                 persist_shop_portal_session(request)
         return self.get_response(request)

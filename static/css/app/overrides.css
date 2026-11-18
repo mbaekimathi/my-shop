@@ -725,6 +725,97 @@ html[data-theme="dark"] .wa-chip--warn {
   white-space: nowrap;
 }
 
+/* Period cards tinted by the receipt-status filter */
+.employee-home .workspace-card--status-pending {
+  border-color: var(--warning-border);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--warning) 22%, transparent),
+      var(--warning-bg)
+    ),
+    var(--surface);
+}
+
+.employee-home .workspace-card--status-pending i {
+  color: var(--warning);
+}
+
+.employee-home .workspace-card--status-confirmed {
+  border-color: var(--info-border);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--info) 22%, transparent),
+      var(--info-bg)
+    ),
+    var(--surface);
+}
+
+.employee-home .workspace-card--status-confirmed i {
+  color: var(--info);
+}
+
+.employee-home .workspace-card--status-cancelled {
+  border-color: var(--danger-border);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--danger) 22%, transparent),
+      var(--danger-bg)
+    ),
+    var(--surface);
+}
+
+.employee-home .workspace-card--status-cancelled i {
+  color: var(--danger);
+}
+
+/* Employee analytics — chart accents */
+.employee-home .ax-line-cancelled {
+  stroke: var(--danger);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+
+.employee-home .ax-chart-legend .is-cancelled::before {
+  content: "";
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.3rem;
+  border-radius: 999px;
+  vertical-align: -0.05rem;
+  background: var(--danger);
+}
+
+/* Status-mix donut tones (pending/confirmed/partial/cancelled) */
+.employee-home .ax-donut--status {
+  --ax-donut-pending: var(--warning);
+  --ax-donut-confirmed: var(--info);
+  --ax-donut-partial: #7c3aed;
+  --ax-donut-cancelled: var(--danger);
+}
+
+.employee-home .ax-donut-legend--status li.is-pending span::before {
+  background: var(--warning);
+}
+
+.employee-home .ax-donut-legend--status li.is-confirmed span::before {
+  background: var(--info);
+}
+
+.employee-home .ax-donut-legend--status li.is-partial span::before {
+  background: #7c3aed;
+}
+
+.employee-home .ax-donut-legend--status li.is-cancelled span::before {
+  background: var(--danger);
+}
+
 /* Tighter table rows */
 .employee-home .item-table--dense th,
 .employee-home .item-table--dense td {

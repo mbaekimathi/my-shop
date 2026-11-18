@@ -830,3 +830,104 @@ html[data-theme="dark"] .auth-card--portal[data-login-mode="shop"] {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
+
+/* Multi-role sign-in — role picker cards */
+.role-pick-list {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1.35rem;
+}
+
+.role-pick-form {
+  margin: 0;
+}
+
+.role-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.2s var(--ease),
+    box-shadow 0.2s var(--ease),
+    transform 0.2s var(--ease);
+}
+
+.role-pick:hover {
+  border-color: rgba(var(--teal-rgb), 0.45);
+  box-shadow: 0 8px 20px rgba(8, 28, 34, 0.08);
+  transform: translateY(-1px);
+}
+
+.role-pick:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.role-pick-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: 10px;
+  background: rgba(var(--teal-rgb), 0.12);
+  color: var(--teal);
+}
+
+.role-pick-icon i {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.role-pick-copy {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.role-pick-copy strong {
+  font-family: var(--font-display);
+  font-size: 0.98rem;
+}
+
+.role-pick-copy em {
+  font-style: normal;
+  font-size: 0.8rem;
+  color: var(--mist-dim);
+  line-height: 1.3;
+}
+
+.role-pick-badge {
+  margin-left: auto;
+  flex: none;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(var(--teal-rgb), 0.14);
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.role-pick.is-current {
+  border-color: rgba(var(--teal-rgb), 0.5);
+}
+
+.role-pick-go {
+  margin-left: auto;
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--mist-dim);
+}

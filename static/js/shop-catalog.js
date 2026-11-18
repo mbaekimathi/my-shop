@@ -24,11 +24,14 @@
   let searchTimer = 0;
   let backgroundLoad = 0;
   const groupEls = new Map();
-  let catalogCacheTtl = 60 * 15;
+  // Catalog snapshots are only read while offline or after a network error,
+  // so they get the long offline TTL — a 15-minute expiry would empty the
+  // till's catalog mid-outage.
+  let catalogCacheTtl = 60 * 60 * 12;
   import("./offline/catalog-cache.js")
     .then((mod) => {
-      if (mod?.CATALOG_CACHE_TTL_SECONDS) {
-        catalogCacheTtl = mod.CATALOG_CACHE_TTL_SECONDS;
+      if (mod?.CATALOG_CACHE_OFFLINE_TTL_SECONDS) {
+        catalogCacheTtl = mod.CATALOG_CACHE_OFFLINE_TTL_SECONDS;
       }
     })
     .catch(() => {});

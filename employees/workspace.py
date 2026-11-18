@@ -1,3 +1,6 @@
+from urllib.parse import urlencode
+
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 
 from .access import role_home_url_name, role_url_segment
@@ -510,6 +513,16 @@ def _footer_site_links(
     links = []
     if settings_link is not None:
         links.append(settings_link)
+    elif profile is not None and profile.role == EmployeeRole.SHOP_CASHIER:
+        if employee_may_any(profile, "settings"):
+            links.append(
+                _link(
+                    "Cashier settings",
+                    "sliders-horizontal",
+                    href=cashier_settings_url(),
+                    active=settings_active,
+                )
+            )
     elif profile is None or employee_may_any(profile, "settings"):
         links.append(
             _link(
@@ -1135,10 +1148,18 @@ def cashier_day_summaries_context(request, profile):
     """Per-shop open-day money summary rows for the cashier dashboard.
 
     The ?status=pending|confirmed|all filter picks which bucket the figures
-    and payment-method breakdown display.
+    and payment-method breakdown display. `balance` carries the live day
+    accounting (opening, sales, expenses, drawings, stock bought, expected
+    till); a stale-open session still carries it — it is yesterday's data.
     """
     from items.services import actionable_shops_for_profile
-    from shops.services import day_sales_status_summary, get_open_shop_day
+    from shops.services import (
+        day_sales_status_summary,
+        day_session_balance_summary,
+        get_last_closed_shop_day,
+        shop_day_balance_channels,
+        shop_day_floor_state,
+    )
 
     shops = actionable_shops_for_profile(profile) if profile is not None else []
     if not shops:
@@ -1146,19 +1167,72 @@ def cashier_day_summaries_context(request, profile):
     status = (request.GET.get("status") or "all").strip().lower()
     if status not in CASHIER_SALES_STATUSES:
         status = "all"
+
+    from .module_permissions import employee_may
+
+    can_open_close = employee_may(profile, "my-shop", "open_close")
+    can_record_drawing = employee_may(profile, "my-shop", "register_expense")
+    back_url = request.get_full_path()
+
     rows = []
     for shop in shops:
-        session = get_open_shop_day(shop)
-        summary = day_sales_status_summary(session) if session else {}
+        state = shop_day_floor_state(shop=shop)
+        session = state.get("open_session")
+        is_open = session is not None
+        stale_open = bool(state.get("stale_open"))
+        # Figures belong to the session THIS cashier opened — a day opened by
+        # a colleague shows status only, no till data.
+        own_session = is_open and session.opened_by_id == profile.pk
+        other_opener = ""
+        if is_open and not own_session:
+            other = session.opened_by.user
+            other_opener = other.get_full_name() or other.username
+        my_session = session if own_session else None
+        summary = day_sales_status_summary(my_session) if my_session else {}
         rows.append(
             {
                 "shop": shop,
-                "session": session,
+                "session": my_session,
+                "is_open": own_session,
+                "other_open": is_open and not own_session,
+                "other_opener": other_opener,
+                "stale_open": stale_open,
                 "summary": summary,
+                "balance": (
+                    day_session_balance_summary(my_session)
+                    if my_session
+                    else {}
+                ),
+                "balance_channels": shop_day_balance_channels(shop=shop),
+                "last_closed": (
+                    None if is_open else get_last_closed_shop_day(shop)
+                ),
                 "display": (
                     _summary_display_for_status(summary, status)
                     if summary
                     else {}
+                ),
+                "day_url": "{}?{}".format(
+                    reverse(
+                        "employees:my_shop_day_toggle",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    urlencode({"back": back_url}),
+                ),
+                "drawings_url": "{}?{}".format(
+                    reverse(
+                        "employees:my_shop_drawings",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    urlencode({"back": back_url}),
+                ),
+                "day_report_url": reverse(
+                    "employees:my_shop_day_report",
+                    kwargs={"shop_id": shop.pk},
+                ),
+                "can_open_close": can_open_close,
+                "can_draw": (
+                    can_record_drawing and own_session and not stale_open
                 ),
             }
         )
@@ -1174,6 +1248,59 @@ def cashier_day_summaries_context(request, profile):
             for key in CASHIER_SALES_STATUSES
         ],
     }
+
+
+# Cashier dashboard sidebar links the employee can hide from Cashier settings.
+# Link-only visibility (same convention as the shop floor sidebar toggles):
+# hidden links disappear from /shop-cashier/ but pages stay reachable by URL.
+CASHIER_SIDEBAR_LINKS = (
+    ("open_close", 'Show "Open / Close shop"'),
+    ("drawings", 'Show "Drawings"'),
+    ("expenses", 'Show "Expenses"'),
+    ("receipts", 'Show "Receipts"'),
+    ("analytics", 'Show "Analytics"'),
+    ("buy_stock", 'Show "Buy stock"'),
+    ("suppliers", 'Show "Suppliers"'),
+)
+CASHIER_SIDEBAR_PREF_KEYS = frozenset(key for key, _label in CASHIER_SIDEBAR_LINKS)
+
+# POSTed toggle field prefix on the Cashier settings page
+# (e.g. sidebar_expenses → the "expenses" pref key).
+CASHIER_SIDEBAR_FIELD_PREFIX = "sidebar_"
+
+
+def cashier_settings_url():
+    return reverse("employees:role_shop_cashier_settings")
+
+
+def cashier_sidebar_pref_enabled(profile, key: str) -> bool:
+    """True unless the employee hid this dashboard link in Cashier settings."""
+    if profile is None:
+        return True
+    prefs = getattr(profile, "sidebar_prefs", None) or {}
+    value = prefs.get(key)
+    return True if value is None else bool(value)
+
+
+def cashier_sidebar_pref_field(key: str) -> str:
+    return f"{CASHIER_SIDEBAR_FIELD_PREFIX}{key}"
+
+
+def cashier_sidebar_key_from_field(field: str) -> str:
+    if not field or not field.startswith(CASHIER_SIDEBAR_FIELD_PREFIX):
+        return ""
+    key = field[len(CASHIER_SIDEBAR_FIELD_PREFIX):]
+    return key if key in CASHIER_SIDEBAR_PREF_KEYS else ""
+
+
+def set_cashier_sidebar_pref(profile, key: str, enabled: bool):
+    if key not in CASHIER_SIDEBAR_PREF_KEYS:
+        raise ValidationError("Unknown sidebar link.")
+    prefs = dict(getattr(profile, "sidebar_prefs", None) or {})
+    prefs[key] = bool(enabled)
+    profile.sidebar_prefs = prefs
+    profile.save(update_fields=["sidebar_prefs", "updated_at"])
+    return profile
 
 
 def buy_stock_action(profile):
@@ -1210,29 +1337,88 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
         day_shops = actionable_shops_for_profile(profile)
         if len(day_shops) == 1:
             day_shop = day_shops[0]
-            day_is_open = get_open_shop_day(day_shop) is not None
-            links.append(
-                _link(
-                    "Close shop" if day_is_open else "Open shop",
-                    "door-closed" if day_is_open else "door-open",
-                    href=reverse(
-                        "employees:my_shop_day_toggle",
-                        kwargs={"shop_id": day_shop.pk},
-                    ),
-                    active=active_slug == "day-toggle",
-                )
+            day_session = get_open_shop_day(day_shop)
+            day_is_open = day_session is not None
+            own_day_open = (
+                day_is_open and day_session.opened_by_id == profile.pk
             )
+            toggle_href = "{}?{}".format(
+                reverse(
+                    "employees:my_shop_day_toggle",
+                    kwargs={"shop_id": day_shop.pk},
+                ),
+                urlencode({"back": reverse(role_home_url_name(role))}),
+            )
+            if cashier_sidebar_pref_enabled(profile, "open_close"):
+                links.append(
+                    _link(
+                        "Close shop" if day_is_open else "Open shop",
+                        "door-closed" if day_is_open else "door-open",
+                        href=toggle_href,
+                        active=active_slug == "day-toggle",
+                    )
+                )
+            if (
+                own_day_open
+                and cashier_sidebar_pref_enabled(profile, "drawings")
+                and employee_may(profile, "my-shop", "register_expense")
+            ):
+                links.append(
+                    _link(
+                        "Drawings",
+                        "hand-coins",
+                        href="{}?{}".format(
+                            reverse(
+                                "employees:my_shop_drawings",
+                                kwargs={"shop_id": day_shop.pk},
+                            ),
+                            urlencode(
+                                {"back": reverse(role_home_url_name(role))}
+                            ),
+                        ),
+                        active=active_slug == "drawings",
+                    )
+                )
         elif len(day_shops) > 1:
-            links.append(
-                _link(
-                    "Open / Close shop",
-                    "door-open",
-                    href=my_shop_url(),
-                    active=False,
+            if cashier_sidebar_pref_enabled(profile, "open_close"):
+                links.append(
+                    _link(
+                        "Open / Close shop",
+                        "door-open",
+                        href=reverse(
+                            "employees:role_shop_day",
+                            kwargs={"role_segment": role_url_segment(role)},
+                        ),
+                        active=active_slug == "shop-day",
+                    )
                 )
+            any_own_shop_open = any(
+                (session := get_open_shop_day(shop)) is not None
+                and session.opened_by_id == profile.pk
+                for shop in day_shops
             )
+            if (
+                any_own_shop_open
+                and cashier_sidebar_pref_enabled(profile, "drawings")
+                and employee_may(profile, "my-shop", "register_expense")
+            ):
+                links.append(
+                    _link(
+                        "Drawings",
+                        "hand-coins",
+                        href="{}?{}".format(
+                            reverse(
+                                "employees:role_shop_day",
+                                kwargs={"role_segment": role_url_segment(role)},
+                            ),
+                            urlencode({"mode": "drawings"}),
+                        ),
+                        active=active_slug == "drawings",
+                    )
+                )
     if profile is None or (
-        employee_may_any(profile, "analytics")
+        cashier_sidebar_pref_enabled(profile, "expenses")
+        and employee_may_any(profile, "analytics")
         and employee_may(profile, "analytics", "expenses")
         and company_pos_analytics_section_visible("expenses")
     ):
@@ -1245,7 +1431,8 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
             )
         )
     if profile is None or (
-        employee_may_any(profile, "analytics")
+        cashier_sidebar_pref_enabled(profile, "receipts")
+        and employee_may_any(profile, "analytics")
         and employee_may(profile, "analytics", "receipts")
         and company_pos_analytics_section_visible("receipts")
     ):
@@ -1257,7 +1444,10 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 active=active_slug == "receipts",
             )
         )
-    if profile is None or employee_may_any(profile, "analytics"):
+    if profile is None or (
+        cashier_sidebar_pref_enabled(profile, "analytics")
+        and employee_may_any(profile, "analytics")
+    ):
         links.append(
             _link(
                 "Analytics",
@@ -1267,12 +1457,14 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
             )
         )
     if profile is None or (
-        employee_may(profile, "my-shop", "buy_stock")
+        cashier_sidebar_pref_enabled(profile, "buy_stock")
+        and employee_may(profile, "my-shop", "buy_stock")
         and _buy_stock_sidebar_flag(profile)
     ):
         links.append(buy_stock_action(profile))
     if profile is None or (
-        employee_may(profile, "analytics", "suppliers")
+        cashier_sidebar_pref_enabled(profile, "suppliers")
+        and employee_may(profile, "analytics", "suppliers")
         and company_pos_analytics_section_visible("suppliers")
     ):
         links.append(
@@ -1349,6 +1541,15 @@ def sidebar_for_role_dashboard(
                     active=active_slug == "suppliers",
                 )
             )
+    if role == EmployeeRole.EMPLOYEE:
+        primary.append(
+            _link(
+                "My analytics",
+                "chart-line",
+                url_name="employees:employee_my_analytics",
+                active=active_slug == "my-analytics",
+            )
+        )
     if role in comms_roles:
         primary.append(
             _link(
@@ -1374,6 +1575,34 @@ def sidebar_for_role_dashboard(
             "primary": primary,
             "footer": _footer_site_links(
                 profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
+def sidebar_for_cashier_settings(profile):
+    """Sidebar for the /shop-cashier/settings/ page."""
+    dashboard_url = reverse(role_home_url_name(EmployeeRole.SHOP_CASHIER))
+    return resolve_sidebar_hrefs(
+        {
+            "page": "cashier_settings",
+            "dashboard_url": dashboard_url,
+            "omit_dashboard_link": True,
+            "primary": [
+                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+                _link(
+                    "Cashier settings",
+                    "sliders-horizontal",
+                    href=cashier_settings_url(),
+                    active=True,
+                ),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
+                settings_active=True,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
@@ -3561,13 +3790,16 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
         return profile is None or employee_may(profile, "settings", submodule)
 
     dashboard_url = reverse(role_home_url_name(role))
-    settings_home_url = settings_url(role)
+    is_cashier = role == EmployeeRole.SHOP_CASHIER
+    settings_home_url = (
+        cashier_settings_url() if is_cashier else settings_url(role)
+    )
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
     if _allowed("home"):
         primary.append(
             _link(
-                "System settings",
-                "settings",
+                "Cashier settings" if is_cashier else "System settings",
+                "sliders-horizontal" if is_cashier else "settings",
                 href=settings_home_url,
                 active=active_view == "home",
             )

@@ -56,7 +56,12 @@ def clear_employee_auth(request):
         write_rotation_pointer,
     )
 
-    from .access import SESSION_PROFILE_KEY, REQUEST_META_ATTR, REQUEST_PROFILE_ATTR
+    from .access import (
+        SESSION_ACTIVE_ROLE_KEY,
+        SESSION_PROFILE_KEY,
+        REQUEST_META_ATTR,
+        REQUEST_PROFILE_ATTR,
+    )
     from .models import EmployeeProfile
 
     old_key = request.session.session_key
@@ -73,6 +78,7 @@ def clear_employee_auth(request):
 
     if SESSION_PROFILE_KEY in request.session:
         del request.session[SESSION_PROFILE_KEY]
+    request.session.pop(SESSION_ACTIVE_ROLE_KEY, None)
     if hasattr(request, REQUEST_META_ATTR):
         delattr(request, REQUEST_META_ATTR)
     if hasattr(request, REQUEST_PROFILE_ATTR):
@@ -167,7 +173,7 @@ def begin_employee_session(request, user, profile):
         write_rotation_pointer,
     )
 
-    from .access import store_profile_session
+    from .access import SESSION_ACTIVE_ROLE_KEY, store_profile_session
     from .middleware import IDLE_SESSION_KEY
     from .models import EmployeeProfile
 
@@ -177,6 +183,9 @@ def begin_employee_session(request, user, profile):
     shop_snap = snapshot_shop_portal_session(request)
     login(request, user)
     restore_shop_portal_session(request, shop_snap)
+    # A fresh sign-in restarts at the primary role — the multi-role picker
+    # (or Switch role) stamps this again when the employee picks a role.
+    request.session.pop(SESSION_ACTIVE_ROLE_KEY, None)
     store_profile_session(request, profile)
     # login() rotated/flushed the session id — the shop's most-recent-session
     # stamp follows the new key for a coexisting shop portal session.

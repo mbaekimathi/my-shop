@@ -1,0 +1,361 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section
+  class="item-panel item-panel--dense item-panel--shop-day shop-day-page"
+  data-shop-day
+  data-mode="{{ mode }}"
+  data-verify-login-url="{{ verify_login_code_url }}"
+  data-animate="rise"
+>
+  <div class="shop-day-shell">
+    <header class="item-panel-head shop-day-head">
+      <div class="item-panel-head-top">
+        <div class="shop-day-head-copy">
+          <p class="stock-kicker">
+            <i data-lucide="store" aria-hidden="true"></i>
+            {{ shop.name }}
+          </p>
+          <h2>Draw from counter</h2>
+          <p>
+            {% if stale_open %}
+            Close the leftover day before recording a drawing.
+            {% elif is_open %}
+            Record who is taking the money — it comes off the expected till.
+            {% else %}
+            Open the shop day before recording a drawing.
+            {% endif %}
+          </p>
+        </div>
+        <p class="shop-day-badge{% if is_open and not stale_open %} is-open{% else %} is-closed{% endif %}">
+          <i data-lucide="{% if is_open and not stale_open %}radio{% elif stale_open %}alert-triangle{% else %}moon{% endif %}" aria-hidden="true"></i>
+          {% if stale_open %}
+          Left open
+          {% elif is_open %}
+          Open
+          {% else %}
+          Closed
+          {% endif %}
+        </p>
+      </div>
+    </header>
+
+    {% if is_open and open_summary %}
+    <section class="shop-day-live" aria-label="Money in till now" data-till-live>
+      <div class="shop-day-live-hero">
+        <div class="shop-day-live-icon" aria-hidden="true">
+          <i data-lucide="wallet"></i>
+        </div>
+        <div class="shop-day-live-copy">
+          <p class="shop-day-live-label">In till now</p>
+          <strong class="shop-day-live-total">
+            <span>KSh</span><em data-till-total>{{ open_summary.expected_total|floatformat:0 }}</em>
+          </strong>
+        </div>
+        <ul class="shop-day-live-split">
+          {% if balance_channels.cash %}
+          <li class="is-cash">
+            <i data-lucide="banknote" aria-hidden="true"></i>
+            <span>Cash</span>
+            <em data-till-cash>{{ open_summary.expected_cash|floatformat:0 }}</em>
+          </li>
+          {% endif %}
+          {% if balance_channels.mpesa %}
+          <li class="is-mpesa">
+            <i data-lucide="smartphone" aria-hidden="true"></i>
+            <span>M-Pesa</span>
+            <em data-till-mpesa>{{ open_summary.expected_mpesa|floatformat:0 }}</em>
+          </li>
+          {% endif %}
+          {% if balance_channels.card %}
+          <li class="is-card">
+            <i data-lucide="credit-card" aria-hidden="true"></i>
+            <span>Card</span>
+            <em data-till-card>{{ open_summary.expected_card|floatformat:0 }}</em>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+      <details class="shop-day-live-detail">
+        <summary>
+          <i data-lucide="list-tree" aria-hidden="true"></i>
+          <span>Breakdown</span>
+        </summary>
+        <ul>
+          <li><span>Opened with</span><em data-till-opening>{{ open_summary.opening_total|floatformat:0 }}</em></li>
+          {% if balance_channels.cash %}
+          <li><span>Cash sales</span><em data-till-cash-sales>{{ open_summary.cash_sales|floatformat:0 }}</em></li>
+          {% endif %}
+          {% if balance_channels.mpesa %}
+          <li><span>M-Pesa sales</span><em data-till-mpesa-sales>{{ open_summary.mpesa_sales|floatformat:0 }}</em></li>
+          {% endif %}
+          {% if balance_channels.card %}
+          <li><span>Card sales</span><em data-till-card-sales>{{ open_summary.card_sales|floatformat:0 }}</em></li>
+          {% endif %}
+          {% if balance_channels.cash %}
+          <li data-till-cash-refunds-row{% if not open_summary.cash_refunds %} hidden{% endif %}>
+            <span>Cash returns</span><em>−<span data-till-cash-refunds>{{ open_summary.cash_refunds|floatformat:0 }}</span></em>
+          </li>
+          {% endif %}
+          {% if balance_channels.mpesa %}
+          <li data-till-mpesa-refunds-row{% if not open_summary.mpesa_refunds %} hidden{% endif %}>
+            <span>M-Pesa returns</span><em>−<span data-till-mpesa-refunds>{{ open_summary.mpesa_refunds|floatformat:0 }}</span></em>
+          </li>
+          {% endif %}
+          {% if balance_channels.card %}
+          <li data-till-card-refunds-row{% if not open_summary.card_refunds %} hidden{% endif %}>
+            <span>Card returns</span><em>−<span data-till-card-refunds>{{ open_summary.card_refunds|floatformat:0 }}</span></em>
+          </li>
+          {% endif %}
+          <li><span>Expenses (cash)</span><em>−<span data-till-expenses>{{ open_summary.expenses_paid|floatformat:0 }}</span></em></li>
+          {% if balance_channels.multi %}
+          {% if balance_channels.cash %}
+          <li><span>Drawings (cash)</span><em>−<span data-till-drawings-cash>{{ open_summary.drawings_cash|floatformat:0 }}</span></em></li>
+          {% endif %}
+          {% if balance_channels.mpesa %}
+          <li><span>Drawings (M-Pesa)</span><em>−<span data-till-drawings-mpesa>{{ open_summary.drawings_mpesa|floatformat:0 }}</span></em></li>
+          {% endif %}
+          {% if balance_channels.card %}
+          <li><span>Drawings (card)</span><em>−<span data-till-drawings-card>{{ open_summary.drawings_card|floatformat:0 }}</span></em></li>
+          {% endif %}
+          {% else %}
+          <li><span>Drawings</span><em>−<span data-till-drawings>{{ open_summary.drawings_paid|floatformat:0 }}</span></em></li>
+          {% endif %}
+          <li><span>Suppliers (cash)</span><em>−<span data-till-suppliers>{{ open_summary.suppliers_paid|floatformat:0 }}</span></em></li>
+        </ul>
+        <p class="shop-day-live-meta">
+          <i data-lucide="clock-3" aria-hidden="true"></i>
+          Opened {{ open_session.opened_at|date:"d M · H:i" }}
+          by {{ open_session.opened_by.user.get_full_name|default:open_session.opened_by.user.username }}
+        </p>
+      </details>
+    </section>
+    {% endif %}
+
+    {% if can_draw %}
+    <section class="shop-day-drawings" id="drawings" aria-label="Draw from counter">
+      {% if drawing_errors %}
+      <div class="form-alert" role="alert">
+        {% for error in drawing_errors %}
+        <p>{{ error }}</p>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <form
+        method="post"
+        class="shop-day-form shop-day-form--drawing"
+        data-shop-day-drawing-form
+        novalidate
+      >
+        {% csrf_token %}
+        <input type="hidden" name="action" value="drawing">
+        <input type="hidden" name="name" value="{{ drawing_data.name|default:'OWNER DRAWING' }}" data-drawing-name>
+
+        <div class="shop-day-form-head">
+          <div class="shop-day-form-title">
+            <span class="shop-day-form-icon is-draw" aria-hidden="true">
+              <i data-lucide="hand-coins"></i>
+            </span>
+            <div>
+              <h3>Draw from counter</h3>
+              <p>
+                {% if balance_channels.multi %}
+                Enter {{ balance_channels.count_copy }} amounts · employee and person drawing codes required
+                {% elif balance_channels.mpesa %}
+                Deducted from M-Pesa · employee and person drawing codes required
+                {% elif balance_channels.card %}
+                Deducted from card · employee and person drawing codes required
+                {% else %}
+                Deducted from cash · employee and person drawing codes required
+                {% endif %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="shop-day-form-body">
+          <div class="shop-day-balances shop-day-balances--drawing-amounts">
+            {% if balance_channels.cash %}
+            <label class="shop-cart-input shop-day-drawing-amount is-cash">
+              <span><i data-lucide="banknote" aria-hidden="true"></i> Cash</span>
+              <input
+                type="text"
+                name="cash_amount"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{{ drawing_data.cash_amount }}"
+                placeholder="0"
+                data-drawing-cash-amount
+                {% if not balance_channels.mpesa and not balance_channels.card %}required{% endif %}
+              >
+            </label>
+            {% endif %}
+            {% if balance_channels.mpesa %}
+            <label class="shop-cart-input shop-day-drawing-amount is-mpesa">
+              <span><i data-lucide="smartphone" aria-hidden="true"></i> M-Pesa</span>
+              <input
+                type="text"
+                name="mpesa_amount"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{{ drawing_data.mpesa_amount }}"
+                placeholder="0"
+                data-drawing-mpesa-amount
+                {% if not balance_channels.cash and not balance_channels.card %}required{% endif %}
+              >
+            </label>
+            {% endif %}
+            {% if balance_channels.card %}
+            <label class="shop-cart-input shop-day-drawing-amount is-card">
+              <span><i data-lucide="credit-card" aria-hidden="true"></i> Card</span>
+              <input
+                type="text"
+                name="card_amount"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{{ drawing_data.card_amount }}"
+                placeholder="0"
+                data-drawing-card-amount
+                {% if not balance_channels.cash and not balance_channels.mpesa %}required{% endif %}
+              >
+            </label>
+            {% endif %}
+          </div>
+          <div class="shop-day-balances shop-day-balances--codes">
+            <label class="shop-cart-input">
+              <span><i data-lucide="user-check" aria-hidden="true"></i> Employee code</span>
+              <input
+                type="text"
+                name="login_code"
+                inputmode="numeric"
+                maxlength="6"
+                autocomplete="one-time-code"
+                placeholder="6 digits"
+                data-drawing-login-code
+                value="{{ drawing_data.login_code }}"
+                required
+              >
+            </label>
+            <label class="shop-cart-input">
+              <span><i data-lucide="user-round" aria-hidden="true"></i> Person drawing code (director)</span>
+              <input
+                type="text"
+                name="drawer_login_code"
+                inputmode="numeric"
+                maxlength="6"
+                autocomplete="one-time-code"
+                placeholder="6 digits"
+                data-drawing-drawer-code
+                value="{{ drawing_data.drawer_login_code }}"
+                required
+              >
+            </label>
+          </div>
+          <p class="shop-cart-status" data-drawing-status>
+            Enter both codes to record the drawing.
+          </p>
+          <div class="shop-day-actions">
+            <a href="{{ back_url }}" class="btn btn--ghost">
+              <i data-lucide="arrow-left" aria-hidden="true"></i>
+              Back
+            </a>
+            <button type="submit" class="btn btn--ghost" data-drawing-submit disabled>
+              <i data-lucide="arrow-down-to-line" aria-hidden="true"></i>
+              Record drawing
+            </button>
+          </div>
+        </div>
+      </form>
+    </section>
+    {% else %}
+    <div class="shop-day-status">
+      <div class="shop-day-status-icon" aria-hidden="true">
+        <i data-lucide="{% if stale_open %}alert-triangle{% else %}door-closed{% endif %}"></i>
+      </div>
+      <div>
+        <strong>
+          {% if stale_open %}A previous day was left open{% else %}Shop is closed{% endif %}
+        </strong>
+        <p>
+          {% if stale_open %}
+          Close the leftover day with counted balances, open today, then come back to draw.
+          {% else %}
+          Open the shop day first — drawings are recorded against the open day.
+          {% endif %}
+        </p>
+        <p class="shop-day-status-actions">
+          <a href="{{ day_url }}" class="btn btn--ghost">
+            <i data-lucide="{% if stale_open %}alert-triangle{% else %}door-open{% endif %}" aria-hidden="true"></i>
+            {% if stale_open %}Close yesterday’s day{% else %}Open shop day{% endif %}
+          </a>
+          <a href="{{ back_url }}" class="btn btn--ghost">
+            <i data-lucide="arrow-left" aria-hidden="true"></i>
+            Back
+          </a>
+        </p>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if is_open %}
+    <section class="shop-day-drawings-log" aria-label="Drawings recorded today">
+      <div class="shop-day-form-head">
+        <div class="shop-day-form-title">
+          <span class="shop-day-form-icon is-draw" aria-hidden="true">
+            <i data-lucide="receipt-text"></i>
+          </span>
+          <div>
+            <h3>Drawings today</h3>
+            <p>Every draw recorded since the shop opened.</p>
+          </div>
+        </div>
+      </div>
+      {% if drawings_rows %}
+      <div class="shop-day-history-wrap">
+        <table class="shop-day-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Person drawing</th>
+              <th>Recorded by</th>
+              {% if balance_channels.cash %}<th>Cash</th>{% endif %}
+              {% if balance_channels.mpesa %}<th>M-Pesa</th>{% endif %}
+              {% if balance_channels.card %}<th>Card</th>{% endif %}
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in drawings_rows %}
+            <tr>
+              <td data-label="Time">{{ row.at|date:"H:i" }}</td>
+              <td data-label="Person drawing"><strong>{{ row.drawer }}</strong></td>
+              <td data-label="Recorded by">{{ row.by|default:"—" }}</td>
+              {% if balance_channels.cash %}<td data-label="Cash">{{ row.cash|floatformat:0 }}</td>{% endif %}
+              {% if balance_channels.mpesa %}<td data-label="M-Pesa">{{ row.mpesa|floatformat:0 }}</td>{% endif %}
+              {% if balance_channels.card %}<td data-label="Card">{{ row.card|floatformat:0 }}</td>{% endif %}
+              <td data-label="Total"><strong>{{ row.paid|floatformat:0 }}</strong></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="shop-day-history-empty">No drawings recorded yet today.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/my-shop-day.js' %}?v=15"></script>
+{% endblock %}

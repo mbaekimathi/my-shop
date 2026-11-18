@@ -9,6 +9,8 @@ SESSION_SHOP_KEY = "active_shop_id"
 SESSION_SHOP_PORTAL_KEY = "shop_portal_auth"
 SESSION_SHOP_PORTAL_SHOP_KEY = "shop_portal_shop_id"
 SESSION_SHOP_PORTAL_TOUCH_KEY = "_shop_portal_touch"
+# Last user-interaction stamp for the optional shop session idle timeout.
+SESSION_SHOP_PORTAL_IDLE_KEY = "_shop_portal_idle_ts"
 # Shop portal stays signed in until explicit logout. Refreshed on each use.
 SHOP_PORTAL_SESSION_AGE = 60 * 60 * 24 * 365 * 10
 # Avoid writing the session row on every poll/ping — refresh at most hourly.
@@ -61,6 +63,7 @@ SHOP_PORTAL_SESSION_KEYS = (
     SESSION_SHOP_PORTAL_KEY,
     SESSION_SHOP_PORTAL_SHOP_KEY,
     SESSION_SHOP_PORTAL_TOUCH_KEY,
+    SESSION_SHOP_PORTAL_IDLE_KEY,
 )
 
 

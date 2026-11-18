@@ -19,11 +19,52 @@
         <h2>{{ meta.headline }}</h2>
         <p>Shop checkout options.</p>
       </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          <strong data-pos-enabled-count>{{ pos_enabled_count }}</strong>
+          <span>of {{ pos_toggle_count }} on</span>
+        </p>
+      </div>
     </div>
   </header>
 
-  <div class="pos-settings-groups">
-    <section class="pos-settings-group" data-stk-shop-group>
+  <div class="pos-settings-toolbar">
+    <label class="item-search-field pos-settings-filter">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search settings…"
+        autocomplete="off"
+        aria-label="Search POS settings"
+        data-pos-filter
+      >
+    </label>
+    <nav class="perm-module-nav pos-settings-jump" aria-label="Jump to a settings group">
+      <a class="perm-module-nav-link" href="#pos-group-stk-push" data-pos-jump="stk-push">STK Push</a>
+      {% for group in pos_setting_groups %}
+      <a class="perm-module-nav-link" href="#pos-group-{{ group.title|slugify }}" data-pos-jump="{{ group.title|slugify }}">{{ group.title }}</a>
+      {% endfor %}
+    </nav>
+    <p class="pos-settings-filter-empty" data-pos-filter-empty hidden>
+      No settings match your search.
+    </p>
+  </div>
+
+  <div class="pos-settings-groups pos-settings-groups--list">
+    <section
+      class="pos-settings-group"
+      id="pos-group-stk-push"
+      data-pos-group
+      data-group-title="STK Push M-Pesa"
+      data-stk-shop-group
+    >
+      <div class="pos-settings-group-head">
+        <div>
+          <h3>STK Push</h3>
+          <p>Safaricom STK Push prompt on the shop cart.</p>
+        </div>
+        <p class="staff-count">1 setting</p>
+      </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row">
           <div class="pos-settings-copy">
@@ -51,10 +92,20 @@
     </section>
 
     {% for group in pos_setting_groups %}
-    <section class="pos-settings-group">
+    <section
+      class="pos-settings-group"
+      id="pos-group-{{ group.title|slugify }}"
+      data-pos-group
+      data-group-title="{{ group.title }}"
+    >
       <div class="pos-settings-group-head">
-        <h3>{{ group.title }}</h3>
-        {% if group.summary %}<p>{{ group.summary }}</p>{% endif %}
+        <div>
+          <h3>{{ group.title }}</h3>
+          {% if group.summary %}<p>{{ group.summary }}</p>{% endif %}
+        </div>
+        <p class="staff-count">
+          {{ group.toggles|length }} setting{{ group.toggles|length|pluralize }}
+        </p>
       </div>
       <ul class="pos-settings-list">
         {% for toggle in group.toggles %}
@@ -142,6 +193,163 @@
           </label>
         </li>
         {% endif %}
+        {% if group.show_open_close_schedule %}
+        <li class="pos-settings-row" data-open-close-dependent{% if not pos_settings.enable_open_close %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Open &amp; close anytime</strong>
+            <p>Staff can open and close their shift at any time of day.</p>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if not working_hours_enabled %}checked{% endif %}
+              data-open-close-mode-toggle
+              data-mode="anytime"
+              aria-label="Open and close anytime"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if not working_hours_enabled %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        <li class="pos-settings-row" data-open-close-dependent{% if not pos_settings.enable_open_close %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Set opening &amp; closing times</strong>
+            <p>Staff open and close their shift at the times set below for each shop.</p>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if working_hours_enabled %}checked{% endif %}
+              data-open-close-mode-toggle
+              data-mode="set"
+              aria-label="Set opening and closing times"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if working_hours_enabled %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        <li
+          class="pos-settings-row pos-settings-row--times"
+          data-open-close-dependent
+          data-open-close-times
+          {% if not working_hours_enabled or not pos_settings.enable_open_close %}hidden{% endif %}
+        >
+          <form method="post" class="open-close-times-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="set_open_close_times">
+            <div class="pos-settings-copy">
+              <strong>Shop opening &amp; closing times</strong>
+              <p>
+                Set when each shop opens and closes its day. Working days are set under
+                <a href="{{ working_hours_settings_url }}">Working hours</a>.
+              </p>
+            </div>
+            {% if open_close_times_shops %}
+            <div class="staff-table-wrap working-hours-shops-wrap">
+              <table class="staff-table working-hours-shops-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Shop</th>
+                    <th scope="col">Opening</th>
+                    <th scope="col">Closing</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in open_close_times_shops %}
+                  <tr>
+                    <td data-label="Shop"><strong>{{ row.shop_name }}</strong></td>
+                    <td data-label="Opening">
+                      <input
+                        type="time"
+                        class="working-hours-shop-time"
+                        name="shop_{{ row.shop_id }}_start_time"
+                        value="{{ row.start_time }}"
+                        required
+                        aria-label="{{ row.shop_name }} opening time"
+                      >
+                    </td>
+                    <td data-label="Closing">
+                      <input
+                        type="time"
+                        class="working-hours-shop-time"
+                        name="shop_{{ row.shop_id }}_end_time"
+                        value="{{ row.end_time }}"
+                        required
+                        aria-label="{{ row.shop_name }} closing time"
+                      >
+                    </td>
+                    <td data-label="Status">
+                      <span class="working-hours-shop-status working-hours-shop-status--{{ row.status_tone }}">
+                        {{ row.status_label }}
+                      </span>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <div class="open-close-times-actions">
+              <button type="submit" class="btn btn--primary">
+                <i data-lucide="save" aria-hidden="true"></i>
+                <span>Save times</span>
+              </button>
+            </div>
+            {% else %}
+            <div class="dashboard-placeholder">
+              <i data-lucide="store" aria-hidden="true"></i>
+              <p>No active shops yet. Register shops under Shop Management.</p>
+            </div>
+            {% endif %}
+          </form>
+        </li>
+        {% endif %}
+        {% if group.show_session_timeouts %}
+        <li class="pos-settings-row pos-settings-row--tax" data-employee-timeout-row{% if not pos_settings.enable_employee_session_timeout %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Employee idle limit</strong>
+            <p>Minutes of inactivity before an employee is signed out.</p>
+          </div>
+          <label class="pos-tax-percent-field">
+            <input
+              type="number"
+              min="1"
+              max="43200"
+              step="1"
+              inputmode="numeric"
+              value="{{ employee_timeout_minutes }}"
+              data-employee-timeout-input
+              aria-label="Employee session idle limit in minutes"
+            >
+            <span>min</span>
+          </label>
+        </li>
+        <li class="pos-settings-row pos-settings-row--tax" data-shop-timeout-row{% if not pos_settings.enable_shop_session_timeout %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Shop idle limit</strong>
+            <p>Minutes of inactivity before a signed-in shop is signed out.</p>
+          </div>
+          <label class="pos-tax-percent-field">
+            <input
+              type="number"
+              min="1"
+              max="43200"
+              step="1"
+              inputmode="numeric"
+              value="{{ shop_timeout_minutes }}"
+              data-shop-timeout-input
+              aria-label="Shop session idle limit in minutes"
+            >
+            <span>min</span>
+          </label>
+        </li>
+        {% endif %}
       </ul>
     </section>
     {% endfor %}
@@ -151,5 +359,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=12"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=15"></script>
 {% endblock %}

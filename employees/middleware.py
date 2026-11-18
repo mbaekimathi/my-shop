@@ -53,7 +53,13 @@ def _request_is_activity(request):
 
 
 class EmployeeIdleTimeoutMiddleware:
-    """Sign out employees idle longer than EMPLOYEE_IDLE_TIMEOUT_SECONDS.
+    """Sign out employees idle longer than the configured session timeout.
+
+    The limit is a company POS setting: ``enable_employee_session_timeout``
+    + ``employee_session_timeout_minutes``. When the toggle is off (the
+    default) there is no idle expiry — sessions end only on logout.
+    EMPLOYEE_IDLE_TIMEOUT_SECONDS remains as the fallback when the settings
+    row cannot be read.
 
     Runs after AuthenticationMiddleware. The expiry check compares against
     the last *prior* interaction (stored stamp or a reported header time) —
@@ -72,6 +78,15 @@ class EmployeeIdleTimeoutMiddleware:
         if user is None or not user.is_authenticated:
             return self.get_response(request)
 
+        try:
+            from shops.services import employee_idle_timeout_seconds
+
+            timeout = employee_idle_timeout_seconds()
+        except Exception:
+            timeout = self.timeout
+        if timeout is None:
+            return self.get_response(request)
+
         session = request.session
         now = int(time.time())
         try:
@@ -81,7 +96,7 @@ class EmployeeIdleTimeoutMiddleware:
         reported = _reported_activity(request, now)
         prior = max(last, reported)
 
-        if prior and now - prior > self.timeout:
+        if prior and now - prior > timeout:
             from .portal_auth import end_employee_session
 
             end_employee_session(request)

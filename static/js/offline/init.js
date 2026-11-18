@@ -23,6 +23,26 @@ export function initOffline() {
   initConnectivity();
   initAutoSync();
 
+  // Signing out drops the cached shop-floor page so a shared device cannot
+  // reopen the till under a stale copy of the last session.
+  document.addEventListener("click", (event) => {
+    const link = event.target?.closest?.("a[href]");
+    if (!link || !navigator.serviceWorker?.controller) return;
+    try {
+      const path = new URL(link.href, location.href).pathname.replace(
+        /\/+$/,
+        ""
+      );
+      if (path.endsWith("/logout")) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "CLEAR_PAGE_CACHE",
+        });
+      }
+    } catch (_err) {
+      /* malformed href — ignore */
+    }
+  });
+
   if (!("serviceWorker" in navigator)) return;
 
   let refreshing = false;

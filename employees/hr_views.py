@@ -119,8 +119,15 @@ def _managed_employees_queryset():
 
 
 def _shop_assignable_employees_queryset():
+    """Employees whose granted roles include a shop-scoped role — the
+    primary role or any additional role (``extra_roles`` CSV)."""
+    from django.db.models import Q
+
+    query = Q(role__in=SHOP_ALLOCATION_ROLES)
+    for role in SHOP_ALLOCATION_ROLES:
+        query |= Q(extra_roles__regex=rf"(^|,){role.value}(,|$)")
     return (
-        EmployeeProfile.objects.filter(role__in=SHOP_ALLOCATION_ROLES)
+        EmployeeProfile.objects.filter(query)
         .exclude(status=EmployeeStatus.PENDING_APPROVAL)
         .select_related("user")
         .prefetch_related("assigned_shops")
@@ -163,7 +170,7 @@ def _parse_shop_ids(raw_values):
 
 def _assign_employee_shops(target, shop_ids_raw):
     """Replace delegated shops for a shop-scoped employee. Returns (ok, message)."""
-    if target.role not in SHOP_ALLOCATION_ROLES:
+    if not set(target.role_values()) & SHOP_ALLOCATION_ROLES:
         return False, (
             f"{target.employee_id} has role {target.get_role_display()}, "
             "which does not use delegated shops."
@@ -813,9 +820,9 @@ def _handle_hr_management_post(request, profile, page_number):
             if form_data["employee_id"] != actor.employee_id:
                 form_errors.append("You cannot change your own employee ID.")
 
-        if (
-            profile.role != EmployeeRole.SUPER_ADMIN
-            and form_data["role"] == EmployeeRole.SUPER_ADMIN
+        if profile.role != EmployeeRole.SUPER_ADMIN and (
+            form_data["role"] == EmployeeRole.SUPER_ADMIN
+            or EmployeeRole.SUPER_ADMIN in (form_data.get("extra_roles") or [])
         ):
             form_errors.append("Only a Super Admin can assign the Super Admin role.")
 

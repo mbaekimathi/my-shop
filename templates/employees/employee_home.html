@@ -20,7 +20,6 @@
         </p>
       </div>
       <div class="stock-stats">
-        <a class="stock-report-apply" href="{% url 'employees:employee_my_analytics' %}">My analytics</a>
         <p class="stock-stat">
           <strong>{{ perf.all.amount_label }}</strong>
           <span>{{ perf.all_caption }}</span>
@@ -53,6 +52,7 @@
           <option value="all"{% if receipt_filter.status == "all" %} selected{% endif %}>All statuses</option>
           <option value="active"{% if receipt_filter.status == "active" %} selected{% endif %}>Pending</option>
           <option value="confirmed"{% if receipt_filter.status == "confirmed" %} selected{% endif %}>Confirmed</option>
+          <option value="cancelled"{% if receipt_filter.status == "cancelled" %} selected{% endif %}>Cancelled</option>
         </select>
       </label>
 
@@ -116,7 +116,7 @@
   {% if perf.has_activity %}
   <div class="workspace-grid workspace-grid--profile">
     {% for period in perf.periods %}
-    <article class="workspace-card{% if forloop.first %} workspace-card--accent{% endif %}">
+    <article class="workspace-card{% if forloop.first %} workspace-card--accent{% endif %}{% if perf.status_tone %} workspace-card--status-{{ perf.status_tone }}{% endif %}">
       <i data-lucide="{{ period.icon }}" aria-hidden="true"></i>
       <h3>{{ period.amount_label }}</h3>
       <p>{{ period.label }} · {{ period.docs }} sale{{ period.docs|pluralize }}</p>

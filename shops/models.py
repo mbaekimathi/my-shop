@@ -764,6 +764,22 @@ class CompanyPosSettings(models.Model):
         default=False,
         help_text="When on, a signed-in shop session can switch to another shop without re-entering the shop password.",
     )
+    enable_employee_session_timeout = models.BooleanField(
+        default=False,
+        help_text="When on, employee portal sessions sign out after the set idle time. When off, employees stay signed in until they log out.",
+    )
+    employee_session_timeout_minutes = models.PositiveIntegerField(
+        default=120,
+        help_text="Minutes of inactivity before an employee session is signed out.",
+    )
+    enable_shop_session_timeout = models.BooleanField(
+        default=False,
+        help_text="When on, shop portal sessions sign out after the set idle time. When off, a shop stays signed in until logout.",
+    )
+    shop_session_timeout_minutes = models.PositiveIntegerField(
+        default=480,
+        help_text="Minutes of inactivity before a shop portal session is signed out.",
+    )
     enable_client_data = models.BooleanField(
         default=True,
         help_text="When on, cart can collect client name and phone. When off, client fields are hidden.",

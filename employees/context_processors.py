@@ -68,6 +68,18 @@ def _employee_workspace_context(request, profile, role):
     role_meta = ROLE_PAGE_META.get(role, ROLE_PAGE_META[EmployeeRole.EMPLOYEE])
     home_url = reverse(role_home_url_name(role))
     back_url = workspace_back_url(request, role)
+    available = profile.role_values()
+    role_options = []
+    if len(available) > 1:
+        role_options = [
+            {
+                "value": value,
+                "label": EmployeeRole(value).label,
+                "icon": ROLE_PAGE_META.get(value, {}).get("icon", "badge-check"),
+                "current": value == role,
+            }
+            for value in available
+        ]
     return {
         "workspace": {
             "profile": profile,
@@ -82,6 +94,10 @@ def _employee_workspace_context(request, profile, role):
             "show_back": back_url is not None,
             "back_url": back_url,
             "is_shop_portal": False,
+            "role_options": role_options,
+            "switch_role_url": reverse("employees:select_role")
+            if role_options
+            else None,
         }
     }
 

@@ -1,0 +1,206 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section
+  class="item-panel item-panel--dense item-panel--pos-settings"
+  data-animate="rise"
+  data-pos-settings
+>
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Settings · Cashier</p>
+        <h2>{{ meta.headline }}</h2>
+        <p>{{ meta.summary }}</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="pos-settings-groups">
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Dashboard sidebar</h3>
+        <p>Choose which menu links appear on your dashboard. Hidden links still work by URL.</p>
+      </div>
+      <ul class="pos-settings-list">
+        {% for toggle in sidebar_toggles %}
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>{{ toggle.label }}</strong>
+          </div>
+          <label class="perm-switch{% if not toggle.enabled %} is-denied{% endif %}">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if toggle.enabled %}checked{% endif %}
+              data-pos-toggle
+              data-field="{{ toggle.field }}"
+              aria-label="{{ toggle.label }}"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if toggle.enabled %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    {% if can_edit_open_close %}
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Open &amp; close</h3>
+        <p>Applies to every shop.</p>
+      </div>
+      <ul class="pos-settings-list">
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>Compulsory open &amp; close</strong>
+            <p>Require staff to open the shop day before trading and close it at the end.</p>
+          </div>
+          <label class="perm-switch{% if not pos_settings.enable_open_close %} is-denied{% endif %}">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if pos_settings.enable_open_close %}checked{% endif %}
+              data-pos-toggle
+              data-field="enable_open_close"
+              aria-label="Compulsory open and close"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if pos_settings.enable_open_close %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        <li class="pos-settings-row" data-open-close-dependent{% if not pos_settings.enable_open_close %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Open &amp; close anytime</strong>
+            <p>Staff can open and close their shift at any time of day.</p>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if not working_hours_enabled %}checked{% endif %}
+              data-open-close-mode-toggle
+              data-mode="anytime"
+              aria-label="Open and close anytime"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if not working_hours_enabled %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        <li class="pos-settings-row" data-open-close-dependent{% if not pos_settings.enable_open_close %} hidden{% endif %}>
+          <div class="pos-settings-copy">
+            <strong>Set opening &amp; closing times</strong>
+            <p>Staff open and close their shift at the times set below for each shop.</p>
+          </div>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if working_hours_enabled %}checked{% endif %}
+              data-open-close-mode-toggle
+              data-mode="set"
+              aria-label="Set opening and closing times"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if working_hours_enabled %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        <li
+          class="pos-settings-row pos-settings-row--times"
+          data-open-close-dependent
+          data-open-close-times
+          {% if not working_hours_enabled or not pos_settings.enable_open_close %}hidden{% endif %}
+        >
+          <form method="post" class="open-close-times-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="set_open_close_times">
+            <div class="pos-settings-copy">
+              <strong>Shop opening &amp; closing times</strong>
+              <p>
+                Set when each shop opens and closes its day. Working days are set under
+                <a href="{{ working_hours_settings_url }}">Working hours</a>.
+              </p>
+            </div>
+            {% if open_close_times_shops %}
+            <div class="staff-table-wrap working-hours-shops-wrap">
+              <table class="staff-table working-hours-shops-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Shop</th>
+                    <th scope="col">Opening</th>
+                    <th scope="col">Closing</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in open_close_times_shops %}
+                  <tr>
+                    <td data-label="Shop"><strong>{{ row.shop_name }}</strong></td>
+                    <td data-label="Opening">
+                      <input
+                        type="time"
+                        class="working-hours-shop-time"
+                        name="shop_{{ row.shop_id }}_start_time"
+                        value="{{ row.start_time }}"
+                        required
+                        aria-label="{{ row.shop_name }} opening time"
+                      >
+                    </td>
+                    <td data-label="Closing">
+                      <input
+                        type="time"
+                        class="working-hours-shop-time"
+                        name="shop_{{ row.shop_id }}_end_time"
+                        value="{{ row.end_time }}"
+                        required
+                        aria-label="{{ row.shop_name }} closing time"
+                      >
+                    </td>
+                    <td data-label="Status">
+                      <span class="working-hours-shop-status working-hours-shop-status--{{ row.status_tone }}">
+                        {{ row.status_label }}
+                      </span>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <div class="open-close-times-actions">
+              <button type="submit" class="btn btn--primary">
+                <i data-lucide="save" aria-hidden="true"></i>
+                <span>Save times</span>
+              </button>
+            </div>
+            {% else %}
+            <div class="dashboard-placeholder">
+              <i data-lucide="store" aria-hidden="true"></i>
+              <p>No active shops yet. Register shops under Shop Management.</p>
+            </div>
+            {% endif %}
+          </form>
+        </li>
+      </ul>
+    </section>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/pos-settings.js' %}?v=13"></script>
+{% endblock %}

@@ -85,6 +85,8 @@ POS_SETTING_FIELDS = {
     "enable_shelf_mode",
     "enable_open_close",
     "enable_passwordless_shop_switch",
+    "enable_employee_session_timeout",
+    "enable_shop_session_timeout",
     "enable_client_data",
     "require_client_phone",
     "require_client_name",
@@ -1230,6 +1232,16 @@ def save_working_hours_settings(data) -> CompanyWorkingHoursSettings:
         settings_row = update_company_working_hours(data)
         update_shop_working_hours_from_post(data, list_active_shops())
     return settings_row
+
+
+def set_working_hours_enabled(enabled: bool) -> CompanyWorkingHoursSettings:
+    """Flip only the schedule on/off — configured days and times stay as set."""
+    _invalidate_working_hours_settings_cache()
+    row = get_company_working_hours_settings()
+    row.enabled = bool(enabled)
+    row.save(update_fields=["enabled", "updated_at"])
+    _invalidate_working_hours_settings_cache()
+    return get_company_working_hours_settings()
 
 
 def shop_day_compulsory_enabled(
@@ -3119,6 +3131,62 @@ def set_company_delivery_amount(*, amount) -> CompanyPosSettings:
     settings_row.save(update_fields=["delivery_amount", "updated_at"])
     _invalidate_pos_settings_cache()
     return settings_row
+
+
+# Session idle timeouts are company-wide only — never overridable per shop.
+SESSION_TIMEOUT_MAX_MINUTES = 60 * 24 * 30  # 30 days
+
+
+def _clean_session_timeout_minutes(value) -> int:
+    try:
+        minutes = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("Enter a valid number of minutes.") from exc
+    if minutes < 1 or minutes > SESSION_TIMEOUT_MAX_MINUTES:
+        raise ValidationError(
+            "Session timeout must be between 1 and 43200 minutes (30 days)."
+        )
+    return minutes
+
+
+def set_employee_session_timeout_minutes(*, minutes) -> CompanyPosSettings:
+    cleaned = _clean_session_timeout_minutes(minutes)
+    settings_row = get_company_pos_settings()
+    settings_row.employee_session_timeout_minutes = cleaned
+    settings_row.save(
+        update_fields=["employee_session_timeout_minutes", "updated_at"]
+    )
+    _invalidate_pos_settings_cache()
+    return settings_row
+
+
+def set_shop_session_timeout_minutes(*, minutes) -> CompanyPosSettings:
+    cleaned = _clean_session_timeout_minutes(minutes)
+    settings_row = get_company_pos_settings()
+    settings_row.shop_session_timeout_minutes = cleaned
+    settings_row.save(
+        update_fields=["shop_session_timeout_minutes", "updated_at"]
+    )
+    _invalidate_pos_settings_cache()
+    return settings_row
+
+
+def employee_idle_timeout_seconds() -> int | None:
+    """Idle limit for employee sessions, or None when the timeout is off."""
+    row = get_company_pos_settings()
+    if not getattr(row, "enable_employee_session_timeout", False):
+        return None
+    minutes = int(getattr(row, "employee_session_timeout_minutes", 0) or 0)
+    return minutes * 60 if minutes > 0 else None
+
+
+def shop_idle_timeout_seconds() -> int | None:
+    """Idle limit for shop portal sessions, or None when the timeout is off."""
+    row = get_company_pos_settings()
+    if not getattr(row, "enable_shop_session_timeout", False):
+        return None
+    minutes = int(getattr(row, "shop_session_timeout_minutes", 0) or 0)
+    return minutes * 60 if minutes > 0 else None
 
 
 def set_receipt_paper_width(*, width: str) -> CompanyPosSettings:
@@ -7535,6 +7603,624 @@ def day_session_balance_summary(session) -> dict:
         supplier_payments=supplier_payments,
         refunds=refunds,
     )
+
+
+def day_session_report_details(session) -> dict:
+    """Line-level rows for the day accounting report (PDF preview)."""
+    from items.models import StockMovement, StockMovementType
+
+    from .models import ShopReceipt
+
+    if session is None:
+        return {}
+
+    closed = session.closed_at or timezone.now()
+    window = {
+        "shop_id": session.shop_id,
+        "created_at__gte": session.opened_at,
+        "created_at__lt": closed,
+    }
+
+    category_labels = dict(ExpenseCategory.choices)
+    expense_rows = []
+    drawing_rows = []
+    for row in (
+        Expense.objects.filter(**window)
+        .order_by("created_at")
+        .values(
+            "created_at",
+            "name",
+            "category",
+            "amount",
+            "amount_paid",
+            "cash_amount",
+            "mpesa_amount",
+            "card_amount",
+            "created_by__user__first_name",
+            "created_by__user__last_name",
+            "created_by__user__username",
+        )
+    ):
+        paid = row["amount_paid"]
+        if paid is None:
+            paid = row["amount"] or Decimal("0.00")
+        entry = {
+            "at": row["created_at"],
+            "name": row["name"],
+            "category_label": category_labels.get(
+                row["category"], row["category"] or "Expense"
+            ),
+            "paid": paid,
+            "cash": Decimal(row["cash_amount"] or 0),
+            "mpesa": Decimal(row["mpesa_amount"] or 0),
+            "card": Decimal(row["card_amount"] or 0),
+        }
+        if row["category"] == ExpenseCategory.OWNER_DRAWINGS:
+            # Drawing names are stamped "OWNER DRAWING · <drawer> · <split>".
+            name = row["name"] or ""
+            drawer = ""
+            parts = [part.strip() for part in name.split("·")]
+            if len(parts) >= 2 and parts[0].upper() == "OWNER DRAWING":
+                drawer = parts[1]
+            entry["drawer"] = drawer or name
+            entry["by"] = (
+                f"{row['created_by__user__first_name'] or ''} "
+                f"{row['created_by__user__last_name'] or ''}"
+            ).strip() or (row["created_by__user__username"] or "")
+            drawing_rows.append(entry)
+        else:
+            expense_rows.append(entry)
+
+    stock_rows = []
+    movements = (
+        StockMovement.objects.filter(
+            movement_type=StockMovementType.IN,
+            amount_paid__gt=0,
+            **window,
+        )
+        .prefetch_related("lines")
+        .order_by("created_at")
+    )
+    for movement in movements:
+        lines = list(movement.lines.all())
+        suppliers = []
+        for line in lines:
+            supplier = (line.supplier_name or "").strip()
+            if supplier and supplier not in suppliers:
+                suppliers.append(supplier)
+        item_names = [
+            (line.item_name or (line.item.name if line.item else "") or "").strip()
+            for line in lines
+        ]
+        item_names = [name for name in item_names if name]
+        if suppliers:
+            label = " · ".join(suppliers)
+        elif len(item_names) == 1:
+            label = item_names[0]
+        elif item_names:
+            label = f"{item_names[0]} +{len(item_names) - 1} more"
+        else:
+            label = "Stock purchase"
+        count = len(lines)
+        if count:
+            label = f"{label} ({count} item{'s' if count != 1 else ''})"
+        stock_rows.append(
+            {"at": movement.created_at, "label": label, "paid": movement.amount_paid}
+        )
+
+    sales_count = ShopReceipt.objects.filter(
+        kind=ShopReceiptKind.SALE, **window
+    ).count()
+
+    return {
+        "sales_count": sales_count,
+        "expenses": expense_rows,
+        "drawings": drawing_rows,
+        "stock_purchases": stock_rows,
+    }
+
+
+def build_shop_day_report_pdf(
+    *, shop: Shop, session, printed_by: str = "", company_name: str = ""
+) -> bytes:
+    """Branded A4 portrait PDF — the shop day's accounting preview/summary."""
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    from core.pdf_fonts import (
+        MANROPE_PDF,
+        MANROPE_PDF_BOLD,
+        register_manrope_pdf_fonts,
+    )
+
+    register_manrope_pdf_fonts()
+
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    summary = day_session_balance_summary(session)
+    details = day_session_report_details(session)
+    channels = shop_day_balance_channels(shop=shop)
+    printed_at = timezone.localtime()
+    is_open = session.closed_at is None
+    opened_by = (
+        session.opened_by.user.get_full_name()
+        or session.opened_by.user.username
+        if session.opened_by
+        else "—"
+    )
+    closed_by = (
+        session.closed_by.user.get_full_name()
+        or session.closed_by.user.username
+        if session.closed_by
+        else ""
+    )
+
+    ink = colors.HexColor("#0b1220")
+    muted = colors.HexColor("#5b6b7c")
+    line = colors.HexColor("#e2e8f0")
+    surface = colors.HexColor("#f8fafc")
+    head_fill = colors.HexColor("#0f172a")
+    accent = colors.HexColor("#0f766e")
+    accent_soft = colors.HexColor("#ccfbf1")
+    white = colors.white
+    money_out = colors.HexColor("#b45309")
+
+    def _esc(text) -> str:
+        return (
+            str(text if text is not None else "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    def _fmt(amount) -> str:
+        if amount is None:
+            return "—"
+        value = Decimal(amount or 0)
+        if value == value.quantize(Decimal("1")):
+            return f"{value.quantize(Decimal('1')):,}"
+        return f"{value.quantize(Decimal('0.01')):,}"
+
+    styles = getSampleStyleSheet()
+    brand_style = ParagraphStyle(
+        "DayBrand", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=8, textColor=accent, leading=10, spaceAfter=1,
+    )
+    title_style = ParagraphStyle(
+        "DayTitle", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=17, textColor=ink, leading=20, spaceAfter=1,
+    )
+    subtitle_style = ParagraphStyle(
+        "DaySubtitle", parent=styles["Normal"], fontName=MANROPE_PDF,
+        fontSize=9, textColor=muted, leading=12,
+    )
+    meta_right = ParagraphStyle(
+        "DayMetaRight", parent=styles["Normal"], fontName=MANROPE_PDF,
+        fontSize=8, textColor=muted, leading=10, alignment=TA_RIGHT,
+    )
+    meta_right_strong = ParagraphStyle(
+        "DayMetaRightStrong", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=9, textColor=ink, leading=11, alignment=TA_RIGHT,
+    )
+    kpi_label = ParagraphStyle(
+        "DayKpiLabel", parent=styles["Normal"], fontName=MANROPE_PDF,
+        fontSize=7, textColor=muted, leading=9, alignment=TA_LEFT,
+    )
+    kpi_value = ParagraphStyle(
+        "DayKpiValue", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=12, textColor=ink, leading=14, alignment=TA_LEFT,
+    )
+    head_cell = ParagraphStyle(
+        "DayHead", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=7.5, textColor=white, leading=9.5,
+    )
+    head_cell_right = ParagraphStyle(
+        "DayHeadRight", parent=head_cell, alignment=TA_RIGHT,
+    )
+    cell = ParagraphStyle(
+        "DayCell", parent=styles["Normal"], fontName=MANROPE_PDF,
+        fontSize=8, textColor=ink, leading=10,
+    )
+    cell_right = ParagraphStyle(
+        "DayCellRight", parent=cell, alignment=TA_RIGHT,
+    )
+    cell_strong = ParagraphStyle(
+        "DayCellStrong", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=8, textColor=ink, leading=10,
+    )
+    cell_strong_right = ParagraphStyle(
+        "DayCellStrongRight", parent=cell_strong, alignment=TA_RIGHT,
+    )
+    cell_out = ParagraphStyle(
+        "DayCellOut", parent=cell_right, textColor=money_out,
+    )
+    section_style = ParagraphStyle(
+        "DaySection", parent=styles["Normal"], fontName=MANROPE_PDF_BOLD,
+        fontSize=10, textColor=ink, leading=13, spaceBefore=8, spaceAfter=3,
+    )
+    note_style = ParagraphStyle(
+        "DayNote", parent=styles["Normal"], fontName=MANROPE_PDF,
+        fontSize=8, textColor=muted, leading=11,
+    )
+
+    buffer = BytesIO()
+    page_size = A4
+    left_m = right_m = 12 * mm
+    top_m = 12 * mm
+    bottom_m = 14 * mm
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=page_size,
+        leftMargin=left_m,
+        rightMargin=right_m,
+        topMargin=top_m,
+        bottomMargin=bottom_m,
+        title=f"{brand} — Day report · {shop.name}",
+        author=brand,
+    )
+
+    story = []
+    day_label = timezone.localtime(session.opened_at).strftime("%d %b %Y")
+    status_label = "Open — preview" if is_open else "Closed"
+    header = Table(
+        [
+            [
+                [
+                    Paragraph(_esc(brand.upper()), brand_style),
+                    Paragraph("Day accounting report", title_style),
+                    Paragraph(
+                        _esc(shop.name) + f" · {day_label}", subtitle_style
+                    ),
+                ],
+                [
+                    Paragraph(_esc(status_label), meta_right_strong),
+                    Paragraph(
+                        "Opened "
+                        + timezone.localtime(session.opened_at).strftime("%H:%M")
+                        + f" by {_esc(opened_by)}",
+                        meta_right,
+                    ),
+                    Paragraph(
+                        (
+                            "Closed "
+                            + timezone.localtime(session.closed_at).strftime("%H:%M")
+                            + (f" by {_esc(closed_by)}" if closed_by else "")
+                        )
+                        if not is_open
+                        else "Not yet closed",
+                        meta_right,
+                    ),
+                    Paragraph(
+                        "Generated "
+                        + printed_at.strftime("%d %b %Y %H:%M")
+                        + (f" · {_esc(printed_by)}" if printed_by else ""),
+                        meta_right,
+                    ),
+                ],
+            ]
+        ],
+        colWidths=[doc.width * 0.62, doc.width * 0.38],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    story.append(header)
+    story.append(Spacer(1, 6))
+
+    outflows = (
+        (summary.get("expenses_paid") or 0)
+        + (summary.get("suppliers_paid") or 0)
+        + (summary.get("drawings_paid") or 0)
+        + (summary.get("cash_refunds") or 0)
+        + (summary.get("mpesa_refunds") or 0)
+        + (summary.get("card_refunds") or 0)
+    )
+    closing_label = "Expected closing" if is_open else "Counted closing"
+    closing_value = (
+        summary.get("expected_total")
+        if is_open
+        else summary.get("closing_total")
+    )
+    kpis = [
+        ("Opened with", summary.get("opening_total")),
+        ("Sales collected", summary.get("sales_total")),
+        ("Paid out", outflows),
+        (closing_label, closing_value),
+    ]
+    kpi_cells = []
+    for label, value in kpis:
+        kpi_cells.append(
+            [
+                Paragraph(_esc(label.upper()), kpi_label),
+                Paragraph(f"KSh {_fmt(value)}", kpi_value),
+            ]
+        )
+    kpi_table = Table([kpi_cells], colWidths=[doc.width / 4.0] * 4)
+    kpi_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), surface),
+                ("BOX", (0, 0), (-1, -1), 0.75, line),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, line),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    story.append(kpi_table)
+    story.append(Spacer(1, 10))
+
+    # ---- Money summary table ------------------------------------------------
+    channel_cols = [("cash", "Cash"), ("mpesa", "M-Pesa")]
+    if channels.get("card"):
+        channel_cols.append(("card", "Card"))
+    ncol = len(channel_cols) + 2
+    col_widths = [doc.width * 0.34] + [
+        doc.width * 0.66 / (ncol - 1)
+    ] * (ncol - 1)
+
+    head = [Paragraph("Money flow", head_cell)]
+    for _key, label in channel_cols:
+        head.append(Paragraph(_esc(label), head_cell_right))
+    head.append(Paragraph("Total", head_cell_right))
+
+    def _money_row(label, cash_v, mpesa_v, card_v, total_v, *, strong=False, minus=False):
+        style_r = cell_strong_right if strong else cell_right
+        style_l = cell_strong if strong else cell
+        values = {"cash": cash_v, "mpesa": mpesa_v, "card": card_v}
+
+        def _cell(value):
+            if minus and value is not None and Decimal(value) != 0:
+                return f"−{_fmt(value)}"
+            return _fmt(value)
+
+        row = [Paragraph(_esc(label), style_l)]
+        for key, _lbl in channel_cols:
+            row.append(Paragraph(_cell(values.get(key)), style_r))
+        row.append(Paragraph(_cell(total_v), style_r))
+        return row
+
+    refunds_total = (
+        (summary.get("cash_refunds") or 0)
+        + (summary.get("mpesa_refunds") or 0)
+        + (summary.get("card_refunds") or 0)
+    )
+    rows = [
+        _money_row(
+            "Opening float",
+            summary.get("opening_cash"),
+            summary.get("opening_mpesa"),
+            summary.get("opening_card"),
+            summary.get("opening_total"),
+        ),
+        _money_row(
+            f"Sales collected ({details.get('sales_count') or 0} receipts)",
+            summary.get("cash_sales"),
+            summary.get("mpesa_sales"),
+            summary.get("card_sales"),
+            summary.get("sales_total"),
+        ),
+        _money_row(
+            "Returns paid",
+            summary.get("cash_refunds"),
+            summary.get("mpesa_refunds"),
+            summary.get("card_refunds"),
+            refunds_total,
+            minus=True,
+        ),
+        _money_row(
+            "Expenses paid",
+            summary.get("expenses_paid"),
+            None,
+            None,
+            summary.get("expenses_paid"),
+            minus=True,
+        ),
+        _money_row(
+            "Stock bought",
+            summary.get("suppliers_paid"),
+            None,
+            None,
+            summary.get("suppliers_paid"),
+            minus=True,
+        ),
+        _money_row(
+            "Owner drawings",
+            summary.get("drawings_cash"),
+            summary.get("drawings_mpesa"),
+            summary.get("drawings_card"),
+            summary.get("drawings_paid"),
+            minus=True,
+        ),
+        _money_row(
+            "Expected in till",
+            summary.get("expected_cash"),
+            summary.get("expected_mpesa"),
+            summary.get("expected_card"),
+            summary.get("expected_total"),
+            strong=True,
+        ),
+    ]
+    strong_rows = {len(rows)}
+    if not is_open:
+        rows.append(
+            _money_row(
+                "Counted closing",
+                summary.get("closing_cash"),
+                summary.get("closing_mpesa"),
+                summary.get("closing_card"),
+                summary.get("closing_total"),
+                strong=True,
+            )
+        )
+        rows.append(
+            _money_row(
+                "Variance",
+                summary.get("cash_variance"),
+                summary.get("mpesa_variance"),
+                summary.get("card_variance"),
+                summary.get("total_variance"),
+                strong=True,
+            )
+        )
+        strong_rows.update({len(rows) - 1, len(rows)})
+
+    money_table = Table([head, *rows], colWidths=col_widths, repeatRows=1)
+    money_style = [
+        ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+        ("GRID", (0, 0), (-1, -1), 0.5, line),
+        ("BOX", (0, 0), (-1, -1), 0.75, line),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]
+    for index in sorted(strong_rows):
+        money_style.append(("BACKGROUND", (0, index), (-1, index), accent_soft))
+    money_table.setStyle(TableStyle(money_style))
+    story.append(money_table)
+    story.append(Spacer(1, 10))
+
+    # ---- Detail tables -------------------------------------------------------
+    def _detail_table(title, headers, body, widths=None, empty_note="None recorded."):
+        story.append(Paragraph(_esc(title), section_style))
+        if not body:
+            story.append(Paragraph(_esc(empty_note), note_style))
+            story.append(Spacer(1, 6))
+            return
+        data = [
+            [
+                Paragraph(_esc(h), head_cell_right if i else head_cell)
+                for i, h in enumerate(headers)
+            ]
+        ]
+        for row in body:
+            data.append(
+                [
+                    Paragraph(_esc(c), cell_right if i else cell)
+                    for i, c in enumerate(row)
+                ]
+            )
+        if widths is None:
+            widths = [doc.width * 0.5] + [
+                doc.width * 0.5 / (len(headers) - 1)
+            ] * (len(headers) - 1)
+        table = Table(data, colWidths=widths, repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+                    ("GRID", (0, 0), (-1, -1), 0.5, line),
+                    ("BOX", (0, 0), (-1, -1), 0.75, line),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, surface]),
+                ]
+            )
+        )
+        story.append(table)
+        story.append(Spacer(1, 6))
+
+    def _time(at):
+        return timezone.localtime(at).strftime("%H:%M")
+
+    drawing_headers = ["Time · detail"] + [label for _k, label in channel_cols] + ["Total"]
+    drawing_widths = [doc.width * 0.46] + [
+        doc.width * 0.54 / (len(channel_cols) + 1)
+    ] * (len(channel_cols) + 1)
+    _detail_table(
+        "Drawings done",
+        drawing_headers,
+        [
+            [
+                f"{_time(r['at'])} · {r['name']}",
+                *[
+                    _fmt(
+                        {
+                            "cash": r["cash"],
+                            "mpesa": r["mpesa"],
+                            "card": r["card"],
+                        }.get(key)
+                    )
+                    for key, _lbl in channel_cols
+                ],
+                _fmt(r["paid"]),
+            ]
+            for r in details.get("drawings") or []
+        ],
+        widths=drawing_widths,
+        empty_note="No drawings recorded this day.",
+    )
+
+    _detail_table(
+        "Expenses incurred",
+        ["Time", "Expense", "Category", "Paid"],
+        [
+            [
+                _time(r["at"]),
+                r["name"],
+                r["category_label"],
+                _fmt(r["paid"]),
+            ]
+            for r in details.get("expenses") or []
+        ],
+        widths=[
+            doc.width * 0.12,
+            doc.width * 0.48,
+            doc.width * 0.22,
+            doc.width * 0.18,
+        ],
+        empty_note="No expenses recorded this day.",
+    )
+
+    _detail_table(
+        "Stock bought",
+        ["Time", "Supplier / items", "Paid"],
+        [
+            [_time(r["at"]), r["label"], _fmt(r["paid"])]
+            for r in details.get("stock_purchases") or []
+        ],
+        widths=[doc.width * 0.14, doc.width * 0.64, doc.width * 0.22],
+        empty_note="No stock purchases paid this day.",
+    )
+
+    if is_open:
+        story.append(Spacer(1, 4))
+        story.append(
+            Paragraph(
+                "Preview only — the day is still open. “Expected in till” is "
+                "what the counted closing should match.",
+                note_style,
+            )
+        )
+
+    doc.build(story)
+    return buffer.getvalue()
 
 
 def day_sales_status_summary(session) -> dict:

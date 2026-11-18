@@ -11,13 +11,16 @@ from django.urls import reverse
 
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
 from shops.models import Shop
-from shops.session import SESSION_SHOP_PORTAL_SHOP_KEY
+from shops.services import (
+    set_company_pos_setting,
+    set_employee_session_timeout_minutes,
+    set_shop_session_timeout_minutes,
+)
+from shops.session import SESSION_SHOP_PORTAL_IDLE_KEY, SESSION_SHOP_PORTAL_SHOP_KEY
 
 
 @override_settings(
     ALLOWED_HOSTS=["testserver", "localhost"],
-    # Keep idle tests on a short window; production default is 2 hours.
-    EMPLOYEE_IDLE_TIMEOUT_SECONDS=15 * 60,
     RATE_LIMITS={
         "login": {"max": 10_000, "window": 60},
         "check_employee_id": {"max": 10_000, "window": 60},
@@ -54,6 +57,11 @@ class SingleSessionTests(TestCase):
             created_by=self.profile,
         )
         self.profile.assigned_shops.add(self.shop)
+        # Session timeout is opt-in; this suite exercises a 15-minute window.
+        set_company_pos_setting(
+            field="enable_employee_session_timeout", enabled=True
+        )
+        set_employee_session_timeout_minutes(minutes=15)
 
     def _login_shop(self, client=None):
         client = client or Client()
@@ -90,6 +98,15 @@ class SingleSessionTests(TestCase):
         from employees.middleware import IDLE_SESSION_KEY
 
         return client.session.get(IDLE_SESSION_KEY)
+
+    def _set_shop_idle_ts(self, client, seconds_ago):
+        """Move the shop portal's last-activity mark into the past."""
+        session = client.session
+        session[SESSION_SHOP_PORTAL_IDLE_KEY] = int(time.time()) - seconds_ago
+        session.save()
+
+    def _shop_idle_ts(self, client):
+        return client.session.get(SESSION_SHOP_PORTAL_IDLE_KEY)
 
     def test_login_stamps_session_key(self):
         client = self._login_employee()
@@ -215,6 +232,75 @@ class SingleSessionTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(self._idle_ts(client), last)
+
+    def test_idle_timeout_off_keeps_employee_signed_in(self):
+        """With the timeout toggle off, sessions end only on logout."""
+        set_company_pos_setting(
+            field="enable_employee_session_timeout", enabled=False
+        )
+        client = self._login_employee()
+        self._set_idle_ts(client, 60 * 60 * 48)
+        self.assertTrue(self._ping(client).get("employee_auth"))
+
+    def test_shop_idle_timeout_signs_out(self):
+        """An idle shop portal session is cleared and bounced to shop login."""
+        set_company_pos_setting(
+            field="enable_shop_session_timeout", enabled=True
+        )
+        set_shop_session_timeout_minutes(minutes=15)
+        client = self._login_shop()
+        self.assertTrue(self._ping(client).get("shop_auth"))
+
+        self._set_shop_idle_ts(client, 901)
+        self.assertFalse(self._ping(client).get("shop_auth"))
+
+        response = client.get(
+            reverse(
+                "employees:my_shop_workspace", kwargs={"shop_id": self.shop.pk}
+            )
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            response.url.startswith(reverse("employees:shop_login"))
+        )
+
+    def test_shop_timeout_off_keeps_session(self):
+        """Default off: the shop portal stays signed in until logout."""
+        client = self._login_shop()
+        self._set_shop_idle_ts(client, 60 * 60 * 24 * 30)
+        self.assertTrue(self._ping(client).get("shop_auth"))
+
+    def test_shop_navigation_refreshes_idle_window(self):
+        set_company_pos_setting(
+            field="enable_shop_session_timeout", enabled=True
+        )
+        set_shop_session_timeout_minutes(minutes=15)
+        client = self._login_shop()
+        self._ping(client)
+        self._set_shop_idle_ts(client, 899)
+
+        response = client.get(
+            reverse(
+                "employees:my_shop_workspace", kwargs={"shop_id": self.shop.pk}
+            ),
+            HTTP_SEC_FETCH_MODE="navigate",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(
+            self._shop_idle_ts(client), int(time.time()) - 5
+        )
+
+    def test_session_timeout_minutes_validation(self):
+        from django.core.exceptions import ValidationError
+
+        with self.assertRaises(ValidationError):
+            set_employee_session_timeout_minutes(minutes="abc")
+        with self.assertRaises(ValidationError):
+            set_employee_session_timeout_minutes(minutes=0)
+        with self.assertRaises(ValidationError):
+            set_shop_session_timeout_minutes(minutes=60 * 24 * 31)
+        row = set_shop_session_timeout_minutes(minutes=60)
+        self.assertEqual(row.shop_session_timeout_minutes, 60)
 
     def test_second_employee_login_keeps_both_devices(self):
         """Employee portal allows concurrent sessions — no device is superseded."""

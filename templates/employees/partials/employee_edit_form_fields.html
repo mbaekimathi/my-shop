@@ -138,6 +138,27 @@
   </select>
 </label>
 
+<fieldset class="field role-extras" data-extra-roles-field>
+  <span class="field-label">Can also sign in as <em>(optional)</em></span>
+  <p class="field-hint">
+    Extra roles this employee can switch to from their account menu after signing in.
+  </p>
+  <div class="role-extras-grid">
+    {% for value, label in role_choices %}
+    <label class="field field--checkbox role-extras-option">
+      <input
+        type="checkbox"
+        name="extra_roles"
+        value="{{ value }}"
+        {% if form_data.extra_roles and value in form_data.extra_roles %}checked{% endif %}
+        data-extra-role-option
+      >
+      <span>{{ label }}</span>
+    </label>
+    {% endfor %}
+  </div>
+</fieldset>
+
 <div class="field-row">
   <label class="field">
     <span class="field-label">New password <em>(optional)</em></span>

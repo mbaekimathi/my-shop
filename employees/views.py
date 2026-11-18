@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -50,6 +51,8 @@ from shops.services import (
     set_company_delivery_amount,
     set_company_pos_setting,
     set_company_tax_percent,
+    set_employee_session_timeout_minutes,
+    set_shop_session_timeout_minutes,
     set_daraja_environment,
     set_daraja_stk_enabled,
     set_shop_stk_push_enabled,
@@ -72,8 +75,11 @@ from shops.services import (
     update_company_and_shop_profiles,
     list_shop_profile_rows,
     list_active_shops,
+    list_working_hours_shop_rows,
     active_shop_count,
     save_working_hours_settings,
+    set_working_hours_enabled,
+    update_shop_working_hours_from_post,
     update_daraja_settings,
     update_developer_payment_settings,
     update_twilio_settings,
@@ -83,10 +89,13 @@ from shops.services import (
 from shops.views import shop_management
 
 from .access import (
+    SESSION_ACTIVE_ROLE_KEY,
     active_employee_required,
     get_profile,
     get_profile_for_request,
     redirect_to_role_home,
+    refresh_effective_role,
+    role_home_url_name,
     role_required,
     role_from_url_segment,
     role_url_segment,
@@ -96,7 +105,7 @@ from .analytics_views import analytics_dashboard
 from communications.views import communications_dashboard
 from .countries import COUNTRY_DIAL_CODES
 from .hr_views import hr_management_page
-from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, FULL_STOCK_WORKFLOW_ROLES, SHOP_ALLOCATION_ROLES
+from .models import EmployeeProfile, EmployeeRole, EmployeeStatus, FULL_STOCK_WORKFLOW_ROLES, SHOP_ALLOCATION_ROLES, join_extra_roles
 from .pagination import page_url, pagination_links, redirect_query_page
 from .services import (
     EMPLOYEE_ID_RE,
@@ -111,13 +120,19 @@ from .services import (
 )
 from .throttle import rate_limit
 from .workspace import (
+    CASHIER_SIDEBAR_LINKS,
     ROLE_PAGE_META,
     buy_stock_modal_context,
     cashier_day_summaries_context,
+    cashier_sidebar_key_from_field,
+    cashier_sidebar_pref_enabled,
+    cashier_sidebar_pref_field,
     get_dashboard_module,
     get_settings_section,
     get_settings_sections,
+    set_cashier_sidebar_pref,
     settings_section_url,
+    sidebar_for_cashier_settings,
     sidebar_for_marketing_links,
     sidebar_for_module,
     sidebar_for_profile,
@@ -528,7 +543,7 @@ def employee_login(request):
     # credentials are an explicit sign-in (or account switch), never an
     # auto-resume of the current session.
     if request.method == "GET" and request.user.is_authenticated and not switching:
-        profile = get_profile(request.user)
+        profile = get_profile_for_request(request)
         if profile and profile.is_active_employee:
             if next_url:
                 return redirect(next_url)
@@ -568,6 +583,13 @@ def employee_login(request):
                     error = "Your account is not active. Contact your administrator."
                 else:
                     begin_employee_session(request, user, profile)
+                    if len(profile.role_values()) > 1:
+                        picker_url = reverse("employees:select_role")
+                        if next_url:
+                            picker_url = (
+                                f"{picker_url}?{urlencode({'next': next_url})}"
+                            )
+                        return redirect(picker_url)
                     if next_url:
                         return redirect(next_url)
                     return redirect_to_role_home(profile)
@@ -689,6 +711,60 @@ def pending_approval(request):
 
 
 @active_employee_required
+@require_http_methods(["GET", "POST"])
+def employee_select_role(request):
+    """Pick which of the employee's assigned roles to act as this session."""
+    profile = get_profile_for_request(request)
+    roles = profile.role_values()
+    next_url = _safe_login_next(
+        request,
+        request.POST.get("next")
+        if request.method == "POST"
+        else request.GET.get("next"),
+    )
+
+    if len(roles) < 2:
+        if next_url:
+            return redirect(next_url)
+        return redirect_to_role_home(profile)
+
+    if request.method == "POST":
+        chosen = (request.POST.get("role") or "").strip()
+        if chosen not in roles:
+            messages.error(request, "Choose one of your assigned roles.")
+        else:
+            request.session[SESSION_ACTIVE_ROLE_KEY] = chosen
+            refresh_effective_role(request)
+            if next_url:
+                return redirect(next_url)
+            return redirect(role_home_url_name(chosen))
+
+    role_cards = [
+        {
+            "value": value,
+            "label": EmployeeRole(value).label,
+            "icon": ROLE_PAGE_META.get(value, ROLE_PAGE_META[EmployeeRole.EMPLOYEE])[
+                "icon"
+            ],
+            "summary": ROLE_PAGE_META.get(
+                value, ROLE_PAGE_META[EmployeeRole.EMPLOYEE]
+            )["summary"],
+            "current": value == profile.role,
+        }
+        for value in roles
+    ]
+    return render(
+        request,
+        "employees/select_role.html",
+        {
+            "profile": profile,
+            "role_cards": role_cards,
+            "next_url": next_url,
+        },
+    )
+
+
+@active_employee_required
 def dashboard(request):
     """Entry point — send active employees to their role dashboard."""
     return redirect_to_role_home(get_profile_for_request(request))
@@ -725,7 +801,11 @@ def role_employee(request):
     from shops.models import ShopReceiptStatus
 
     receipt_status = receipt_filter["status"]
-    if receipt_status not in {ShopReceiptStatus.ACTIVE, ShopReceiptStatus.CONFIRMED}:
+    if receipt_status not in {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.CONFIRMED,
+        ShopReceiptStatus.CANCELLED,
+    }:
         receipt_status = None
         receipt_filter["status"] = "all"
     receipt_bounds = None
@@ -807,7 +887,9 @@ def employee_my_analytics(request):
             "status_label": profile.get_status_display(),
             "stats": build_employee_analytics(profile),
             "page_sidebar": sidebar_for_role_dashboard(
-                EmployeeRole.EMPLOYEE, profile=profile
+                EmployeeRole.EMPLOYEE,
+                profile=profile,
+                active_slug="my-analytics",
             ),
         },
     )
@@ -963,14 +1045,23 @@ def update_employee_access(request, role_segment, employee_id):
     changed = []
     if target.role != new_role:
         target.role = new_role
+        # The new primary must not linger in the additional-roles list.
+        remaining = [r for r in target.extra_role_list() if r != new_role]
+        new_extras = join_extra_roles(remaining)
+        if new_extras != target.extra_roles:
+            target.extra_roles = new_extras
         changed.append(f"role → {target.get_role_display()}")
     if target.status != new_status:
         target.status = new_status
         changed.append(f"status → {target.get_status_display()}")
 
-    update_fields = ["role", "status", "updated_at"]
+    update_fields = ["role", "status", "extra_roles", "updated_at"]
     cleared_shops = False
-    if new_role not in SHOP_ALLOCATION_ROLES and target.assigned_shops.exists():
+    granted_roles = {new_role, *target.extra_role_list()}
+    if (
+        not granted_roles & SHOP_ALLOCATION_ROLES
+        and target.assigned_shops.exists()
+    ):
         target.assigned_shops.clear()
         cleared_shops = True
         changed.append("shops cleared")
@@ -1012,6 +1103,283 @@ def role_store_manager(request):
 @role_required(EmployeeRole.SHOP_CASHIER)
 def role_shop_cashier(request):
     return _render_role_page(request, EmployeeRole.SHOP_CASHIER)
+
+
+@role_required(EmployeeRole.SHOP_CASHIER)
+@require_http_methods(["GET", "POST"])
+def cashier_settings(request):
+    """Cashier settings — per-cashier sidebar picks + open & close options.
+
+    Sidebar link picks are stored per employee (EmployeeProfile.sidebar_prefs)
+    and only hide links on /shop-cashier/ — pages stay reachable by URL.
+    The open & close schedule options edit the same company/shop rows as
+    Settings → POS, so they require the settings/company-pos permission.
+    """
+    from .module_permissions import employee_may, require_module_permission
+
+    profile = get_profile_for_request(request)
+    denied = require_module_permission(request, profile, "settings", "home")
+    if denied is not None:
+        return denied
+
+    can_edit_open_close = employee_may(profile, "settings", "company-pos")
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        wants_json = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or "application/json" in (request.headers.get("Accept") or "")
+        )
+
+        def _fail(message, status=400):
+            if wants_json:
+                return JsonResponse({"ok": False, "error": message}, status=status)
+            messages.error(request, message)
+            return redirect(request.path)
+
+        if action == "toggle_pos_setting":
+            field = (request.POST.get("field") or "").strip()
+            enabled = (request.POST.get("enabled") or "").strip() in (
+                "1",
+                "true",
+                "on",
+                "yes",
+            )
+            pref_key = cashier_sidebar_key_from_field(field)
+            if pref_key:
+                try:
+                    set_cashier_sidebar_pref(profile, pref_key, enabled)
+                except ValidationError as exc:
+                    return _fail("; ".join(exc.messages))
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "field": field,
+                            "enabled": cashier_sidebar_pref_enabled(
+                                profile, pref_key
+                            ),
+                        }
+                    )
+                messages.success(request, "Sidebar updated.")
+                return redirect(request.path)
+            if field != "enable_open_close":
+                return _fail("Unknown cashier setting.")
+            if not can_edit_open_close:
+                return _fail(
+                    "You do not have permission for settings/company-pos.",
+                    status=403,
+                )
+            try:
+                row = set_company_pos_setting(field=field, enabled=enabled)
+            except ValidationError as exc:
+                return _fail("; ".join(exc.messages))
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "field": field,
+                        "enabled": pos_toggle_enabled(row, field),
+                        "stock_mode": stock_mode_of(row),
+                    }
+                )
+            messages.success(request, "Setting updated.")
+            return redirect(request.path)
+        if action in ("set_open_close_mode", "set_open_close_times"):
+            if not can_edit_open_close:
+                return _fail(
+                    "You do not have permission for settings/company-pos.",
+                    status=403,
+                )
+            if action == "set_open_close_mode":
+                mode = (request.POST.get("mode") or "").strip().lower()
+                if mode not in ("anytime", "set"):
+                    return _fail("Choose a valid open & close schedule.")
+                row = set_working_hours_enabled(enabled=(mode == "set"))
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "open_close_mode": mode,
+                            "working_hours_enabled": bool(row.enabled),
+                        }
+                    )
+                messages.success(request, "Open & close schedule updated.")
+                return redirect(request.path)
+            try:
+                update_shop_working_hours_from_post(
+                    request.POST, list_active_shops()
+                )
+            except ValidationError as exc:
+                return _fail("; ".join(exc.messages))
+            if wants_json:
+                return JsonResponse({"ok": True})
+            messages.success(request, "Opening & closing times saved.")
+            return redirect(request.path)
+        return _fail("Unknown action.")
+
+    meta = {
+        "title": "Cashier Settings",
+        "headline": "Cashier settings",
+        "summary": (
+            "Choose which links appear on your dashboard sidebar, "
+            "and set the shop opening & closing options."
+        ),
+        "icon": "sliders-horizontal",
+    }
+    pos = get_company_pos_settings()
+    return render(
+        request,
+        "employees/settings_cashier.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "sidebar_toggles": [
+                {
+                    "field": cashier_sidebar_pref_field(key),
+                    "label": label,
+                    "enabled": cashier_sidebar_pref_enabled(profile, key),
+                }
+                for key, label in CASHIER_SIDEBAR_LINKS
+            ],
+            "pos_settings": pos,
+            "can_edit_open_close": can_edit_open_close,
+            "working_hours_enabled": bool(
+                get_company_working_hours_settings().enabled
+            ),
+            "open_close_times_shops": (
+                list_working_hours_shop_rows() if can_edit_open_close else []
+            ),
+            "working_hours_settings_url": settings_section_url(
+                profile.role, "working-hours"
+            ),
+            "page_sidebar": sidebar_for_cashier_settings(profile),
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def role_shop_day(request, role_segment):
+    """Pick a shop, then open/close its day — no floor unlock needed."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+    expected_segment = role_url_segment(profile.role)
+    if role_segment != expected_segment:
+        return redirect("employees:role_shop_day", role_segment=expected_segment)
+
+    from .module_permissions import employee_may, require_module_permission
+
+    denied = require_module_permission(request, profile, "my-shop", "open_close")
+    if denied is not None:
+        return denied
+
+    from items.services import actionable_shops_for_profile
+    from shops.services import (
+        day_session_balance_summary,
+        get_last_closed_shop_day,
+        shop_day_balance_channels,
+        shop_day_floor_state,
+    )
+
+    can_record_drawing = employee_may(
+        profile, "my-shop", "register_expense"
+    )
+    drawing_mode = (request.GET.get("mode") or "").strip() == "drawings"
+
+    back_url = request.get_full_path()
+    day_shops = []
+    for shop in actionable_shops_for_profile(profile):
+        state = shop_day_floor_state(shop=shop)
+        open_session = state.get("open_session")
+        is_open = open_session is not None
+        stale_open = bool(state.get("stale_open"))
+        # Till data is only for the session this cashier opened.
+        own_session = is_open and open_session.opened_by_id == profile.pk
+        other_opener = ""
+        if is_open and not own_session:
+            other = open_session.opened_by.user
+            other_opener = other.get_full_name() or other.username
+        summary = (
+            day_session_balance_summary(open_session) if own_session else {}
+        )
+        last_closed = None if is_open else get_last_closed_shop_day(shop)
+        toggle_url = "{}?{}".format(
+            reverse("employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}),
+            urlencode({"back": back_url}),
+        )
+        if stale_open:
+            action_label = "Close yesterday’s day"
+            action_icon = "alert-triangle"
+        elif is_open:
+            action_label = "Close shop"
+            action_icon = "door-closed"
+        else:
+            action_label = "Open shop"
+            action_icon = "door-open"
+        day_shops.append(
+            {
+                "shop": shop,
+                "is_open": is_open,
+                "own_session": own_session,
+                "other_open": is_open and not own_session,
+                "other_opener": other_opener,
+                "stale_open": stale_open,
+                "open_session": open_session,
+                "summary": summary,
+                "last_closed": last_closed,
+                "balance_channels": shop_day_balance_channels(shop=shop),
+                "toggle_url": toggle_url,
+                "drawing_url": "{}?{}".format(
+                    reverse(
+                        "employees:my_shop_drawings",
+                        kwargs={"shop_id": shop.pk},
+                    ),
+                    urlencode({"back": back_url}),
+                ),
+                "can_draw": (
+                    can_record_drawing and own_session and not stale_open
+                ),
+                "action_label": action_label,
+                "action_icon": action_icon,
+            }
+        )
+
+    if drawing_mode:
+        meta = {
+            "title": "Record a drawing",
+            "headline": "Record a drawing",
+            "summary": "Pick the shop to draw from — drawings are recorded against the open day.",
+            "icon": "hand-coins",
+        }
+    else:
+        meta = {
+            "title": "Open / close shop",
+            "headline": "Open / close shop",
+            "summary": "Pick a shop, then enter opening or closing details.",
+            "icon": "door-open",
+        }
+    return render(
+        request,
+        "employees/role_shop_day.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_role_dashboard(
+                profile.role,
+                profile=profile,
+                active_slug="drawings" if drawing_mode else "shop-day",
+                omit_dashboard_link=False,
+            ),
+            "day_shops": day_shops,
+            "drawing_mode": drawing_mode,
+        },
+    )
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver"}
@@ -2654,25 +3022,10 @@ POS_SETTING_GROUPS = (
         "toggles": (("enable_discount", "Discount"),),
     },
     {
-        "title": "Stock",
-        "summary": "Pick one. Turning one on switches the others off.",
-        "toggles": (
-            ("stock_mode_items", "Items"),
-            ("stock_mode_shelf", "Shelf"),
-            ("stock_mode_both", "Both"),
-        ),
-    },
-    {
-        "title": "Open & close",
+        "title": "Tax",
         "summary": "",
-        "toggles": (("enable_open_close", "Compulsory open & close"),),
-    },
-    {
-        "title": "Shop switching",
-        "summary": "",
-        "toggles": (
-            ("enable_passwordless_shop_switch", "Switch shops without password"),
-        ),
+        "toggles": (("enable_tax", "Tax"),),
+        "show_tax_percent": True,
     },
     {
         "title": "Clients",
@@ -2693,6 +3046,37 @@ POS_SETTING_GROUPS = (
         "show_delivery_amount": True,
     },
     {
+        "title": "Stock",
+        "summary": "Pick one. Turning one on switches the others off.",
+        "toggles": (
+            ("stock_mode_items", "Items"),
+            ("stock_mode_shelf", "Shelf"),
+            ("stock_mode_both", "Both"),
+        ),
+    },
+    {
+        "title": "Open & close",
+        "summary": "",
+        "toggles": (("enable_open_close", "Compulsory open & close"),),
+        "show_open_close_schedule": True,
+    },
+    {
+        "title": "Shop switching",
+        "summary": "",
+        "toggles": (
+            ("enable_passwordless_shop_switch", "Switch shops without password"),
+        ),
+    },
+    {
+        "title": "Session timeout",
+        "summary": "Off = a session ends only when the user logs out. On = the user is signed out after the set minutes of inactivity.",
+        "toggles": (
+            ("enable_employee_session_timeout", "Employee session"),
+            ("enable_shop_session_timeout", "Shop session"),
+        ),
+        "show_session_timeouts": True,
+    },
+    {
         "title": "Shop floor sidebar",
         "summary": "Choose which menu links appear on the shop page.",
         "toggles": (
@@ -2707,12 +3091,6 @@ POS_SETTING_GROUPS = (
             ("enable_sidebar_receipts", 'Show "Receipts"'),
             ("enable_sidebar_website", 'Show "Shop website"'),
         ),
-    },
-    {
-        "title": "Tax",
-        "summary": "",
-        "toggles": (("enable_tax", "Tax"),),
-        "show_tax_percent": True,
     },
 )
 
@@ -2864,6 +3242,82 @@ def _company_pos_settings(
                     }
                 )
             messages.success(request, "Delivery amount updated.")
+            return redirect(request.path)
+        if action == "set_employee_session_timeout":
+            try:
+                row = set_employee_session_timeout_minutes(
+                    minutes=request.POST.get("employee_timeout_minutes") or ""
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "employee_session_timeout_minutes": row.employee_session_timeout_minutes,
+                    }
+                )
+            messages.success(request, "Employee session timeout updated.")
+            return redirect(request.path)
+        if action == "set_shop_session_timeout":
+            try:
+                row = set_shop_session_timeout_minutes(
+                    minutes=request.POST.get("shop_timeout_minutes") or ""
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "shop_session_timeout_minutes": row.shop_session_timeout_minutes,
+                    }
+                )
+            messages.success(request, "Shop session timeout updated.")
+            return redirect(request.path)
+        if action == "set_open_close_mode":
+            mode = (request.POST.get("mode") or "").strip().lower()
+            if mode not in ("anytime", "set"):
+                message = "Choose a valid open & close schedule."
+                if wants_json:
+                    return JsonResponse(
+                        {"ok": False, "error": message}, status=400
+                    )
+                messages.error(request, message)
+                return redirect(request.path)
+            row = set_working_hours_enabled(enabled=(mode == "set"))
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "open_close_mode": mode,
+                        "working_hours_enabled": bool(row.enabled),
+                    }
+                )
+            messages.success(request, "Open & close schedule updated.")
+            return redirect(request.path)
+        if action == "set_open_close_times":
+            try:
+                update_shop_working_hours_from_post(
+                    request.POST, list_active_shops()
+                )
+            except ValidationError as exc:
+                message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+                if wants_json:
+                    return JsonResponse({"ok": False, "error": message}, status=400)
+                messages.error(request, message)
+                return redirect(request.path)
+            if wants_json:
+                return JsonResponse({"ok": True})
+            messages.success(request, "Opening & closing times saved.")
             return redirect(request.path)
         if action == "set_receipt_paper_width":
             try:
@@ -3099,6 +3553,10 @@ def _company_pos_settings(
                 "summary": group["summary"],
                 "show_tax_percent": bool(group.get("show_tax_percent")),
                 "show_delivery_amount": bool(group.get("show_delivery_amount")),
+                "show_open_close_schedule": bool(
+                    group.get("show_open_close_schedule")
+                ),
+                "show_session_timeouts": bool(group.get("show_session_timeouts")),
                 "toggles": toggles,
             }
         )
@@ -3133,8 +3591,23 @@ def _company_pos_settings(
             "daraja_settings_url": settings_section_url(
                 context["profile"].role, "company-daraja"
             ),
+            "working_hours_enabled": bool(
+                get_company_working_hours_settings().enabled
+            ),
+            "open_close_times_shops": (
+                list_working_hours_shop_rows() if show_employee_perm_links else []
+            ),
+            "working_hours_settings_url": settings_section_url(
+                context["profile"].role, "working-hours"
+            ),
             "tax_percent_value": f"{pos.tax_percent:.0f}",
             "delivery_amount_value": f"{pos.delivery_amount:.0f}",
+            "employee_timeout_minutes": int(
+                getattr(pos, "employee_session_timeout_minutes", 0) or 0
+            ),
+            "shop_timeout_minutes": int(
+                getattr(pos, "shop_session_timeout_minutes", 0) or 0
+            ),
             "receipt_paper_width": paper_width,
             "receipt_font_size": font["size"],
             "receipt_font_weight": font["weight"],

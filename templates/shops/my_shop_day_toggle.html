@@ -169,140 +169,21 @@
     {% endif %}
 
     {% if is_open and can_record_drawing %}
-    <section class="shop-day-drawings" aria-label="Draw from counter">
-      {% if drawing_errors %}
-      <div class="form-alert" role="alert">
-        {% for error in drawing_errors %}
-        <p>{{ error }}</p>
-        {% endfor %}
+    <div class="shop-day-status shop-day-status--drawings">
+      <div class="shop-day-status-icon" aria-hidden="true">
+        <i data-lucide="hand-coins"></i>
       </div>
-      {% endif %}
-
-      <form
-        method="post"
-        class="shop-day-form shop-day-form--drawing"
-        data-shop-day-drawing-form
-        novalidate
-      >
-        {% csrf_token %}
-        <input type="hidden" name="action" value="drawing">
-        <input type="hidden" name="name" value="{{ drawing_data.name|default:'OWNER DRAWING' }}" data-drawing-name>
-
-        <div class="shop-day-form-head">
-          <div class="shop-day-form-title">
-            <span class="shop-day-form-icon is-draw" aria-hidden="true">
-              <i data-lucide="hand-coins"></i>
-            </span>
-            <div>
-              <h3>Draw from counter</h3>
-              <p>
-                {% if balance_channels.multi %}
-                Enter {{ balance_channels.count_copy }} amounts · employee and person drawing codes required
-                {% elif balance_channels.mpesa %}
-                Deducted from M-Pesa · employee and person drawing codes required
-                {% elif balance_channels.card %}
-                Deducted from card · employee and person drawing codes required
-                {% else %}
-                Deducted from cash · employee and person drawing codes required
-                {% endif %}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div class="shop-day-form-body">
-          <div class="shop-day-balances shop-day-balances--drawing-amounts">
-            {% if balance_channels.cash %}
-            <label class="shop-cart-input shop-day-drawing-amount is-cash">
-              <span><i data-lucide="banknote" aria-hidden="true"></i> Cash</span>
-              <input
-                type="text"
-                name="cash_amount"
-                min="0"
-                step="0.01"
-                inputmode="decimal"
-                value="{{ drawing_data.cash_amount }}"
-                placeholder="0"
-                data-drawing-cash-amount
-                {% if not balance_channels.mpesa and not balance_channels.card %}required{% endif %}
-              >
-            </label>
-            {% endif %}
-            {% if balance_channels.mpesa %}
-            <label class="shop-cart-input shop-day-drawing-amount is-mpesa">
-              <span><i data-lucide="smartphone" aria-hidden="true"></i> M-Pesa</span>
-              <input
-                type="text"
-                name="mpesa_amount"
-                min="0"
-                step="0.01"
-                inputmode="decimal"
-                value="{{ drawing_data.mpesa_amount }}"
-                placeholder="0"
-                data-drawing-mpesa-amount
-                {% if not balance_channels.cash and not balance_channels.card %}required{% endif %}
-              >
-            </label>
-            {% endif %}
-            {% if balance_channels.card %}
-            <label class="shop-cart-input shop-day-drawing-amount is-card">
-              <span><i data-lucide="credit-card" aria-hidden="true"></i> Card</span>
-              <input
-                type="text"
-                name="card_amount"
-                min="0"
-                step="0.01"
-                inputmode="decimal"
-                value="{{ drawing_data.card_amount }}"
-                placeholder="0"
-                data-drawing-card-amount
-                {% if not balance_channels.cash and not balance_channels.mpesa %}required{% endif %}
-              >
-            </label>
-            {% endif %}
-          </div>
-          <div class="shop-day-balances shop-day-balances--codes">
-            <label class="shop-cart-input">
-              <span><i data-lucide="user-check" aria-hidden="true"></i> Employee code</span>
-              <input
-                type="text"
-                name="login_code"
-                inputmode="numeric"
-                maxlength="6"
-                autocomplete="one-time-code"
-                placeholder="6 digits"
-                data-drawing-login-code
-                value="{{ drawing_data.login_code }}"
-                required
-              >
-            </label>
-            <label class="shop-cart-input">
-              <span><i data-lucide="user-round" aria-hidden="true"></i> Person drawing code</span>
-              <input
-                type="text"
-                name="drawer_login_code"
-                inputmode="numeric"
-                maxlength="6"
-                autocomplete="one-time-code"
-                placeholder="6 digits"
-                data-drawing-drawer-code
-                value="{{ drawing_data.drawer_login_code }}"
-                required
-              >
-            </label>
-          </div>
-          <p class="shop-cart-status" data-drawing-status>
-            Enter both codes to record the drawing.
-          </p>
-          <div class="shop-day-actions">
-            <button type="submit" class="btn btn--ghost" data-drawing-submit disabled>
-              <i data-lucide="arrow-down-to-line" aria-hidden="true"></i>
-              Record drawing
-            </button>
-          </div>
-        </div>
-      </form>
-    </section>
+      <div>
+        <strong>Owner drawings</strong>
+        <p>Director draws (cash / M-Pesa / card) are recorded on the drawings page.</p>
+        <p class="shop-day-status-actions">
+          <a href="{{ drawings_url }}" class="btn btn--ghost">
+            <i data-lucide="hand-coins" aria-hidden="true"></i>
+            Draw from counter
+          </a>
+        </p>
+      </div>
+    </div>
     {% endif %}
 
     {% if form_errors %}
@@ -424,10 +305,21 @@
         </p>
 
         <div class="shop-day-actions">
-          <a class="btn btn--ghost" href="{% url 'employees:my_shop_workspace' shop.id %}">
+          <a class="btn btn--ghost" href="{{ back_url }}">
             <i data-lucide="arrow-left" aria-hidden="true"></i>
             Back
           </a>
+          {% if is_open or last_closed %}
+          <a
+            class="btn btn--ghost"
+            href="{{ day_report_url }}"
+            target="_blank"
+            rel="noopener"
+          >
+            <i data-lucide="file-text" aria-hidden="true"></i>
+            Day report (PDF)
+          </a>
+          {% endif %}
           <button type="submit" class="btn btn--primary" data-day-submit disabled>
             <i data-lucide="{% if is_open %}lock{% else %}unlock{% endif %}" aria-hidden="true"></i>
             {% if is_open %}Close shop{% else %}Open shop{% endif %}
@@ -516,5 +408,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/my-shop-day.js' %}?v=14"></script>
+<script src="{% static 'js/my-shop-day.js' %}?v=15"></script>
 {% endblock %}
