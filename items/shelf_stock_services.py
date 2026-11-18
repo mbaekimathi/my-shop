@@ -532,3 +532,72 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
         item = archive_shelf_item(shop=shop, shelf_item_id=data.get("shelf_item_id"))
         return f"“{item.name}” removed from the shelf list."
     raise ValidationError("Unknown shelf action.")
+
+
+def apply_shelf_stock_lines(*, shop, actor, mode, lines) -> dict:
+    """Stock in/out many shelf lines in one post.
+
+    Each ``line`` is either a table row (``shelf_item_id`` + qty/price/note)
+    or the quick-add strip (``name`` + unit/qty/price/note). Per-line errors
+    are collected and returned with a done count and total moved.
+    """
+    if mode not in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
+        raise ValidationError("Choose stock in or stock out.")
+    done = 0
+    total = Decimal("0")
+    errors: list[str] = []
+    price_required = (
+        mode == ShelfStockMovementType.IN
+        and _shelf_requirement("require_buying_price_on_in")
+    )
+    for line in lines:
+        name = " ".join(str(line.get("name") or "").split())
+        label = name or f"Item {line.get('shelf_item_id')}"
+        try:
+            if mode == ShelfStockMovementType.IN:
+                if price_required and not str(line.get("price") or "").strip():
+                    raise ValidationError("Enter the unit buying price.")
+            if name:
+                if mode == ShelfStockMovementType.IN:
+                    _item, movement, _registered = stock_in_shelf_item_by_name(
+                        shop=shop,
+                        actor=actor,
+                        name=name,
+                        unit=line.get("unit") or "",
+                        qty=line.get("qty"),
+                        buying_price=_parse_buying_price(
+                            line.get("price"), label
+                        ),
+                        note=line.get("note") or "",
+                    )
+                else:
+                    _item, movement = stock_out_shelf_item_by_name(
+                        shop=shop,
+                        actor=actor,
+                        name=name,
+                        qty=line.get("qty"),
+                        note=line.get("note") or "",
+                    )
+            elif not str(line.get("shelf_item_id") or "").strip():
+                raise ValidationError("Enter the shelf item name.")
+            else:
+                movement = record_shelf_movement(
+                    shop=shop,
+                    shelf_item_id=line.get("shelf_item_id"),
+                    mode=mode,
+                    qty=line.get("qty"),
+                    actor=actor,
+                    note=line.get("note") or "",
+                    buying_price=(
+                        _parse_buying_price(line.get("price"), label)
+                        if mode == ShelfStockMovementType.IN
+                        else None
+                    ),
+                )
+        except ValidationError as exc:
+            for message in getattr(exc, "messages", [str(exc)]):
+                errors.append(f"{label}: {message}")
+        else:
+            done += 1
+            total += movement.quantity
+    return {"done": done, "total": total, "errors": errors}

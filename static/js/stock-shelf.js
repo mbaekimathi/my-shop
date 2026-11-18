@@ -282,4 +282,27 @@
       }
     });
   }
+
+  // Bulk stock in/out: keep a live count of rows (and the quick-add strip)
+  // with a quantity typed, so hidden search-filtered rows still count.
+  const bulkSummary = document.querySelector("[data-shelf-bulk-summary]");
+  if (bulkSummary && layout) {
+    const idleText = bulkSummary.textContent;
+    const recount = () => {
+      let count = 0;
+      document
+        .querySelectorAll(
+          '[data-shelf-stock] input[name^="shelf_qty_"], [name="shelf_new_qty"]'
+        )
+        .forEach((input) => {
+          const value = input.value.trim();
+          if (value && Number(value) > 0) count += 1;
+        });
+      bulkSummary.textContent = count
+        ? `${count} item${count === 1 ? "" : "s"} ready — press the button to apply.`
+        : idleText;
+    };
+    layout.addEventListener("input", recount);
+    recount();
+  }
 })();

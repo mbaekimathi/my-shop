@@ -270,6 +270,25 @@ shelf_action="action:<id>" submit buttons instead of nested forms.
     </table>
   </div>
   {% if stock_mode == 'in' or stock_mode == 'out' %}
+  <div class="store-stock-footer shelf-bulk-footer">
+    <p class="store-stock-footer-summary" data-shelf-bulk-summary>
+      Search to find items, type a quantity on each, then
+      {% if stock_mode == 'in' %}stock them all in{% else %}remove them all{% endif %}
+      with one click.
+    </p>
+    <div class="store-stock-actions">
+      <button
+        type="submit"
+        name="shelf_action"
+        value="{% if stock_mode == 'in' %}in_bulk{% else %}out_bulk{% endif %}"
+        class="store-stock-btn store-stock-btn--primary"
+        data-shelf-bulk-submit
+      >
+        <i data-lucide="{% if stock_mode == 'in' %}package-plus{% else %}package-minus{% endif %}" aria-hidden="true"></i>
+        {% if stock_mode == 'in' %}Stock in entered{% else %}Remove entered{% endif %}
+      </button>
+    </div>
+  </div>
   <div class="store-stock-empty" data-item-search-idle hidden>
     <i data-lucide="search" aria-hidden="true"></i>
     <p>

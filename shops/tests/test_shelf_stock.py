@@ -462,6 +462,138 @@ class ShelfStockTests(TestCase):
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("3"))
 
+    def test_bulk_stock_in_via_stock_management(self):
+        """The Stock in entered button posts every filled row (and the
+        quick-add strip) as one in_bulk action."""
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        item_a = ShelfItem.objects.create(
+            shop=self.shop, name="MAIZE FLOUR 2KG", unit="PACKETS",
+            quantity=Decimal("5"), created_by=self.profile,
+        )
+        item_b = ShelfItem.objects.create(
+            shop=self.shop, name="RICE 1KG", unit="PACKETS",
+            quantity=Decimal("3"), created_by=self.profile,
+        )
+        admin_user = User.objects.create_user(
+            username="800996", password="admin-pass", is_active=True
+        )
+        admin = EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="800996",
+            phone_country_code="+254",
+            phone_number="700000996",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        self.client.force_login(admin_user)
+        from employees.workspace import stock_management_url
+
+        url = (
+            f"{stock_management_url(admin.role, 'in', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+        page = self.client.get(url)
+        self.assertContains(page, 'value="in_bulk"')
+
+        response = self.client.post(
+            url,
+            {
+                "shelf_action": "in_bulk",
+                "shelf_shop_id": str(self.shop.pk),
+                f"shelf_qty_{item_a.pk}": "4",
+                f"shelf_price_{item_a.pk}": "120",
+                f"shelf_qty_{item_b.pk}": "2",
+                f"shelf_price_{item_b.pk}": "80",
+                "shelf_new_name": "sugar 500g",
+                "shelf_new_unit": "PACKETS",
+                "shelf_new_qty": "6",
+                "shelf_new_price": "95",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        item_a.refresh_from_db()
+        item_b.refresh_from_db()
+        self.assertEqual(item_a.quantity, Decimal("9"))
+        self.assertEqual(item_b.quantity, Decimal("5"))
+        new_item = ShelfItem.objects.get(shop=self.shop, name="SUGAR 500G")
+        self.assertEqual(new_item.quantity, Decimal("6"))
+
+        # A bad line fails on its own — the good lines still post.
+        response = self.client.post(
+            url,
+            {
+                "shelf_action": "in_bulk",
+                "shelf_shop_id": str(self.shop.pk),
+                f"shelf_qty_{item_a.pk}": "abc",
+                f"shelf_price_{item_a.pk}": "120",
+                f"shelf_qty_{item_b.pk}": "1",
+                f"shelf_price_{item_b.pk}": "80",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        item_a.refresh_from_db()
+        item_b.refresh_from_db()
+        self.assertEqual(item_a.quantity, Decimal("9"))
+        self.assertEqual(item_b.quantity, Decimal("6"))
+
+        # Nothing filled in is rejected without moving anything.
+        self.client.post(
+            url,
+            {
+                "shelf_action": "in_bulk",
+                "shelf_shop_id": str(self.shop.pk),
+            },
+        )
+        item_b.refresh_from_db()
+        self.assertEqual(item_b.quantity, Decimal("6"))
+
+    def test_bulk_stock_out_via_stock_management(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        item_a = ShelfItem.objects.create(
+            shop=self.shop, name="MAIZE FLOUR 2KG", unit="PACKETS",
+            quantity=Decimal("5"), created_by=self.profile,
+        )
+        item_b = ShelfItem.objects.create(
+            shop=self.shop, name="RICE 1KG", unit="PACKETS",
+            quantity=Decimal("3"), created_by=self.profile,
+        )
+        admin_user = User.objects.create_user(
+            username="800997", password="admin-pass", is_active=True
+        )
+        admin = EmployeeProfile.objects.create(
+            user=admin_user,
+            employee_id="800997",
+            phone_country_code="+254",
+            phone_number="700000997",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        self.client.force_login(admin_user)
+        from employees.workspace import stock_management_url
+
+        url = (
+            f"{stock_management_url(admin.role, 'out', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+        page = self.client.get(url)
+        self.assertContains(page, 'value="out_bulk"')
+
+        response = self.client.post(
+            url,
+            {
+                "shelf_action": "out_bulk",
+                "shelf_shop_id": str(self.shop.pk),
+                f"shelf_qty_{item_a.pk}": "2",
+                f"shelf_qty_{item_b.pk}": "9",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        item_a.refresh_from_db()
+        item_b.refresh_from_db()
+        # item_b over-removes — its line errors, item_a still applies.
+        self.assertEqual(item_a.quantity, Decimal("3"))
+        self.assertEqual(item_b.quantity, Decimal("3"))
+
     def test_portal_changes_require_permitted_staff_id(self):
         set_company_pos_setting(field="enable_shelf_mode", enabled=True)
         client = self._login()

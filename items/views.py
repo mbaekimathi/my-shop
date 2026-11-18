@@ -1544,6 +1544,60 @@ def _stock_shelf_post(
         messages.error(request, "That shop is not in Shelf mode.")
         return _next()
 
+    if action in ("in_bulk", "out_bulk"):
+        from .models import ShelfStockMovementType
+        from .shelf_stock_services import apply_shelf_stock_lines
+
+        lines = []
+        for key, raw in request.POST.items():
+            if not str(key).startswith("shelf_qty_"):
+                continue
+            line_id = str(key)[len("shelf_qty_"):].strip()
+            if not line_id.isdigit() or not str(raw or "").strip():
+                continue
+            lines.append(
+                {
+                    "shelf_item_id": line_id,
+                    "qty": raw,
+                    "price": request.POST.get(f"shelf_price_{line_id}"),
+                    "note": request.POST.get(f"shelf_note_{line_id}") or "",
+                }
+            )
+        # The quick-add strip counts as one more line when it is filled in.
+        strip_name = (request.POST.get("shelf_new_name") or "").strip()
+        strip_qty = (request.POST.get("shelf_new_qty") or "").strip()
+        if strip_name or strip_qty:
+            lines.append(
+                {
+                    "name": strip_name,
+                    "unit": request.POST.get("shelf_new_unit"),
+                    "qty": strip_qty,
+                    "price": request.POST.get("shelf_new_price"),
+                    "note": request.POST.get("shelf_new_note") or "",
+                }
+            )
+        if not lines:
+            messages.error(request, "Enter a quantity on at least one item.")
+            return _next(shelf_shop)
+        move_mode = (
+            ShelfStockMovementType.IN
+            if action == "in_bulk"
+            else ShelfStockMovementType.OUT
+        )
+        result = apply_shelf_stock_lines(
+            shop=shelf_shop, actor=profile, mode=move_mode, lines=lines
+        )
+        for error in result["errors"]:
+            messages.error(request, error)
+        if result["done"]:
+            messages.success(
+                request,
+                f"Recorded {result['done']} shelf stock {move_mode} line"
+                f"{'' if result['done'] == 1 else 's'} "
+                f"({result['total'].normalize():f} units).",
+            )
+        return _next(shelf_shop)
+
     if action in ("in", "out", "archive", "transfer") and not row_id.isdigit():
         messages.error(request, "Pick a shelf item first.")
         return _next(shelf_shop)
