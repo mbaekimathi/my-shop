@@ -4,105 +4,97 @@
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
-{% csrf_token %}
-<section class="staff-panel staff-panel--dense hr--list-table" data-animate="rise">
-  <div class="staff-panel-head">
+<section class="staff-panel staff-panel--dense hr-perm" data-animate="rise">
+  <header class="staff-panel-head hr-auth-head">
     <div>
+      <p class="stock-kicker">HR management</p>
       <h2>{{ meta.headline }}</h2>
       <p>{{ meta.summary }}</p>
     </div>
-    <a class="btn btn--ghost staff-panel-link" href="{{ authorizations_url }}">
-      <i data-lucide="shield-check" aria-hidden="true"></i>
-      <span>Shop authorizations</span>
-    </a>
+    <div class="hr-auth-head-actions">
+      <p class="stock-stat">
+        <strong>{{ employees_page.paginator.count }}</strong>
+        <span>employee{{ employees_page.paginator.count|pluralize }}</span>
+      </p>
+      <a class="btn btn--ghost staff-panel-link" href="{{ authorizations_url }}">
+        <i data-lucide="shield-check" aria-hidden="true"></i>
+        <span>Shop authorizations</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="hr-auth-toolbar">
+    <form class="hr-perm-search" method="get" action="">
+      <label class="item-search-field hr-auth-search">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input
+          type="search"
+          name="q"
+          value="{{ search }}"
+          placeholder="Search name, ID, role, or email…"
+          autocomplete="off"
+          aria-label="Search employees"
+        >
+      </label>
+      <button class="btn btn--ghost hr-perm-search-btn" type="submit">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <span>Search</span>
+      </button>
+      {% if search %}
+      <a class="hr-perm-clear" href="{{ request.path }}">Clear</a>
+      {% endif %}
+    </form>
   </div>
 
-  {% if permission_modules %}
-  <div class="perm-modules" data-permission-matrix>
-    {% for module in permission_modules %}
-    <section class="perm-module" id="module-{{ module.slug }}" data-module="{{ module.slug }}">
-      <div class="perm-module-head">
-        <div class="perm-module-title">
-          <i data-lucide="{{ module.icon }}" aria-hidden="true"></i>
-          <div>
-            <h3>{{ module.label }}</h3>
-            <p>{{ module.summary }}</p>
-          </div>
+  {% if employees %}
+  <div class="hr-auth-list">
+    {% for employee in employees %}
+    <a class="hr-auth-card hr-perm-card" href="{{ employee.permissions_url }}">
+      <div class="hr-auth-card-person">
+        {% if employee.profile_photo %}
+        <img class="staff-avatar" src="{{ employee.profile_photo.url }}" alt="" width="40" height="40">
+        {% else %}
+        <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
+          <i data-lucide="user"></i>
+        </span>
+        {% endif %}
+        <div class="hr-auth-card-copy">
+          <strong>{{ employee.user.get_full_name|default:employee.user.username }}</strong>
+          <small>
+            <code>{{ employee.employee_id }}</code>
+            · {{ employee.get_role_display }}
+            · {{ employee.get_status_display }}
+          </small>
         </div>
-        <p class="staff-count">{{ module.submodules|length }} submodule{{ module.submodules|length|pluralize }}</p>
+        {% if employee.denied_permissions %}
+        <span class="hr-auth-count hr-perm-count--denied">
+          {{ employee.denied_permissions }} denied
+        </span>
+        {% else %}
+        <span class="hr-auth-count">All allowed</span>
+        {% endif %}
+        <i data-lucide="chevron-right" class="hr-perm-card-arrow" aria-hidden="true"></i>
       </div>
-
-      {% if module.rows %}
-      <div class="staff-table-wrap perm-table-scroll">
-        <p class="hr-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
-        <table class="staff-table staff-table--dense perm-table">
-          <thead>
-            <tr>
-              <th scope="col">Employee</th>
-              {% for submodule in module.submodules %}
-              <th scope="col" class="perm-col" title="{{ submodule.label }}">{{ submodule.label }}</th>
-              {% endfor %}
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in module.rows %}
-            <tr>
-              <td data-label="Employee">
-                <div class="staff-person">
-                  {% if row.employee.profile_photo %}
-                  <img class="staff-avatar" src="{{ row.employee.profile_photo.url }}" alt="" width="36" height="36">
-                  {% else %}
-                  <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
-                    <i data-lucide="user"></i>
-                  </span>
-                  {% endif %}
-                  <div>
-                    <strong>{{ row.employee.user.get_full_name|default:row.employee.user.username }}</strong>
-                    <small>
-                      <code>{{ row.employee.employee_id }}</code>
-                      · {{ row.employee.get_role_display }}
-                    </small>
-                  </div>
-                </div>
-              </td>
-              {% for toggle in row.toggles %}
-              <td class="perm-col" data-label="{{ toggle.label }}">
-                <label class="perm-switch">
-                  <input
-                    type="checkbox"
-                    class="perm-switch-input"
-                    {% if toggle.allowed %}checked{% endif %}
-                    data-permission-toggle
-                    data-employee-id="{{ row.employee.employee_id }}"
-                    data-module-slug="{{ module.slug }}"
-                    data-submodule-slug="{{ toggle.slug }}"
-                    aria-label="{{ toggle.label }} for {{ row.employee.employee_id }}"
-                  >
-                  <span class="perm-switch-ui" aria-hidden="true"></span>
-                  <span class="perm-switch-state">
-                    {% if toggle.allowed %}Allowed{% else %}Denied{% endif %}
-                  </span>
-                </label>
-              </td>
-              {% endfor %}
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div class="dashboard-placeholder perm-module-empty">
-        <i data-lucide="users" aria-hidden="true"></i>
-        <p>No approved employees yet. Approve registrations first, then set permissions here.</p>
-      </div>
-      {% endif %}
-    </section>
+    </a>
     {% endfor %}
   </div>
+
+  {% if employees_page.has_other_pages %}
+  {% include "employees/partials/pagination_nav.html" with pagination_label="Employee permission pages" %}
+  {% else %}
+  <p class="stock-report-footnote">
+    Showing {{ employees|length }} of {{ employees_page.paginator.count }} employee{{ employees_page.paginator.count|pluralize }}
+  </p>
+  {% endif %}
+
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="{{ meta.icon }}" aria-hidden="true"></i>
-    <p>No modules are configured for permissions yet.</p>
+    {% if search %}
+    <p>No employees match "{{ search }}".</p>
+    {% else %}
+    <p>No approved employees yet. Approve registrations first, then set permissions here.</p>
+    {% endif %}
   </div>
   {% endif %}
 </section>
@@ -116,5 +108,4 @@
 <script src="{% static 'js/hr-management.js' %}?v=20261113-approvals-live"></script>
 <script src="{% static 'js/auth.js' %}"></script>
 <script src="{% static 'js/register.js' %}?v=20261019-assets"></script>
-<script src="{% static 'js/hr-permissions.js' %}"></script>
 {% endblock %}

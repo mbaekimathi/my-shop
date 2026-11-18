@@ -580,6 +580,51 @@
   border-radius: 0;
 }
 
+/* Per-employee permissions — vertical submodule rows (no wide matrix table) */
+.perm-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0;
+  display: grid;
+}
+
+.perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1.35rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.perm-row:first-child {
+  border-top: 0;
+}
+
+.perm-row:hover {
+  background: var(--panel-muted);
+}
+
+.perm-row-label {
+  min-width: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.perm-row .perm-switch {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+  flex-shrink: 0;
+}
+
+.perm-row .perm-switch-state {
+  min-width: 3.4rem;
+  text-align: left;
+}
+
 .perm-table {
   width: max-content;
   min-width: 100%;

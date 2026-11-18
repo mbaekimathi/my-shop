@@ -41,6 +41,7 @@ from .services import (
 )
 from .workspace import (
     hr_approvals_url,
+    hr_employee_permissions_url,
     hr_section_url,
     pending_hr_approvals_count,
     sidebar_for_hr_permissions,
@@ -460,6 +461,10 @@ def _handle_permissions_post(request, profile):
 
 
 def _render_hr_permissions(request, profile, section_meta):
+    from urllib.parse import urlencode
+
+    from django.db.models import Count, Q
+
     from .module_permissions import require_module_permission
 
     denied = require_module_permission(
@@ -488,39 +493,64 @@ def _render_hr_permissions(request, profile, section_meta):
     else:
         form_data, form_errors, open_register_modal = _register_context(request)
 
-    employees = list(_permission_employees_queryset())
-    allowed_lookup = _permission_allowed_lookup([employee.pk for employee in employees])
-
-    modules = []
-    for module in permission_modules_for_display():
-        if not module["submodules"]:
-            continue
-        rows = []
-        for employee in employees:
-            toggles = []
-            for submodule in module["submodules"]:
-                allowed = allowed_lookup.get(
-                    (employee.pk, module["slug"], submodule["slug"]),
-                    True,
-                )
-                toggles.append(
-                    {
-                        "slug": submodule["slug"],
-                        "label": submodule["label"],
-                        "allowed": allowed,
-                    }
-                )
-            rows.append({"employee": employee, "toggles": toggles})
-        modules.append(
-            {
-                "slug": module["slug"],
-                "label": module["label"],
-                "icon": module["icon"],
-                "summary": module["summary"],
-                "submodules": module["submodules"],
-                "rows": rows,
-            }
+    search = (request.GET.get("q") or "").strip()
+    employees_qs = _permission_employees_queryset()
+    if search:
+        employees_qs = employees_qs.filter(
+            Q(employee_id__icontains=search)
+            | Q(user__first_name__icontains=search)
+            | Q(user__last_name__icontains=search)
+            | Q(user__username__icontains=search)
+            | Q(user__email__icontains=search)
+            | Q(role__icontains=search)
         )
+
+    try:
+        page_number = max(1, int(request.GET.get("page") or 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    paginator = Paginator(
+        employees_qs,
+        settings.EMPLOYEE_LIST_PAGE_SIZE,
+    )
+    employees_page = paginator.get_page(page_number)
+    employees = list(employees_page.object_list)
+
+    denied_counts = {
+        row["employee_id"]: row["denied"]
+        for row in EmployeeModulePermission.objects.filter(
+            employee_id__in=[employee.pk for employee in employees],
+            allowed=False,
+        )
+        .values("employee_id")
+        .annotate(denied=Count("pk"))
+    }
+    for employee in employees:
+        employee.denied_permissions = denied_counts.get(employee.pk, 0)
+        employee.permissions_url = hr_employee_permissions_url(
+            profile.role, employee.employee_id
+        )
+
+    segment = role_url_segment(profile.role)
+    base_url = reverse(
+        "employees:hr_section",
+        kwargs={"role_segment": segment, "section": "permissions"},
+    )
+
+    def _page_link(number):
+        query = {}
+        if number > 1:
+            query["page"] = number
+        if search:
+            query["q"] = search
+        return f"{base_url}?{urlencode(query)}" if query else base_url
+
+    pagination = {"previous_url": None, "next_url": None}
+    if employees_page.has_previous():
+        pagination["previous_url"] = _page_link(employees_page.previous_page_number)
+    if employees_page.has_next():
+        pagination["next_url"] = _page_link(employees_page.next_page_number)
 
     return render(
         request,
@@ -531,8 +561,121 @@ def _render_hr_permissions(request, profile, section_meta):
             "section": "permissions",
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_hr_permissions(profile.role, profile=profile),
-            "permission_modules": modules,
+            "page_sidebar": sidebar_for_hr_management(
+                profile.role, active_view="permissions", profile=profile
+            ),
+            "employees_page": employees_page,
+            "employees": employees,
+            "search": search,
+            "authorizations_url": hr_section_url(profile.role, "authorizations"),
+            "form_data": form_data,
+            "form_errors": form_errors,
+            "open_register_modal": open_register_modal,
+            "countries": COUNTRY_DIAL_CODES,
+            "pagination": pagination,
+        },
+    )
+
+
+def _permission_modules_for_employee(employee):
+    allowed_lookup = _permission_allowed_lookup([employee.pk])
+    modules = []
+    for module in permission_modules_for_display():
+        if not module["submodules"]:
+            continue
+        toggles = [
+            {
+                "slug": submodule["slug"],
+                "label": submodule["label"],
+                "allowed": allowed_lookup.get(
+                    (employee.pk, module["slug"], submodule["slug"]),
+                    True,
+                ),
+            }
+            for submodule in module["submodules"]
+        ]
+        modules.append(
+            {
+                "slug": module["slug"],
+                "label": module["label"],
+                "icon": module["icon"],
+                "summary": module["summary"],
+                "toggles": toggles,
+            }
+        )
+    return modules
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def hr_employee_permissions(request, role_segment, employee_id):
+    from .module_permissions import require_module_permission
+
+    profile = get_profile_for_request(request)
+    expected_segment = role_url_segment(profile.role)
+    if role_segment != expected_segment:
+        return redirect(
+            "employees:hr_employee_permissions",
+            role_segment=expected_segment,
+            employee_id=employee_id,
+        )
+
+    denied = require_module_permission(
+        request, profile, "hr-management", "permissions"
+    )
+    if denied is not None:
+        return denied
+
+    target = get_object_or_404(
+        _permission_employees_queryset(),
+        employee_id__iexact=employee_id,
+    )
+
+    form_data = dict(EMPTY_EMPLOYEE_FORM)
+    form_errors = []
+    open_register_modal = False
+
+    if request.method == "POST":
+        redirect_response, modal_state, json_response = _handle_permissions_post(
+            request,
+            profile,
+        )
+        if json_response is not None:
+            return json_response
+        if redirect_response is not None:
+            return redirect_response
+        if modal_state is not None:
+            form_data = modal_state["form_data"]
+            form_errors = modal_state["form_errors"]
+            open_register_modal = modal_state["open_register_modal"]
+    else:
+        form_data, form_errors, open_register_modal = _register_context(request)
+
+    meta = {
+        "title": f"Permissions — {target.employee_id}",
+        "headline": "Module permissions",
+        "summary": (
+            "Enable or disable what this employee can do in every "
+            "module and submodule."
+        ),
+        "icon": "key-round",
+    }
+
+    return render(
+        request,
+        "employees/hr_employee_permissions.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "section": "permissions",
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": sidebar_for_hr_permissions(
+                profile.role, profile=profile
+            ),
+            "target_employee": target,
+            "permission_modules": _permission_modules_for_employee(target),
+            "permissions_url": hr_section_url(profile.role, "permissions"),
             "authorizations_url": hr_section_url(profile.role, "authorizations"),
             "form_data": form_data,
             "form_errors": form_errors,

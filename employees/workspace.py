@@ -2474,6 +2474,14 @@ def hr_section_url(role, section):
     )
 
 
+def hr_employee_permissions_url(role, employee_id):
+    segment = role_url_segment(role)
+    return reverse(
+        "employees:hr_employee_permissions",
+        kwargs={"role_segment": segment, "employee_id": employee_id},
+    )
+
+
 def hr_management_url(role):
     segment = role_url_segment(role)
     return reverse(
@@ -2586,6 +2594,11 @@ def sidebar_for_hr_permissions(role, profile=None):
     dashboard_url = reverse(role_home_url_name(role))
     primary = [
         _link("Dashboard", "layout-dashboard", href=dashboard_url),
+        _link(
+            "All employees",
+            "users",
+            href=hr_section_url(role, "permissions"),
+        ),
         *[
             _link(
                 module["label"],

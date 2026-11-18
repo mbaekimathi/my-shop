@@ -1,0 +1,100 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+{% csrf_token %}
+<section class="staff-panel staff-panel--dense hr-perm-detail" data-animate="rise">
+  <header class="staff-panel-head hr-auth-head">
+    <div>
+      <p class="stock-kicker">HR management · Permissions</p>
+      <h2>{{ meta.headline }}</h2>
+      <p>{{ meta.summary }}</p>
+    </div>
+    <div class="hr-auth-head-actions">
+      <a class="btn btn--ghost staff-panel-link" href="{{ permissions_url }}">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+        <span>All employees</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="hr-perm-person">
+    {% if target_employee.profile_photo %}
+    <img class="staff-avatar" src="{{ target_employee.profile_photo.url }}" alt="" width="44" height="44">
+    {% else %}
+    <span class="staff-avatar staff-avatar--empty" aria-hidden="true">
+      <i data-lucide="user"></i>
+    </span>
+    {% endif %}
+    <div class="hr-auth-card-copy">
+      <strong>{{ target_employee.user.get_full_name|default:target_employee.user.username }}</strong>
+      <small>
+        <code>{{ target_employee.employee_id }}</code>
+        · {{ target_employee.get_role_display }}
+        · {{ target_employee.get_status_display }}
+      </small>
+    </div>
+  </div>
+
+  {% if permission_modules %}
+  <div class="perm-modules" data-permission-matrix>
+    {% for module in permission_modules %}
+    <section class="perm-module" id="module-{{ module.slug }}" data-module="{{ module.slug }}">
+      <div class="perm-module-head">
+        <div class="perm-module-title">
+          <i data-lucide="{{ module.icon }}" aria-hidden="true"></i>
+          <div>
+            <h3>{{ module.label }}</h3>
+            <p>{{ module.summary }}</p>
+          </div>
+        </div>
+        <p class="staff-count">{{ module.toggles|length }} permission{{ module.toggles|length|pluralize }}</p>
+      </div>
+
+      <ul class="perm-rows">
+        {% for toggle in module.toggles %}
+        <li class="perm-row">
+          <span class="perm-row-label">{{ toggle.label }}</span>
+          <label class="perm-switch">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if toggle.allowed %}checked{% endif %}
+              data-permission-toggle
+              data-employee-id="{{ target_employee.employee_id }}"
+              data-module-slug="{{ module.slug }}"
+              data-submodule-slug="{{ toggle.slug }}"
+              aria-label="{{ toggle.label }} for {{ target_employee.employee_id }}"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if toggle.allowed %}Allowed{% else %}Denied{% endif %}
+            </span>
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="{{ meta.icon }}" aria-hidden="true"></i>
+    <p>No modules are configured for permissions yet.</p>
+  </div>
+  {% endif %}
+</section>
+
+{% include "employees/partials/hr_register_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/input-uppercase.js' %}"></script>
+<script src="{% static 'js/hr-management.js' %}?v=20261113-approvals-live"></script>
+<script src="{% static 'js/auth.js' %}"></script>
+<script src="{% static 'js/register.js' %}?v=20261019-assets"></script>
+<script src="{% static 'js/hr-permissions.js' %}?v=20261118-perm-rows"></script>
+{% endblock %}

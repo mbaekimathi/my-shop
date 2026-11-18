@@ -404,6 +404,11 @@ urlpatterns = [
         name="hr_management",
     ),
     path(
+        "<role_segment:role_segment>/hr-management/permissions/<slug:employee_id>/",
+        hr_views.hr_employee_permissions,
+        name="hr_employee_permissions",
+    ),
+    path(
         "<role_segment:role_segment>/hr-management/<slug:section>/",
         hr_views.hr_section,
         name="hr_section",
