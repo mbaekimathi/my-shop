@@ -158,16 +158,31 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `ShopPriceIsolationTests`.
 
 ## Cashiers report (Analytics → Cashiers, slug `balances`)
-- `_build_balances` is cashier-centric: `ShopDaySession`s in the filtered
-  period roll up by `opened_by` (a day belongs to whoever opened it; the
-  closer shows per row). `?employee_id=<pk>` narrows to one cashier —
-  parsed in `build_analytics_page` (`filters["selected_employee_id"]`), the
-  dropdown renders only for `section_slug == "balances"`.
-- `_day_balance_data` carries `opened_by_id`/`closed_by_id` on every
-  `session_rows` entry; per-cashier + grand totals are re-summed from those
-  rows (disabled till channels are zeroed via `_BALANCE_CHANNEL_KEYS`, and
-  `_apply_pos_visibility` still strips M-Pesa/Card-labelled columns when the
-  POS flags are off — keep channel names in labels).
+- IT support and shop manager dashboards pin a "Cashiers" sidebar shortcut to
+  it (`_dashboard_analytics_section_links` — their sidebars are kept in
+  parity; `DashboardSidebarLinkTests` asserts they match).
+- `_build_balances` is a slim sessions list: a single "Sessions" table lists
+  each `ShopDaySession` in the filtered period — Session (date + start/end
+  times), Cashier, Shop, Status, Report — whose **Open** link (and the
+  session cell itself) goes to
+  `<role>/analytics/balances/<session_id>/` (`analytics_day_session`,
+  gated by `analytics/balances` + shop allocation). No metrics/till
+  boards — the page is just the sessions list plus the standard filters.
+- `?employee_id=<pk>` narrows to sessions the cashier opened (a day belongs
+  to whoever opened it) — parsed in `build_analytics_page`
+  (`filters["selected_employee_id"]`), the dropdown renders only for
+  `section_slug == "balances"`. `_day_balance_data` carries
+  `id`/`opened_by_id`/`closed_by_id` on every `session_rows` entry.
+- The session report page is built by `build_day_session_report_page` — the
+  same sections as the day accounting PDF (money flow, items sold,
+  pending/cancelled sales, drawings, expenses, stocked in/out via
+  `day_session_balance_summary` / `day_session_report_details` with the
+  employee's day-report counted-status pick; `_apply_pos_visibility` strips
+  M-Pesa/Card-labelled columns when the POS flags are off — keep channel
+  names in labels). `?download=1` streams the same
+  `build_shop_day_report_pdf`. Session links carry a `?back=` URL so "Back
+  to cashiers" restores the filters. Tests:
+  `AnalyticsDaySessionReportTests`.
 
 ## Expense payments (Analytics → Expenses → category)
 - `Expense` tracks `amount_paid` + `payment_status` (unpaid/partial/paid);
@@ -206,6 +221,29 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `action=toggle_pos_setting` with `field=sidebar_<key>` so `pos-settings.js`
   works unmodified; `_cashier_dashboard_links` drops hidden links (link-only,
   same convention as the floor toggles).
+- The "Sell popup" group is also **per-employee** (`SELL_POPUP_TOGGLES`,
+  `sidebar_prefs["sell_*"]`, POSTed as `field=sell_<key>`) — it configures
+  the dashboard Sell modal's document types, payment channels, and price
+  editing in place of the company/shop POS toggles (see "Sell" action below).
+- The "Day report" group is a **per-employee** one-of pick of which receipt
+  statuses count as sales in the day accounting report — `all` (pending +
+  confirmed + partially returned, the default), `pending`, or `confirmed`
+  (confirmed + partially returned). Stored as `sidebar_prefs
+  ["day_report_status"]` — `day_report_status_mode` /
+  `day_report_counted_statuses` / `set_day_report_status_pref` in
+  employees/workspace.py reuse the `CASHIER_SALES_STATUSES` buckets; the
+  toggles post `field=day_report_status_<mode>` through
+  `action=toggle_pos_setting` and use `data-stock-mode-toggle` so
+  `pos-settings.js` enforces one-of (unchecked → 400). `my_shop_day_report`
+  passes `day_report_counted_statuses(profile)` into
+  `build_shop_day_report_pdf` → `day_session_balance_summary` +
+  `day_session_report_details` (`counted_statuses` param, None = every sale
+  receipt): it filters the sales tender, the counted receipts' return
+  refunds (`_collect_return_payment_events`), items sold, and the
+  "(N receipts)" count; the flagged pending/cancelled list is unaffected.
+  The PDF subtitle shows "Pending sales only" / "Confirmed sales only" when
+  filtered. Tests: `shops/tests/test_day_sales_summary.py
+  ::DayReportCountedStatusesTests`.
 - The "Open & close" group edits the shared company rows
   (`enable_open_close`, `CompanyWorkingHoursSettings.enabled`, per-shop
   `ShopWorkingHoursSettings` times — same as Settings → POS) and is gated by
@@ -215,25 +253,53 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 ## Action popups on role dashboards
 - Sidebar `_action` items render `data-modal-open`/`data-href`; `workspace_base.html`
   opens `[data-modal="<name>"]` when the modal exists on the page, else follows the
-  href. `?modal=buy-stock|register-expense` auto-opens on load.
-- `expense_modal_context` / `buy_stock_modal_context` (employees/workspace.py) supply
-  modal context **only for single-actionable-shop staff**; multi-shop staff fall back
+  href. `?modal=sell|buy-stock|register-expense` auto-opens on load.
+- `expense_modal_context` / `buy_stock_modal_context` / `sell_modal_context`
+  (employees/workspace.py) supply modal context **only for
+  single-actionable-shop staff**; multi-shop staff fall back
   to the `data-href` (MY-SHOP picker / page).
 - Endpoints used by dashboard popups must allow allocation-level access (no floor
   unlock): `_require_allocated_shop_access` — the staff-ID field in the payload
   authorises the write. Used by register expense, open/close day, verify-login-code,
-  **buy stock POST and stock-supplier search**. Catalog GETs use
+  **buy stock POST, stock-supplier search, and checkout POST**
+  (`my_shop_checkout`). Catalog GETs, serial search, and the client lookup use
   `_require_shop_read_access`.
-- Cashier dashboard (`_cashier_dashboard_links`): no Stock Management link — "Buy
-  stock" action (`buy_stock_action`, gated by `my-shop/buy_stock` +
+- Cashier dashboard (`_cashier_dashboard_links`): no Stock Management link — "Sell"
+  action (`sell_action`, first quick action, gated by `my-shop/workspace` +
+  any of sale/credit/quotation, per-employee `sell` sidebar pref) opens
+  `shops/partials/sell_modal.html` (`data-modal="sell"`, `cashier-sell.js`)
+  — a lean floor-style cart: live `my_shop_catalog` search, sale/credit/quotation
+  picker, payment methods + splits, client name/phone autosuggest
+  (`my_shop_client_lookup`), serial picker (`my_shop_serial_search`; serial
+  lines' qty = picked serials), staff-ID verify, then POSTs the same
+  `my_shop_checkout` payload the floor sends. Skips STK push, delivery, trades,
+  confirm-at-checkout, and device printing (the result pane shows the
+  plain-text receipt with a browser Print). **Exempt from the company/shop POS
+  feature toggles** — its own per-employee toggles live under Cashier settings
+  → "Sell popup" (`SELL_POPUP_TOGGLES` in employees/workspace.py, stored in
+  `sidebar_prefs` as `sell_*` keys, POSTed as `sell_<key>` fields): document
+  types (sale/credit/quotation), payment channels (cash/M-Pesa/card — split
+  methods derive from enabled channels), and "Edit item prices". Client
+  fields are always shown, optional for sales. The payload sends
+  `dashboard_popup: true` → `my_shop_checkout` honours it only for a logged-in
+  employee with no unlocked floor session (`resolve_active_shop` →
+  `pos_unrestricted` in `complete_shop_checkout`, which skips the
+  kind/payment/client-data/discount/compulsory-print toggles, and checks the
+  `sell_*` prefs + `sell_payment_methods` for the kind/payment/price
+  instead); permission checks use `employee_may_unrestricted`
+  (employees/module_permissions.py) — HR matrix rows and role defaults still
+  apply. Tests: `shops/tests/test_dashboard_sell.py`. Plus a
+  "Buy stock" action (`buy_stock_action`, gated by `my-shop/buy_stock` +
   `enable_sidebar_buy_stock`) opens `shops/partials/buy_stock_modal.html` on
   `role_home.html` (stock-catalog.js + stock-bulk.js loaded when
   `buy_stock_modal`), plus a "Suppliers" link (`analytics/suppliers`).
 - Cashier dashboard + `role_shop_day` picker (`?mode=drawings` when reached via
-  the Drawings link) render per-shop **day cards**: status badge (Open /
+  the Drawings link; `?mode=report|history` for the Day report / Day history
+  pickers) render per-shop **day cards**: status badge (Open /
   "Yesterday — left open" / Closed), opened-with/sales/expenses/drawings/
-  stock-bought/in-till stats, and day actions (open/close, record drawing,
-  day-report PDF). Rows come from `cashier_day_summaries_context` +
+  stock-bought/in-till stats, and day actions (open/close, record drawing —
+  report/history pickers instead link each card to `my_shop_day_report` /
+  `my_shop_day_history`). Rows come from `cashier_day_summaries_context` +
   `role_shop_day`. **Till data is scoped to the session the cashier opened**
   (`open_session.opened_by_id == profile.pk`) — a day opened by a colleague
   shows only "Open — <name>" / "Day open under <name>" with no figures; the
@@ -241,6 +307,22 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   A **stale-open session keeps showing its own (yesterday's) figures** — that
   is the intended "yesterday's data" display, paired with a "Close yesterday's
   day" action.
+- **Foreign session lockout** (`cashier_session_blocks` in
+  employees/workspace.py): when any allocated shop's open `ShopDaySession`
+  belongs to another employee (`opened_by_id != profile.pk`), a cashier is
+  locked out entirely — `CashierSessionBlockMiddleware` (last in MIDDLEWARE)
+  renders `employees/cashier_session_blocked.html` for every GET under
+  `/shop-cashier/*` (403 JSON for XHR/non-GET) naming who must close it, and
+  `_cashier_foreign_day_denied` (shops/views.py) blocks the `my-shop/*`
+  endpoints at the `_require_allocated_shop_access` /
+  `_require_active_shop_session` / `_require_shop_read_access` guards — the
+  next cashier cannot sell, buy stock, register expenses/drawings, or close
+  the previous cashier's session; they must ask that cashier to close it.
+  Shop portal sessions and non-cashier roles are unaffected, so the day can
+  always be closed from the floor or by a manager. Call sites that flatten
+  the guard's `denied` into a generic JSON 403 pass it through untouched when
+  it is already a `JsonResponse`. Tests:
+  `shops/tests/test_cashier_session_block.py`.
 - The **Drawings** sidebar link only renders while at least one assigned shop
   has an open day: single shop → `my_shop_drawings` (`/my-shop/<id>/drawings/`),
   multi-shop → the `role_shop_day` picker. The dedicated drawings page is gated
@@ -272,10 +354,26 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `application/pdf`). `build_shop_day_report_pdf` + `day_session_report_details`
   in `shops/services.py` — KPI strip + money-flow table (opening / sales /
   returns / expenses / stock bought / drawings / expected, per channel) plus
-  per-line drawings, expenses, and paid stock-in rows. Reports the open
+  per-line drawings, expenses, and stock movement rows. "Stocked in" lists
+  **all** IN `StockMovement`s in the day window (paid or not — unpaid groups
+  show the payment-status label; non-purchase `entry_source`s like customer
+  return/trade-in are tagged on the item cell), and "Stocked out" lists every
+  OUT line with reason/note/refund and an estimated value (`qty ×
+  StockMovementLine.unit_cost`, the shop weighted average stamped at
+  stock-out) footered as "Estimated value lost". Transfers are `REQUEST`
+  movements — not listed in either. Reports the open
   session ("Expected in till" preview) or the last closed one (counted
-  closing + variance). "Day report (PDF)" button sits in the day page close
-  form actions, opened in a new tab.
+  closing + variance). On the cashier dashboard, "Day report" + "Day history"
+  are **sidebar-only links** (`sidebar_only=True` keeps them off the
+  role_home "Quick actions" cards, which render `page_sidebar.quick_actions` —
+  `resolve_sidebar_hrefs` filters flagged items into that key); both are
+  per-employee-hideable via the `day_report`/`day_history` keys in
+  `CASHIER_SIDEBAR_LINKS`. Single shop → direct `my_shop_day_report` (new tab)
+  / `my_shop_day_history`; multi-shop → `role_shop_day?mode=report|history`.
+  When an employee session shares the browser with a shop-portal session, the
+  floor sidebar's "Dashboard" link goes to the employee's role home —
+  `_portal_home_role` (shops/views.py) feeds `home_role` into
+  `sidebar_for_my_shop`.
 - Open & close schedule (Settings → POS → Open & close): two modes under the
   `enable_open_close` compulsory toggle — "anytime" (staff open/close whenever)
   or "set" (per-shop opening/closing times). The mode is stored as
@@ -283,6 +381,21 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   that flag — configured days/times survive); per-shop times POST as
   `action=set_open_close_times` → `update_shop_working_hours_from_post`.
   Working days stay under Settings → Working hours.
+
+## Role dashboard sidebar groups
+- Sidebar items can collapse into a dropdown group: `group=True` renders the
+  item as a toggle button (`data-nav-group`, `aria-expanded`) in
+  `workspace_sidebar.html`; children are marked `child=True` and render
+  `hidden data-nav-group-item` — closed on load, expanded by the
+  `data-nav-group` click handler in `workspace_base.html` (toggles `is-open`
+  + `hidden`, rotates the `workspace-nav-caret` chevron).
+  `.workspace-nav-link[hidden]` in `shell.css` keeps collapsed children
+  hidden (the base `display:flex` would otherwise beat the attribute).
+- IT support / shop manager sidebars use this for **Store management**
+  (`_it_support_stock_links` in `employees/workspace.py`): a sidebar-only
+  parent (`sidebar_only=True` → no Quick-actions card) wrapping the
+  Item/Shelf stock management child links. Single-stock-type setups keep a
+  flat link instead of a one-child group.
 
 ## Wi‑Fi printing
 - Channels (Bluetooth/USB/Wi‑Fi) → `enable_print_*` flags; "Connect to printer"
@@ -509,3 +622,37 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Tests: `shops/tests/test_permission_enforcement.py`
   (`ReceiptReturnCancelPermissionTests`, `TradeCheckoutPermissionTests`,
   `FloorReceiptReturnPermissionTests`).
+
+## Shop switching (role workspaces + portal)
+- The "Switch shop" user-menu item + `shop_switch_modal.html` /
+  `shop-switch.js` (`/my-shop/switch/`, `my_shop_switch`) behave differently
+  per session kind (`mode` in the GET payload):
+  - **Portal sessions** (`is_shop_portal`) move the portal shop:
+    `begin_shop_portal_session` + `set_active_shop`, shop password required
+    unless `CompanyPosSettings.enable_passwordless_shop_switch` (Settings →
+    POS) is on; attempts share the `login` rate-limit bucket; lands on the
+    new shop's floor.
+  - **Employees in a shop-scoped role** (`SHOP_ASSIGNABLE_ROLES`) re-pick a
+    **view shop** — the same session-only `employee_acting_shop` key the
+    role picker uses. No floor unlock, no password; POST lands them back on
+    the role dashboard. `shop-switch.js` submits one click in `mode=view`.
+- The view pick **narrows** `actionable_shops_for_profile` to that shop
+  only when it is one of the profile's allocated shops (or any active shop
+  while unallocated, same as the role-picker stand-in); anything else is
+  ignored and falls back to the full allocation. Allocation-level write
+  checks (`get_shop_for_profile`, `profile_allocated_to_shop`) are
+  unchanged — the pick is a view overlay, not an extra grant.
+- Pickable shops in the GET payload: allocated shops when the profile has
+  any (plus an `all_option` "All shops" card → POST `shop_id=` clears the
+  pick), else every active shop (role-picker parity for unallocated staff).
+  `current_shop_id` is the acting pick; `@ensure_csrf_cookie` covers role
+  pages that render no `{% csrf_token %}` form.
+- `workspace.can_shop_switch` (`employees/context_processors.py`) shows the
+  employee user-menu item for shop-scoped roles when a viewable shop
+  exists; the modal + JS load whenever `is_shop_portal or can_shop_switch`.
+- `_apply_acting_shop` (`employees/access.py`) now runs for single-role
+  staff too — `_apply_active_role` used to bail before applying it when
+  `len(role_values) < 2`, so only multi-role picks ever reached
+  `profile.acting_shop_id`.
+- Tests: `shops/tests/test_shop_switch.py` (`ShopSwitchTests`,
+  `EmployeeShopSwitchTests`).

@@ -123,15 +123,25 @@ from .throttle import rate_limit
 from .workspace import (
     CASHIER_SIDEBAR_LINKS,
     ROLE_PAGE_META,
+    SELL_POPUP_TOGGLES,
     buy_stock_modal_context,
     cashier_day_summaries_context,
+    cashier_sell_key_from_field,
+    cashier_sell_pref_enabled,
+    cashier_sell_pref_field,
     cashier_sidebar_key_from_field,
     cashier_sidebar_pref_enabled,
     cashier_sidebar_pref_field,
+    day_report_status_mode,
+    day_report_status_mode_from_field,
+    day_report_status_pref_field,
     get_dashboard_module,
     get_settings_section,
     get_settings_sections,
+    sell_modal_context,
+    set_cashier_sell_pref,
     set_cashier_sidebar_pref,
+    set_day_report_status_pref,
     settings_section_url,
     sidebar_for_cashier_settings,
     sidebar_for_marketing_links,
@@ -197,6 +207,7 @@ def _render_role_page(request, expected_role):
         "page_sidebar": sidebar_for_role_dashboard(expected_role, profile=profile),
     }
     if expected_role == EmployeeRole.SHOP_CASHIER:
+        context.update(sell_modal_context(request, profile))
         context.update(buy_stock_modal_context(request, profile))
         context.update(cashier_day_summaries_context(request, profile))
     return render(request, "employees/role_home.html", context)
@@ -1223,6 +1234,45 @@ def cashier_settings(request):
                     )
                 messages.success(request, "Sidebar updated.")
                 return redirect(request.path)
+            sell_key = cashier_sell_key_from_field(field)
+            if sell_key:
+                try:
+                    set_cashier_sell_pref(profile, sell_key, enabled)
+                except ValidationError as exc:
+                    return _fail("; ".join(exc.messages))
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "field": field,
+                            "enabled": cashier_sell_pref_enabled(
+                                profile, sell_key
+                            ),
+                        }
+                    )
+                messages.success(request, "Sell popup updated.")
+                return redirect(request.path)
+            report_mode = day_report_status_mode_from_field(field)
+            if report_mode:
+                if not enabled:
+                    return _fail("Pick one status for the day report.")
+                try:
+                    set_day_report_status_pref(profile, report_mode)
+                except ValidationError as exc:
+                    return _fail("; ".join(exc.messages))
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "field": field,
+                            "enabled": True,
+                            "stock_mode": day_report_status_pref_field(
+                                day_report_status_mode(profile)
+                            ),
+                        }
+                    )
+                messages.success(request, "Day report status updated.")
+                return redirect(request.path)
             if field != "enable_open_close":
                 return _fail("Unknown cashier setting.")
             if not can_edit_open_close:
@@ -1304,6 +1354,26 @@ def cashier_settings(request):
                 }
                 for key, label in CASHIER_SIDEBAR_LINKS
             ],
+            "sell_toggles": [
+                {
+                    "field": cashier_sell_pref_field(key),
+                    "label": label,
+                    "enabled": cashier_sell_pref_enabled(profile, key),
+                }
+                for key, label in SELL_POPUP_TOGGLES
+            ],
+            "day_report_toggles": [
+                {
+                    "field": day_report_status_pref_field(mode),
+                    "label": label,
+                    "enabled": day_report_status_mode(profile) == mode,
+                }
+                for mode, label in (
+                    ("all", "All receipts"),
+                    ("pending", "Pending receipts only"),
+                    ("confirmed", "Confirmed receipts only"),
+                )
+            ],
             "pos_settings": pos,
             "can_edit_open_close": can_edit_open_close,
             "working_hours_enabled": bool(
@@ -1348,7 +1418,10 @@ def role_shop_day(request, role_segment):
     can_record_drawing = employee_may(
         profile, "my-shop", "register_expense"
     )
-    drawing_mode = (request.GET.get("mode") or "").strip() == "drawings"
+    mode = (request.GET.get("mode") or "").strip().lower()
+    if mode not in {"drawings", "report", "history"}:
+        mode = ""
+    drawing_mode = mode == "drawings"
 
     back_url = request.get_full_path()
     day_shops = []
@@ -1400,6 +1473,14 @@ def role_shop_day(request, role_segment):
                     ),
                     urlencode({"back": back_url}),
                 ),
+                "report_url": reverse(
+                    "employees:my_shop_day_report",
+                    kwargs={"shop_id": shop.pk},
+                ),
+                "history_url": reverse(
+                    "employees:my_shop_day_history",
+                    kwargs={"shop_id": shop.pk},
+                ),
                 "can_draw": (
                     can_record_drawing and own_session and not stale_open
                 ),
@@ -1414,6 +1495,20 @@ def role_shop_day(request, role_segment):
             "headline": "Record a drawing",
             "summary": "Pick the shop to draw from — drawings are recorded against the open day.",
             "icon": "hand-coins",
+        }
+    elif mode == "report":
+        meta = {
+            "title": "Day report",
+            "headline": "Day report",
+            "summary": "Pick a shop to open its day report.",
+            "icon": "file-text",
+        }
+    elif mode == "history":
+        meta = {
+            "title": "Day history",
+            "headline": "Day history",
+            "summary": "Pick a shop to browse its recorded days.",
+            "icon": "history",
         }
     else:
         meta = {
@@ -1433,10 +1528,15 @@ def role_shop_day(request, role_segment):
             "page_sidebar": sidebar_for_role_dashboard(
                 profile.role,
                 profile=profile,
-                active_slug="drawings" if drawing_mode else "shop-day",
+                active_slug={
+                    "drawings": "drawings",
+                    "report": "day-report",
+                    "history": "day-history",
+                }.get(mode, "shop-day"),
                 omit_dashboard_link=False,
             ),
             "day_shops": day_shops,
+            "day_mode": mode,
             "drawing_mode": drawing_mode,
         },
     )
@@ -1776,6 +1876,7 @@ def _main_website_guide(request, company, main_shop):
 @role_required(
     EmployeeRole.IT_SUPPORT,
     EmployeeRole.SUPER_ADMIN,
+    EmployeeRole.COMPANY_MANAGER,
     EmployeeRole.SHOP_MANAGER,
 )
 @require_http_methods(["GET", "POST"])

@@ -126,22 +126,23 @@ def _apply_active_role(request, profile) -> None:
     signed-in profile uses ``update_fields`` or sets ``role`` explicitly.
     """
     available = profile.role_values()
-    if len(available) < 2:
-        return
-    db_role = getattr(profile, "db_role", profile.role)
-    profile.db_role = db_role
-    active = session_active_role(request, available)
-    if active:
-        profile.role = active
+    if len(available) >= 2:
+        db_role = getattr(profile, "db_role", profile.role)
+        profile.db_role = db_role
+        active = session_active_role(request, available)
+        if active:
+            profile.role = active
     _apply_acting_shop(request, profile)
 
 
 def _apply_acting_shop(request, profile) -> None:
-    """Expose the role picker's shop as ``profile.acting_shop_id``, in memory only.
+    """Expose the picked view shop as ``profile.acting_shop_id``, in memory only.
 
     Multi-role staff who act in a shop-scoped role with no allocated shops pick
-    a shop on the role picker; the pick is session-only and is never written to
-    the DB. Stale picks are dropped once the session's role is not shop-scoped.
+    a shop on the role picker; shop-scoped staff can also re-pick from the
+    "Switch shop" user-menu item. The pick is session-only and is never written
+    to the DB. Stale picks are dropped once the session's role is not
+    shop-scoped.
     """
     session = getattr(request, "session", None)
     if session is None:

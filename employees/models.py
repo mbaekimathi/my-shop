@@ -49,6 +49,7 @@ SHOP_ALLOCATION_ROLES = frozenset(
 FULL_STOCK_WORKFLOW_ROLES = frozenset(
     {
         EmployeeRole.SUPER_ADMIN,
+        EmployeeRole.COMPANY_MANAGER,
         EmployeeRole.SHOP_MANAGER,
         EmployeeRole.COMPANY_STORE_MANAGER,
         EmployeeRole.SHOP_STORE_MANAGER,

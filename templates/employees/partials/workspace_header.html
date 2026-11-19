@@ -165,6 +165,17 @@
           <span>Switch role</span>
         </a>
         {% endif %}
+        {% if workspace.can_shop_switch %}
+        <button
+          class="workspace-user-dropdown-item"
+          type="button"
+          role="menuitem"
+          data-shop-switch-open
+        >
+          <i data-lucide="store" aria-hidden="true"></i>
+          <span>Switch shop</span>
+        </button>
+        {% endif %}
         <a
           class="workspace-user-dropdown-item workspace-user-dropdown-item--danger"
           role="menuitem"

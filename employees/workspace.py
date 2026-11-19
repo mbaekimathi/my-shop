@@ -252,6 +252,7 @@ def _workspace_parent_url(request, role):
             if role in (
                 EmployeeRole.IT_SUPPORT,
                 EmployeeRole.SUPER_ADMIN,
+                EmployeeRole.COMPANY_MANAGER,
                 EmployeeRole.SHOP_MANAGER,
             ):
                 return marketing_links_url()
@@ -431,6 +432,9 @@ def _link(
     live_badge=False,
     nav_key="",
     new_tab=False,
+    sidebar_only=False,
+    child=False,
+    group=False,
 ):
     item = {
         "type": "link",
@@ -440,6 +444,10 @@ def _link(
         "danger": danger,
         "muted": muted,
     }
+    if child:
+        item["child"] = True
+    if group:
+        item["group"] = True
     if url_name:
         item["url_name"] = url_name
         item["href"] = reverse(url_name)
@@ -447,6 +455,8 @@ def _link(
         item["href"] = href
     if new_tab:
         item["new_tab"] = True
+    if sidebar_only:
+        item["sidebar_only"] = True
     if nav_key:
         item["nav_key"] = nav_key
     if live_badge:
@@ -578,6 +588,11 @@ def resolve_sidebar_hrefs(sidebar):
                 _link("Dashboard", "layout-dashboard", href=dashboard_url),
                 *primary,
             ]
+    sidebar["quick_actions"] = [
+        item
+        for item in sidebar.get("primary") or []
+        if not item.get("sidebar_only")
+    ]
     return sidebar
 
 
@@ -591,10 +606,19 @@ def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
         wanted = ()
     elif role == EmployeeRole.EMPLOYEE:
         wanted = ("credits",)
+    elif role in (
+        EmployeeRole.IT_SUPPORT,
+        EmployeeRole.COMPANY_MANAGER,
+        EmployeeRole.SHOP_MANAGER,
+    ):
+        wanted = (*wanted, "balances")
     by_slug = {row["slug"]: row for row in ANALYTICS_SECTIONS}
     links = []
     for slug in wanted:
-        if slug not in ANALYTICS_DASHBOARD_SECTION_SLUGS and slug != "credits":
+        if (
+            slug not in ANALYTICS_DASHBOARD_SECTION_SLUGS
+            and slug not in ("credits", "balances")
+        ):
             continue
         section = by_slug.get(slug)
         if section is None:
@@ -946,6 +970,7 @@ def _it_support_stock_links(role, *, active_slug=None, profile=None):
                 "boxes",
                 href=base,
                 active=active_slug == "item-stock",
+                child=True,
             )
         )
     if _it_support_shelf_stock_available(profile):
@@ -955,8 +980,26 @@ def _it_support_stock_links(role, *, active_slug=None, profile=None):
                 "layers",
                 href=f"{base}&tab=shelf",
                 active=active_slug == "shelf-stock",
+                child=True,
             )
         )
+    if len(links) > 1:
+        for link in links:
+            link["child"] = True
+        links.insert(
+            0,
+            _link(
+                "Store management",
+                "warehouse",
+                href=base,
+                active=active_slug in ("item-stock", "shelf-stock"),
+                sidebar_only=True,
+                group=True,
+            ),
+        )
+    else:
+        for link in links:
+            link.pop("child", None)
     return links
 
 
@@ -1252,10 +1295,6 @@ def cashier_day_summaries_context(request, profile):
                     ),
                     urlencode({"back": back_url}),
                 ),
-                "day_report_url": reverse(
-                    "employees:my_shop_day_report",
-                    kwargs={"shop_id": shop.pk},
-                ),
                 "can_open_close": can_open_close,
                 "can_draw": (
                     can_record_drawing and own_session and not stale_open
@@ -1276,12 +1315,95 @@ def cashier_day_summaries_context(request, profile):
     }
 
 
+def cashier_session_blocks(profile):
+    """Allocated shops whose open day session belongs to another employee.
+
+    A cashier may only work on a shop day they opened themselves — when a
+    colleague's (or a previous shift's) session is still open the cashier
+    workspace is locked until that person closes it. Rows feed the blocked
+    notice: ``{shop, session, opener}``.
+    """
+    from items.services import actionable_shops_for_profile
+    from shops.services import get_open_shop_day
+
+    if (
+        profile is None
+        or getattr(profile, "role", None) != EmployeeRole.SHOP_CASHIER
+        or not profile.is_active_employee
+    ):
+        return []
+    blocks = []
+    for shop in actionable_shops_for_profile(profile):
+        session = get_open_shop_day(shop)
+        if session is None or session.opened_by_id == profile.pk:
+            continue
+        opener = "a colleague"
+        if session.opened_by_id:
+            user = session.opened_by.user
+            opener = user.get_full_name() or user.username
+        blocks.append({"shop": shop, "session": session, "opener": opener})
+    return blocks
+
+
+def render_cashier_session_blocked(request, profile, *, blocks=None):
+    """Blocking page shown while a colleague's day session is still open."""
+    from django.shortcuts import render
+
+    blocks = blocks if blocks is not None else cashier_session_blocks(profile)
+    dashboard_url = reverse(role_home_url_name(EmployeeRole.SHOP_CASHIER))
+    return render(
+        request,
+        "employees/cashier_session_blocked.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Session still open",
+                "headline": "Session still open",
+                "summary": (
+                    "A shop day is still open under another cashier — ask "
+                    "them to close it before you can start work."
+                ),
+                "icon": "door-closed",
+            },
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "session_blocks": blocks,
+            "page_sidebar": resolve_sidebar_hrefs(
+                {
+                    "page": "role_dashboard",
+                    "dashboard_url": dashboard_url,
+                    "omit_dashboard_link": True,
+                    "primary": [
+                        _link(
+                            "Dashboard",
+                            "layout-dashboard",
+                            href=dashboard_url,
+                            active=True,
+                        )
+                    ],
+                    "footer": [
+                        _link(
+                            "Sign out",
+                            "log-out",
+                            url_name="employees:logout",
+                            danger=True,
+                        )
+                    ],
+                }
+            ),
+        },
+    )
+
+
 # Cashier dashboard sidebar links the employee can hide from Cashier settings.
 # Link-only visibility (same convention as the shop floor sidebar toggles):
 # hidden links disappear from /shop-cashier/ but pages stay reachable by URL.
 CASHIER_SIDEBAR_LINKS = (
+    ("sell", 'Show "Sell"'),
     ("open_close", 'Show "Open / Close shop"'),
     ("drawings", 'Show "Drawings"'),
+    ("day_report", 'Show "Day report"'),
+    ("day_history", 'Show "Day history"'),
     ("expenses", 'Show "Expenses"'),
     ("receipts", 'Show "Receipts"'),
     ("analytics", 'Show "Analytics"'),
@@ -1329,6 +1451,148 @@ def set_cashier_sidebar_pref(profile, key: str, enabled: bool):
     return profile
 
 
+# Sell popup options — which document types, payment channels, and price
+# editing the employee's dashboard Sell popup offers. Per-employee, stored
+# in sidebar_prefs (missing key = on); POSTed as sell_<key> fields.
+SELL_POPUP_TOGGLES = (
+    ("sell_sale", 'Sell popup — "Sale"'),
+    ("sell_credit", 'Sell popup — "Credit"'),
+    ("sell_quotation", 'Sell popup — "Quotation"'),
+    ("sell_pay_cash", "Sell popup — Cash payments"),
+    ("sell_pay_mpesa", "Sell popup — M-Pesa payments"),
+    ("sell_pay_card", "Sell popup — Card payments"),
+    ("sell_edit_prices", "Sell popup — Edit item prices"),
+)
+SELL_POPUP_PREF_KEYS = frozenset(key for key, _label in SELL_POPUP_TOGGLES)
+
+SELL_PAYMENT_CHANNELS = ("cash", "mpesa", "card")
+SELL_PAYMENT_LABELS = {
+    "cash": "Cash",
+    "mpesa": "M-Pesa",
+    "card": "Card",
+    "both": "Cash + M-Pesa",
+    "cash_card": "Cash + Card",
+    "mpesa_card": "M-Pesa + Card",
+    "cash_mpesa_card": "Cash + M-Pesa + Card",
+}
+
+
+def cashier_sell_pref_enabled(profile, key: str) -> bool:
+    """True unless the employee disabled this Sell popup option."""
+    if profile is None:
+        return True
+    prefs = getattr(profile, "sidebar_prefs", None) or {}
+    value = prefs.get(key)
+    return True if value is None else bool(value)
+
+
+def cashier_sell_pref_field(key: str) -> str:
+    """The posted toggle field is the pref key itself (sell_<option>)."""
+    return key
+
+
+def cashier_sell_key_from_field(field: str) -> str:
+    field = (field or "").strip()
+    return field if field in SELL_POPUP_PREF_KEYS else ""
+
+
+def set_cashier_sell_pref(profile, key: str, enabled: bool):
+    if key not in SELL_POPUP_PREF_KEYS:
+        raise ValidationError("Unknown Sell popup option.")
+    prefs = dict(getattr(profile, "sidebar_prefs", None) or {})
+    prefs[key] = bool(enabled)
+    profile.sidebar_prefs = prefs
+    profile.save(update_fields=["sidebar_prefs", "updated_at"])
+    return profile
+
+
+def sell_payment_methods(profile) -> list:
+    """Payment methods the employee's Sell popup offers (pref-derived)."""
+    channels = [
+        channel
+        for channel in SELL_PAYMENT_CHANNELS
+        if cashier_sell_pref_enabled(profile, f"sell_pay_{channel}")
+    ]
+    methods = list(channels)
+    if "cash" in channels and "mpesa" in channels:
+        methods.append("both")
+    if "cash" in channels and "card" in channels:
+        methods.append("cash_card")
+    if "mpesa" in channels and "card" in channels:
+        methods.append("mpesa_card")
+    if len(channels) == len(SELL_PAYMENT_CHANNELS):
+        methods.append("cash_mpesa_card")
+    return methods
+
+
+def sell_kinds_allowed(profile) -> list:
+    """Document kinds the Sell popup offers — pref + HR permission."""
+    from .module_permissions import employee_may_unrestricted
+
+    return [
+        kind
+        for kind in ("sale", "credit", "quotation")
+        if cashier_sell_pref_enabled(profile, f"sell_{kind}")
+        and employee_may_unrestricted(profile, "my-shop", kind)
+    ]
+
+
+# Day report sales filter — which receipt statuses the employee's day
+# accounting report counts as sales. Stored per employee in
+# sidebar_prefs["day_report_status"] using the same buckets as the
+# dashboard day-summary filter (CASHIER_SALES_STATUSES); "all" when missing.
+DAY_REPORT_STATUS_PREF_KEY = "day_report_status"
+DAY_REPORT_STATUS_FIELD_PREFIX = "day_report_status_"
+
+
+def day_report_status_mode(profile) -> str:
+    """The employee's day-report sales filter — all|pending|confirmed."""
+    prefs = getattr(profile, "sidebar_prefs", None) or {}
+    mode = str(prefs.get(DAY_REPORT_STATUS_PREF_KEY) or "all").strip().lower()
+    return mode if mode in CASHIER_SALES_STATUSES else "all"
+
+
+def day_report_status_pref_field(mode: str) -> str:
+    return f"{DAY_REPORT_STATUS_FIELD_PREFIX}{mode}"
+
+
+def day_report_status_mode_from_field(field: str) -> str:
+    if not field or not field.startswith(DAY_REPORT_STATUS_FIELD_PREFIX):
+        return ""
+    mode = field[len(DAY_REPORT_STATUS_FIELD_PREFIX):]
+    return mode if mode in CASHIER_SALES_STATUSES else ""
+
+
+def set_day_report_status_pref(profile, mode: str):
+    if mode not in CASHIER_SALES_STATUSES:
+        raise ValidationError("Unknown day report status.")
+    prefs = dict(getattr(profile, "sidebar_prefs", None) or {})
+    prefs[DAY_REPORT_STATUS_PREF_KEY] = mode
+    profile.sidebar_prefs = prefs
+    profile.save(update_fields=["sidebar_prefs", "updated_at"])
+    return profile
+
+
+def day_report_counted_statuses(profile) -> frozenset:
+    """Receipt statuses counted as sales in the employee's day report."""
+    from shops.models import ShopReceiptStatus
+
+    mode = day_report_status_mode(profile)
+    if mode == "pending":
+        return frozenset({ShopReceiptStatus.ACTIVE})
+    if mode == "confirmed":
+        return frozenset(
+            {ShopReceiptStatus.CONFIRMED, ShopReceiptStatus.PARTIAL_RETURN}
+        )
+    return frozenset(
+        {
+            ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.CONFIRMED,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        }
+    )
+
+
 def buy_stock_action(profile):
     """Buy-stock sidebar action — popup when the modal exists, else href."""
     from items.services import actionable_shops_for_profile
@@ -1350,12 +1614,109 @@ def buy_stock_action(profile):
     )
 
 
+def sell_action(profile, role=None):
+    """Sell sidebar action — popup when the modal exists, else deep-link it."""
+    from items.services import actionable_shops_for_profile
+
+    shops = actionable_shops_for_profile(profile) if profile is not None else []
+    home_role = role or getattr(profile, "role", None)
+    if len(shops) == 1 and home_role:
+        # No modal on this page → bounce to the dashboard, which auto-opens
+        # it via the ?modal=sell query param.
+        href = reverse(role_home_url_name(home_role)) + "?modal=sell"
+    else:
+        href = my_shop_url()
+    return _action(
+        "Sell",
+        "shopping-cart",
+        action="sell",
+        href=href,
+    )
+
+
+def _sell_link_allowed(profile):
+    """Cashier may open the Sell popup when any sale kind is permitted."""
+    from .module_permissions import employee_may
+
+    return employee_may(profile, "my-shop", "workspace") and bool(
+        sell_kinds_allowed(profile)
+    )
+
+
+def sell_modal_context(request, profile):
+    """
+    Context for the Sell popup on non-floor pages.
+
+    Only rendered when the employee has exactly one actionable shop —
+    multi-shop staff still follow the action's data-href to MY-SHOP.
+
+    The popup is exempt from the company/shop POS feature toggles: which
+    document types, payment channels, and price editing it offers is set by
+    the employee's own Sell popup toggles (Cashier settings → Sell popup)
+    plus the HR permission matrix.
+    """
+    from items.services import actionable_shops_for_profile
+    from shops.services import get_effective_pos_settings, pos_settings_as_dict
+
+    from .module_permissions import employee_may
+
+    if profile is None or not employee_may(profile, "my-shop", "workspace"):
+        return {}
+    shops = actionable_shops_for_profile(profile)
+    if len(shops) != 1:
+        return {}
+    shop = shops[0]
+    pos_settings = get_effective_pos_settings(shop)
+    pos_flags = pos_settings_as_dict(pos_settings)
+    cart_kinds = sell_kinds_allowed(profile)
+    if not cart_kinds:
+        return {}
+    payment_methods = sell_payment_methods(profile)
+    from communications.automations import credit_whatsapp_required
+
+    return {
+        "sell_modal": True,
+        "shop": shop,
+        "pos_settings": pos_settings,
+        "pos_flags": pos_flags,
+        "cart_kinds": cart_kinds,
+        "default_kind": cart_kinds[0],
+        "default_payment": payment_methods[0] if payment_methods else "",
+        "sell_payment_options": [
+            (method, SELL_PAYMENT_LABELS[method]) for method in payment_methods
+        ],
+        "sell_edit_prices": cashier_sell_pref_enabled(profile, "sell_edit_prices"),
+        "show_document_picker": len(cart_kinds) > 1,
+        "credit_whatsapp": credit_whatsapp_required(),
+        "catalog_url": reverse(
+            "employees:my_shop_catalog", kwargs={"shop_id": shop.pk}
+        ),
+        "checkout_url": reverse(
+            "employees:my_shop_checkout", kwargs={"shop_id": shop.pk}
+        ),
+        "client_lookup_url": reverse(
+            "employees:my_shop_client_lookup", kwargs={"shop_id": shop.pk}
+        ),
+        "verify_login_code_url": reverse(
+            "employees:my_shop_verify_login_code", kwargs={"shop_id": shop.pk}
+        ),
+        "serial_search_url": reverse(
+            "employees:my_shop_serial_search", kwargs={"shop_id": shop.pk}
+        ),
+    }
+
+
 def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
     """Shop cashier dashboard sidebar."""
     from .module_permissions import employee_may, employee_may_any
     from shops.services import company_pos_analytics_section_visible
 
     links = []
+    if profile is None or (
+        cashier_sidebar_pref_enabled(profile, "sell")
+        and _sell_link_allowed(profile)
+    ):
+        links.append(sell_action(profile, role))
     if profile is not None and employee_may(profile, "my-shop", "open_close"):
         from items.services import actionable_shops_for_profile
         from shops.services import get_open_shop_day
@@ -1405,6 +1766,32 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                         active=active_slug == "drawings",
                     )
                 )
+            if cashier_sidebar_pref_enabled(profile, "day_report"):
+                links.append(
+                    _link(
+                        "Day report",
+                        "file-text",
+                        href=reverse(
+                            "employees:my_shop_day_report",
+                            kwargs={"shop_id": day_shop.pk},
+                        ),
+                        new_tab=True,
+                        sidebar_only=True,
+                    )
+                )
+            if cashier_sidebar_pref_enabled(profile, "day_history"):
+                links.append(
+                    _link(
+                        "Day history",
+                        "history",
+                        href=reverse(
+                            "employees:my_shop_day_history",
+                            kwargs={"shop_id": day_shop.pk},
+                        ),
+                        active=active_slug == "day-history",
+                        sidebar_only=True,
+                    )
+                )
         elif len(day_shops) > 1:
             if cashier_sidebar_pref_enabled(profile, "open_close"):
                 links.append(
@@ -1440,6 +1827,34 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                             urlencode({"mode": "drawings"}),
                         ),
                         active=active_slug == "drawings",
+                    )
+                )
+            role_day_url = reverse(
+                "employees:role_shop_day",
+                kwargs={"role_segment": role_url_segment(role)},
+            )
+            if cashier_sidebar_pref_enabled(profile, "day_report"):
+                links.append(
+                    _link(
+                        "Day report",
+                        "file-text",
+                        href="{}?{}".format(
+                            role_day_url, urlencode({"mode": "report"})
+                        ),
+                        active=active_slug == "day-report",
+                        sidebar_only=True,
+                    )
+                )
+            if cashier_sidebar_pref_enabled(profile, "day_history"):
+                links.append(
+                    _link(
+                        "Day history",
+                        "history",
+                        href="{}?{}".format(
+                            role_day_url, urlencode({"mode": "history"})
+                        ),
+                        active=active_slug == "day-history",
+                        sidebar_only=True,
                     )
                 )
     if profile is None or (
@@ -1516,9 +1931,14 @@ def sidebar_for_role_dashboard(
     comms_roles = (
         EmployeeRole.IT_SUPPORT,
         EmployeeRole.SUPER_ADMIN,
+        EmployeeRole.COMPANY_MANAGER,
         EmployeeRole.SHOP_MANAGER,
     )
-    split_stock_roles = (EmployeeRole.IT_SUPPORT, EmployeeRole.SHOP_MANAGER)
+    split_stock_roles = (
+        EmployeeRole.IT_SUPPORT,
+        EmployeeRole.COMPANY_MANAGER,
+        EmployeeRole.SHOP_MANAGER,
+    )
     skip_slugs = ("whatsapp",) if role in comms_roles else ()
     if role in split_stock_roles:
         # "Stock Management" splits into direct item / shelf stock links below.
@@ -1664,6 +2084,7 @@ def sidebar_for_my_shop(
     trade_out_enabled=False,
     shelf_mode_enabled=False,
     pos=None,
+    home_role=None,
 ):
     """Sidebar for MY-SHOP entry picker and shop floor workspace."""
     from .module_permissions import employee_may
@@ -1702,8 +2123,15 @@ def sidebar_for_my_shop(
         }
     )
     if portal and shop is not None:
-        dashboard_url = reverse(
-            "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
+        # A signed-in employee who also unlocked the floor still calls their
+        # role dashboard "Dashboard" — a pure shop portal session calls the
+        # floor workspace home instead.
+        dashboard_url = (
+            reverse(role_home_url_name(home_role))
+            if home_role is not None
+            else reverse(
+                "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
+            )
         )
         # Shop-portal floor *is* that session's home.
         omit_dashboard_link = active == "workspace"
@@ -2996,13 +3424,6 @@ def analytics_item_report_url(role):
     )
 
 
-def analytics_settings_url(role):
-    return reverse(
-        "employees:analytics_settings",
-        kwargs={"role_segment": role_url_segment(role)},
-    )
-
-
 def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     """Sidebar for the Analytics overview hub only — not shared with section pages."""
     from .analytics_services import ANALYTICS_DASHBOARD_SECTION_SLUGS, ANALYTICS_SECTIONS
@@ -3109,15 +3530,6 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
             )
         )
     primary.extend(section_links)
-    if profile is None or employee_may(profile, "analytics", "settings"):
-        primary.append(
-            _link(
-                "Analytics settings",
-                "settings",
-                href=analytics_settings_url(role),
-                active=active_view == "settings",
-            )
-        )
     return resolve_sidebar_hrefs(
         {
             "page": "analytics",
@@ -3153,7 +3565,6 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
         "confirm-receipts": ("Confirm receipts", "badge-check"),
         "return-receipts": ("Return receipt", "undo-2"),
         "return-receipts-audits": ("Returned receipts audit", "scroll-text"),
-        "settings": ("Analytics settings", "settings"),
     }
 
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
@@ -3163,64 +3574,53 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
         )
 
     if active_view in special_labels:
-        if active_view == "settings":
-            if profile is None or employee_may(profile, "analytics", "settings"):
+        if profile is None or employee_may(profile, "analytics", "receipts"):
+            primary.append(
+                _link(
+                    "Receipts",
+                    "receipt",
+                    href=analytics_receipts_url(role),
+                    active=False,
+                )
+            )
+        if active_view in {"return-receipts", "return-receipts-audits"}:
+            if profile is None or employee_may(
+                profile, "analytics", "return-receipts"
+            ):
                 primary.append(
                     _link(
-                        "Analytics settings",
-                        "settings",
-                        href=analytics_settings_url(role),
-                        active=True,
+                        "Return receipt",
+                        "undo-2",
+                        href=analytics_return_receipts_url(role),
+                        active=active_view == "return-receipts",
+                    )
+                )
+                primary.append(
+                    _link(
+                        "Returned receipts audit",
+                        "scroll-text",
+                        href=analytics_return_receipts_audits_url(role),
+                        active=active_view == "return-receipts-audits",
                     )
                 )
         else:
-            if profile is None or employee_may(profile, "analytics", "receipts"):
+            label, icon = special_labels[active_view]
+            perm = active_view
+            if profile is None or employee_may(profile, "analytics", perm):
+                href = analytics_confirm_receipts_url(role)
+                primary.append(_link(label, icon, href=href, active=True))
+            if active_view == "confirm-receipts" and (
+                profile is None
+                or employee_may(profile, "analytics", "return-receipts")
+            ):
                 primary.append(
                     _link(
-                        "Receipts",
-                        "receipt",
-                        href=analytics_receipts_url(role),
+                        "Return receipt",
+                        "undo-2",
+                        href=analytics_return_receipts_url(role),
                         active=False,
                     )
                 )
-            if active_view in {"return-receipts", "return-receipts-audits"}:
-                if profile is None or employee_may(
-                    profile, "analytics", "return-receipts"
-                ):
-                    primary.append(
-                        _link(
-                            "Return receipt",
-                            "undo-2",
-                            href=analytics_return_receipts_url(role),
-                            active=active_view == "return-receipts",
-                        )
-                    )
-                    primary.append(
-                        _link(
-                            "Returned receipts audit",
-                            "scroll-text",
-                            href=analytics_return_receipts_audits_url(role),
-                            active=active_view == "return-receipts-audits",
-                        )
-                    )
-            else:
-                label, icon = special_labels[active_view]
-                perm = active_view
-                if profile is None or employee_may(profile, "analytics", perm):
-                    href = analytics_confirm_receipts_url(role)
-                    primary.append(_link(label, icon, href=href, active=True))
-                if active_view == "confirm-receipts" and (
-                    profile is None
-                    or employee_may(profile, "analytics", "return-receipts")
-                ):
-                    primary.append(
-                        _link(
-                            "Return receipt",
-                            "undo-2",
-                            href=analytics_return_receipts_url(role),
-                            active=False,
-                        )
-                    )
     else:
         section_slug = "items" if active_view == "item-report" else section_slug
         section = ANALYTICS_SECTION_BY_SLUG.get(section_slug)
@@ -3272,15 +3672,6 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                 or employee_may(profile, "my-shop", "register_expense")
             ):
                 primary.append(register_expense_action(profile))
-        if profile is None or employee_may(profile, "analytics", "settings"):
-            primary.append(
-                _link(
-                    "Analytics settings",
-                    "settings",
-                    href=analytics_settings_url(role),
-                    active=False,
-                )
-            )
 
     return resolve_sidebar_hrefs(
         {
@@ -3352,15 +3743,6 @@ def sidebar_for_stock(role, *, profile=None, active="stock"):
                     active=active == "supply",
                 )
             )
-    if profile is None or employee_may(profile, "analytics", "settings"):
-        primary.append(
-            _link(
-                "Analytics settings",
-                "settings",
-                href=analytics_settings_url(role),
-                active=False,
-            )
-        )
     return resolve_sidebar_hrefs(
         {
             "page": "analytics",

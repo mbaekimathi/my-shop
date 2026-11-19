@@ -9,7 +9,6 @@
   data-animate="rise"
   data-analytics
   data-ax-section="supply"
-  data-supply-analytics
 >
   <header class="ax-top">
     <div class="ax-top-main">
@@ -74,13 +73,12 @@
         <h3>Suppliers</h3>
         <p class="ax-card-sub">Ranked by number of deliveries for this item.</p>
       </div>
-      <span class="ax-card-hint">Deliveries · units · spend · avg price</span>
+      <span class="ax-card-hint">Click a supplier to open their account</span>
     </header>
     <div class="ax-band-legend ax-band-legend--supply" aria-label="Column groups">
       <span class="is-flow">Name · Phone</span>
       <span class="is-total">Volume</span>
       <span class="is-result">Pricing</span>
-      <span class="is-action">History</span>
     </div>
     <div class="ax-table-wrap ax-table-wrap--scroll ax-table-wrap--list">
       {% if page.supplier_rows %}
@@ -93,14 +91,19 @@
             <th class="ax-th--num">Units</th>
             <th class="ax-th--money">Total spend</th>
             <th class="ax-th--money">Avg unit price</th>
-            <th class="ax-th--action">Details</th>
           </tr>
         </thead>
         <tbody>
           {% for supplier in page.supplier_rows %}
           <tr>
             <td class="ax-cell--primary" data-label="Name">
+              {% if supplier.account_href %}
+              <a class="ax-entity-link" href="{{ supplier.account_href }}" title="Open {{ supplier.name }}'s supplier account">
+                <span class="ax-entity-name">{{ supplier.name }}</span>
+              </a>
+              {% else %}
               <span class="ax-entity-name">{{ supplier.name }}</span>
+              {% endif %}
             </td>
             <td class="ax-cell--phone" data-label="Phone">
               {% if supplier.phone %}{{ supplier.phone }}{% else %}—{% endif %}
@@ -109,18 +112,6 @@
             <td class="ax-cell--num" data-label="Units">{{ supplier.quantity }}</td>
             <td class="ax-cell--money" data-label="Total spend"><span class="ax-money">{{ supplier.total_value }}</span></td>
             <td class="ax-cell--money" data-label="Avg unit price"><span class="ax-money">{{ supplier.average_price }}</span></td>
-            <td class="ax-cell--action" data-label="Details">
-              <button
-                class="ax-supply-detail-btn"
-                type="button"
-                data-supply-history-open="{{ supplier.history_key }}"
-                data-supply-name="{{ supplier.name }}"
-                aria-label="View {{ supplier.name }} supply history"
-              >
-                <i data-lucide="eye" aria-hidden="true"></i>
-                <span>History</span>
-              </button>
-            </td>
           </tr>
           {% endfor %}
           {% if page.totals %}
@@ -131,7 +122,6 @@
             <td class="ax-cell--num">{{ page.totals.quantity }}</td>
             <td class="ax-cell--money"><span class="ax-money">{{ page.totals.total_value }}</span></td>
             <td class="ax-cell--money"><span class="ax-money">{{ page.totals.average_price }}</span></td>
-            <td class="ax-cell--action" aria-hidden="true">—</td>
           </tr>
           {% endif %}
         </tbody>
@@ -141,7 +131,6 @@
       {% endif %}
     </div>
   </section>
-  {{ page.supply_history|json_script:"supply-history-data" }}
   {% else %}
   <section class="ax-card ax-card--wide ax-card--empty">
     <div class="ax-empty-state">
@@ -165,41 +154,6 @@
 
 {% block workspace_overlays %}
 {{ block.super }}
-<div class="workspace-modal shop-receipt-modal" data-supply-history-modal hidden aria-hidden="true">
-  <div class="workspace-modal-backdrop" data-supply-history-close></div>
-  <div
-    class="workspace-modal-dialog shop-receipt-modal-dialog ax-supply-modal-dialog"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="supply-history-title"
-  >
-    <div class="workspace-modal-head shop-receipt-modal-head">
-      <div>
-        <p class="shop-receipt-modal-kicker">Supply history</p>
-        <h2 id="supply-history-title" data-supply-history-title>Supplier details</h2>
-      </div>
-      <button type="button" class="workspace-icon-btn" data-supply-history-close aria-label="Close">
-        <i data-lucide="x" aria-hidden="true"></i>
-      </button>
-    </div>
-    <div class="shop-receipt-modal-body">
-      <div class="ax-table-wrap ax-table-wrap--scroll ax-table-wrap--list">
-        <table class="ax-table ax-table--supply-history">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Shop</th>
-              <th class="ax-th--num">Units</th>
-              <th class="ax-th--money">Unit price</th>
-              <th class="ax-th--money">Total</th>
-            </tr>
-          </thead>
-          <tbody data-supply-history-body></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -240,57 +194,6 @@
         }
       });
     }
-
-    const modal = document.querySelector("[data-supply-history-modal]");
-    const payload = document.getElementById("supply-history-data");
-    if (!modal || !payload) return;
-    const history = JSON.parse(payload.textContent);
-    const body = modal.querySelector("[data-supply-history-body]");
-    const title = modal.querySelector("[data-supply-history-title]");
-    const close = () => {
-      modal.hidden = true;
-      modal.setAttribute("aria-hidden", "true");
-      document.body.classList.remove("workspace-modal-open");
-    };
-    document.querySelectorAll("[data-supply-history-open]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const rows = history[button.dataset.supplyHistoryOpen] || [];
-        title.textContent = `${button.dataset.supplyName} · supply history`;
-        body.replaceChildren(...rows.map((row) => {
-          const tr = document.createElement("tr");
-          [
-            { value: row.date, className: "" },
-            { value: row.shop, className: "ax-cell--primary" },
-            { value: row.quantity, className: "ax-cell--num" },
-            { value: row.unit_price, className: "ax-cell--money ax-money" },
-            { value: row.amount, className: "ax-cell--money ax-money" },
-          ].forEach(({ value, className }) => {
-            const cell = document.createElement("td");
-            if (className) cell.className = className;
-            if (className.includes("ax-money")) {
-              const span = document.createElement("span");
-              span.className = "ax-money";
-              span.textContent = value;
-              cell.appendChild(span);
-            } else {
-              cell.textContent = value;
-            }
-            tr.appendChild(cell);
-          });
-          return tr;
-        }));
-        modal.hidden = false;
-        modal.setAttribute("aria-hidden", "false");
-        document.body.classList.add("workspace-modal-open");
-        if (window.lucide?.createIcons) window.lucide.createIcons();
-      });
-    });
-    modal.querySelectorAll("[data-supply-history-close]").forEach((button) => {
-      button.addEventListener("click", close);
-    });
-    window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !modal.hidden) close();
-    });
   })();
 </script>
 {% endblock %}

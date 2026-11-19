@@ -205,6 +205,220 @@ class DaySalesStatusSummaryTests(TestCase):
         self.assertEqual(day_sales_status_summary(None), {})
 
 
+class DayReportCountedStatusesTests(TestCase):
+    """The day report's per-employee status filter (counted_statuses)."""
+
+    def setUp(self):
+        _invalidate_pos_settings_cache()
+        self.user = User.objects.create_user(
+            username="200403",
+            password="pass",
+            email="report-filter@test.local",
+            first_name="Report",
+            last_name="Cashier",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="200403",
+            phone_country_code="+254",
+            phone_number="700000403",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="Report Shop",
+            location="Nairobi",
+            email="report-shop@test.local",
+            phone_number="0700000403",
+            login_code="200403",
+            password_hash=make_password("pass"),
+            created_by=self.profile,
+        )
+        self.profile.assigned_shops.add(self.shop)
+        self.item = Item.objects.create(
+            name="Report Item",
+            category="Parts",
+            description="Report fixture",
+            minimum_selling_price=Decimal("50.00"),
+            shop_price=Decimal("100.00"),
+            stock=10,
+            track_serial_number=False,
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(
+            shop=self.shop,
+            item=self.item,
+            quantity=10,
+            average_cost=Decimal("40.00"),
+        )
+        open_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "1000",
+                "mpesa_amount": "500",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": "200403",
+            },
+        )
+        self.session = get_open_shop_day(self.shop)
+        complete_shop_checkout(
+            shop=self.shop,
+            profile=self.profile,
+            payload={
+                "kind": ShopReceiptKind.SALE,
+                "payment_method": ShopPaymentMethod.CASH,
+                "cash_amount": "100",
+                "mpesa_amount": "0",
+                "login_code": "200403",
+                "lines": [{"id": self.item.pk, "qty": 1, "price": "100"}],
+            },
+        )
+        complete_shop_checkout(
+            shop=self.shop,
+            profile=self.profile,
+            payload={
+                "kind": ShopReceiptKind.SALE,
+                "payment_method": ShopPaymentMethod.MPESA,
+                "cash_amount": "0",
+                "mpesa_amount": "200",
+                "login_code": "200403",
+                "lines": [{"id": self.item.pk, "qty": 2, "price": "100"}],
+                "confirm": True,
+            },
+        )
+
+    def test_confirmed_only_drops_pending_sales(self):
+        from shops.services import (
+            day_session_balance_summary,
+            day_session_report_details,
+        )
+
+        counted = {
+            ShopReceiptStatus.CONFIRMED,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        }
+        summary = day_session_balance_summary(
+            self.session, counted_statuses=counted
+        )
+        self.assertEqual(summary["cash_sales"], Decimal("0"))
+        self.assertEqual(summary["mpesa_sales"], Decimal("200"))
+        self.assertEqual(summary["sales_total"], Decimal("200"))
+
+        details = day_session_report_details(
+            self.session, counted_statuses=counted
+        )
+        self.assertEqual(details["sales_count"], 1)
+        self.assertEqual(len(details["items_sold"]), 1)
+        self.assertEqual(details["items_sold"][0]["qty"], Decimal("2"))
+        # Pending receipts still surface in the flagged list.
+        self.assertEqual(len(details["flagged_receipts"]), 1)
+        self.assertEqual(
+            details["flagged_receipts"][0]["status"],
+            ShopReceiptStatus.ACTIVE,
+        )
+
+    def test_pending_only_drops_confirmed_sales(self):
+        from shops.services import (
+            day_session_balance_summary,
+            day_session_report_details,
+        )
+
+        counted = {ShopReceiptStatus.ACTIVE}
+        summary = day_session_balance_summary(
+            self.session, counted_statuses=counted
+        )
+        self.assertEqual(summary["cash_sales"], Decimal("100"))
+        self.assertEqual(summary["mpesa_sales"], Decimal("0"))
+
+        details = day_session_report_details(
+            self.session, counted_statuses=counted
+        )
+        self.assertEqual(details["sales_count"], 1)
+        self.assertEqual(details["items_sold"][0]["qty"], Decimal("1"))
+
+    def test_default_keeps_all_counted_statuses(self):
+        from shops.services import (
+            day_session_balance_summary,
+            day_session_report_details,
+        )
+
+        summary = day_session_balance_summary(self.session)
+        self.assertEqual(summary["sales_total"], Decimal("300"))
+        details = day_session_report_details(self.session)
+        self.assertEqual(details["sales_count"], 2)
+
+    def test_pdf_builds_with_status_filter(self):
+        from shops.services import build_shop_day_report_pdf
+
+        pdf = build_shop_day_report_pdf(
+            shop=self.shop,
+            session=self.session,
+            printed_by="Report Cashier",
+            company_name="TEST-SHOP",
+            counted_statuses={ShopReceiptStatus.CONFIRMED},
+            sales_scope_label="Confirmed sales only",
+        )
+        self.assertTrue(pdf.startswith(b"%PDF"))
+
+    def test_stocked_in_and_out_lists_with_est_value(self):
+        from items.models import (
+            StockEntrySource,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockOutReason,
+        )
+        from shops.services import day_session_report_details
+
+        in_mv = StockMovement.objects.create(
+            movement_type=StockMovementType.IN,
+            entry_source=StockEntrySource.STOCK_MANAGEMENT,
+            shop=self.shop,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=in_mv,
+            item=self.item,
+            quantity=Decimal("3"),
+            buying_price=Decimal("40.00"),
+        )
+        out_mv = StockMovement.objects.create(
+            movement_type=StockMovementType.OUT,
+            entry_source=StockEntrySource.STOCK_MANAGEMENT,
+            shop=self.shop,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=out_mv,
+            item=self.item,
+            quantity=Decimal("2"),
+            unit_cost=Decimal("40.00"),
+            reason=StockOutReason.WASTE,
+            note="Broken",
+        )
+
+        details = day_session_report_details(self.session)
+        groups = details["stock_purchases"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["lines"][0]["qty"], Decimal("3"))
+        self.assertEqual(groups[0]["lines"][0]["total"], Decimal("120.00"))
+        self.assertEqual(groups[0]["paid"], Decimal("0"))
+        self.assertEqual(groups[0]["source_label"], "Stock management")
+
+        out = details["stock_out"]
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["item"], "Report Item")
+        self.assertEqual(out[0]["qty"], Decimal("2"))
+        self.assertEqual(out[0]["est_value"], Decimal("80.00"))
+        self.assertEqual(out[0]["reason_label"], "Waste")
+        self.assertEqual(out[0]["note"], "Broken")
+        self.assertEqual(
+            details["stock_out_est_total"], Decimal("80.00")
+        )
+
+
 class CashierDaySummaryContextTests(TestCase):
     def setUp(self):
         _invalidate_pos_settings_cache()

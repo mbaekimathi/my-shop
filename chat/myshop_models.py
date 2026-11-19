@@ -263,22 +263,6 @@ class CompanyProfile(models.Model):
         db_table = "shops_companyprofile"
 
 
-class CompanyAnalyticsSettings(models.Model):
-    """Company-wide analytics defaults (singleton row, pk=1).
-
-    `receipt_data_source` is `all`, `pending` or `confirmed` — mirrors MY-SHOP
-    `shops.0083_company_analytics_settings`.
-    """
-
-    id = models.BigAutoField(primary_key=True)
-    receipt_data_source = models.CharField(max_length=16, default="pending")
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        managed = False
-        db_table = "shops_companyanalyticssettings"
-
-
 class CompanyPosSettings(models.Model):
     """Company-wide MY-SHOP POS defaults (singleton row, pk=1).
 

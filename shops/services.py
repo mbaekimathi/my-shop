@@ -12,8 +12,6 @@ from django.utils import timezone
 from employees.countries import COUNTRY_DIAL_CODES
 
 from .models import (
-    AnalyticsReceiptDataSource,
-    CompanyAnalyticsSettings,
     CompanyCommunicationsSettings,
     CompanyDarajaSettings,
     StkProvider,
@@ -855,50 +853,8 @@ STOCK_SETTING_FIELDS = frozenset(
         "shelf_require_note_on_request",
     }
 )
-ANALYTICS_SETTINGS_CACHE_KEY = "company_analytics_settings:v1"
-ANALYTICS_RECEIPT_DATA_SOURCES = frozenset(
-    {
-        AnalyticsReceiptDataSource.ALL,
-        AnalyticsReceiptDataSource.PENDING,
-        AnalyticsReceiptDataSource.CONFIRMED,
-    }
-)
-
-
 def _invalidate_stock_settings_cache() -> None:
     cache.delete(STOCK_SETTINGS_CACHE_KEY)
-
-
-def _invalidate_analytics_settings_cache() -> None:
-    cache.delete(ANALYTICS_SETTINGS_CACHE_KEY)
-
-
-def get_company_analytics_settings() -> CompanyAnalyticsSettings:
-    cached = cache.get(ANALYTICS_SETTINGS_CACHE_KEY)
-    if isinstance(cached, CompanyAnalyticsSettings):
-        return cached
-    settings_row, _ = CompanyAnalyticsSettings.objects.get_or_create(pk=1)
-    cache.set(ANALYTICS_SETTINGS_CACHE_KEY, settings_row, POS_SETTINGS_CACHE_TTL)
-    return settings_row
-
-
-def get_analytics_receipt_data_source_default() -> str:
-    row = get_company_analytics_settings()
-    value = (row.receipt_data_source or "").strip().lower()
-    if value in ANALYTICS_RECEIPT_DATA_SOURCES:
-        return value
-    return AnalyticsReceiptDataSource.PENDING
-
-
-def set_analytics_receipt_data_source(*, source: str) -> CompanyAnalyticsSettings:
-    value = (source or "").strip().lower()
-    if value not in ANALYTICS_RECEIPT_DATA_SOURCES:
-        raise ValidationError("Choose all, pending or confirmed receipts.")
-    settings_row = get_company_analytics_settings()
-    settings_row.receipt_data_source = value
-    settings_row.save(update_fields=["receipt_data_source", "updated_at"])
-    _invalidate_analytics_settings_cache()
-    return get_company_analytics_settings()
 
 
 def get_company_stock_settings() -> CompanyStockSettings:
@@ -6307,12 +6263,17 @@ def initiate_rider_delivery_stk(
     )
 
 
-def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) -> dict:
+def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, pos_unrestricted=False) -> dict:
     """
     Complete a MY-SHOP cart checkout.
 
     Validates the authorising staff 6-digit ID, creates a receipt, and for
     sale/credit deducts shop stock. Quotations never touch stock.
+
+    `pos_unrestricted` (dashboard Sell popup only) skips the company/shop POS
+    feature toggles — kind availability, payment-method gates, client-data
+    requirement, discount flag, and compulsory printing. HR permission rows
+    and role defaults still apply.
     """
     from employees.services import invalid_staff_code_message, verify_active_employee_code
     from items.models import (
@@ -6340,13 +6301,30 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         require_shop_day_for_sale(shop=shop)
 
     pos_settings = get_effective_pos_settings(shop)
-    if not pos_settings.kind_enabled(kind):
+    if (
+        not pos_settings.kind_enabled(kind)
+        and not (
+            pos_unrestricted
+            and kind
+            in (ShopReceiptKind.SALE, ShopReceiptKind.CREDIT, ShopReceiptKind.QUOTATION)
+        )
+    ):
         raise ValidationError("That transaction type is disabled in POS settings.")
+
+    # Price editing: floor follows enable_discount; the dashboard Sell popup
+    # follows the employee's own "Edit item prices" toggle instead.
+    if pos_unrestricted:
+        from employees.workspace import cashier_sell_pref_enabled
+
+        price_editable = cashier_sell_pref_enabled(profile, "sell_edit_prices")
+    else:
+        price_editable = bool(getattr(pos_settings, "enable_discount", True))
 
     print_via = (payload.get("print_via") or "").strip().lower()
     if (
         kind in (ShopReceiptKind.SALE, ShopReceiptKind.CREDIT)
         and pos_settings.compulsory_print_on_sale
+        and not pos_unrestricted
     ):
         if not print_via:
             raise ValidationError("Select a print method before completing the sale.")
@@ -6360,14 +6338,23 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     if authorising is None:
         raise ValidationError(invalid_staff_code_message(login_code, shop=shop))
 
-    from employees.module_permissions import ensure_employee_may
-
-    ensure_employee_may(
-        authorising,
-        "my-shop",
-        kind,
-        message=f"You do not have permission to complete a {kind}.",
+    from employees.module_permissions import (
+        employee_may_unrestricted,
+        ensure_employee_may,
     )
+
+    if pos_unrestricted:
+        if not employee_may_unrestricted(authorising, "my-shop", kind):
+            raise ValidationError(
+                f"You do not have permission to complete a {kind}."
+            )
+    else:
+        ensure_employee_may(
+            authorising,
+            "my-shop",
+            kind,
+            message=f"You do not have permission to complete a {kind}.",
+        )
 
     confirm_raw = payload.get("confirm")
     confirm_requested = confirm_raw is True or str(
@@ -6394,11 +6381,13 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
     client_name = (payload.get("client_name") or "").strip().upper()
     client_phone_raw = (payload.get("client_phone") or "").strip()
     client_phone = format_kenya_phone(client_phone_raw) if client_phone_raw else ""
-    collect_client_data = bool(getattr(pos_settings, "enable_client_data", True))
-    require_client_phone = collect_client_data and bool(
+    collect_client_data = pos_unrestricted or bool(
+        getattr(pos_settings, "enable_client_data", True)
+    )
+    require_client_phone = not pos_unrestricted and collect_client_data and bool(
         getattr(pos_settings, "require_client_phone", False)
     )
-    require_client_name = collect_client_data and bool(
+    require_client_name = not pos_unrestricted and collect_client_data and bool(
         getattr(pos_settings, "require_client_name", False)
     )
     delivery_wanted = bool(payload.get("delivery"))
@@ -6559,7 +6548,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
                         f"Enter the amount owed for “{item.name}”."
                     )
                     continue
-            elif not pos_settings.enable_discount:
+            elif not price_editable:
                 unit_price = list_price
             elif unit_price < item.minimum_selling_price and (
                 unit_price > 0 or list_price > 0
@@ -6747,12 +6736,14 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None) 
         tender = {"cash": Decimal("0.00"), "mpesa": Decimal("0.00"), "card": Decimal("0.00")}
 
         if kind == ShopReceiptKind.SALE:
-            if not pos_settings.cash_sale_checkout_enabled():
+            if not pos_unrestricted and not pos_settings.cash_sale_checkout_enabled():
                 raise ValidationError("No payment methods are enabled in POS settings.")
             payment_method = (payload.get("payment_method") or "").strip().lower()
             if payment_method not in SALE_PAYMENT_METHODS:
                 raise ValidationError("Choose an enabled payment method.")
-            if not pos_settings.payment_method_enabled(payment_method):
+            if not pos_unrestricted and not pos_settings.payment_method_enabled(
+                payment_method
+            ):
                 raise ValidationError("That payment method is disabled in POS settings.")
 
             channels = payment_method_channels(payment_method)
@@ -7255,20 +7246,23 @@ def _append_return_payment_event(
     return True
 
 
-def _collect_return_payment_events(*, shop_id, start, end) -> list:
+def _collect_return_payment_events(
+    *, shop_id, start, end, counted_statuses=None
+) -> list:
     """Flat refund events for a shop whose timestamp falls in [start, end)."""
     from .models import ShopReceipt
 
     if start >= end:
         return []
-    rows = (
-        ShopReceipt.objects.filter(
-            shop_id=shop_id,
-            kind=ShopReceiptKind.SALE,
-            last_returned_at__gte=start,
-        )
-        .exclude(return_payment_events=[])
-        .values("return_payment_events")
+    qs = ShopReceipt.objects.filter(
+        shop_id=shop_id,
+        kind=ShopReceiptKind.SALE,
+        last_returned_at__gte=start,
+    )
+    if counted_statuses is not None:
+        qs = qs.filter(status__in=counted_statuses)
+    rows = qs.exclude(return_payment_events=[]).values(
+        "return_payment_events"
     )
     events = []
     for row in rows:
@@ -7546,8 +7540,12 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
     return rows
 
 
-def day_session_balance_summary(session) -> dict:
-    """Live expected balances for one session (open or closed)."""
+def day_session_balance_summary(session, counted_statuses=None) -> dict:
+    """Live expected balances for one session (open or closed).
+
+    `counted_statuses` narrows which receipt statuses count as sales (and
+    which receipts' return refunds subtract); None counts every sale receipt.
+    """
     from items.models import StockMovement, StockMovementType
 
     from .models import Expense, ShopReceipt
@@ -7556,13 +7554,16 @@ def day_session_balance_summary(session) -> dict:
         return {}
 
     closed = session.closed_at or timezone.now()
+    sales_qs = ShopReceipt.objects.filter(
+        shop_id=session.shop_id,
+        kind=ShopReceiptKind.SALE,
+        created_at__gte=session.opened_at,
+        created_at__lt=closed,
+    )
+    if counted_statuses is not None:
+        sales_qs = sales_qs.filter(status__in=counted_statuses)
     sales = list(
-        ShopReceipt.objects.filter(
-            shop_id=session.shop_id,
-            kind=ShopReceiptKind.SALE,
-            created_at__gte=session.opened_at,
-            created_at__lt=closed,
-        ).values(
+        sales_qs.values(
             "created_at",
             "cash_amount",
             "mpesa_amount",
@@ -7571,7 +7572,10 @@ def day_session_balance_summary(session) -> dict:
         )
     )
     refunds = _collect_return_payment_events(
-        shop_id=session.shop_id, start=session.opened_at, end=closed
+        shop_id=session.shop_id,
+        start=session.opened_at,
+        end=closed,
+        counted_statuses=counted_statuses,
     )
     expenses = list(
         Expense.objects.filter(
@@ -7605,9 +7609,17 @@ def day_session_balance_summary(session) -> dict:
     )
 
 
-def day_session_report_details(session) -> dict:
-    """Line-level rows for the day accounting report (PDF preview)."""
-    from items.models import StockMovement, StockMovementType
+def day_session_report_details(session, counted_statuses=None) -> dict:
+    """Line-level rows for the day accounting report (PDF preview).
+
+    `counted_statuses` narrows which receipt statuses count toward items sold
+    and the sales count; the flagged (pending/cancelled) list is unaffected.
+    """
+    from items.models import (
+        StockMovement,
+        StockMovementType,
+        StockOutReason,
+    )
 
     from .models import ShopReceipt
 
@@ -7695,7 +7707,6 @@ def day_session_report_details(session) -> dict:
     movements = (
         StockMovement.objects.filter(
             movement_type=StockMovementType.IN,
-            amount_paid__gt=0,
             **window,
         )
         .prefetch_related("lines__item")
@@ -7732,15 +7743,66 @@ def day_session_report_details(session) -> dict:
             {
                 "at": movement.created_at,
                 "paid": movement.amount_paid,
+                "payment_label": (
+                    movement.get_payment_status_display()
+                    if movement.payment_status
+                    else ""
+                ),
+                "source_label": (
+                    movement.get_entry_source_display()
+                    if movement.entry_source
+                    else ""
+                ),
                 "lines": lines,
             }
         )
 
-    counted_statuses = {
-        ShopReceiptStatus.ACTIVE,
-        ShopReceiptStatus.CONFIRMED,
-        ShopReceiptStatus.PARTIAL_RETURN,
-    }
+    stock_out_rows = []
+    stock_out_est_total = Decimal("0.00")
+    stock_out_reason_labels = dict(StockOutReason.choices)
+    for movement in (
+        StockMovement.objects.filter(
+            movement_type=StockMovementType.OUT,
+            **window,
+        )
+        .prefetch_related("lines__item")
+        .order_by("created_at")
+    ):
+        for line in movement.lines.all():
+            item = (
+                line.item_name
+                or (line.item.name if line.item else "")
+                or ""
+            ).strip() or "Stock item"
+            qty = _qty(line.quantity)
+            unit = _money_or_zero(line.unit_cost)
+            est = (unit * qty).quantize(Decimal("0.01"))
+            stock_out_est_total += est
+            stock_out_rows.append(
+                {
+                    "at": movement.created_at,
+                    "item": item,
+                    "qty": qty,
+                    "unit_cost": unit,
+                    "est_value": est,
+                    "reason": line.reason or "",
+                    "reason_label": stock_out_reason_labels.get(
+                        line.reason, ""
+                    ),
+                    "note": (line.note or "").strip(),
+                    "refund_amount": line.refund_amount,
+                }
+            )
+
+    counted = (
+        set(counted_statuses)
+        if counted_statuses is not None
+        else {
+            ShopReceiptStatus.ACTIVE,
+            ShopReceiptStatus.CONFIRMED,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        }
+    )
     flagged_statuses = {
         ShopReceiptStatus.ACTIVE,
         ShopReceiptStatus.CANCELLED,
@@ -7762,7 +7824,7 @@ def day_session_report_details(session) -> dict:
                 f"{user.first_name or ''} {user.last_name or ''}".strip()
                 or user.username
             )
-        if receipt.status in counted_statuses:
+        if receipt.status in counted:
             for line in receipt.lines.all():
                 qty = _qty(line.quantity) - _qty(line.returned_quantity)
                 if qty <= 0:
@@ -7807,7 +7869,9 @@ def day_session_report_details(session) -> dict:
         ),
         key=lambda row: (-row["amount"], row["item"]),
     )
-    sales_count = len(receipts)
+    sales_count = sum(
+        1 for receipt in receipts if receipt.status in counted
+    )
 
     return {
         "sales_count": sales_count,
@@ -7816,13 +7880,26 @@ def day_session_report_details(session) -> dict:
         "expenses": expense_rows,
         "drawings": drawing_rows,
         "stock_purchases": stock_rows,
+        "stock_out": stock_out_rows,
+        "stock_out_est_total": stock_out_est_total,
     }
 
 
 def build_shop_day_report_pdf(
-    *, shop: Shop, session, printed_by: str = "", company_name: str = ""
+    *,
+    shop: Shop,
+    session,
+    printed_by: str = "",
+    company_name: str = "",
+    counted_statuses=None,
+    sales_scope_label: str = "",
 ) -> bytes:
-    """Branded A4 portrait PDF — the shop day's accounting preview/summary."""
+    """Branded A4 portrait PDF — the shop day's accounting preview/summary.
+
+    `counted_statuses` narrows which receipt statuses count as sales in the
+    money flow, items sold, and sales count (the employee's day-report
+    status pick). `sales_scope_label` is printed under the title when set.
+    """
     from io import BytesIO
 
     from reportlab.lib import colors
@@ -7849,8 +7926,12 @@ def build_shop_day_report_pdf(
     register_manrope_pdf_fonts()
 
     brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
-    summary = day_session_balance_summary(session)
-    details = day_session_report_details(session)
+    summary = day_session_balance_summary(
+        session, counted_statuses=counted_statuses
+    )
+    details = day_session_report_details(
+        session, counted_statuses=counted_statuses
+    )
     channels = shop_day_balance_channels(shop=shop)
     printed_at = timezone.localtime()
     is_open = session.closed_at is None
@@ -8031,7 +8112,14 @@ def build_shop_day_report_pdf(
                     Paragraph(_esc(brand.upper()), brand_style),
                     Paragraph("Day accounting report", title_style),
                     Paragraph(
-                        _esc(shop.name) + f" · {day_label}", subtitle_style
+                        _esc(shop.name)
+                        + f" · {day_label}"
+                        + (
+                            f" · {_esc(sales_scope_label)}"
+                            if sales_scope_label
+                            else ""
+                        ),
+                        subtitle_style,
                     ),
                 ],
                 [
@@ -8569,11 +8657,28 @@ def build_shop_day_report_pdf(
         empty_note="No expenses recorded this day.",
     )
 
-    # -- Stock bought ---------------------------------------------------------
+    # -- Stocked in -----------------------------------------------------------
     stock_groups = details.get("stock_purchases") or []
     stock_rows = []
     stock_spans = []
     stock_bgs = []
+    stock_in_sources = {"Buy items", "Stock management"}
+
+    def _stock_in_item_cell(stock_line, group):
+        source = group.get("source_label") or ""
+        if not source or source in stock_in_sources:
+            return _p(stock_line["item"])
+        html = (
+            f"<b>{_esc(stock_line['item'])}</b>"
+            f"<br/><font size='6.8' color='#5b6b7c'>{_esc(source)}</font>"
+        )
+        return Paragraph(html, cell)
+
+    def _stock_in_paid_cell(group):
+        if group["paid"]:
+            return _pr(_fmt(group["paid"]), strong=True)
+        return _pr(group.get("payment_label") or "—")
+
     for index, group in enumerate(stock_groups):
         lines = group.get("lines") or []
         if not lines:
@@ -8592,7 +8697,7 @@ def build_shop_day_report_pdf(
             stock_rows.append(
                 [
                     _p(_time(group["at"])) if i == 0 else "",
-                    _p(stock_line["item"]),
+                    _stock_in_item_cell(stock_line, group),
                     _pr(
                         _qty_label(stock_line["qty"])
                         if stock_line["qty"] is not None
@@ -8612,7 +8717,7 @@ def build_shop_day_report_pdf(
                         stock_line["supplier_name"],
                         stock_line["supplier_phone"],
                     ),
-                    _pr(_fmt(group["paid"]), strong=True) if i == 0 else "",
+                    _stock_in_paid_cell(group) if i == 0 else "",
                 ]
             )
         end = len(stock_rows)
@@ -8624,7 +8729,7 @@ def build_shop_day_report_pdf(
         (g.get("paid") or Decimal("0")) for g in stock_groups
     )
     _detail_table(
-        "Stock bought",
+        "Stocked in",
         ["Time", "Item", "Qty", "Unit cost", "Amount", "Supplier", "Paid"],
         stock_rows,
         [
@@ -8640,7 +8745,66 @@ def build_shop_day_report_pdf(
         footer=["Total", "", "", "", "", "", _fmt(stock_paid_total)],
         spans=stock_spans,
         group_backgrounds=stock_bgs,
-        empty_note="No stock purchases paid this day.",
+        empty_note="No stock added this day.",
+    )
+
+    # -- Stocked out ----------------------------------------------------------
+    stock_out_rows = details.get("stock_out") or []
+    stock_out_total = (
+        details.get("stock_out_est_total")
+        if details.get("stock_out_est_total") is not None
+        else sum((r["est_value"] or Decimal("0")) for r in stock_out_rows)
+    )
+
+    def _stock_out_reason_cell(row):
+        label = row["reason_label"] or "—"
+        extras = []
+        if row.get("note"):
+            extras.append(_esc(row["note"]))
+        if row.get("refund_amount"):
+            extras.append(f"Refund KSh {_fmt(row['refund_amount'])}")
+        html = f"<b>{_esc(label)}</b>"
+        if extras:
+            html += (
+                "<br/><font size='6.8' color='#5b6b7c'>"
+                + " · ".join(extras)
+                + "</font>"
+            )
+        return Paragraph(html, cell_sm)
+
+    _detail_table(
+        "Stocked out",
+        ["Time", "Item", "Qty", "Reason", "Unit cost", "Est. value"],
+        [
+            [
+                _p(_time(r["at"]), cell_sm),
+                _p(r["item"], cell_sm),
+                _p(_qty_label(r["qty"]), cell_sm_right),
+                _stock_out_reason_cell(r),
+                _p(_fmt(r["unit_cost"]), cell_sm_right),
+                _p(_fmt(r["est_value"]), cell_sm_right),
+            ]
+            for r in stock_out_rows
+        ],
+        [
+            doc.width * 0.07,
+            doc.width * 0.31,
+            doc.width * 0.08,
+            doc.width * 0.24,
+            doc.width * 0.12,
+            doc.width * 0.18,
+        ],
+        aligns=["l", "l", "r", "l", "r", "r"],
+        footer=[
+            "Estimated value lost",
+            "",
+            "",
+            "",
+            "",
+            _fmt(stock_out_total),
+        ],
+        dense=True,
+        empty_note="No stock taken out this day.",
     )
 
     if is_open:

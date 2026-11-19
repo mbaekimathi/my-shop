@@ -2387,7 +2387,7 @@ def resolve_analytics_receipt_status(
 
     An explicit GET value wins and is remembered on the session, so the same
     receipt set follows the user across every analytics page; otherwise the
-    remembered choice (then the company default) applies. ``default`` only
+    remembered choice applies, then ``default``, then pending. ``default`` only
     changes the final fallback when nothing was chosen or remembered.
     """
     resolved = _normalize_analytics_receipt_status(raw)
@@ -2407,9 +2407,7 @@ def resolve_analytics_receipt_status(
     fallback = _normalize_analytics_receipt_status(default)
     if fallback is not None:
         return fallback
-    from shops.services import get_analytics_receipt_data_source_default
-
-    return get_analytics_receipt_data_source_default()
+    return ANALYTICS_RECEIPT_STATUS_PENDING
 
 
 def _apply_analytics_receipt_status(qs, status_key: str | None, *, field: str = "status"):
@@ -2479,6 +2477,10 @@ def _metric(label, value, hint="", tone="neutral"):
         "warn": "warn",
         "good": "good",
         "bad": "bad",
+        "info": "info",
+        "violet": "violet",
+        "cash": "cash",
+        "cost": "cost",
         "neutral": "neutral",
     }
     return {
@@ -2881,6 +2883,81 @@ def _stock_summary_board(
             },
         ],
     }
+
+
+def _overview_metric_cards(
+    *,
+    total_sale_docs: int,
+    total_sales,
+    total_credit_docs: int,
+    total_credits,
+    total_docs: int,
+    total_revenue,
+    total_stock,
+    total_gross,
+    total_gross_pct,
+    total_expense_docs: int,
+    total_expenses,
+    total_profit,
+    total_margin,
+) -> list:
+    profit = Decimal(total_profit or 0)
+    gross = Decimal(total_gross or 0)
+    expenses = Decimal(total_expenses or 0)
+    profit_tone = "good" if profit >= 0 else "bad"
+    return [
+        _metric(
+            "All sales",
+            _money_ksh(total_sales),
+            hint=f"{int(total_sale_docs or 0)} receipts",
+            tone="info",
+        ),
+        _metric(
+            "All credits",
+            _money_ksh(total_credits),
+            hint=f"{int(total_credit_docs or 0)} receipts",
+            tone="violet",
+        ),
+        _metric(
+            "Total revenue",
+            _money_ksh(total_revenue),
+            hint=f"{int(total_docs or 0)} receipts · sales + credits",
+            tone="cash",
+        ),
+        _metric(
+            "Stock value sold",
+            _money_ksh(total_stock),
+            hint="Buying cost of items sold",
+            tone="cost",
+        ),
+        _metric(
+            "Gross margin",
+            _money_ksh(gross),
+            hint=f"{total_gross_pct}% of revenue",
+            tone="good" if gross >= 0 else "bad",
+        ),
+        _metric(
+            "Expenses cost used",
+            _money_ksh(expenses),
+            hint=(
+                f"{int(total_expense_docs or 0)} expenses · "
+                "excludes owner drawings"
+            ),
+            tone="warn" if expenses > 0 else "neutral",
+        ),
+        _metric(
+            "Profit",
+            _money_ksh(profit),
+            hint="Gross margin − expenses",
+            tone=profit_tone,
+        ),
+        _metric(
+            "Profit margin",
+            f"{total_margin}%",
+            hint="Of total revenue",
+            tone=profit_tone,
+        ),
+    ]
 
 
 def _table(
@@ -8277,6 +8354,7 @@ def _day_balance_data(filters) -> dict:
         opening = opening_by_session_id.get(session.pk, {})
         session_rows.append(
             {
+                "id": session.pk,
                 "shop_id": session.shop_id,
                 "is_open": False,
                 "opened_by_id": session.opened_by_id,
@@ -8387,6 +8465,7 @@ def _day_balance_data(filters) -> dict:
         opening = opening_by_session_id.get(session.pk, {})
         session_rows.append(
             {
+                "id": session.pk,
                 "shop_id": session.shop_id,
                 "is_open": True,
                 "opened_by_id": session.opened_by_id,
@@ -8638,94 +8717,6 @@ def _build_overview(filters):
         (amt for _docs, amt in drawings_by_shop.values()), _zero()
     )
 
-    summary_columns = [
-        "Metric",
-        {
-            "label": "Entries",
-            "money": True,
-            "title": "Receipts or expense documents counted",
-        },
-        {"label": "Amount", "money": True},
-    ]
-    summary_rows = [
-        [
-            "All sales",
-            total_sale_docs,
-            _money_cell(total_sales, title=f"All sales {_money_ksh(total_sales)}"),
-        ],
-        [
-            "All credits",
-            total_credit_docs,
-            _money_cell(
-                total_credits, title=f"All credits {_money_ksh(total_credits)}"
-            ),
-        ],
-        {
-            "cells": [
-                "Total revenue",
-                total_docs,
-                _money_cell(
-                    total_revenue,
-                    title=f"Total revenue {_money_ksh(total_revenue)} (sales + credits)",
-                ),
-            ],
-            "key": True,
-        },
-        [
-            "Stock value sold",
-            "—",
-            _money_cell(
-                total_stock,
-                title=f"Stock value sold {_money_ksh(total_stock)} — buying cost of items sold",
-            ),
-        ],
-        {
-            "cells": [
-                "Gross margin",
-                "—",
-                _money_cell(
-                    total_gross,
-                    tone="good" if total_gross >= 0 else "bad",
-                    title=f"Gross margin {_money_ksh(total_gross)} · {total_gross_pct}% of revenue",
-                ),
-            ],
-            "key": True,
-        },
-        [
-            "Expenses cost used",
-            total_expense_docs,
-            _money_cell(
-                total_expenses,
-                tone="warn" if total_expenses > 0 else "neutral",
-                title=f"Expenses {_money_ksh(total_expenses)} — excludes owner drawings",
-            ),
-        ],
-        {
-            "cells": [
-                "Profit",
-                "—",
-                _money_cell(
-                    total_profit,
-                    tone="good" if total_profit >= 0 else "bad",
-                    title=f"Profit {_money_ksh(total_profit)} (gross margin − expenses)",
-                ),
-            ],
-            "key": True,
-        },
-        {
-            "cells": [
-                "Profit margin",
-                "—",
-                _pct_cell(
-                    total_margin,
-                    tone="good" if total_profit >= 0 else "bad",
-                    title=f"Profit margin {total_margin}% of revenue",
-                ),
-            ],
-            "key": True,
-        },
-    ]
-
     shop_columns = ["Shop"]
     for label, is_total, band, band_start in (
         ("Sales", False, "flow", True),
@@ -8889,22 +8880,26 @@ def _build_overview(filters):
             "− expenses (owner drawings excluded)."
         ),
         "alerts": alerts,
-        "metrics": [],
+        "metrics": _overview_metric_cards(
+            total_sale_docs=total_sale_docs,
+            total_sales=total_sales,
+            total_credit_docs=total_credit_docs,
+            total_credits=total_credits,
+            total_docs=total_docs,
+            total_revenue=total_revenue,
+            total_stock=total_stock,
+            total_gross=total_gross,
+            total_gross_pct=total_gross_pct,
+            total_expense_docs=total_expense_docs,
+            total_expenses=total_expenses,
+            total_profit=total_profit,
+            total_margin=total_margin,
+        ),
         "trends": [],
         "charts": [],
         "sections": [],
         "insights": [],
         "tables": [
-            _table(
-                "Company summary",
-                summary_columns,
-                summary_rows,
-                empty="No activity for the selected period.",
-                shop_grid=False,
-                footnote=(
-                    "Combined figures across the selected shops for this period."
-                ),
-            ),
             _table(
                 "Individual shops",
                 shop_columns,
@@ -9703,89 +9698,47 @@ def _build_revenue(filters):
     return page
 
 
-_BALANCE_CHANNEL_KEYS = {
-    "cash": (
-        "opening_cash",
-        "expected_opening_cash",
-        "opening_cash_variance",
-        "closing_cash",
-        "session_open_cash",
-        "cash_sales",
-        "cash_refunds",
-        "expected_cash",
-        "cash_variance",
-        "live_cash",
-    ),
-    "mpesa": (
-        "opening_mpesa",
-        "expected_opening_mpesa",
-        "opening_mpesa_variance",
-        "closing_mpesa",
-        "session_open_mpesa",
-        "mpesa_sales",
-        "mpesa_refunds",
-        "expected_mpesa",
-        "mpesa_variance",
-        "live_mpesa",
-    ),
-    "card": (
-        "opening_card",
-        "expected_opening_card",
-        "opening_card_variance",
-        "closing_card",
-        "session_open_card",
-        "card_sales",
-        "card_refunds",
-        "expected_card",
-        "card_variance",
-        "live_card",
-    ),
-}
-
-
-def _strip_disabled_balance_channels(by_shop, totals, live_by_shop, flags) -> None:
-    """Zero till channels the company disabled so combined totals stay right."""
-    if all(flags.get(key, True) for key in _BALANCE_CHANNEL_KEYS):
-        return
-    for flag_key, keys in _BALANCE_CHANNEL_KEYS.items():
-        if flags.get(flag_key, True):
-            continue
-        for entry in list(by_shop.values()) + list(live_by_shop.values()) + [totals]:
-            for key in keys:
-                if key in entry:
-                    entry[key] = _zero()
-    for entry in list(by_shop.values()) + list(live_by_shop.values()) + [totals]:
-        if "live_total" in entry:
-            entry["live_total"] = (
-                Decimal(entry.get("live_cash") or 0)
-                + Decimal(entry.get("live_mpesa") or 0)
-                + Decimal(entry.get("live_card") or 0)
-            )
-
-
 def _build_balances(filters):
-    """Cashiers report — day sessions rolled up by the cashier who opened them."""
-    from collections import defaultdict
+    """Cashiers report — shop day sessions the viewer can open and review."""
+    from urllib.parse import urlencode
 
+    from django.urls import reverse
     from django.utils import timezone
+
+    from .access import role_url_segment
 
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     shops_by_id = {shop.pk: shop for shop in shops}
-    flags = filters.get("pos_flags") or _pos_feature_flags()
-    start = filters["start"]
+
+    role = filters.get("role")
+    role_segment = role_url_segment(role) if role is not None else ""
+    balances_url = ""
+    back_query = ""
+    if role_segment:
+        balances_url = reverse(
+            "employees:analytics_section",
+            kwargs={"role_segment": role_segment, "section": "balances"},
+        )
+        query = (filters.get("query") or "").strip()
+        if query:
+            balances_url = f"{balances_url}?{query}"
+        back_query = urlencode({"back": balances_url})
+
+    def _session_report_href(session_id):
+        if not session_id or not role_segment:
+            return ""
+        url = reverse(
+            "employees:analytics_day_session",
+            kwargs={
+                "role_segment": role_segment,
+                "session_id": session_id,
+            },
+        )
+        return f"{url}?{back_query}" if back_query else url
 
     day_balances = _day_balance_data(filters)
     session_rows = [dict(row) for row in day_balances["session_rows"]]
-
-    # Zero till channels the company disabled before totals are rolled up.
-    for flag_key, keys in _BALANCE_CHANNEL_KEYS.items():
-        if flags.get(flag_key, True):
-            continue
-        for row in session_rows:
-            for key in keys:
-                if key in row:
-                    row[key] = _zero()
 
     # Cashier filter — a day belongs to whoever opened it.
     selected_employee_id = int(filters.get("selected_employee_id") or 0)
@@ -9848,339 +9801,7 @@ def _build_balances(filters):
             if row.get("opened_by_id") == selected_employee_id
         ]
 
-    total_keys = (
-        "expected_opening_cash",
-        "expected_opening_mpesa",
-        "expected_opening_card",
-        "opening_cash",
-        "opening_mpesa",
-        "opening_card",
-        "opening_cash_variance",
-        "opening_mpesa_variance",
-        "opening_card_variance",
-        "closing_cash",
-        "closing_mpesa",
-        "closing_card",
-        "cash_sales",
-        "mpesa_sales",
-        "card_sales",
-        "cash_refunds",
-        "mpesa_refunds",
-        "card_refunds",
-        "expenses_paid",
-        "drawings_paid",
-        "suppliers_paid",
-        "expected_cash",
-        "expected_mpesa",
-        "expected_card",
-        "cash_variance",
-        "mpesa_variance",
-        "card_variance",
-    )
-    totals = {key: _zero() for key in total_keys}
-    totals["open_sessions"] = 0
-    totals["close_sessions"] = 0
-
-    def _new_bucket():
-        return {
-            "sessions": 0,
-            "open_sessions": 0,
-            "shops": set(),
-            "opening_total": _zero(),
-            "sales_total": _zero(),
-            "expenses_paid": _zero(),
-            "drawings_paid": _zero(),
-            "suppliers_paid": _zero(),
-            "expected_total": _zero(),
-            "closing_total": _zero(),
-            "variance_total": _zero(),
-        }
-
-    cashier_totals: dict[int, dict] = defaultdict(_new_bucket)
-    for row in session_rows:
-        is_open = bool(row.get("is_open"))
-        if row.get("opened_at") is not None and row["opened_at"] >= start:
-            totals["open_sessions"] += 1
-        if not is_open:
-            totals["close_sessions"] += 1
-        for key in total_keys:
-            totals[key] += Decimal(row.get(key) or 0)
-        opening = (
-            Decimal(row.get("opening_cash") or 0)
-            + Decimal(row.get("opening_mpesa") or 0)
-            + Decimal(row.get("opening_card") or 0)
-        )
-        sales = (
-            Decimal(row.get("cash_sales") or 0)
-            + Decimal(row.get("mpesa_sales") or 0)
-            + Decimal(row.get("card_sales") or 0)
-        )
-        expected = (
-            Decimal(row.get("expected_cash") or 0)
-            + Decimal(row.get("expected_mpesa") or 0)
-            + Decimal(row.get("expected_card") or 0)
-        )
-        closing = _zero()
-        variance = _zero()
-        if not is_open:
-            closing = (
-                Decimal(row.get("closing_cash") or 0)
-                + Decimal(row.get("closing_mpesa") or 0)
-                + Decimal(row.get("closing_card") or 0)
-            )
-            variance = (
-                Decimal(row.get("cash_variance") or 0)
-                + Decimal(row.get("mpesa_variance") or 0)
-                + Decimal(row.get("card_variance") or 0)
-            )
-        bucket = cashier_totals[row.get("opened_by_id") or 0]
-        bucket["sessions"] += 1
-        bucket["open_sessions"] += 1 if is_open else 0
-        bucket["shops"].add(row["shop_id"])
-        bucket["opening_total"] += opening
-        bucket["sales_total"] += sales
-        bucket["expenses_paid"] += row["expenses_paid"]
-        bucket["drawings_paid"] += row["drawings_paid"]
-        bucket["suppliers_paid"] += row["suppliers_paid"]
-        bucket["expected_total"] += expected
-        bucket["closing_total"] += closing
-        bucket["variance_total"] += variance
-
-    sales_total = (
-        totals["cash_sales"] + totals["mpesa_sales"] + totals["card_sales"]
-    )
-    paid_out = (
-        totals["expenses_paid"]
-        + totals["drawings_paid"]
-        + totals["suppliers_paid"]
-    )
-    expected_total = (
-        totals["expected_cash"]
-        + totals["expected_mpesa"]
-        + totals["expected_card"]
-    )
-    closing_total = (
-        totals["closing_cash"]
-        + totals["closing_mpesa"]
-        + totals["closing_card"]
-    )
-    variance_total = (
-        totals["cash_variance"]
-        + totals["mpesa_variance"]
-        + totals["card_variance"]
-    )
-    open_count = sum(1 for row in session_rows if row.get("is_open"))
-    cashier_count = len(cashier_totals)
-
-    metrics = [
-        _metric(
-            "Day sessions",
-            f"{len(session_rows)}",
-            hint=(
-                f"{cashier_count} cashier{'s' if cashier_count != 1 else ''}"
-                + (f" · {open_count} still open" if open_count else "")
-            ),
-        ),
-        _metric(
-            "Sales collected",
-            _money_ksh(sales_total),
-            hint="Cash · M-Pesa · card",
-        ),
-        _metric(
-            "Paid out",
-            _money_ksh(paid_out),
-            hint="Expenses · drawings · suppliers",
-            tone="warn" if paid_out > 0 else "neutral",
-        ),
-        _metric(
-            "Expected closing",
-            _money_ksh(expected_total),
-            hint="Opening + sales − paid out",
-        ),
-        _metric(
-            "Counted closing",
-            _money_ksh(closing_total),
-            hint=(
-                f"{totals['close_sessions']} day"
-                f"{'s' if totals['close_sessions'] != 1 else ''} counted"
-            ),
-        ),
-        _metric(
-            "Close variance",
-            _money_ksh(variance_total),
-            hint="Counted − expected",
-            tone=_variance_tone(variance_total),
-        ),
-    ]
-
-    cash_metrics = [
-        _metric(
-            "Expected opening cash",
-            _money_ksh(totals["expected_opening_cash"]),
-            hint="Previous closing cash",
-        ),
-        _metric(
-            "Actual opening cash",
-            _money_ksh(totals["opening_cash"]),
-            hint=f"{int(totals['open_sessions'] or 0)} days opened",
-        ),
-        _metric(
-            "Opening cash variance",
-            _money_ksh(totals["opening_cash_variance"]),
-            hint="Actual − expected",
-            tone=_variance_tone(totals["opening_cash_variance"]),
-        ),
-        _metric(
-            "Expected closing cash",
-            _money_ksh(totals["expected_cash"]),
-            hint="Open + cash sales − expenses − drawings − suppliers",
-        ),
-        _metric(
-            "Actual closing cash",
-            _money_ksh(totals["closing_cash"]),
-            hint=f"{int(totals['close_sessions'] or 0)} days closed",
-        ),
-        _metric(
-            "Closing cash variance",
-            _money_ksh(totals["cash_variance"]),
-            hint="Actual − expected",
-            tone=_variance_tone(totals["cash_variance"]),
-        ),
-    ]
-    mpesa_metrics = [
-        _metric(
-            "Expected opening M-Pesa",
-            _money_ksh(totals["expected_opening_mpesa"]),
-            hint="Previous closing M-Pesa",
-        ),
-        _metric(
-            "Actual opening M-Pesa",
-            _money_ksh(totals["opening_mpesa"]),
-        ),
-        _metric(
-            "Opening M-Pesa variance",
-            _money_ksh(totals["opening_mpesa_variance"]),
-            hint="Actual − expected",
-            tone=_variance_tone(totals["opening_mpesa_variance"]),
-        ),
-        _metric(
-            "Expected closing M-Pesa",
-            _money_ksh(totals["expected_mpesa"]),
-            hint="Open + M-Pesa sales",
-        ),
-        _metric(
-            "Actual closing M-Pesa",
-            _money_ksh(totals["closing_mpesa"]),
-        ),
-        _metric(
-            "Closing M-Pesa variance",
-            _money_ksh(totals["mpesa_variance"]),
-            hint="Actual − expected",
-            tone=_variance_tone(totals["mpesa_variance"]),
-        ),
-    ]
-    card_metrics = [
-        _metric(
-            "Expected opening Card",
-            _money_ksh(totals["expected_opening_card"]),
-            hint="Previous closing Card",
-        ),
-        _metric(
-            "Actual opening Card",
-            _money_ksh(totals["opening_card"]),
-        ),
-        _metric(
-            "Opening Card variance",
-            _money_ksh(totals["opening_card_variance"]),
-            hint="Actual − expected",
-            tone=_variance_tone(totals["opening_card_variance"]),
-        ),
-        _metric(
-            "Expected closing Card",
-            _money_ksh(totals["expected_card"]),
-            hint="Open + card sales",
-        ),
-        _metric(
-            "Actual closing Card",
-            _money_ksh(totals["closing_card"]),
-        ),
-        _metric(
-            "Closing Card variance",
-            _money_ksh(totals["card_variance"]),
-            hint="Actual − expected",
-            tone=_variance_tone(totals["card_variance"]),
-        ),
-    ]
-
-    cashier_columns = [
-        "Cashier",
-        "Shops",
-        "Days",
-        "Opened",
-        "Sales",
-        "Expenses paid",
-        "Drawings paid",
-        "Suppliers paid",
-        "Expected close",
-        "Counted close",
-        "Close variance",
-    ]
-    cashier_rows = []
-    for employee_id, bucket in sorted(
-        cashier_totals.items(),
-        key=lambda item: (-item[1]["sales_total"], _cashier_name(item[0])),
-    ):
-        cashier_rows.append(
-            [
-                _cashier_cell(employee_id or None),
-                str(len(bucket["shops"])),
-                str(bucket["sessions"]),
-                _money_ksh(bucket["opening_total"]),
-                _money_ksh(bucket["sales_total"]),
-                _money_ksh(bucket["expenses_paid"]),
-                _money_ksh(bucket["drawings_paid"]),
-                _money_ksh(bucket["suppliers_paid"]),
-                _money_ksh(bucket["expected_total"]),
-                _money_ksh(bucket["closing_total"]),
-                {
-                    "label": _money_ksh(bucket["variance_total"]),
-                    "tone": _variance_tone(bucket["variance_total"]),
-                },
-            ]
-        )
-
-    session_columns = [
-        "Cashier",
-        "Shop",
-        "Opened",
-        "Closed",
-        "Closed by",
-        "Exp. open cash",
-        "Exp. open M-Pesa",
-        "Exp. open Card",
-        "Open cash",
-        "Open M-Pesa",
-        "Open Card",
-        "Open cash var",
-        "Open M-Pesa var",
-        "Open Card var",
-        "Cash sales",
-        "M-Pesa sales",
-        "Card sales",
-        "Expenses paid",
-        "Drawings paid",
-        "Suppliers paid",
-        "Exp. close cash",
-        "Exp. close M-Pesa",
-        "Exp. close Card",
-        "Close cash",
-        "Close M-Pesa",
-        "Close Card",
-        "Close cash var",
-        "Close M-Pesa var",
-        "Close Card var",
-    ]
-    session_table_rows = []
+    session_list_rows = []
     for row in sorted(
         session_rows,
         key=lambda item: item["closed_at"] or item["opened_at"] or timezone.now(),
@@ -10188,72 +9809,37 @@ def _build_balances(filters):
     ):
         shop = shops_by_id.get(row["shop_id"])
         shop_name = shop.name if shop else f"Shop {row['shop_id']}"
-        opened = timezone.localtime(row["opened_at"]).strftime("%d %b %H:%M")
-        if row.get("is_open") or row["closed_at"] is None:
-            closed = "Open"
-            closed_by = "—"
+        opened_local = timezone.localtime(row["opened_at"])
+        is_open_row = bool(row.get("is_open")) or row["closed_at"] is None
+        if is_open_row:
+            session_sub = f"Started {opened_local:%H:%M}"
+            status_cell = {
+                "kind": "status",
+                "label": "Open",
+                "tone": "warn",
+            }
         else:
-            closed = timezone.localtime(row["closed_at"]).strftime("%d %b %H:%M")
-            closed_by = _cashier_name(row.get("closed_by_id"))
-        cash_var = row["cash_variance"]
-        mpesa_var = row["mpesa_variance"]
-        card_var = row["card_variance"]
-        open_cash_var = row["opening_cash_variance"]
-        open_mpesa_var = row["opening_mpesa_variance"]
-        open_card_var = row["opening_card_variance"]
-        is_open_row = bool(row.get("is_open"))
-        session_table_rows.append(
+            closed_local = timezone.localtime(row["closed_at"])
+            session_sub = f"{opened_local:%H:%M} – {closed_local:%H:%M}"
+            status_cell = {
+                "kind": "status",
+                "label": "Closed",
+                "tone": "good",
+            }
+        href = _session_report_href(row.get("id"))
+        session_list_rows.append(
             [
+                {
+                    "label": opened_local.strftime("%d %b %Y"),
+                    "sub": session_sub,
+                    "href": href,
+                },
                 _cashier_cell(row.get("opened_by_id")),
                 shop_name,
-                opened,
-                closed,
-                closed_by,
-                _money_ksh(row["expected_opening_cash"]),
-                _money_ksh(row["expected_opening_mpesa"]),
-                _money_ksh(row["expected_opening_card"]),
-                _money_ksh(row["opening_cash"]),
-                _money_ksh(row["opening_mpesa"]),
-                _money_ksh(row["opening_card"]),
+                status_cell,
                 {
-                    "label": _money_ksh(open_cash_var),
-                    "tone": _variance_tone(open_cash_var),
-                },
-                {
-                    "label": _money_ksh(open_mpesa_var),
-                    "tone": _variance_tone(open_mpesa_var),
-                },
-                {
-                    "label": _money_ksh(open_card_var),
-                    "tone": _variance_tone(open_card_var),
-                },
-                _money_ksh(row["cash_sales"]),
-                _money_ksh(row["mpesa_sales"]),
-                _money_ksh(row["card_sales"]),
-                _money_ksh(row.get("expenses_paid", row.get("expenses"))),
-                _money_ksh(row.get("drawings_paid") or 0),
-                _money_ksh(row.get("suppliers_paid") or 0),
-                _money_ksh(row["expected_cash"]),
-                _money_ksh(row["expected_mpesa"]),
-                _money_ksh(row["expected_card"]),
-                "—" if is_open_row else _money_ksh(row["closing_cash"]),
-                "—" if is_open_row else _money_ksh(row["closing_mpesa"]),
-                "—" if is_open_row else _money_ksh(row["closing_card"]),
-                {
-                    "label": "—" if is_open_row else _money_ksh(cash_var),
-                    "tone": "neutral" if is_open_row else _variance_tone(cash_var),
-                },
-                {
-                    "label": "—" if is_open_row else _money_ksh(mpesa_var),
-                    "tone": "neutral"
-                    if is_open_row
-                    else _variance_tone(mpesa_var),
-                },
-                {
-                    "label": "—" if is_open_row else _money_ksh(card_var),
-                    "tone": "neutral"
-                    if is_open_row
-                    else _variance_tone(card_var),
+                    "label": "Open",
+                    "href": href,
                 },
             ]
         )
@@ -10264,60 +9850,614 @@ def _build_balances(filters):
     return {
         "headline": headline,
         "lead": (
-            "Day sessions grouped by the cashier who opened each day — openings, "
-            "sales collected, money paid out, and expected vs counted closing. "
-            "Pick a cashier above to isolate one person's days."
+            "Shop day sessions in the selected period — open a session to "
+            "view every report for that day: money flow, items sold, "
+            "expenses, drawings, and stock."
         ),
         "alerts": [],
-        "metrics": metrics,
-        "metric_groups": [
-            _till_metric_group(
-                label="Cash till (period)",
-                icon="banknote",
-                tone="cash",
-                metrics=cash_metrics,
-            ),
-            _till_metric_group(
-                label="M-Pesa till (period)",
-                icon="smartphone",
-                tone="mpesa",
-                metrics=mpesa_metrics,
-            ),
-            _till_metric_group(
-                label="Card till (period)",
-                icon="credit-card",
-                tone="card",
-                metrics=card_metrics,
-            ),
-        ],
         "insights": [],
         "tables": [
             _table(
-                "Cashiers (period)",
-                cashier_columns,
-                cashier_rows,
-                empty="No day sessions for this period.",
-                footnote=(
-                    "A day belongs to the cashier who opened it; the closer is shown "
-                    "per session below. Counted close sums each closed day's counted "
-                    "till; variance is counted − expected."
-                ),
-            ),
-            _table(
-                "Day sessions",
-                session_columns,
-                session_table_rows,
+                "Sessions",
+                ["Session", "Cashier", "Shop", "Status", "Report"],
+                session_list_rows,
                 empty="No shop day sessions in this period.",
                 footnote=(
-                    "Expected opening = previous day's closing balance. Expected "
-                    "closing cash = opening + cash sales − expenses paid − owner "
-                    "drawings − suppliers paid. Variance = actual − expected."
+                    "A day belongs to the cashier who opened it. Open a "
+                    "session to view every report for that day."
                 ),
-                table_class="ax-table--sessions",
             ),
         ],
         "filter_employees": filter_employees,
         "selected_employee_id": selected_employee_id,
+        "sessions_layout": True,
+    }
+
+
+def build_day_session_report_page(*, profile, request, session) -> dict:
+    """Every report for one shop day session — opened from the Cashiers list.
+
+    Mirrors the day accounting PDF (money flow + items sold + flagged sales +
+    drawings + expenses + stock in/out) so the whole day can be reviewed on
+    screen; ``?download=1`` on the view streams the same PDF.
+    """
+    from urllib.parse import urlencode
+
+    from django.utils.http import url_has_allowed_host_and_scheme
+
+    from shops.services import (
+        day_session_balance_summary,
+        day_session_report_details,
+        shop_day_balance_channels,
+    )
+
+    from .workspace import (
+        analytics_section_url,
+        day_report_counted_statuses,
+        day_report_status_mode,
+    )
+
+    shop = session.shop
+    report_mode = day_report_status_mode(profile)
+    counted_statuses = day_report_counted_statuses(profile)
+    summary = day_session_balance_summary(
+        session, counted_statuses=counted_statuses
+    )
+    details = day_session_report_details(
+        session, counted_statuses=counted_statuses
+    )
+    channels = shop_day_balance_channels(shop=shop)
+    is_open = session.closed_at is None
+
+    requested_back = (request.GET.get("back") or "").strip()
+    back_href = ""
+    if requested_back and url_has_allowed_host_and_scheme(
+        requested_back, allowed_hosts={request.get_host()}
+    ):
+        back_href = requested_back
+    if not back_href:
+        back_href = analytics_section_url(profile.role, "balances")
+
+    def _person(row):
+        if row is None or getattr(row, "user", None) is None:
+            return "—"
+        return row.user.get_full_name() or row.user.username or "—"
+
+    opened_local = timezone.localtime(session.opened_at)
+    closed_local = (
+        timezone.localtime(session.closed_at) if session.closed_at else None
+    )
+    opened_by = _person(session.opened_by)
+    closed_by = _person(session.closed_by)
+
+    sales_scope_label = (
+        "Pending sales only"
+        if report_mode == "pending"
+        else "Confirmed sales only"
+        if report_mode == "confirmed"
+        else ""
+    )
+    period_label = (
+        f"{opened_local:%d %b %Y} · Open — live preview"
+        if is_open
+        else f"{opened_local:%d %b %Y} · Closed {closed_local:%H:%M}"
+    )
+    lead = f"Opened {opened_local:%d %b %Y %H:%M} by {opened_by}"
+    lead += (
+        f" — closed {closed_local:%d %b %Y %H:%M} by {closed_by}."
+        if not is_open
+        else " — not yet closed."
+    )
+    if sales_scope_label:
+        lead += f" {sales_scope_label}."
+
+    refunds_total = (
+        Decimal(summary.get("cash_refunds") or 0)
+        + Decimal(summary.get("mpesa_refunds") or 0)
+        + Decimal(summary.get("card_refunds") or 0)
+    )
+    paid_out = (
+        Decimal(summary.get("expenses_paid") or 0)
+        + Decimal(summary.get("suppliers_paid") or 0)
+        + Decimal(summary.get("drawings_paid") or 0)
+        + refunds_total
+    )
+    sales_count = int(details.get("sales_count") or 0)
+    total_variance = summary.get("total_variance")
+
+    metrics = [
+        _metric(
+            "Status",
+            "Open" if is_open else "Closed",
+            hint=(
+                "Live preview — still counting"
+                if is_open
+                else "Day counted and closed"
+            ),
+            tone="warn" if is_open else "good",
+        ),
+        _metric(
+            "Opened with",
+            _money_ksh(summary.get("opening_total")),
+            hint=f"Float at {opened_local:%H:%M}",
+        ),
+        _metric(
+            "Sales collected",
+            _money_ksh(summary.get("sales_total")),
+            hint=f"{sales_count} receipt{'s' if sales_count != 1 else ''}",
+        ),
+        _metric(
+            "Paid out",
+            _money_ksh(paid_out),
+            hint="Expenses · stock · drawings · returns",
+            tone="warn" if paid_out > 0 else "neutral",
+        ),
+    ]
+    if is_open:
+        metrics.append(
+            _metric(
+                "Expected closing",
+                _money_ksh(summary.get("expected_total")),
+                hint="Opening + sales − paid out",
+            )
+        )
+    else:
+        metrics.append(
+            _metric(
+                "Counted closing",
+                _money_ksh(summary.get("closing_total")),
+                hint=f"Counted at {closed_local:%H:%M}",
+            )
+        )
+        metrics.append(
+            _metric(
+                "Close variance",
+                _money_ksh(total_variance),
+                hint="Counted − expected",
+                tone=_variance_tone(total_variance),
+            )
+        )
+
+    channel_cols = [
+        (key, label)
+        for key, label in (
+            ("cash", "Cash"),
+            ("mpesa", "M-Pesa"),
+            ("card", "Card"),
+        )
+        if channels.get(key)
+    ]
+
+    def _money_cell(value, *, minus=False, tone=""):
+        if value is None:
+            return {"kind": "money", "label": "—"}
+        amount = Decimal(value)
+        label = _money_ksh(amount)
+        if minus and amount != 0:
+            label = f"−{label}"
+        cell = {"kind": "money", "label": label}
+        if tone:
+            cell["tone"] = tone
+        return cell
+
+    def _channel_values(prefix):
+        return {
+            "cash": summary.get(f"{prefix}_cash"),
+            "mpesa": summary.get(f"{prefix}_mpesa"),
+            "card": summary.get(f"{prefix}_card"),
+        }
+
+    def _flow_row(label, by_channel, total, *, minus=False):
+        cells = [label]
+        for key, _label in channel_cols:
+            cells.append(_money_cell(by_channel.get(key), minus=minus))
+        cells.append(_money_cell(total, minus=minus))
+        return cells
+
+    flow_columns = [{"label": "Flow"}]
+    flow_columns += [
+        {"label": label, "money": True} for _key, label in channel_cols
+    ]
+    flow_columns.append({"label": "Total", "money": True, "total": True})
+    flow_rows = [
+        _flow_row(
+            "Opening float",
+            _channel_values("opening"),
+            summary.get("opening_total"),
+        ),
+        _flow_row(
+            f"Sales collected ({sales_count} receipts)",
+            {
+                "cash": summary.get("cash_sales"),
+                "mpesa": summary.get("mpesa_sales"),
+                "card": summary.get("card_sales"),
+            },
+            summary.get("sales_total"),
+        ),
+        _flow_row(
+            "Returns paid",
+            {
+                "cash": summary.get("cash_refunds"),
+                "mpesa": summary.get("mpesa_refunds"),
+                "card": summary.get("card_refunds"),
+            },
+            refunds_total,
+            minus=True,
+        ),
+        _flow_row(
+            "Expenses paid",
+            {"cash": summary.get("expenses_paid")},
+            summary.get("expenses_paid"),
+            minus=True,
+        ),
+        _flow_row(
+            "Stock bought",
+            {"cash": summary.get("suppliers_paid")},
+            summary.get("suppliers_paid"),
+            minus=True,
+        ),
+        _flow_row(
+            "Owner drawings",
+            {
+                "cash": summary.get("drawings_cash"),
+                "mpesa": summary.get("drawings_mpesa"),
+                "card": summary.get("drawings_card"),
+            },
+            summary.get("drawings_paid"),
+            minus=True,
+        ),
+        _flow_row(
+            "Expected in till",
+            _channel_values("expected"),
+            summary.get("expected_total"),
+        ),
+    ]
+    if not is_open:
+        flow_rows.append(
+            _flow_row(
+                "Counted closing",
+                _channel_values("closing"),
+                summary.get("closing_total"),
+            )
+        )
+        variance_cells = ["Variance"]
+        for key, _label in channel_cols:
+            channel_variance = summary.get(f"{key}_variance")
+            variance_cells.append(
+                _money_cell(
+                    channel_variance,
+                    tone=_variance_tone(channel_variance),
+                )
+            )
+        variance_cells.append(
+            _money_cell(total_variance, tone=_variance_tone(total_variance))
+        )
+        flow_rows.append(variance_cells)
+
+    def _time(at):
+        return timezone.localtime(at).strftime("%H:%M")
+
+    def _supplier_cell(name, phone):
+        name = (name or "").strip()
+        phone = (phone or "").strip()
+        if not name and not phone:
+            return "—"
+        return {"label": name or "—", "sub": phone}
+
+    tables = [
+        _table(
+            "Money flow",
+            flow_columns,
+            flow_rows,
+            empty="No money movement recorded this day.",
+            footnote=(
+                "Expected in till = opening + sales − returns − expenses − "
+                "stock bought − drawings. Variance = counted − expected."
+            ),
+        ),
+    ]
+
+    items_sold = details.get("items_sold") or []
+    items_qty_total = sum(
+        (Decimal(row.get("qty") or 0) for row in items_sold), _zero()
+    )
+    items_amount_total = sum(
+        (Decimal(row.get("amount") or 0) for row in items_sold), _zero()
+    )
+    tables.append(
+        _table(
+            "Items sold",
+            [
+                "Item",
+                {"label": "Qty", "money": True},
+                {"label": "Amount", "money": True},
+            ],
+            [
+                [
+                    row["item"],
+                    _qty_label(row["qty"]),
+                    _money_ksh(row["amount"]),
+                ]
+                for row in items_sold
+            ],
+            empty="No items sold this day.",
+            footnote=(
+                f"{len(items_sold)} item"
+                f"{'s' if len(items_sold) != 1 else ''} · "
+                f"{_qty_label(items_qty_total)} units · "
+                f"{_money_ksh(items_amount_total)}"
+            )
+            if items_sold
+            else "",
+        )
+    )
+
+    flagged = details.get("flagged_receipts") or []
+    flagged_total = sum(
+        (Decimal(row.get("total") or 0) for row in flagged), _zero()
+    )
+    flagged_rows = []
+    for row in flagged:
+        flagged_rows.append(
+            [
+                _time(row["at"]),
+                {"label": row["number"], "sub": row["items_label"]},
+                row["seller"],
+                {
+                    "kind": "status",
+                    "label": row["status_label"],
+                    "tone": (
+                        "warn"
+                        if row["status"] == ShopReceiptStatus.ACTIVE
+                        else "bad"
+                    ),
+                },
+                _money_ksh(row["total"]),
+            ]
+        )
+    tables.append(
+        _table(
+            "Pending & cancelled sales",
+            [
+                "Time",
+                "Receipt",
+                "Sold by",
+                "Status",
+                {"label": "Amount", "money": True},
+            ],
+            flagged_rows,
+            empty="No pending or cancelled sales this day.",
+            footnote=(
+                f"{len(flagged)} receipt{'s' if len(flagged) != 1 else ''} · "
+                f"{_money_ksh(flagged_total)}"
+            )
+            if flagged
+            else "",
+        )
+    )
+
+    drawing_rows = details.get("drawings") or []
+    drawing_columns = [{"label": "Time · detail"}]
+    drawing_columns += [
+        {"label": label, "money": True} for _key, label in channel_cols
+    ]
+    drawing_columns.append({"label": "Total", "money": True})
+    drawing_table_rows = []
+    for row in drawing_rows:
+        cells = [f"{_time(row['at'])} · {row['name']}"]
+        for key, _label in channel_cols:
+            cells.append(_money_ksh(row.get(key)))
+        cells.append(_money_ksh(row.get("paid")))
+        drawing_table_rows.append(cells)
+    tables.append(
+        _table(
+            "Drawings done",
+            drawing_columns,
+            drawing_table_rows,
+            empty="No drawings recorded this day.",
+            footnote=(
+                f"Total {_money_ksh(summary.get('drawings_paid'))}"
+                if drawing_rows
+                else ""
+            ),
+        )
+    )
+
+    expense_rows = details.get("expenses") or []
+    expenses_paid_total = sum(
+        (Decimal(row.get("paid") or 0) for row in expense_rows), _zero()
+    )
+    expense_status_tones = {
+        ExpensePaymentStatus.PAID: "good",
+        ExpensePaymentStatus.PARTIAL: "warn",
+        ExpensePaymentStatus.UNPAID: "bad",
+    }
+    expense_table_rows = []
+    for row in expense_rows:
+        expense_table_rows.append(
+            [
+                _time(row["at"]),
+                row["name"],
+                row["category_label"],
+                _qty_label(row["qty"]),
+                _supplier_cell(row["supplier_name"], row["supplier_phone"]),
+                {
+                    "kind": "status",
+                    "label": row.get("status_label") or "—",
+                    "tone": expense_status_tones.get(
+                        row.get("status"), "neutral"
+                    ),
+                },
+                _money_ksh(row.get("paid")),
+            ]
+        )
+    tables.append(
+        _table(
+            "Expenses incurred",
+            [
+                "Time",
+                "Expense",
+                "Category",
+                {"label": "Qty", "money": True},
+                "Supplier",
+                "Status",
+                {"label": "Paid", "money": True},
+            ],
+            expense_table_rows,
+            empty="No expenses recorded this day.",
+            footnote=(
+                f"Paid {_money_ksh(expenses_paid_total)}"
+                if expense_rows
+                else ""
+            ),
+        )
+    )
+
+    stock_groups = details.get("stock_purchases") or []
+    stock_in_rows = []
+    for group in stock_groups:
+        source = (group.get("source_label") or "").strip() or "Stock in"
+        header = f"{_time(group['at'])} · {source}"
+        if group.get("paid"):
+            header += f" · Paid {_money_ksh(group['paid'])}"
+        elif group.get("payment_label"):
+            header += f" · {group['payment_label']}"
+        stock_in_rows.append({"group_header": True, "label": header})
+        lines = group.get("lines") or [
+            {
+                "item": "Stock purchase",
+                "qty": None,
+                "unit_cost": None,
+                "total": None,
+                "supplier_name": "",
+                "supplier_phone": "",
+            }
+        ]
+        for line in lines:
+            stock_in_rows.append(
+                [
+                    line["item"],
+                    (
+                        _qty_label(line["qty"])
+                        if line.get("qty") is not None
+                        else "—"
+                    ),
+                    (
+                        _money_ksh(line["unit_cost"])
+                        if line.get("unit_cost") is not None
+                        else "—"
+                    ),
+                    (
+                        _money_ksh(line["total"])
+                        if line.get("total") is not None
+                        else "—"
+                    ),
+                    _supplier_cell(
+                        line["supplier_name"], line["supplier_phone"]
+                    ),
+                ]
+            )
+    stock_paid_total = sum(
+        (Decimal(group.get("paid") or 0) for group in stock_groups), _zero()
+    )
+    tables.append(
+        _table(
+            "Stocked in",
+            [
+                "Item",
+                {"label": "Qty", "money": True},
+                {"label": "Unit cost", "money": True},
+                {"label": "Amount", "money": True},
+                "Supplier",
+            ],
+            stock_in_rows,
+            empty="No stock added this day.",
+            footnote=(
+                f"Paid to suppliers {_money_ksh(stock_paid_total)}"
+                if stock_groups
+                else ""
+            ),
+        )
+    )
+
+    stock_out = details.get("stock_out") or []
+    stock_out_total = details.get("stock_out_est_total")
+    if stock_out_total is None:
+        stock_out_total = sum(
+            (Decimal(row.get("est_value") or 0) for row in stock_out), _zero()
+        )
+    stock_out_rows = []
+    for row in stock_out:
+        extras = []
+        if row.get("note"):
+            extras.append(row["note"])
+        if row.get("refund_amount"):
+            extras.append(f"Refund {_money_ksh(row['refund_amount'])}")
+        stock_out_rows.append(
+            [
+                _time(row["at"]),
+                row["item"],
+                _qty_label(row["qty"]),
+                {
+                    "label": row.get("reason_label") or "—",
+                    "sub": " · ".join(extras),
+                },
+                _money_ksh(row["unit_cost"]),
+                _money_ksh(row["est_value"]),
+            ]
+        )
+    tables.append(
+        _table(
+            "Stocked out",
+            [
+                "Time",
+                "Item",
+                {"label": "Qty", "money": True},
+                "Reason",
+                {"label": "Unit cost", "money": True},
+                {"label": "Est. value", "money": True},
+            ],
+            stock_out_rows,
+            empty="No stock removed this day.",
+            footnote=(
+                f"Estimated value {_money_ksh(stock_out_total)}"
+                if stock_out
+                else ""
+            ),
+        )
+    )
+
+    alerts = []
+    if is_open:
+        alerts.append(
+            _alert(
+                "info",
+                "Day still open",
+                "Figures are a live preview — sales and paid-outs update "
+                "until the day is closed.",
+            )
+        )
+
+    page = {
+        "headline": f"Day session — {shop.name}",
+        "period_label": period_label,
+        "lead": lead,
+        "back_href": back_href,
+        "back_label": "Back to cashiers",
+        "download_href": f"{request.path}?{urlencode({'download': '1'})}",
+        "list_table_layout": True,
+        "hide_date_filters": True,
+        "day_session_layout": True,
+        "alerts": alerts,
+        "metrics": metrics,
+        "insights": [],
+        "tables": tables,
+    }
+    page = _apply_pos_visibility(page, _pos_feature_flags())
+    return {
+        "section_slug": "balances",
+        "include_all_time": False,
+        "page": page,
     }
 
 
@@ -12426,7 +12566,6 @@ def _build_supply(filters):
             "selected_item": None,
             "item_choices": item_choices,
             "supplier_rows": [],
-            "supply_history": {},
             "totals": None,
             "summary_board": None,
         }
@@ -12458,10 +12597,10 @@ def _build_supply(filters):
             {
                 "name": name,
                 "phone": phone,
+                "has_name": bool((line.supplier_name or "").strip()),
                 "movement_ids": set(),
                 "quantity": 0,
                 "amount": _zero(),
-                "details": [],
             },
         )
         quantity = Decimal(line.quantity or 0)
@@ -12469,34 +12608,27 @@ def _build_supply(filters):
         entry["movement_ids"].add(line.movement_id)
         entry["quantity"] += quantity
         entry["amount"] += unit_price * quantity
-        entry["details"].append(
-            {
-                "date": timezone.localtime(line.movement.created_at).strftime(
-                    "%d %b %Y, %H:%M"
-                ),
-                "shop": line.movement.shop.name if line.movement.shop_id else "—",
-                "quantity": _qty_number(quantity),
-                "unit_price": _money_ksh(unit_price),
-                "amount": _money_ksh(unit_price * quantity),
-            }
-        )
 
     supplier_rows = []
-    supply_history = {}
-    for index, entry in enumerate(
-        sorted(grouped.values(), key=lambda row: (-len(row["movement_ids"]), row["name"].casefold())),
-        start=1,
+    for entry in sorted(
+        grouped.values(), key=lambda row: (-len(row["movement_ids"]), row["name"].casefold())
     ):
-        history_key = f"supplier-{index}"
         average_price = (
             entry["amount"] / entry["quantity"] if entry["quantity"] else _zero()
         )
-        supply_history[history_key] = entry["details"]
         supplier_rows.append(
             {
-                "history_key": history_key,
                 "name": entry["name"],
                 "phone": entry["phone"],
+                "account_href": (
+                    shelf_supplier_account_url(
+                        filters["role"],
+                        name=entry["name"],
+                        phone=entry["phone"],
+                    )
+                    if entry["has_name"]
+                    else ""
+                ),
                 "supply_count": len(entry["movement_ids"]),
                 "quantity": _qty_number(entry["quantity"]),
                 "average_price": _money_ksh(average_price),
@@ -12534,7 +12666,6 @@ def _build_supply(filters):
         "selected_item": selected_item,
         "item_choices": item_choices,
         "supplier_rows": supplier_rows,
-        "supply_history": supply_history,
         "totals": totals,
         "summary_board": _supply_summary_board(
             item_name=selected_item.name,

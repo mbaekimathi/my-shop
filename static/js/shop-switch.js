@@ -32,7 +32,7 @@
     readCookie("csrftoken") ||
     "";
 
-  let state = { passwordless: false, currentShopId: "", shops: [] };
+  let state = { mode: "portal", passwordless: false, currentShopId: "", shops: [] };
   let selectedShopId = "";
   let busy = false;
 
@@ -194,14 +194,21 @@
         throw new Error(data.error || "Could not load shops.");
       }
       state = {
+        mode: data.mode === "view" ? "view" : "portal",
         passwordless: Boolean(data.passwordless),
         currentShopId: String(data.current_shop_id || ""),
         shops: Array.isArray(data.shops) ? data.shops : [],
       };
+      if (data.all_option && typeof data.all_option === "object") {
+        state.shops = [data.all_option, ...state.shops];
+      }
       if (lead) {
-        lead.textContent = state.passwordless
-          ? "Choose a shop to switch to — no password needed."
-          : "Choose a shop, then enter its password.";
+        lead.textContent =
+          state.mode === "view"
+            ? "Choose a shop to view its details."
+            : state.passwordless
+            ? "Choose a shop to switch to — no password needed."
+            : "Choose a shop, then enter its password.";
       }
       renderShops();
     } catch (error) {
@@ -291,8 +298,10 @@
     const card = event.target.closest("[data-shop-switch-pick]");
     if (!card || !list?.contains(card)) return;
     const shopId = card.dataset.shopSwitchPick || "";
-    if (!shopId || shopId === state.currentShopId || busy) return;
-    if (state.passwordless) {
+    if (busy || shopId === state.currentShopId) return;
+    // "All shops" posts an empty id to clear the view pick.
+    if (!shopId && state.mode !== "view") return;
+    if (state.mode === "view" || state.passwordless) {
       submitSwitch(shopId);
       return;
     }

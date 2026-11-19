@@ -24,12 +24,24 @@
         <i data-lucide="{{ item.icon }}" aria-hidden="true"></i>
         <span>{{ item.label }}</span>
       </button>
+      {% elif item.group %}
+      <button
+        class="workspace-nav-link workspace-nav-link--group{% if item.active %} is-active{% endif %}"
+        type="button"
+        data-nav-group
+        aria-expanded="false"
+      >
+        <i data-lucide="{{ item.icon }}" aria-hidden="true"></i>
+        <span>{{ item.label }}</span>
+        <i data-lucide="chevron-right" class="workspace-nav-caret" aria-hidden="true"></i>
+      </button>
       {% else %}
       <a
-        class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}{% if item.live_badge and item.badge %} has-live-badge{% endif %}"
+        class="workspace-nav-link{% if item.active %} is-active{% endif %}{% if item.muted %} workspace-nav-link--muted{% endif %}{% if item.child %} workspace-nav-link--child{% endif %}{% if item.live_badge and item.badge %} has-live-badge{% endif %}"
         href="{{ item.href }}"
         data-workspace-nav
         {% if item.new_tab %}target="_blank" rel="noopener"{% endif %}
+        {% if item.child %}hidden data-nav-group-item{% endif %}
         {% if item.nav_key %}data-nav-key="{{ item.nav_key }}"{% endif %}
         {% if item.nav_key == "stock-transfers" %}data-stock-transfer-nav{% endif %}
         {% if item.nav_key == "hr-approvals" %}data-hr-approvals-nav{% endif %}

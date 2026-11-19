@@ -2,7 +2,6 @@ from django.contrib import admin
 
 from .models import (
     Client,
-    CompanyAnalyticsSettings,
     CompanyCommunicationsSettings,
     CompanyDeveloperPaymentSettings,
     CompanyPosSettings,
@@ -111,12 +110,6 @@ class CompanyPosSettingsAdmin(admin.ModelAdmin):
         "shop_session_timeout_minutes",
         "updated_at",
     )
-    readonly_fields = ("updated_at",)
-
-
-@admin.register(CompanyAnalyticsSettings)
-class CompanyAnalyticsSettingsAdmin(admin.ModelAdmin):
-    list_display = ("id", "receipt_data_source", "updated_at")
     readonly_fields = ("updated_at",)
 
 

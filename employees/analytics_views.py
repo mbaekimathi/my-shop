@@ -307,131 +307,6 @@ def analytics_dashboard(request, profile, meta, module, page_sidebar=None):
 
 
 @active_employee_required
-def analytics_settings(request, role_segment):
-    """Company default for analytics receipt data (pending vs confirmed)."""
-    from django.contrib import messages
-
-    from shops.models import AnalyticsReceiptDataSource
-    from shops.services import (
-        get_analytics_receipt_data_source_default,
-        set_analytics_receipt_data_source,
-    )
-
-    from .module_permissions import employee_may, require_module_permission
-    from .workspace import analytics_settings_url, analytics_url
-
-    profile = get_profile_for_request(request)
-    if role_from_url_segment(role_segment) is None:
-        from django.http import Http404
-
-        raise Http404("Role portal not found.")
-
-    expected = role_url_segment(profile.role)
-    if role_segment != expected:
-        return redirect("employees:analytics_settings", role_segment=expected)
-
-    module = get_dashboard_module("analytics", profile.role)
-    if module is None:
-        from django.http import Http404
-
-        raise Http404("Module not found.")
-
-    denied = require_module_permission(request, profile, "analytics", "settings")
-    if denied is not None:
-        return denied
-
-    can_edit = employee_may(profile, "analytics", "settings")
-    if request.method == "POST":
-        if not can_edit:
-            messages.error(request, "You cannot change analytics settings.")
-            return redirect(analytics_settings_url(profile.role))
-        try:
-            set_analytics_receipt_data_source(
-                source=(request.POST.get("receipt_data_source") or "").strip()
-            )
-        except ValidationError as exc:
-            message = (
-                exc.messages[0] if getattr(exc, "messages", None) else str(exc)
-            )
-            messages.error(request, message)
-            return redirect(analytics_settings_url(profile.role))
-        messages.success(
-            request,
-            "Analytics default updated. New analytics loads use this receipt set.",
-        )
-        return redirect(analytics_settings_url(profile.role))
-
-    current = get_analytics_receipt_data_source_default()
-    option_meta = {
-        AnalyticsReceiptDataSource.ALL: {
-            "value": AnalyticsReceiptDataSource.ALL,
-            "label": "All receipts",
-            "icon": "layers",
-            "eyebrow": "Everything",
-            "summary": "Include pending and confirmed receipts together.",
-            "points": (
-                "One view across open and finalized sales",
-                "Best when you want the full picture at a glance",
-            ),
-        },
-        AnalyticsReceiptDataSource.PENDING: {
-            "value": AnalyticsReceiptDataSource.PENDING,
-            "label": "Pending receipts",
-            "icon": "clock-3",
-            "eyebrow": "Awaiting confirmation",
-            "summary": "Include sales still waiting to be confirmed on the floor.",
-            "points": (
-                "Matches live POS tickets before confirmation",
-                "Best while receipts are still being reviewed",
-            ),
-        },
-        AnalyticsReceiptDataSource.CONFIRMED: {
-            "value": AnalyticsReceiptDataSource.CONFIRMED,
-            "label": "Confirmed receipts",
-            "icon": "badge-check",
-            "eyebrow": "Finalized sales",
-            "summary": "Include only receipts that have been confirmed (and partial returns).",
-            "points": (
-                "Cleaner totals for closed, approved sales",
-                "Best for management and period close reports",
-            ),
-        },
-    }
-    receipt_options = [
-        option_meta[AnalyticsReceiptDataSource.ALL],
-        option_meta[AnalyticsReceiptDataSource.PENDING],
-        option_meta[AnalyticsReceiptDataSource.CONFIRMED],
-    ]
-    current_option = option_meta.get(current) or option_meta[AnalyticsReceiptDataSource.PENDING]
-    meta = {
-        "title": "Analytics settings",
-        "headline": "Analytics settings",
-        "summary": "Choose which receipts analytics loads by default.",
-        "icon": "settings",
-    }
-    return render(
-        request,
-        "employees/analytics_settings.html",
-        {
-            "profile": profile,
-            "meta": meta,
-            "module": module,
-            "role_label": profile.get_role_display(),
-            "status_label": profile.get_status_display(),
-            "can_edit_analytics_settings": can_edit,
-            "receipt_data_source": current,
-            "receipt_data_source_options": AnalyticsReceiptDataSource.choices,
-            "receipt_options": receipt_options,
-            "current_receipt_option": current_option,
-            "analytics_home_url": analytics_url(profile.role),
-            "page_sidebar": sidebar_for_analytics_section(
-                profile.role, active_view="settings", profile=profile
-            ),
-        },
-    )
-
-
-@active_employee_required
 @require_GET
 def analytics_section(request, role_segment, section):
     """Dedicated analytics page for one domain (/…/analytics/<section>/)."""
@@ -456,6 +331,121 @@ def analytics_section(request, role_segment, section):
         raise Http404("Module not found.")
 
     return _render_analytics(request, profile, section_slug=section)
+
+
+@active_employee_required
+@require_GET
+def analytics_day_session(request, role_segment, session_id):
+    """One shop day session — every report for that day (/…/analytics/balances/<id>/)."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_day_session",
+            role_segment=expected,
+            session_id=session_id,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "balances")
+    if denied is not None:
+        return denied
+
+    from django.http import Http404
+
+    from items.services import actionable_shops_for_profile
+    from shops.models import ShopDaySession
+
+    session = (
+        ShopDaySession.objects.filter(pk=session_id)
+        .select_related("shop", "opened_by__user", "closed_by__user")
+        .first()
+    )
+    shop_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
+    if session is None or session.shop_id not in shop_ids:
+        raise Http404("Day session not found.")
+
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "download",
+        "print",
+    ):
+        from django.http import HttpResponse
+        from django.utils import timezone
+        from django.utils.text import slugify
+
+        from shops.services import (
+            build_shop_day_report_pdf,
+            get_company_display_name,
+        )
+
+        from .workspace import (
+            day_report_counted_statuses,
+            day_report_status_mode,
+        )
+
+        report_mode = day_report_status_mode(profile)
+        printed_by = profile.user.get_full_name() or profile.user.username
+        pdf_bytes = build_shop_day_report_pdf(
+            shop=session.shop,
+            session=session,
+            printed_by=printed_by,
+            company_name=get_company_display_name(),
+            counted_statuses=day_report_counted_statuses(profile),
+            sales_scope_label=(
+                "Pending sales only"
+                if report_mode == "pending"
+                else "Confirmed sales only" if report_mode == "confirmed" else ""
+            ),
+        )
+        stamp = timezone.localtime(session.opened_at).strftime("%Y%m%d")
+        filename = (
+            f"day-report-{slugify(session.shop.name) or 'shop'}-{stamp}.pdf"
+        )
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        response["Content-Length"] = str(len(pdf_bytes))
+        return response
+
+    from .analytics_services import build_day_session_report_page
+
+    context = build_day_session_report_page(
+        profile=profile, request=request, session=session
+    )
+    return render(
+        request,
+        "employees/analytics.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": f"Day session · {session.shop.name} · Analytics",
+                "headline": "Day session",
+                "summary": "Every report for this shop day.",
+                "icon": "scale",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "credit_audits_href": "",
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role, active_view="balances", profile=profile
+            ),
+            **context,
+        },
+    )
 
 
 @active_employee_required

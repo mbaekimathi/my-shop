@@ -5,7 +5,7 @@
 
 {% block workspace_content %}
 <section
-  class="ax{% if page.ledger_layout %} ax--ledger{% endif %}{% if page.list_table_layout %} ax--list-table{% endif %}"
+  class="ax{% if page.ledger_layout %} ax--ledger{% endif %}{% if page.list_table_layout %} ax--list-table{% endif %}{% if page.sessions_layout %} ax--sessions{% endif %}{% if page.day_session_layout %} ax--day-report{% endif %}"
   data-animate="rise"
   data-analytics
   data-ax-section="{{ section_slug }}"

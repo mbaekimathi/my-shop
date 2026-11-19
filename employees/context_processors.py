@@ -64,6 +64,28 @@ def _portal_workspace_context(portal_shop):
     }
 
 
+def _can_shop_switch(profile) -> bool:
+    """Shop-scoped employees get a "Switch shop" user-menu item that re-picks
+    the session's view shop (``employee_acting_shop``) — role pages then show
+    that shop's details as if the employee belonged to it. No floor unlock.
+    """
+    try:
+        from shops.models import Shop
+
+        from .models import SHOP_ASSIGNABLE_ROLES
+
+        if getattr(profile, "role", None) not in SHOP_ASSIGNABLE_ROLES:
+            return False
+        if profile.assigned_shops.filter(
+            is_hidden=False, is_suspended=False
+        ).exists():
+            return True
+        # Unallocated shop-scoped staff may view any active shop.
+        return Shop.objects.filter(is_hidden=False, is_suspended=False).exists()
+    except Exception:
+        return False
+
+
 def _employee_workspace_context(request, profile, role):
     role_meta = ROLE_PAGE_META.get(role, ROLE_PAGE_META[EmployeeRole.EMPLOYEE])
     home_url = reverse(role_home_url_name(role))
@@ -94,6 +116,7 @@ def _employee_workspace_context(request, profile, role):
             "show_back": back_url is not None,
             "back_url": back_url,
             "is_shop_portal": False,
+            "can_shop_switch": _can_shop_switch(profile),
             "role_options": role_options,
             "switch_role_url": reverse("employees:select_role")
             if role_options

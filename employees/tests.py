@@ -72,7 +72,7 @@ class AnalyticsSidebarTests(TestCase):
         self.assertTrue(sidebar["primary"][1]["active"])
         self.assertIn("Revenue", labels)
         self.assertIn("Receipts", labels)
-        self.assertIn("Analytics settings", labels)
+        self.assertNotIn("Analytics settings", labels)
         self.assertIn("Items", labels)
         self.assertIn("Stock", labels)
         self.assertNotIn("Item report", labels)
@@ -85,9 +85,7 @@ class AnalyticsSidebarTests(TestCase):
             EmployeeRole.IT_SUPPORT, active_view="revenue"
         )
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(
-            labels, ["Dashboard", "Overview", "Revenue", "Analytics settings"]
-        )
+        self.assertEqual(labels, ["Dashboard", "Overview", "Revenue"])
         self.assertTrue(sidebar["primary"][2]["active"])
         self.assertFalse(sidebar["primary"][1]["active"])
 
@@ -98,7 +96,7 @@ class AnalyticsSidebarTests(TestCase):
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertEqual(
             labels,
-            ["Dashboard", "Overview", "Items", "Item report", "Analytics settings"],
+            ["Dashboard", "Overview", "Items", "Item report"],
         )
         self.assertTrue(sidebar["primary"][2]["active"])
         self.assertFalse(sidebar["primary"][3]["active"])
@@ -109,13 +107,7 @@ class AnalyticsSidebarTests(TestCase):
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertEqual(
             labels,
-            [
-                "Dashboard",
-                "Overview",
-                "Stock",
-                "Supply analytics",
-                "Analytics settings",
-            ],
+            ["Dashboard", "Overview", "Stock", "Supply analytics"],
         )
         self.assertTrue(sidebar["primary"][2]["active"])
         self.assertFalse(sidebar["primary"][3]["active"])
@@ -144,16 +136,8 @@ class AnalyticsSidebarTests(TestCase):
         )
         self.assertTrue(sidebar["primary"][3]["active"])
 
-    def test_analytics_settings_sidebar_is_focused(self):
-        sidebar = sidebar_for_analytics_section(
-            EmployeeRole.IT_SUPPORT, active_view="settings"
-        )
-        labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(labels, ["Dashboard", "Overview", "Analytics settings"])
-        self.assertTrue(sidebar["primary"][2]["active"])
 
-
-class AnalyticsReceiptStatusSettingsTests(TestCase):
+class AnalyticsReceiptStatusTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
             username="870099",
@@ -168,33 +152,40 @@ class AnalyticsReceiptStatusSettingsTests(TestCase):
             status=EmployeeStatus.ACTIVE,
         )
 
-    def test_settings_page_saves_default_and_filters_override(self):
-        from employees.analytics_services import (
-            resolve_analytics_receipt_status,
-            _receipts_qs,
-        )
-        from shops.models import AnalyticsReceiptDataSource
-        from shops.services import (
-            get_analytics_receipt_data_source_default,
-            set_analytics_receipt_data_source,
+    def test_receipt_status_defaults_to_pending(self):
+        from employees.analytics_services import resolve_analytics_receipt_status
+
+        self.assertEqual(resolve_analytics_receipt_status(None), "pending")
+        self.assertEqual(resolve_analytics_receipt_status("bogus"), "pending")
+        self.assertEqual(
+            resolve_analytics_receipt_status(None, default="all"), "all"
         )
 
+    def test_receipt_status_pick_is_remembered_on_session(self):
+        from django.contrib.sessions.backends.db import SessionStore
+        from django.test import RequestFactory
+
+        from employees.analytics_services import resolve_analytics_receipt_status
+
+        request = RequestFactory().get("/it-support/analytics/revenue/")
+        request.session = SessionStore()
         self.assertEqual(
-            get_analytics_receipt_data_source_default(),
-            AnalyticsReceiptDataSource.PENDING,
+            resolve_analytics_receipt_status("confirmed", request=request),
+            "confirmed",
         )
-        self.client.force_login(self.user)
-        response = self.client.post(
-            "/it-support/analytics/settings/",
-            {"receipt_data_source": "confirmed"},
-        )
-        self.assertEqual(response.status_code, 302)
         self.assertEqual(
-            get_analytics_receipt_data_source_default(),
-            AnalyticsReceiptDataSource.CONFIRMED,
+            resolve_analytics_receipt_status(None, request=request), "confirmed"
         )
-        self.assertEqual(resolve_analytics_receipt_status(None), "confirmed")
-        self.assertEqual(resolve_analytics_receipt_status("pending"), "pending")
+        self.assertEqual(
+            resolve_analytics_receipt_status("pending", request=request),
+            "pending",
+        )
+        self.assertEqual(
+            resolve_analytics_receipt_status(None, request=request), "pending"
+        )
+
+    def test_receipt_status_filters_receipt_queryset(self):
+        from employees.analytics_services import _receipts_qs
 
         shop = Shop.objects.create(
             name="AX STATUS SHOP",
@@ -243,7 +234,6 @@ class AnalyticsReceiptStatusSettingsTests(TestCase):
         )
         self.assertEqual(pending_ids, {pending.pk})
         self.assertEqual(confirmed_ids, {confirmed.pk})
-        set_analytics_receipt_data_source(source="pending")
 
 
 class ConfirmSalesReceiptTests(TestCase):
@@ -1335,6 +1325,237 @@ class AnalyticsPosFeatureVisibilityTests(TestCase):
         self.assertIn("Cash", labels)
         self.assertIn("M-Pesa", labels)
         self._assert_rows_align(page)
+
+
+class AnalyticsDaySessionReportTests(TestCase):
+    """Cashiers day sessions open a page with every report for that day."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="870066",
+            password="day-pass",
+            email="day@test.local",
+            is_active=True,
+        )
+        self.staff = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="870066",
+            phone_country_code="+254",
+            phone_number="700001166",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_MANAGER,
+        )
+        self.shop = Shop.objects.create(
+            name="DAY SHOP",
+            location="NAIROBI",
+            email="day-shop@test.local",
+            phone_number="0700001166",
+            login_code="870166",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        self.staff.assigned_shops.add(self.shop)
+
+    def _session(self):
+        from shops.models import ShopDaySession
+
+        return ShopDaySession.objects.create(
+            shop=self.shop,
+            opened_by=self.staff,
+            opening_cash=1000,
+            opening_mpesa=200,
+            opening_card=0,
+            opening_credit=0,
+        )
+
+    def _sale(self, number="SL-D1", total=250):
+        return ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number=number,
+            client_name="Walk-in",
+            subtotal=total,
+            tax_percent=0,
+            tax_amount=0,
+            total=total,
+            amount_paid=total,
+            cash_amount=total,
+            payment_method="cash",
+            created_by=self.staff,
+        )
+
+    def _close(self, session, *, cash=1250, mpesa=200):
+        from django.utils import timezone
+
+        session.closing_cash = cash
+        session.closing_mpesa = mpesa
+        session.closing_card = 0
+        session.closing_credit = 0
+        session.closed_by = self.staff
+        session.closed_at = timezone.now()
+        session.save()
+        return session
+
+    def _balances_page(self):
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from employees.analytics_services import build_analytics_page
+
+        request = RequestFactory().get(
+            "/shop-manager/analytics/balances/",
+            {"range": "day", "date": timezone.localdate().isoformat()},
+        )
+        request.user = self.user
+        return build_analytics_page(
+            profile=self.staff, request=request, section_slug="balances"
+        )["page"]
+
+    @staticmethod
+    def _labels(columns):
+        return [
+            (col.get("label") if isinstance(col, dict) else col)
+            for col in columns
+        ]
+
+    def test_session_rows_link_to_day_report(self):
+        session = self._session()
+        page = self._balances_page()
+        table = next(
+            t for t in page["tables"] if t["title"] == "Sessions"
+        )
+        self.assertEqual(
+            self._labels(table["columns"]),
+            ["Session", "Cashier", "Shop", "Status", "Report"],
+        )
+        row = table["rows"][0]
+        cells = row["cells"] if isinstance(row, dict) else row
+        session_cell = cells[0]
+        self.assertIn("Started", session_cell["sub"])
+        self.assertIn(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            session_cell["href"],
+        )
+        report_cell = cells[-1]
+        self.assertEqual(report_cell["label"], "Open")
+        self.assertIn(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            report_cell["href"],
+        )
+        self.assertIn("back=", report_cell["href"])
+
+    def test_day_session_page_lists_all_reports(self):
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        session = self._session()
+        receipt = self._sale()
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item_name="Charger",
+            quantity=1,
+            unit_price=250,
+            line_total=250,
+        )
+        session = self._close(session)
+
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        request.user = self.user
+        context = build_day_session_report_page(
+            profile=self.staff, request=request, session=session
+        )
+        page = context["page"]
+        self.assertEqual(context["section_slug"], "balances")
+        self.assertTrue(page["hide_date_filters"])
+        self.assertIn("/shop-manager/analytics/balances/", page["back_href"])
+        self.assertIn("download=1", page["download_href"])
+        self.assertEqual(
+            [t["title"] for t in page["tables"]],
+            [
+                "Money flow",
+                "Items sold",
+                "Pending & cancelled sales",
+                "Drawings done",
+                "Expenses incurred",
+                "Stocked in",
+                "Stocked out",
+            ],
+        )
+        flow_labels = [r[0] for r in page["tables"][0]["rows"]]
+        self.assertIn("Counted closing", flow_labels)
+        self.assertIn("Variance", flow_labels)
+        items = page["tables"][1]
+        self.assertEqual(items["rows"][0][0], "Charger")
+        metric_labels = [m["label"] for m in page["metrics"]]
+        self.assertIn("Counted closing", metric_labels)
+        self.assertIn("Close variance", metric_labels)
+
+    def test_day_session_open_shows_live_preview(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        session = self._session()
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        request.user = self.user
+        page = build_day_session_report_page(
+            profile=self.staff, request=request, session=session
+        )["page"]
+        metric_labels = [m["label"] for m in page["metrics"]]
+        self.assertIn("Expected closing", metric_labels)
+        self.assertNotIn("Counted closing", metric_labels)
+        self.assertTrue(page["alerts"])
+
+    def test_day_session_view_renders_and_streams_pdf(self):
+        session = self._session()
+        self._sale()
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Money flow")
+        self.assertContains(response, "Items sold")
+
+        pdf = self.client.get(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {"download": "1"},
+        )
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
+
+    def test_day_session_404s_for_unallocated_shop(self):
+        from shops.models import ShopDaySession
+
+        other_shop = Shop.objects.create(
+            name="OTHER SHOP",
+            location="NAKURU",
+            email="other-shop@test.local",
+            phone_number="0700001167",
+            login_code="870167",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        session = ShopDaySession.objects.create(
+            shop=other_shop, opened_by=self.staff
+        )
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        self.assertEqual(response.status_code, 404)
 
 
 class DashboardSidebarLinkTests(TestCase):
@@ -3182,6 +3403,7 @@ class MarketingLinksPageTests(TestCase):
                 "Credits",
                 "Suppliers",
                 "Clients",
+                "Cashiers",
                 "Item Management",
                 "HR Management",
                 "Shop Management",

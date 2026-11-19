@@ -37,7 +37,6 @@ def _myshop_apps_installed():
 if _myshop_apps_installed():
     from items.models import Item, ShopStock, StoreStock
     from shops.models import (
-        CompanyAnalyticsSettings,
         CompanyPosSettings,
         CompanyProfile,
         Shop,
@@ -78,7 +77,6 @@ else:
     ExpenseSupplier = mm.ExpenseSupplier
     ShopItemPrice = mm.ShopItemPrice
     CompanyProfile = mm.CompanyProfile
-    CompanyAnalyticsSettings = mm.CompanyAnalyticsSettings
     CompanyPosSettings = mm.CompanyPosSettings
     ShopPosSettings = mm.ShopPosSettings
     ItemSerial = mm.ItemSerial
@@ -103,7 +101,6 @@ UNMANAGED = [
     ExpenseSupplier,
     ShopItemPrice,
     CompanyProfile,
-    CompanyAnalyticsSettings,
     CompanyPosSettings,
     ShopPosSettings,
     ItemSerial,
@@ -575,10 +572,6 @@ class BotTests(ChatTestCase):
     def setUp(self):
         super().setUp()
         self.login()
-        # Match confirmed receipt fixtures unless a test overrides the setting.
-        CompanyAnalyticsSettings.objects.create(
-            pk=1, receipt_data_source="confirmed"
-        )
         item = Item.objects.create(
             category="Grocery", name="Sugar 1kg",
             minimum_selling_price=Decimal("100"),
@@ -596,7 +589,7 @@ class BotTests(ChatTestCase):
             kind="sale", payment_method="cash", client_name="",
             total=Decimal("1500"), amount_paid=Decimal("1500"),
             cash_amount=Decimal("1500"), mpesa_amount=Decimal("0"),
-            status="confirmed",
+            status="active",
         )
         ShopReceiptLine.objects.create(
             receipt_id=self.receipt.pk, item_id=item.pk,
@@ -627,47 +620,41 @@ class BotTests(ChatTestCase):
         reply = reply_for(self.shop_a, "how much did we sell today")
         self.assertIn("KSh 1,500.00", reply)
 
-    def test_sales_uses_analytics_receipt_default(self):
-        """Default company setting filters sales; message can override."""
-        CompanyAnalyticsSettings.objects.filter(pk=1).update(
-            receipt_data_source="confirmed"
-        )
+    def test_sales_receipt_status_override(self):
+        """Sales default to pending; the message can override the scope."""
         self.create_receipt(
-            shop_id=self.shop_a.pk, receipt_number="R-PEND",
+            shop_id=self.shop_a.pk, receipt_number="R-CONF",
             kind="sale", payment_method="cash", client_name="",
             total=Decimal("900"), amount_paid=Decimal("900"),
             cash_amount=Decimal("900"), mpesa_amount=Decimal("0"),
-            status="active",
+            status="confirmed",
         )
-        # Default confirmed → only the confirmed R-001 from setUp.
+        # Default pending → only the active R-001 from setUp.
         reply = reply_for(self.shop_a, "sales today")
         self.assertIn("KSh 1,500.00", reply)
-        self.assertIn("confirmed receipts", reply)
+        self.assertIn("pending receipts", reply)
         self.assertNotIn("KSh 2,400.00", reply)
 
-        # Explicit pending override → only the active receipt.
-        pending = reply_for(self.shop_a, "sales today pending")
-        self.assertIn("KSh 900.00", pending)
-        self.assertIn("pending receipts", pending)
-        self.assertNotIn("KSh 1,500.00", pending)
-
-        # Explicit confirmed still works.
+        # Explicit confirmed → only the confirmed receipt.
         confirmed = reply_for(self.shop_a, "sales today confirmed")
-        self.assertIn("KSh 1,500.00", confirmed)
+        self.assertIn("KSh 900.00", confirmed)
         self.assertIn("confirmed receipts", confirmed)
+        self.assertNotIn("KSh 1,500.00", confirmed)
+
+        # Explicit all → both.
+        all_scope = reply_for(self.shop_a, "sales today all")
+        self.assertIn("KSh 2,400.00", all_scope)
+        self.assertIn("all receipts", all_scope)
 
     def test_items_sold_respects_receipt_status(self):
-        CompanyAnalyticsSettings.objects.filter(pk=1).update(
-            receipt_data_source="pending"
-        )
-        # Confirmed receipt from setUp should be excluded under pending default.
+        # Pending default → the active receipt's lines are listed.
         reply = reply_for(self.shop_a, "items sold today")
         self.assertIn("pending receipts", reply)
-        self.assertIn("No items sold", reply)
+        self.assertIn("Sugar 1kg", reply)
 
         reply = reply_for(self.shop_a, "items sold today confirmed")
-        self.assertIn("Sugar 1kg", reply)
         self.assertIn("confirmed receipts", reply)
+        self.assertIn("No items sold", reply)
 
     def test_stock_intent(self):
         reply = reply_for(self.shop_a, "stock sugar")

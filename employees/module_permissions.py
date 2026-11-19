@@ -200,6 +200,44 @@ def profile_has_shop_allocation(profile) -> bool:
     return bool(actionable_shops_for_profile(profile))
 
 
+def employee_may_unrestricted(profile, module_slug: str, submodule_slug: str) -> bool:
+    """
+    Like employee_may but ignores company_pos_permission_visible (POS toggles).
+
+    Used by surfaces explicitly exempt from the company/shop POS switches —
+    e.g. the cashier dashboard Sell popup, which always offers sale / credit /
+    quotation regardless of the floor toggles. Explicit HR matrix rows and
+    role defaults still apply.
+    """
+    if profile is None:
+        return False
+
+    module_slug = (module_slug or "").strip()
+    submodule_slug = normalize_submodule(module_slug, submodule_slug)
+
+    if not module_slug or not submodule_slug:
+        return False
+
+    if getattr(profile, "role", None) == EmployeeRole.SUPER_ADMIN:
+        return True
+
+    if (
+        getattr(profile, "role", None) in HR_STAFF_ROLES
+        and module_slug == "hr-management"
+        and submodule_slug == "permissions"
+    ):
+        return True
+
+    if not is_valid_permission_key(module_slug, submodule_slug):
+        return True
+
+    cache = _cache_for(profile)
+    key = (module_slug, submodule_slug)
+    if key in cache:
+        return cache[key]
+    return role_default_permission(profile, module_slug, submodule_slug)
+
+
 def employee_may_any(profile, module_slug: str) -> bool:
     """True if the employee may use at least one submodule in the module."""
     module = PERMISSION_MODULE_BY_SLUG.get(module_slug)

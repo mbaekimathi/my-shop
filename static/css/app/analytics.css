@@ -1118,6 +1118,87 @@
   text-overflow: ellipsis;
 }
 
+/* Company overview — per-metric colored cards */
+.ax[data-ax-section="overview"] .ax-kpis {
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.55rem;
+}
+
+.ax[data-ax-section="overview"] .ax-kpi {
+  gap: 0.22rem;
+  padding: 0.75rem 0.8rem 0.7rem;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 8px 22px rgba(8, 24, 28, 0.05);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-info {
+  --kpi-tone: var(--info);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-violet {
+  --kpi-tone: #7c3aed;
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-cash {
+  --kpi-tone: var(--teal);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-cost {
+  --kpi-tone: var(--accent-deep);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-good {
+  --kpi-tone: var(--teal);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-bad {
+  --kpi-tone: var(--danger);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-warn {
+  --kpi-tone: var(--accent-deep);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-info,
+.ax[data-ax-section="overview"] .ax-kpi.is-violet,
+.ax[data-ax-section="overview"] .ax-kpi.is-cash,
+.ax[data-ax-section="overview"] .ax-kpi.is-cost,
+.ax[data-ax-section="overview"] .ax-kpi.is-good,
+.ax[data-ax-section="overview"] .ax-kpi.is-bad,
+.ax[data-ax-section="overview"] .ax-kpi.is-warn {
+  border-color: color-mix(in srgb, var(--kpi-tone) 34%, var(--line));
+  background:
+    linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--kpi-tone) 11%, var(--surface)),
+      var(--surface) 78%
+    );
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-info::before,
+.ax[data-ax-section="overview"] .ax-kpi.is-violet::before,
+.ax[data-ax-section="overview"] .ax-kpi.is-cash::before,
+.ax[data-ax-section="overview"] .ax-kpi.is-cost::before,
+.ax[data-ax-section="overview"] .ax-kpi.is-good::before,
+.ax[data-ax-section="overview"] .ax-kpi.is-bad::before,
+.ax[data-ax-section="overview"] .ax-kpi.is-warn::before {
+  width: 4px;
+  background: var(--kpi-tone);
+}
+
+.ax[data-ax-section="overview"] .ax-kpi.is-info strong,
+.ax[data-ax-section="overview"] .ax-kpi.is-violet strong,
+.ax[data-ax-section="overview"] .ax-kpi.is-cash strong,
+.ax[data-ax-section="overview"] .ax-kpi.is-cost strong,
+.ax[data-ax-section="overview"] .ax-kpi.is-good strong,
+.ax[data-ax-section="overview"] .ax-kpi.is-bad strong,
+.ax[data-ax-section="overview"] .ax-kpi.is-warn strong {
+  font-size: 1.02rem;
+  color: var(--kpi-tone);
+}
+
 .ax-card-hint {
   margin: 0;
   color: var(--mist-soft);
@@ -1375,6 +1456,18 @@
   .workspace-main:has(.ax-table--shops):not(:has(.ax--list-table)) {
     width: calc(100% - 1.5rem);
     max-width: none;
+  }
+}
+
+/* Supply analytics gets the same full frame so its data is not squeezed. */
+.workspace-main:has(.ax--list-table[data-ax-section="supply"]) {
+  width: calc(100% - 1rem);
+  max-width: none;
+}
+
+@media (min-width: 980px) {
+  .workspace-main:has(.ax--list-table[data-ax-section="supply"]) {
+    width: calc(100% - 1.5rem);
   }
 }
 
@@ -1949,16 +2042,98 @@
 }
 
 .ax--list-table[data-ax-section="supply"] .ax-summary-board--supply {
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 2.15fr);
+  gap: 0.6rem;
   margin-top: 0.05rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tiles {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-hero {
+  display: grid;
+  align-content: center;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.95rem 1.05rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--line));
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--teal) 12%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent) 58%
+    );
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent),
+    0 10px 28px rgba(8, 24, 28, 0.06);
 }
 
 .ax--list-table[data-ax-section="supply"] .ax-summary-hero-value {
   font-size: clamp(1.05rem, 2vw, 1.35rem);
   line-height: 1.25;
+  white-space: normal;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tiles {
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem;
+  padding-top: 0;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-tile.is-flow {
+  --tile-tone: var(--teal);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-tile.is-cost {
+  --tile-tone: var(--accent-deep);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-tile.is-good {
+  --tile-tone: var(--teal);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-tile.is-neutral {
+  --tile-tone: var(--mist-dim);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--tile-tone, var(--mist-dim)) 28%, var(--line));
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--tile-tone, var(--mist-dim)) 8%, var(--surface)),
+      var(--surface) 82%
+    );
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tile i {
+  color: var(--tile-tone, var(--mist-dim));
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tile-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tile.is-flow .ax-summary-tile-value,
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tile.is-cost .ax-summary-tile-value,
+.ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tile.is-good .ax-summary-tile-value {
+  color: var(--tile-tone);
+}
+
+@media (max-width: 900px) {
+  .ax--list-table[data-ax-section="supply"] .ax-summary-board--supply {
+    grid-template-columns: 1fr;
+  }
 }
 
 .ax--list-table[data-ax-section="supply"] .ax-card-sub {
@@ -1980,14 +2155,43 @@
   background: color-mix(in srgb, var(--ok) 60%, transparent);
 }
 
-.ax-band-legend--supply .is-action::before {
-  background: color-mix(in srgb, var(--mist-dim) 45%, transparent);
-}
-
 .ax--list-table[data-ax-section="supply"] .ax-entity-name {
   font-weight: 650;
   color: var(--text-strong);
   line-height: 1.25;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-entity-link {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-entity-link .ax-entity-name {
+  color: var(--teal);
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-entity-link:hover .ax-entity-name {
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-underline-offset: 0.15rem;
+}
+
+/* Suppliers table fills the card instead of shrinking to content width. */
+.ax--list-table[data-ax-section="supply"] .ax-table--supply {
+  width: 100%;
+  min-width: 100%;
+}
+
+.ax--list-table[data-ax-section="supply"] .ax-table-wrap .ax-table--supply th.ax-th--item,
+.ax--list-table[data-ax-section="supply"] .ax-table-wrap .ax-table--supply td.ax-cell--primary {
+  width: auto;
+  min-width: 14rem;
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--phone,
@@ -1999,49 +2203,26 @@
   font-weight: 550;
 }
 
-.ax-supply-detail-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  min-height: 2rem;
-  padding: 0.35rem 0.65rem;
-  border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
-  color: var(--teal);
-  font-size: 0.72rem;
-  font-weight: 650;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.ax-supply-detail-btn:hover {
-  background: color-mix(in srgb, var(--teal) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
-}
-
-.ax-supply-detail-btn svg {
-  width: 0.95rem;
-  height: 0.95rem;
-}
-
 .ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--num,
 .ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--num {
+  min-width: 5.5rem;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--money,
 .ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--money {
+  min-width: 9rem;
   text-align: right;
   white-space: nowrap;
 }
 
-.ax--list-table[data-ax-section="supply"] .ax-table--supply th.ax-th--action,
-.ax--list-table[data-ax-section="supply"] .ax-table--supply td.ax-cell--action {
-  width: 7.5rem;
-  text-align: center;
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="supply"] .ax-table--supply th,
+  .ax--list-table[data-ax-section="supply"] .ax-table--supply td {
+    padding: 0.62rem 0.85rem;
+    font-size: 0.82rem;
+  }
 }
 
 .ax--list-table[data-ax-section="supply"] .ax-table-wrap--list:has(.ax-table--supply) {
@@ -2084,46 +2265,6 @@
 
 .ax--list-table[data-ax-section="supply"] .ax-empty-state-action {
   margin-top: 0.35rem;
-}
-
-.ax-supply-modal-dialog .ax-table--supply-history th.ax-th--num,
-.ax-supply-modal-dialog .ax-table--supply-history td.ax-cell--num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.ax-supply-modal-dialog .ax-table--supply-history th.ax-th--money,
-.ax-supply-modal-dialog .ax-table--supply-history td.ax-cell--money {
-  text-align: right;
-}
-
-@media (max-width: 1100px) {
-  .ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tiles {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 720px) {
-  .ax--list-table[data-ax-section="supply"] .ax-summary-board--supply .ax-summary-tiles {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .ax-supply-detail-btn span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
-  .ax-supply-detail-btn {
-    padding: 0.35rem;
-    border-radius: 10px;
-  }
 }
 
 .ax-table--shops .ax-th--band-cash,
@@ -8389,372 +8530,6 @@
   }
 }
 
-/* ?? Analytics settings ??????????????????????????????????????? */
-
-.ax--settings {
-  gap: 1rem;
-}
-
-.ax-settings-hero .ax-title {
-  display: grid;
-  gap: 0.28rem;
-}
-
-.ax-settings-kicker {
-  margin: 0;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--teal) 70%, var(--mist-dim));
-}
-
-.ax-settings-hero .ax-lead {
-  margin: 0.15rem 0 0;
-  max-width: 42rem;
-  color: var(--mist-dim);
-  font-size: 0.9rem;
-  line-height: 1.45;
-}
-
-.ax-settings-hero .ax-apply--ghost {
-  gap: 0.4rem;
-}
-
-.ax-settings-hero .ax-apply--ghost i,
-.ax-settings-hero .ax-apply--ghost svg {
-  width: 0.95rem;
-  height: 0.95rem;
-}
-
-.ax-settings-readonly {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin: 0;
-  padding: 0.55rem 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--mist) 8%, var(--surface));
-  color: var(--mist-dim);
-  font-size: 0.84rem;
-}
-
-.ax-settings-readonly i,
-.ax-settings-readonly svg {
-  width: 0.95rem;
-  height: 0.95rem;
-  flex: 0 0 auto;
-}
-
-.ax-settings-form {
-  margin: 0;
-}
-
-.ax-settings-panel {
-  display: grid;
-  gap: 1rem;
-  padding: 1rem 1.05rem 1.1rem;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--teal) 8%, var(--surface)),
-      var(--surface) 42%
-    );
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent);
-}
-
-.ax-settings-panel-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem 1rem;
-}
-
-.ax-settings-panel-head h3 {
-  margin: 0;
-  font-size: 1.05rem;
-  letter-spacing: -0.02em;
-  color: var(--text-strong);
-}
-
-.ax-settings-panel-head p {
-  margin: 0.25rem 0 0;
-  color: var(--mist-dim);
-  font-size: 0.86rem;
-  line-height: 1.4;
-}
-
-.ax-settings-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 2rem;
-  padding: 0.28rem 0.7rem;
-  border: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--teal) 12%, var(--surface));
-  color: var(--teal);
-  font-size: 0.76rem;
-  font-weight: 800;
-}
-
-.ax-settings-live i,
-.ax-settings-live svg {
-  width: 0.9rem;
-  height: 0.9rem;
-}
-
-.ax-settings-choices {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-
-.ax-settings-legend {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.ax-settings-choice {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 0.75rem;
-  align-items: start;
-  min-height: 100%;
-  padding: 0.95rem 0.95rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
-  cursor: pointer;
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms ease,
-    background 160ms ease;
-}
-
-.ax-settings-choice:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--teal) 35%, var(--line));
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--text-strong) 6%, transparent);
-}
-
-.ax-settings-choice.is-selected {
-  border-color: color-mix(in srgb, var(--teal) 55%, var(--line));
-  background:
-    linear-gradient(
-      165deg,
-      color-mix(in srgb, var(--teal) 14%, var(--surface)),
-      var(--surface) 55%
-    );
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--teal) 18%, transparent),
-    0 12px 26px color-mix(in srgb, var(--teal) 10%, transparent);
-}
-
-.ax-settings-choice input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.ax-settings-choice:has(input:disabled) {
-  cursor: default;
-  opacity: 0.92;
-}
-
-.ax-settings-choice:has(input:disabled):hover {
-  transform: none;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-strong) 3%, transparent);
-}
-
-.ax-settings-choice-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.45rem;
-  height: 2.45rem;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--mist) 10%, var(--surface));
-  color: var(--mist-dim);
-}
-
-.ax-settings-choice.is-selected .ax-settings-choice-icon {
-  background: color-mix(in srgb, var(--teal) 16%, var(--surface));
-  color: var(--teal);
-}
-
-.ax-settings-choice-icon i,
-.ax-settings-choice-icon svg {
-  width: 1.15rem;
-  height: 1.15rem;
-}
-
-.ax-settings-choice-body {
-  display: grid;
-  gap: 0.28rem;
-  min-width: 0;
-}
-
-.ax-settings-choice-eyebrow {
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--mist-dim);
-}
-
-.ax-settings-choice-body strong {
-  font-size: 1rem;
-  letter-spacing: -0.02em;
-  color: var(--text-strong);
-}
-
-.ax-settings-choice-summary {
-  color: var(--mist-dim);
-  font-size: 0.84rem;
-  line-height: 1.4;
-}
-
-.ax-settings-choice-points {
-  list-style: none;
-  margin: 0.35rem 0 0;
-  padding: 0;
-  display: grid;
-  gap: 0.28rem;
-}
-
-.ax-settings-choice-points li {
-  position: relative;
-  padding-left: 0.9rem;
-  color: var(--text-strong);
-  font-size: 0.8rem;
-  line-height: 1.35;
-}
-
-.ax-settings-choice-points li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.45rem;
-  width: 0.35rem;
-  height: 0.35rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--teal) 55%, var(--line));
-}
-
-.ax-settings-choice-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.45rem;
-  height: 1.45rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: transparent;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.ax-settings-choice.is-selected .ax-settings-choice-check {
-  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
-  background: var(--teal);
-  color: #101820;
-}
-
-.ax-settings-choice-check i,
-.ax-settings-choice-check svg {
-  width: 0.85rem;
-  height: 0.85rem;
-}
-
-.ax-settings-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem 1rem;
-  padding-top: 0.15rem;
-}
-
-.ax-settings-hint {
-  display: inline-flex;
-  align-items: flex-start;
-  gap: 0.4rem;
-  margin: 0;
-  max-width: 34rem;
-  color: var(--mist-dim);
-  font-size: 0.8rem;
-  line-height: 1.4;
-}
-
-.ax-settings-hint i,
-.ax-settings-hint svg {
-  width: 0.9rem;
-  height: 0.9rem;
-  margin-top: 0.12rem;
-  flex: 0 0 auto;
-  color: var(--teal);
-}
-
-.ax-settings-note {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.75rem;
-  align-items: start;
-  padding: 0.9rem 1rem;
-  border: 1px dashed color-mix(in srgb, var(--teal) 30%, var(--line));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
-}
-
-.ax-settings-note-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.2rem;
-  height: 2.2rem;
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--teal) 14%, var(--surface));
-  color: var(--teal);
-}
-
-.ax-settings-note-icon i,
-.ax-settings-note-icon svg {
-  width: 1.05rem;
-  height: 1.05rem;
-}
-
-.ax-settings-note strong {
-  display: block;
-  margin: 0.05rem 0 0.2rem;
-  color: var(--text-strong);
-  font-size: 0.92rem;
-}
-
-.ax-settings-note p {
-  margin: 0;
-  color: var(--mist-dim);
-  font-size: 0.84rem;
-  line-height: 1.4;
-}
-
 /* Pending / Confirmed filter control */
 
 .ax-receipt-scope,
@@ -8811,20 +8586,6 @@
 
 .ax-receipt-scope-option:hover .ax-receipt-scope-ui {
   color: var(--text-strong);
-}
-
-@media (max-width: 799px) {
-  .ax-settings-choices {
-    grid-template-columns: 1fr;
-  }
-
-  .ax-settings-actions {
-    align-items: stretch;
-  }
-
-  .ax-settings-actions .ax-apply {
-    width: 100%;
-  }
 }
 
 @media (max-width: 699px) {
@@ -8976,13 +8737,7 @@ body.ax-credit-due-open {
 .ax-section-open,
 .ax-mini-bars,
 .ax-kpi em,
-.ax-alert-action,
-.ax-settings-kicker,
-.ax-settings-choice-points,
-.ax-settings-choice-summary,
-.ax-settings-note,
-.ax-settings-hint,
-.ax-settings-panel-head p {
+.ax-alert-action {
   display: none !important;
 }
 
@@ -9128,23 +8883,6 @@ body.ax-credit-due-open {
 
 .ax-grid--tables {
   gap: 0.55rem;
-}
-
-/* Settings: keep the choice, drop the essay */
-.ax-settings-choice-eyebrow {
-  font-size: 0.65rem;
-}
-
-.ax-settings-choice {
-  padding: 0.7rem 0.75rem;
-}
-
-.ax-settings-panel-head h3 {
-  margin: 0;
-}
-
-.ax--settings .ax-lead {
-  display: none !important;
 }
 
 .ax-receipt-scope,
@@ -9486,4 +9224,674 @@ body.ax-credit-due-open {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ============================================================
+   Cashier sessions + day-session report — modern surfaces.
+   Scoped: .ax.ax--sessions (sessions list) / .ax.ax--day-report
+   (single session report). Token-based so the dark theme and
+   every breakpoint keep working.
+   ============================================================ */
+
+.ax.ax--sessions,
+.ax.ax--day-report {
+  gap: 1rem;
+}
+
+/* ---------- Hero header ---------- */
+
+.ax.ax--sessions .ax-top,
+.ax.ax--day-report .ax-top {
+  width: fit-content;
+  max-width: 100%;
+  justify-self: center;
+  padding: 1.05rem 1.2rem;
+  border-radius: var(--radius-lg);
+  border-color: color-mix(in srgb, var(--line) 75%, transparent);
+  background:
+    radial-gradient(
+      ellipse at top right,
+      color-mix(in srgb, var(--teal) 10%, transparent),
+      transparent 52%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--teal) 8%, var(--surface)),
+      var(--surface) 58%
+    );
+  box-shadow: var(--shadow-sm);
+}
+
+.ax.ax--sessions .ax-title h2,
+.ax.ax--day-report .ax-title h2 {
+  font-size: clamp(1.15rem, 2.4vw, 1.5rem);
+  letter-spacing: -0.025em;
+}
+
+.ax.ax--sessions .ax-lead,
+.ax.ax--day-report .ax-lead {
+  max-width: 48rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.ax.ax--sessions .ax-apply,
+.ax.ax--day-report .ax-apply {
+  min-height: 2.15rem;
+  padding: 0.34rem 0.95rem;
+  border-radius: 10px;
+  box-shadow: var(--accent-glow);
+  text-decoration: none;
+}
+
+.ax.ax--sessions .ax-apply--ghost,
+.ax.ax--day-report .ax-apply--ghost {
+  box-shadow: none;
+  border-color: var(--ghost-border);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+/* ---------- Filter toolbar (sessions list) ---------- */
+
+.ax.ax--sessions .ax-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.ax.ax--sessions .ax-filters select,
+.ax.ax--sessions .ax-filters input {
+  min-height: 2.25rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--input-bg);
+  font-size: 0.8rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ax.ax--sessions .ax-filters select:focus,
+.ax.ax--sessions .ax-filters input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent);
+  outline: none;
+}
+
+/* ---------- Report cards ---------- */
+
+.ax.ax--sessions .ax-card,
+.ax.ax--day-report .ax-card {
+  padding: 0;
+  gap: 0;
+  width: fit-content;
+  max-width: 100%;
+  justify-self: center;
+  border-radius: var(--radius-lg);
+  border-color: color-mix(in srgb, var(--line) 75%, transparent);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.ax.ax--sessions .ax-card-head,
+.ax.ax--day-report .ax-card-head {
+  padding: 0.85rem 1.1rem 0.7rem;
+  border-bottom: 0;
+}
+
+.ax.ax--sessions .ax-card-head h3,
+.ax.ax--day-report .ax-card-head h3 {
+  font-size: 0.92rem;
+  letter-spacing: -0.01em;
+}
+
+.ax.ax--sessions .ax-card-head h3::before,
+.ax.ax--day-report .ax-card-head h3::before {
+  content: "";
+  width: 0.3rem;
+  height: 0.95rem;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--teal), var(--accent));
+  flex-shrink: 0;
+}
+
+.ax.ax--sessions .ax-table-wrap,
+.ax.ax--day-report .ax-table-wrap {
+  gap: 0;
+}
+
+.ax.ax--sessions .ax-table-wrap--list,
+.ax.ax--day-report .ax-table-wrap--list {
+  border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.ax.ax--sessions .ax-scroll-hint,
+.ax.ax--day-report .ax-scroll-hint {
+  padding: 0.3rem 1.1rem 0;
+}
+
+/* ---------- Table polish ---------- */
+
+.ax.ax--sessions .ax-table,
+.ax.ax--day-report .ax-table {
+  font-size: 0.8rem;
+}
+
+.ax.ax--sessions .ax-table thead th,
+.ax.ax--day-report .ax-table thead th {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 60%, var(--surface));
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.ax.ax--sessions .ax-table thead th:first-child,
+.ax.ax--day-report .ax-table thead th:first-child,
+.ax.ax--sessions .ax-table thead th.ax-th--item,
+.ax.ax--day-report .ax-table thead th.ax-th--item {
+  padding-left: 1.1rem;
+}
+
+.ax.ax--sessions .ax-table thead th:last-child,
+.ax.ax--day-report .ax-table thead th:last-child {
+  padding-right: 1.1rem;
+}
+
+.ax.ax--sessions .ax-table tbody td,
+.ax.ax--day-report .ax-table tbody td {
+  padding: 0.62rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  vertical-align: middle;
+}
+
+.ax.ax--sessions .ax-table tbody tr:last-child td,
+.ax.ax--day-report .ax-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ax.ax--sessions .ax-table tbody td:first-child,
+.ax.ax--day-report .ax-table tbody td:first-child,
+.ax.ax--sessions .ax-table tbody td.ax-cell--primary,
+.ax.ax--day-report .ax-table tbody td.ax-cell--primary {
+  padding-left: 1.1rem;
+}
+
+.ax.ax--sessions .ax-table tbody td:last-child,
+.ax.ax--day-report .ax-table tbody td:last-child {
+  padding-right: 1.1rem;
+}
+
+.ax.ax--sessions .ax-table tbody tr:hover td,
+.ax.ax--day-report .ax-table tbody tr:hover td,
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table tbody tr:hover td:first-child,
+.ax.ax--day-report .ax-table-wrap--scroll .ax-table tbody tr:hover td:first-child,
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table tbody tr:hover td.ax-cell--primary,
+.ax.ax--day-report .ax-table-wrap--scroll .ax-table tbody tr:hover td.ax-cell--primary {
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+}
+
+/* Sticky first column matches the card surface (scroll overflow only). */
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table th:first-child,
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table td:first-child,
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table td.ax-cell--primary,
+.ax.ax--day-report .ax-table-wrap--scroll .ax-table th:first-child,
+.ax.ax--day-report .ax-table-wrap--scroll .ax-table td:first-child,
+.ax.ax--day-report .ax-table-wrap--scroll .ax-table td.ax-cell--primary {
+  box-shadow: 1px 0 0 color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+/* Group divider rows (Stocked in batches, etc.) */
+.ax.ax--sessions .ax-table tbody tr.ax-row--group td,
+.ax.ax--day-report .ax-table tbody tr.ax-row--group td {
+  padding: 0.45rem 1.1rem;
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+  border-left: 3px solid color-mix(in srgb, var(--teal) 55%, var(--line));
+  color: var(--mist);
+}
+
+.ax.ax--sessions .ax-table tbody tr.ax-row--group:hover td,
+.ax.ax--day-report .ax-table tbody tr.ax-row--group:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+/* ---------- Cells ---------- */
+
+/* Session primary cell: date + time, un-pilled link */
+.ax.ax--sessions .ax-cell--primary .ax-link.ax-entity-link,
+.ax.ax--day-report .ax-cell--primary .ax-link.ax-entity-link {
+  display: inline-grid;
+  gap: 0.08rem;
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+.ax.ax--sessions .ax-cell--primary .ax-entity-name,
+.ax.ax--day-report .ax-cell--primary .ax-entity-name {
+  color: var(--text-strong);
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.ax.ax--sessions .ax-cell--primary .ax-entity-meta,
+.ax.ax--day-report .ax-cell--primary .ax-entity-meta {
+  color: var(--mist-dim);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.ax.ax--sessions .ax-cell--primary .ax-link:hover .ax-entity-name,
+.ax.ax--day-report .ax-cell--primary .ax-link:hover .ax-entity-name {
+  color: var(--teal);
+}
+
+/* Entity cells elsewhere (cashier name + ID, supplier + phone) */
+.ax.ax--sessions .ax-entity-name,
+.ax.ax--day-report .ax-entity-name {
+  font-weight: 650;
+  color: var(--text-strong);
+}
+
+.ax.ax--sessions .ax-entity-meta,
+.ax.ax--day-report .ax-entity-meta {
+  color: var(--mist-dim);
+  font-size: 0.68rem;
+}
+
+/* Status pill with a leading dot */
+.ax.ax--sessions .ax-status,
+.ax.ax--day-report .ax-status {
+  gap: 0.32rem;
+  padding: 0.16rem 0.6rem;
+  font-size: 0.64rem;
+  letter-spacing: 0.05em;
+}
+
+.ax.ax--sessions .ax-status::before,
+.ax.ax--day-report .ax-status::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+/* "Open" action — solid teal pill button */
+.ax.ax--sessions .ax-table td:last-child .ax-link {
+  gap: 0.3rem;
+  padding: 0.34rem 0.85rem;
+  border-radius: 999px;
+  background: var(--teal);
+  color: var(--surface);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--teal) 30%, transparent);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.ax.ax--sessions .ax-table td:last-child .ax-link::after {
+  content: "\2192";
+  font-weight: 800;
+}
+
+.ax.ax--sessions .ax-table td:last-child .ax-link:hover {
+  background: color-mix(in srgb, var(--teal) 82%, var(--text-strong));
+  color: var(--surface);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--teal) 38%, transparent);
+}
+
+/* Money cells — right aligned, tabular figures */
+.ax.ax--sessions .ax-money,
+.ax.ax--day-report .ax-money {
+  font-variant-numeric: tabular-nums;
+}
+
+.ax.ax--day-report .ax-table td.ax-cell--money {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Footnote inside edge-to-edge cards */
+.ax.ax--sessions .ax-footnote,
+.ax.ax--day-report .ax-footnote {
+  padding: 0.55rem 1.1rem 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 45%, var(--surface));
+}
+
+/* Empty state */
+.ax.ax--sessions .ax-card .ax-empty,
+.ax.ax--day-report .ax-card .ax-empty {
+  margin: 0.75rem 1.1rem 0.9rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+/* ---------- Day-report KPI tiles ---------- */
+
+.ax.ax--day-report .ax-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.6rem;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+}
+
+.ax.ax--day-report .ax-kpi {
+  min-width: 0;
+  padding: 0.7rem 0.85rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  gap: 0.22rem;
+}
+
+.ax.ax--day-report .ax-kpi::before {
+  width: 4px;
+  background: color-mix(in srgb, var(--mist-dim) 45%, transparent);
+}
+
+.ax.ax--day-report .ax-kpi.is-good::before {
+  background: var(--teal);
+}
+
+.ax.ax--day-report .ax-kpi.is-bad::before {
+  background: var(--danger);
+}
+
+.ax.ax--day-report .ax-kpi.is-warn::before {
+  background: var(--accent-deep);
+}
+
+.ax.ax--day-report .ax-kpi strong {
+  font-size: 1.02rem;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Day-report alert ---------- */
+
+.ax.ax--day-report .ax-alert {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.ax.ax--day-report .ax-alert.is-info {
+  border: 1px solid var(--info-border);
+  border-left: 4px solid var(--info);
+  background: color-mix(in srgb, var(--info) 6%, var(--surface));
+}
+
+.ax.ax--day-report .ax-alert-main strong {
+  display: block;
+  font-size: 0.82rem;
+}
+
+.ax.ax--day-report .ax-alert-main p {
+  margin: 0.1rem 0 0;
+  font-size: 0.76rem;
+  color: var(--mist-dim);
+}
+
+/* ---------- Tablet ---------- */
+
+@media (max-width: 1100px) {
+  .ax.ax--sessions .ax-top,
+  .ax.ax--day-report .ax-top {
+    padding: 0.9rem 1rem;
+  }
+}
+
+/* ---------- Mobile (table → stacked cards) ---------- */
+
+@media (max-width: 699px) {
+  .ax.ax--sessions .ax-top,
+  .ax.ax--day-report .ax-top {
+    width: auto;
+    justify-self: stretch;
+    padding: 0.85rem 0.9rem;
+    border-radius: 14px;
+  }
+
+  .ax.ax--sessions .ax-top-main {
+    align-items: flex-start;
+  }
+
+  .ax.ax--sessions .ax-filters select,
+  .ax.ax--sessions .ax-filters input {
+    flex: 1 1 46%;
+    min-width: 9rem;
+  }
+
+  .ax.ax--sessions .ax-filters .ax-apply {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .ax.ax--day-report .ax-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .ax.ax--day-report .ax-kpi {
+    padding: 0.6rem 0.7rem;
+    border-radius: 12px;
+  }
+
+  .ax.ax--day-report .ax-kpi strong {
+    font-size: 0.95rem;
+  }
+
+  /* Stacked rows fill the card — let it span full width again. */
+  .ax.ax--sessions .ax-card,
+  .ax.ax--day-report .ax-card {
+    width: auto;
+    justify-self: stretch;
+  }
+
+  /* Collapsed row cards keep the card chrome. */
+  .ax.ax--sessions .ax-table tbody tr,
+  .ax.ax--day-report .ax-table tbody tr {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  }
+
+  .ax.ax--sessions .ax-table tbody tr:last-child,
+  .ax.ax--day-report .ax-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ax.ax--sessions .ax-table tbody tr.ax-row--group,
+  .ax.ax--day-report .ax-table tbody tr.ax-row--group {
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* First cell title band — date/time stack stays readable. */
+  .ax.ax--sessions .ax-table-wrap .ax-table tbody tr td:first-child,
+  .ax.ax--day-report .ax-table-wrap .ax-table tbody tr td:first-child {
+    background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+    padding: 0.6rem 1rem;
+  }
+
+  .ax.ax--sessions .ax-table td,
+  .ax.ax--day-report .ax-table td {
+    padding: 0.55rem 1rem;
+  }
+
+  /* Open action becomes a full-width row button. */
+  .ax.ax--sessions .ax-table td:last-child {
+    padding: 0.6rem 1rem 0.75rem;
+  }
+
+  .ax.ax--sessions .ax-table td:last-child::before {
+    align-self: center;
+  }
+
+  .ax.ax--sessions .ax-table td:last-child .ax-link {
+    justify-content: center;
+    min-width: 7rem;
+    padding: 0.45rem 1rem;
+  }
+
+  .ax.ax--sessions .ax-footnote,
+  .ax.ax--day-report .ax-footnote {
+    padding: 0.5rem 1rem 0.65rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .ax.ax--day-report .ax-kpis {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+  }
+
+  .ax.ax--day-report .ax-kpi strong {
+    font-size: 0.88rem;
+  }
+
+  .ax.ax--sessions .ax-top-actions,
+  .ax.ax--day-report .ax-top-actions {
+    width: 100%;
+  }
+
+  .ax.ax--sessions .ax-top-actions .ax-apply,
+  .ax.ax--day-report .ax-top-actions .ax-apply {
+    flex: 1 1 auto;
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+/* ---------- Day report: centered uniform report column ---------- */
+
+.ax.ax--day-report .ax-kpis,
+.ax.ax--day-report .ax-alerts,
+.ax.ax--day-report .ax-grid--tables {
+  width: min(58rem, 100%);
+  margin-inline: auto;
+  justify-self: center;
+}
+
+.ax.ax--day-report .ax-card {
+  width: 100%;
+  justify-self: stretch;
+}
+
+/* ---------- Full-width, un-boxed tables ---------- */
+
+.ax.ax--sessions .ax-table {
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ax.ax--day-report .ax-table {
+  width: 100%;
+  min-width: 0;
+}
+
+.ax.ax--sessions .ax-table th,
+.ax.ax--sessions .ax-table td,
+.ax.ax--day-report .ax-table th,
+.ax.ax--day-report .ax-table td {
+  border-right: 0;
+  white-space: normal;
+}
+
+.ax.ax--sessions .ax-table tbody tr:nth-child(even) td,
+.ax.ax--day-report .ax-table tbody tr:nth-child(even) td {
+  background: transparent;
+}
+
+/* Cashier / supplier entity cells stack name + meta */
+.ax.ax--sessions .ax-entity-link,
+.ax.ax--day-report .ax-entity-link {
+  display: inline-grid;
+  gap: 0.06rem;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+/* Money headers align with their right-aligned values */
+.ax.ax--day-report .ax-table th.ax-th--money {
+  text-align: right;
+}
+
+@media (min-width: 700px) {
+  /* Sessions: Status + Report hug content at the right edge */
+  .ax.ax--sessions .ax-table th:nth-child(4),
+  .ax.ax--sessions .ax-table td:nth-child(4) {
+    width: 7rem;
+    white-space: nowrap;
+  }
+
+  .ax.ax--sessions .ax-table th:nth-child(5),
+  .ax.ax--sessions .ax-table td:nth-child(5) {
+    width: 8.5rem;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* Day report: every non-label column hugs content; labels flex */
+  .ax.ax--day-report .ax-table th:not(:first-child),
+  .ax.ax--day-report .ax-table td:not(:first-child) {
+    width: 1%;
+    white-space: nowrap;
+  }
+
+  .ax.ax--day-report .ax-table td.ax-cell--money,
+  .ax.ax--day-report .ax-table td.ax-cell--pair {
+    text-align: right;
+  }
+}
+
+/* Roomier session rows + stronger KPIs */
+.ax.ax--sessions .ax-table tbody td {
+  padding-top: 0.72rem;
+  padding-bottom: 0.72rem;
+}
+
+.ax.ax--day-report .ax-kpi {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ax.ax--day-report .ax-kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.ax.ax--day-report .ax-kpi strong {
+  font-size: 1.12rem;
+}
+
+@media (max-width: 699px) {
+  .ax.ax--sessions .ax-table td,
+  .ax.ax--day-report .ax-table td {
+    width: auto;
+    white-space: normal;
+  }
 }

@@ -16,7 +16,6 @@ from django.utils import timezone
 
 from .myshop_models import (
     Client,
-    CompanyAnalyticsSettings,
     Expense,
     Item,
     Shop,
@@ -207,19 +206,12 @@ def _window(start_date, end_date):
 
 
 def analytics_receipt_default() -> str:
-    """Company default from MY-SHOP analytics settings (`all` | `pending` | `confirmed`)."""
-    try:
-        row = CompanyAnalyticsSettings.objects.filter(pk=1).first()
-        value = ((row.receipt_data_source if row else "") or "").strip().lower()
-        if value in (ANALYTICS_ALL, ANALYTICS_PENDING, ANALYTICS_CONFIRMED):
-            return value
-    except Exception:
-        pass
+    """Default receipt scope for sales & item analytics (`all` | `pending` | `confirmed`)."""
     return ANALYTICS_PENDING
 
 
 def resolve_receipt_status(text: str | None = None) -> str:
-    """All/pending/confirmed for sales & item analytics — message override or company default."""
+    """All/pending/confirmed for sales & item analytics — message override or default."""
     low = (text or "").lower()
     if re.search(r"\bconfirmed\b", low):
         return ANALYTICS_CONFIRMED

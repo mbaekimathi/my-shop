@@ -1,0 +1,272 @@
+{% load static %}
+{% if sell_modal %}
+<div
+  class="workspace-modal sell-modal"
+  data-modal="sell"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="sell"></div>
+  <div
+    class="workspace-modal-dialog sell-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="sell-modal-title"
+  >
+    <div class="workspace-modal-head buy-stock-modal-head">
+      <div class="buy-stock-modal-head-copy">
+        <p class="buy-stock-modal-kicker">{{ shop.name }}</p>
+        <h2 id="sell-modal-title">Sell</h2>
+        <p class="buy-stock-modal-lead">Search items, build a cart, then check out.</p>
+      </div>
+      <button
+        class="workspace-icon-btn"
+        type="button"
+        aria-label="Close"
+        data-modal-close="sell"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div
+      class="sell-modal-body"
+      data-sell-root
+      data-shop-id="{{ shop.pk }}"
+      data-shop-name="{{ shop.name }}"
+      data-catalog-api="{{ catalog_url }}"
+      data-checkout-url="{{ checkout_url }}"
+      data-verify-login-url="{{ verify_login_code_url }}"
+      data-client-lookup-url="{{ client_lookup_url }}"
+      data-serial-search-url="{{ serial_search_url }}"
+      data-default-kind="{{ default_kind }}"
+      data-default-payment="{{ default_payment }}"
+      data-pos-discount="{% if sell_edit_prices %}1{% else %}0{% endif %}"
+      data-pos-stock-tracking="{% if pos_settings.enable_stock_tracking %}1{% else %}0{% endif %}"
+      data-pos-client-data="1"
+      data-pos-tax="{% if pos_settings.enable_tax %}1{% else %}0{% endif %}"
+      data-pos-tax-percent="{{ pos_flags.effective_tax_percent }}"
+      data-credit-whatsapp="{% if credit_whatsapp %}1{% else %}0{% endif %}"
+    >
+      {% csrf_token %}
+      <div class="sell-modal-main">
+        <label class="buy-stock-simple-search-field sell-search-field">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Search items to sell…"
+            autocomplete="off"
+            data-sell-search
+            data-autofocus
+            aria-label="Search items"
+          >
+        </label>
+        <div class="sell-results" data-sell-results>
+          <div class="buy-stock-simple-empty buy-stock-simple-empty-card" data-sell-results-idle>
+            <span class="buy-stock-simple-empty-icon" aria-hidden="true">
+              <i data-lucide="package-search"></i>
+            </span>
+            <p>Type a name to add items</p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="sell-modal-side">
+        <div class="sell-cart">
+          <div class="sell-cart-head">
+            <p class="sell-cart-title">
+              Cart
+              <span class="sell-cart-count" data-sell-count hidden>0</span>
+            </p>
+            <button
+              type="button"
+              class="stock-float-clear sell-cart-clear"
+              data-sell-clear
+              hidden
+            >
+              Clear
+            </button>
+          </div>
+          <p class="sell-cart-empty" data-sell-empty>
+            No items yet — search to add.
+          </p>
+          <ul class="sell-cart-lines" data-sell-lines></ul>
+          <div class="sell-cart-total" data-sell-total-row hidden>
+            <span>Total</span>
+            <strong data-sell-total>KSh 0.00</strong>
+          </div>
+        </div>
+
+        <form class="sell-checkout" data-sell-checkout novalidate>
+          {% if show_document_picker %}
+          <div class="shop-cart-field">
+            <span class="shop-cart-field-label">Document</span>
+            <div class="shop-cart-seg" role="group" aria-label="Document type">
+              {% if "sale" in cart_kinds %}
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="sell_kind" value="sale" data-sell-kind{% if default_kind == "sale" %} checked{% endif %}>
+                <span>Sale</span>
+              </label>
+              {% endif %}
+              {% if "credit" in cart_kinds %}
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="sell_kind" value="credit" data-sell-kind{% if default_kind == "credit" %} checked{% endif %}>
+                <span>Credit</span>
+              </label>
+              {% endif %}
+              {% if "quotation" in cart_kinds %}
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="sell_kind" value="quotation" data-sell-kind{% if default_kind == "quotation" %} checked{% endif %}>
+                <span>Quotation</span>
+              </label>
+              {% endif %}
+            </div>
+          </div>
+          {% elif default_kind %}
+          <input type="hidden" name="sell_kind" value="{{ default_kind }}" data-sell-kind>
+          {% endif %}
+
+          {% if "quotation" in cart_kinds %}
+          <label class="shop-cart-check" data-sell-whatsapp-wrap{% if default_kind != "quotation" %} hidden{% endif %}>
+            <input type="checkbox" name="share_whatsapp" value="1" data-sell-whatsapp>
+            <span>Share quotation to WhatsApp</span>
+          </label>
+          {% endif %}
+
+          {% if "credit" in cart_kinds %}
+          <div class="shop-cart-field" data-sell-credit-due-wrap{% if default_kind != "credit" %} hidden{% endif %}>
+            <label class="shop-cart-input">
+              <span>Payment due date <em>(optional)</em></span>
+              <input type="date" name="credit_due_date" data-sell-credit-due>
+            </label>
+          </div>
+          {% endif %}
+
+          {% if sell_payment_options %}
+          <div class="shop-cart-field" data-sell-payment-wrap{% if default_kind != "sale" %} hidden{% endif %}>
+            <span class="shop-cart-field-label">Payment</span>
+            <div class="shop-cart-seg" role="group" aria-label="Payment method">
+              {% for value, label in sell_payment_options %}
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="sell_payment" value="{{ value }}" data-sell-pay{% if default_payment == value %} checked{% endif %}>
+                <span>{{ label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="shop-cart-split" data-sell-split hidden>
+            <label class="shop-cart-input" data-sell-split-cash>
+              <span>Cash</span>
+              <input type="text" min="0" step="0.01" inputmode="decimal" data-sell-cash placeholder="0.00">
+            </label>
+            <label class="shop-cart-input" data-sell-split-mpesa>
+              <span>M-Pesa</span>
+              <input type="text" min="0" step="0.01" inputmode="decimal" data-sell-mpesa placeholder="0.00">
+            </label>
+            <label class="shop-cart-input" data-sell-split-card>
+              <span>Card</span>
+              <input type="text" min="0" step="0.01" inputmode="decimal" data-sell-card placeholder="0.00">
+            </label>
+          </div>
+
+          <div class="shop-cart-client{% if default_kind != 'sale' %} is-required{% endif %}" data-sell-client>
+            <div class="shop-cart-client-head">
+              <p class="shop-cart-client-label" data-sell-client-heading>
+                Link client{% if default_kind != "sale" %} <span class="shop-serial-required" aria-hidden="true">*</span>{% endif %}
+              </p>
+              <p class="shop-cart-client-note" data-sell-client-note>
+                {% if default_kind == "sale" %}Optional. {% endif %}Enter a name, a phone number, or both.
+              </p>
+            </div>
+            <label class="shop-cart-input">
+              <span data-sell-client-phone-label>
+                Client phone <em>(optional)</em>
+              </span>
+              <input
+                type="tel"
+                name="client_phone"
+                autocomplete="tel"
+                inputmode="tel"
+                data-sell-client-phone
+                placeholder="07XX XXX XXX"
+              >
+            </label>
+            <div class="shop-cart-name-wrap">
+              <label class="shop-cart-input">
+                <span data-sell-client-name-label>
+                  Client full name <em>(optional)</em>
+                </span>
+                <input
+                  type="text"
+                  name="client_name"
+                  autocomplete="off"
+                  data-sell-client-name
+                  class="shop-cart-name-input"
+                  placeholder="Full name"
+                  aria-autocomplete="list"
+                  aria-controls="sell-client-suggest"
+                >
+              </label>
+              <div
+                class="shop-cart-client-suggest"
+                id="sell-client-suggest"
+                data-sell-client-suggest
+                role="listbox"
+                hidden
+              ></div>
+            </div>
+            <p class="shop-cart-client-hint" data-sell-client-hint></p>
+          </div>
+
+          <label class="shop-cart-input sell-login">
+            <span>Staff ID <span class="shop-serial-required" aria-hidden="true">*</span></span>
+            <input
+              type="text"
+              name="login_code"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="6 digits"
+              data-sell-login
+            >
+          </label>
+          <p class="shop-cart-status sell-login-status" data-sell-login-status></p>
+
+          <button class="stock-float-submit sell-submit" type="submit" data-sell-submit disabled>
+            <i data-lucide="check" aria-hidden="true"></i>
+            <span data-sell-submit-label>Complete</span>
+          </button>
+          <p class="shop-cart-status sell-status" data-sell-status role="status"></p>
+        </form>
+
+        <div class="sell-result" data-sell-result hidden>
+          <p class="sell-result-title" data-sell-result-title></p>
+          <pre class="sell-result-receipt" data-sell-result-receipt></pre>
+          <div class="sell-result-actions">
+            <button type="button" class="btn btn--ghost btn--sm" data-sell-result-print>
+              <i data-lucide="printer" aria-hidden="true"></i>
+              Print
+            </button>
+            <a
+              class="btn btn--ghost btn--sm"
+              data-sell-result-whatsapp
+              target="_blank"
+              rel="noopener"
+              hidden
+            >
+              <i data-lucide="message-circle" aria-hidden="true"></i>
+              WhatsApp
+            </a>
+            <button type="button" class="btn btn--primary btn--sm" data-sell-result-new>
+              <i data-lucide="plus" aria-hidden="true"></i>
+              New sale
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+{% endif %}

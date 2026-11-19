@@ -653,9 +653,9 @@ urlpatterns = [
         name="analytics_item_report",
     ),
     path(
-        "<role_segment:role_segment>/analytics/settings/",
-        analytics_views.analytics_settings,
-        name="analytics_settings",
+        "<role_segment:role_segment>/analytics/balances/<int:session_id>/",
+        analytics_views.analytics_day_session,
+        name="analytics_day_session",
     ),
     path(
         "<role_segment:role_segment>/analytics/<slug:section>/",

@@ -1,0 +1,58 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="home" data-animate="rise">
+  <header class="home-hero">
+    <p class="home-kicker">{{ role_label|default:workspace.role_label }}</p>
+    <h2 class="home-title">
+      {% if meta.icon %}
+      <span class="home-title-icon" aria-hidden="true"><i data-lucide="{{ meta.icon }}"></i></span>
+      {% endif %}
+      {{ meta.headline }}
+    </h2>
+    {% if meta.summary %}
+    <p class="home-sub">{{ meta.summary }}</p>
+    {% endif %}
+  </header>
+
+  <section class="home-section" aria-labelledby="session-blocked-title">
+    <h3 class="home-section-title" id="session-blocked-title">Waiting for the day to close</h3>
+    {% for block in session_blocks %}
+    <article class="home-money-shop">
+      <h4 class="home-money-shop-name">
+        {{ block.shop.name }}
+        <span class="shop-day-badge is-open">
+          <i data-lucide="radio" aria-hidden="true"></i>
+          Open — {{ block.opener }}
+        </span>
+        {% if block.session %}
+        <small>opened {{ block.session.opened_at|date:"M j, H:i" }} by {{ block.opener }}</small>
+        {% endif %}
+      </h4>
+      <div class="home-empty">
+        <i data-lucide="user-check" aria-hidden="true"></i>
+        <p>
+          <strong>{{ block.shop.name }} is still open under {{ block.opener }}.</strong>
+          Please ask {{ block.opener }} to close their session first — you
+          cannot sell, record expenses or drawings, or open the day until
+          they do.
+        </p>
+      </div>
+    </article>
+    {% empty %}
+    <article class="home-money-shop">
+      <div class="home-empty">
+        <i data-lucide="check-circle-2" aria-hidden="true"></i>
+        <p>
+          <strong>No open session found.</strong>
+          The blocking session was just closed — reload to continue.
+        </p>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+</section>
+{% endblock %}

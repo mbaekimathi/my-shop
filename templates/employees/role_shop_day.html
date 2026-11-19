@@ -129,7 +129,17 @@
       {% endif %}
 
       <div class="shop-day-actions">
-        {% if drawing_mode %}
+        {% if day_mode == "report" %}
+        <a class="btn btn--primary" href="{{ row.report_url }}" target="_blank" rel="noopener">
+          <i data-lucide="file-text" aria-hidden="true"></i>
+          Day report
+        </a>
+        {% elif day_mode == "history" %}
+        <a class="btn btn--primary" href="{{ row.history_url }}">
+          <i data-lucide="history" aria-hidden="true"></i>
+          Day history
+        </a>
+        {% elif drawing_mode %}
         {% if row.can_draw %}
         <a class="btn btn--primary" href="{{ row.drawing_url }}">
           <i data-lucide="hand-coins" aria-hidden="true"></i>

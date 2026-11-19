@@ -113,3 +113,73 @@ class EmployeeIdleTimeoutMiddleware:
             session[IDLE_SESSION_KEY] = candidate
 
         return self.get_response(request)
+
+
+class CashierSessionBlockMiddleware:
+    """Lock the cashier workspace while a colleague's day session is open.
+
+    A cashier may only work on a shop day they opened themselves. When an
+    allocated shop's open ``ShopDaySession`` belongs to another employee
+    (e.g. the previous shift never closed), every page under the
+    ``/shop-cashier/`` segment renders a blocking notice naming whoever must
+    close it; the matching ``my-shop/*`` endpoints are denied separately in
+    ``shops.views``.
+
+    Runs last so the short-circuited response still passes through every
+    outer middleware's response processing. Shop portal sessions and
+    non-cashier roles are unaffected — a manager or the shop portal can
+    always close the day as an escape hatch.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        user = getattr(request, "user", None)
+        if user is None or not user.is_authenticated:
+            return self.get_response(request)
+
+        from .access import get_profile_for_request, role_url_segment
+        from .models import EmployeeRole
+
+        segment = role_url_segment(EmployeeRole.SHOP_CASHIER)
+        if not request.path_info.startswith(f"/{segment}/"):
+            return self.get_response(request)
+
+        profile = get_profile_for_request(request)
+        if (
+            profile is None
+            or profile.role != EmployeeRole.SHOP_CASHIER
+            or not profile.is_active_employee
+        ):
+            return self.get_response(request)
+
+        from .workspace import (
+            cashier_session_blocks,
+            render_cashier_session_blocked,
+        )
+
+        blocks = cashier_session_blocks(profile)
+        if not blocks:
+            return self.get_response(request)
+
+        wants_json = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or "application/json" in (request.headers.get("Accept") or "")
+        )
+        if wants_json or request.method != "GET":
+            from django.http import JsonResponse
+
+            first = blocks[0]
+            opener = first["opener"]
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        f"{first['shop'].name} is still open under {opener}. "
+                        f"Ask {opener} to close their session first."
+                    ),
+                },
+                status=403,
+            )
+        return render_cashier_session_blocked(request, profile, blocks=blocks)

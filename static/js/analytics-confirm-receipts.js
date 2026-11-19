@@ -1842,7 +1842,7 @@ ${confirmPanelHtml}`;
         syncSubmitConfirm();
         return;
       }
-      renderDetail(data);
+      closeModal();
       loadRows();
     } catch (_err) {
       setConfirmStatus("Confirm failed.", { error: true });

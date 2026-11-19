@@ -18,11 +18,11 @@
     {% endif %}
   </header>
 
-  {% if page_sidebar.primary %}
+  {% if page_sidebar.quick_actions %}
   <section class="home-section" aria-labelledby="home-actions-title">
     <h3 class="home-section-title" id="home-actions-title">Quick actions</h3>
     <div class="home-actions">
-      {% for item in page_sidebar.primary %}
+      {% for item in page_sidebar.quick_actions %}
       {% if item.type == "action" %}
       <button
         type="button"
@@ -153,6 +153,7 @@
         </tbody>
       </table>
       {% endif %}
+      {% if row.can_open_close or row.can_draw %}
       <div class="shop-day-actions">
         {% if row.can_open_close %}
         <a class="btn btn--primary" href="{{ row.day_url }}">
@@ -166,11 +167,8 @@
           Record drawing
         </a>
         {% endif %}
-        <a class="btn btn--ghost" href="{{ row.day_report_url }}" target="_blank" rel="noopener">
-          <i data-lucide="file-text" aria-hidden="true"></i>
-          Day report (PDF)
-        </a>
       </div>
+      {% endif %}
       {% elif row.other_open %}
       <div class="home-empty">
         <i data-lucide="user-check" aria-hidden="true"></i>
@@ -222,10 +220,14 @@
 </section>
 
 {% include "shops/partials/buy_stock_modal.html" %}
+{% include "shops/partials/sell_modal.html" %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
+{% if sell_modal %}
+<script defer src="{% static 'js/cashier-sell.js' %}?v=1"></script>
+{% endif %}
 {% if buy_stock_modal %}
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261118-avg-cost"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=7"></script>
