@@ -2956,7 +2956,9 @@ def require_shop_day_for_sale(shop, pos=None):
 
     Compulsory open/close off → trading allowed. Otherwise an open day
     session started today is required; a stale session from a previous day
-    must be closed first.
+    must be closed first. Till hand-over: once the shop has run at least
+    one day, sales between a close and the next open are allowed — they
+    land on the next opened session.
     """
     if pos is None:
         pos = effective_pos_settings(shop)
@@ -2964,6 +2966,10 @@ def require_shop_day_for_sale(shop, pos=None):
         return
     open_session = get_open_shop_day(shop)
     if open_session is None:
+        if ShopDaySession.objects.filter(
+            shop_id=shop.pk, closed_at__isnull=False
+        ).exists():
+            return
         raise StockError("Open the shop day before selling.")
     if timezone.localtime(open_session.opened_at).date() < timezone.localdate():
         raise StockError(

@@ -318,7 +318,10 @@ class ActingShopRolePickTests(TestCase):
             link.get("label")
             for link in home.context["page_sidebar"]["primary"]
         }
-        self.assertIn("Open shop", labels)
+        # IT support acting as cashier is a view-only pass — read links stay,
+        # mutating actions (Sell, open/close, drawings) are dropped.
+        self.assertNotIn("Sell", labels)
+        self.assertNotIn("Open shop", labels)
         self.assertIn("Expenses", labels)
         self.assertIn("Receipts", labels)
         self.assertIn("Analytics", labels)
@@ -453,3 +456,212 @@ class ExtraRolesWriteTests(TestCase):
         profile.refresh_from_db()
         self.assertEqual(profile.role, EmployeeRole.SHOP_CASHIER)
         self.assertEqual(profile.extra_role_list(), [EmployeeRole.SHOP_MANAGER])
+
+
+@override_settings(
+    ALLOWED_HOSTS=["testserver", "localhost"],
+    RATE_LIMITS={
+        "login": {"max": 10_000, "window": 60},
+        "check_employee_id": {"max": 10_000, "window": 60},
+        "register": {"max": 10_000, "window": 60},
+        "sync": {"max": 10_000, "window": 60},
+    },
+)
+class SupportViewOnlyRoleTests(TestCase):
+    """IT support acting in a different role browses it read-only.
+
+    The picked workspace behaves like they are the ones in session — a
+    cashier day opened by someone else still shows its till — but every
+    write outside the session-navigation endpoints is denied.
+    """
+
+    PASSWORD = "view-only-pass"
+
+    def _employee(self, employee_id, role, *, extra_roles=""):
+        user = User.objects.create_user(
+            username=employee_id,
+            password=self.PASSWORD,
+            email=f"{employee_id}@test.local",
+            first_name="VIEW",
+            last_name=employee_id,
+            is_active=True,
+        )
+        return EmployeeProfile.objects.create(
+            user=user,
+            employee_id=employee_id,
+            phone_country_code="+254",
+            phone_number="700000006",
+            status=EmployeeStatus.ACTIVE,
+            role=role,
+            extra_roles=extra_roles,
+        )
+
+    def setUp(self):
+        from django.contrib.auth.hashers import make_password
+
+        from shops.models import Shop
+        from shops.services import open_shop_day
+
+        self.cashier = self._employee("840001", EmployeeRole.SHOP_CASHIER)
+        self.support = self._employee(
+            "840002", EmployeeRole.IT_SUPPORT, extra_roles="shop_cashier"
+        )
+        self.shop = Shop.objects.create(
+            name="VIEW ONLY SHOP",
+            location="NAIROBI",
+            email="view-only-shop@test.local",
+            phone_number="0700008401",
+            login_code="840101",
+            password_hash=make_password(self.PASSWORD),
+            created_by=self.cashier,
+        )
+        # A day already open under the real cashier — the support pass must
+        # see it as "their" session, not the colleague-day lockout.
+        open_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "1000",
+                "mpesa_amount": "500",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": self.cashier.employee_id,
+            },
+        )
+        self.client = Client()
+        self.client.post(
+            reverse("employees:login"),
+            {"username": self.support.employee_id, "password": self.PASSWORD},
+        )
+        self.client.post(
+            reverse("employees:select_role"),
+            {"role": EmployeeRole.SHOP_CASHIER, "shop": str(self.shop.pk)},
+        )
+
+    def test_dashboard_shows_foreign_day_till_read_only(self):
+        response = self.client.get(reverse("employees:role_shop_cashier"))
+        self.assertEqual(response.status_code, 200)
+        # The colleague-day lockout page is skipped and the till is visible.
+        self.assertTemplateNotUsed(
+            response, "employees/cashier_session_blocked.html"
+        )
+        self.assertContains(response, "Day summary")
+        self.assertContains(response, "In till now")
+        # …and the employee actually in session is named on the row.
+        self.assertContains(response, "VIEW 840001")
+        # …but no mutating affordances are offered.
+        self.assertContains(response, "View only")
+        self.assertNotContains(response, "Close shop")
+        self.assertNotContains(response, "Record drawing")
+
+    def test_day_picker_shows_till_without_actions(self):
+        response = self.client.get(
+            reverse(
+                "employees:role_shop_day",
+                kwargs={"role_segment": "shop-cashier"},
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "In till now")
+        self.assertContains(response, "View only")
+        # The employee in session is named — the badge shows who owns the day.
+        self.assertContains(response, "VIEW 840001")
+        self.assertNotContains(response, "Close shop")
+
+    def test_mutation_post_denied_json(self):
+        response = self.client.post(
+            reverse("employees:role_shop_cashier_settings"),
+            {
+                "action": "toggle_pos_setting",
+                "field": "sidebar_sell",
+                "enabled": "0",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 403)
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["view_only"])
+
+    def test_checkout_post_denied(self):
+        response = self.client.post(
+            reverse(
+                "employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}
+            ),
+            {"kind": "sale", "login_code": self.cashier.employee_id},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(response.json()["view_only"])
+
+    def test_catalog_read_allowed_on_foreign_day(self):
+        response = self.client.get(
+            reverse(
+                "employees:my_shop_catalog", kwargs={"shop_id": self.shop.pk}
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_floor_unlock_allowed_but_writes_denied(self):
+        # Floor unlock is session navigation — it stays allowed.
+        response = self.client.post(
+            reverse("employees:my_shop_select"),
+            {"shop_id": str(self.shop.pk), "password": self.PASSWORD},
+        )
+        self.assertEqual(response.status_code, 302)
+        response = self.client.get(
+            reverse(
+                "employees:my_shop_workspace",
+                kwargs={"shop_id": self.shop.pk},
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            reverse(
+                "employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}
+            ),
+            {"kind": "sale", "login_code": self.cashier.employee_id},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_acting_shop_switch_allowed(self):
+        response = self.client.post(
+            reverse("employees:my_shop_switch"),
+            {"shop_id": ""},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+
+    def test_role_picker_post_still_allowed(self):
+        response = self.client.post(
+            reverse("employees:select_role"),
+            {"role": EmployeeRole.IT_SUPPORT},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            self.client.session[SESSION_ACTIVE_ROLE_KEY],
+            EmployeeRole.IT_SUPPORT,
+        )
+        # Back on the primary role the pass is writable again.
+        from django.test import RequestFactory
+
+        from employees.access import get_profile_for_request
+
+        request = RequestFactory().get("/it-support/")
+        request.session = self.client.session
+        request.user = self.support.user
+        profile = get_profile_for_request(request)
+        self.assertFalse(getattr(profile, "view_only_role", False))
+
+    def test_day_history_stays_shop_wide(self):
+        response = self.client.get(
+            reverse(
+                "employees:my_shop_day_history",
+                kwargs={"shop_id": self.shop.pk},
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        sessions = response.context["day_sessions"]
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["opened_by"], self.cashier)

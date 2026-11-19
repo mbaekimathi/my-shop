@@ -10,7 +10,7 @@
       <div>
         <p class="stock-kicker">Employee · Analytics</p>
         <h2>My analytics</h2>
-        <p>Your sales performance, trends, top items, and receipt statuses.</p>
+        <p>Your sales performance, items sold, trends, and receipt statuses.</p>
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
@@ -62,6 +62,55 @@
 </section>
 
 <section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>Items sold</h2>
+        <p>
+          {{ stats.items_sold|length }} item{{ stats.items_sold|length|pluralize }}
+          · {{ stats.items_revenue_label }} · {{ stats.period_label }}
+        </p>
+      </div>
+    </div>
+  </header>
+  <div class="ax-table-wrap ax-table-wrap--scroll">
+    {% if stats.items_sold %}
+    <table class="ax-table ax-table--items-sold">
+      <thead>
+        <tr>
+          <th class="ax-th--item">Item</th>
+          <th class="ax-th--num">Receipts</th>
+          <th class="ax-th--num">Qty sold</th>
+          <th class="ax-th--money">Sales</th>
+          <th class="ax-th--num">Share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.items_sold %}
+        <tr>
+          <td class="ax-cell--primary" data-label="Item">{{ row.name }}</td>
+          <td class="ax-cell--num" data-label="Receipts">{{ row.docs }}</td>
+          <td class="ax-cell--num" data-label="Qty sold">{{ row.qty_label }}</td>
+          <td class="ax-cell--money" data-label="Sales"><span class="ax-money">{{ row.amount_label }}</span></td>
+          <td class="ax-cell--num ax-cell--share" data-label="Share">
+            <span class="ax-share-cell">
+              <span class="ax-bar-track" aria-hidden="true"><span class="ax-bar-fill" style="width: {{ row.share_pct }}%"></span></span>
+              {{ row.share_label }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="ax-empty">
+      No item sales in this period yet. Items you sell on the shop floor will list here.
+    </p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="2">
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>

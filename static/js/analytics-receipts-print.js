@@ -34,7 +34,7 @@
   const selectedPaper = () => {
     const value =
       form?.querySelector('input[name="print_paper"]:checked')?.value || "a4";
-    return value === "80" || value === "50" ? value : "a4";
+    return value === "80" || value === "58" || value === "50" ? value : "a4";
   };
 
   const currentFilterParams = () => {

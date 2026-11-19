@@ -94,6 +94,7 @@ from .access import (
     active_employee_required,
     get_profile,
     get_profile_for_request,
+    profile_view_only,
     redirect_to_role_home,
     refresh_effective_role,
     role_home_url_name,
@@ -113,6 +114,7 @@ from .services import (
     EMPTY_EMPLOYEE_FORM,
     build_employee_analytics,
     build_employee_performance,
+    delete_employee,
     employee_form_data_from_post,
     employee_id_is_taken,
     mark_employee_id_taken,
@@ -977,7 +979,7 @@ def employee_my_analytics(request):
                 "title": "My analytics",
                 "headline": "My analytics",
                 "summary": (
-                    "Your sales performance, trends, top items, "
+                    "Your sales performance, items sold, trends, "
                     "and receipt statuses."
                 ),
                 "icon": "chart-line",
@@ -1105,6 +1107,38 @@ def update_employee_access(request, role_segment, employee_id):
     )
     if target is None:
         messages.error(request, f"Employee {employee_id} was not found.")
+        return _redirect_after_employee_access_update(request, list_page or None)
+
+    if (request.POST.get("action") or "").strip() == "disallow":
+        denied = require_module_permission(
+            request, profile, "hr-management", "delete"
+        )
+        if denied is not None:
+            return denied
+        if target.status != EmployeeStatus.PENDING_APPROVAL:
+            messages.error(
+                request,
+                "Only registrations awaiting approval can be disallowed.",
+            )
+            return _redirect_after_employee_access_update(request, list_page or None)
+        if (
+            profile.role != EmployeeRole.SUPER_ADMIN
+            and target.role == EmployeeRole.SUPER_ADMIN
+        ):
+            messages.error(
+                request, "Only a Super Admin can modify a Super Admin account."
+            )
+            return _redirect_after_employee_access_update(request, list_page or None)
+        display_name = target.user.get_full_name() or target.user.username
+        try:
+            delete_employee(target)
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
+            return _redirect_after_employee_access_update(request, list_page or None)
+        messages.success(
+            request,
+            f"Disallowed {employee_id} ({display_name}) — registration removed.",
+        )
         return _redirect_after_employee_access_update(request, list_page or None)
 
     new_role = request.POST.get("role", "").strip()
@@ -1454,6 +1488,7 @@ def role_shop_day(request, role_segment):
     can_record_drawing = employee_may(
         profile, "my-shop", "register_expense"
     )
+    view_only = profile_view_only(profile)
     mode = (request.GET.get("mode") or "").strip().lower()
     if mode not in {"drawings", "report", "history"}:
         mode = ""
@@ -1466,10 +1501,20 @@ def role_shop_day(request, role_segment):
         open_session = state.get("open_session")
         is_open = open_session is not None
         stale_open = bool(state.get("stale_open"))
-        # Till data is only for the session this cashier opened.
-        own_session = is_open and open_session.opened_by_id == profile.pk
+        # Till data is only for the session this cashier opened — a view-only
+        # pass (IT support acting as cashier) counts as the opener so the
+        # figures stay visible; actions stay hidden and writes stay denied.
+        own_session = is_open and (
+            open_session.opened_by_id == profile.pk or view_only
+        )
+        # Keep the real opener's name on view-only rows too — the support
+        # pass needs to see which employee actually owns the session.
         other_opener = ""
-        if is_open and not own_session:
+        if (
+            is_open
+            and open_session.opened_by_id
+            and open_session.opened_by_id != profile.pk
+        ):
             other = open_session.opened_by.user
             other_opener = other.get_full_name() or other.username
         summary = (
@@ -1518,8 +1563,12 @@ def role_shop_day(request, role_segment):
                     kwargs={"shop_id": shop.pk},
                 ),
                 "can_draw": (
-                    can_record_drawing and own_session and not stale_open
+                    can_record_drawing
+                    and own_session
+                    and not stale_open
+                    and not view_only
                 ),
+                "view_only": view_only,
                 "action_label": action_label,
                 "action_icon": action_icon,
             }

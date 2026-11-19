@@ -98,6 +98,26 @@
                 <i data-lucide="file-text" aria-hidden="true"></i>
                 PDF
               </a>
+              <a
+                class="btn btn--ghost btn--sm"
+                href="{{ day_report_url }}?session={{ row.session.pk }}&paper=80"
+                target="_blank"
+                rel="noopener"
+                title="Print on 80 mm thermal"
+              >
+                <i data-lucide="printer" aria-hidden="true"></i>
+                80 mm
+              </a>
+              <a
+                class="btn btn--ghost btn--sm"
+                href="{{ day_report_url }}?session={{ row.session.pk }}&paper=58"
+                target="_blank"
+                rel="noopener"
+                title="Print on 58 mm thermal"
+              >
+                <i data-lucide="printer" aria-hidden="true"></i>
+                58 mm
+              </a>
             </td>
           </tr>
           {% endfor %}

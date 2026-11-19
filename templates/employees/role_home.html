@@ -132,13 +132,16 @@
           {% if row.stale_open %}
           Yesterday — left open
           {% elif row.is_open %}
-          Open
+          Open{% if row.view_only and row.other_opener %} — {{ row.other_opener }}{% endif %}
           {% elif row.other_open %}
           Open — {{ row.other_opener }}
           {% else %}
           Closed
           {% endif %}
         </span>
+        {% if row.view_only %}
+        <span class="shop-day-badge">View only</span>
+        {% endif %}
         {% if row.session %}
         <small>opened {{ row.session.opened_at|date:"M j, H:i" }} by {{ row.session.opened_by.user.get_full_name|default:row.session.opened_by.user.username }}</small>
         {% endif %}

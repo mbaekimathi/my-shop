@@ -100,14 +100,40 @@
             </label>
           </td>
           <td class="hr-approve-col--save" data-label="Save">
-            <button
-              class="btn btn--primary hr-approve-save"
-              type="submit"
-              form="approve-{{ employee.employee_id }}"
-            >
-              <i data-lucide="check" aria-hidden="true"></i>
-              <span>Save</span>
-            </button>
+            <div class="hr-approve-actions">
+              <button
+                class="btn btn--primary hr-approve-save"
+                type="submit"
+                form="approve-{{ employee.employee_id }}"
+              >
+                <i data-lucide="check" aria-hidden="true"></i>
+                <span>Save</span>
+              </button>
+              {% if module_permissions.delete|default:True %}
+              <form
+                class="hr-disallow-form"
+                method="post"
+                action="{% url 'employees:update_employee_access' role_segment=role_segment employee_id=employee.employee_id %}"
+                data-confirm-delete
+                data-employee-name="{{ employee.user.get_full_name|default:employee.employee_id }}"
+              >
+                {% csrf_token %}
+                <input type="hidden" name="action" value="disallow">
+                <input type="hidden" name="list_page" value="{{ employees_page.number }}">
+                {% if return_to %}
+                <input type="hidden" name="return_to" value="{{ return_to }}">
+                {% endif %}
+                <button
+                  class="btn btn--danger hr-approve-save"
+                  type="submit"
+                  title="Disallow and delete this registration"
+                >
+                  <i data-lucide="x" aria-hidden="true"></i>
+                  <span>Disallow</span>
+                </button>
+              </form>
+              {% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}

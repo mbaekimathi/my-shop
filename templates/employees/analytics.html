@@ -546,6 +546,11 @@
         <span class="is-total">Total</span>
         <span class="is-result">Profit</span>
       </div>
+      {% elif table.shop_grid and section_slug == "item-report" %}
+      <div class="ax-band-legend ax-band-legend--items" aria-label="Column groups">
+        <span class="is-flow">Per shop — qty/day · profit/day · margin · top day</span>
+        <span class="is-total">All shops</span>
+      </div>
       {% elif table.shop_grid and section_slug == "stock" %}
       <div class="ax-band-legend ax-band-legend--stock" aria-label="Column groups">
         <span class="is-flow">By shop</span>
@@ -689,6 +694,13 @@
                 </span>
                 {% elif cell.kind == "status" %}
                 <span class="ax-status is-{{ cell.tone|default:'neutral' }}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
+                {% elif cell.kind == "empty" %}
+                <span class="ax-empty-cell"{% if cell.title %} title="{{ cell.title }}"{% endif %}>&mdash;</span>
+                {% elif cell.kind == "share" %}
+                <span class="ax-share"{% if cell.title %} title="{{ cell.title }}"{% endif %}>
+                  <span class="ax-share-value">{{ cell.label }}</span>
+                  <span class="ax-share-track" aria-hidden="true"><span class="ax-share-fill" style="width: {{ cell.pct }}%"></span></span>
+                </span>
                 {% elif cell.kind == "pay" %}
                 <button
                   type="button"
@@ -763,8 +775,8 @@
   >
     <div class="workspace-modal-head">
       <div>
-        <h2 id="print-receipts-title">Print receipts</h2>
-        <p class="stock-print-lead">Uses the filters on this page, then print or download.</p>
+        <h2 id="print-receipts-title">{{ page.receipts_print_title|default:"Print receipts" }}</h2>
+        <p class="stock-print-lead">{{ page.receipts_print_lead|default:"Uses the filters on this page, then print or download." }}</p>
         <p class="stock-print-pages" data-receipts-print-pages hidden></p>
       </div>
       <button
@@ -783,23 +795,23 @@
         <legend class="stock-print-shops-label">Paper</legend>
         <div class="stock-print-paper-list">
           <label class="stock-print-paper-option">
-            <input type="radio" name="print_paper" value="a4" checked>
+            <input type="radio" name="print_paper" value="a4"{% if page.receipts_print_default_paper != "80" and page.receipts_print_default_paper != "58" %} checked{% endif %}>
             <span>
               <strong>A4</strong>
               <small>Office printer</small>
             </span>
           </label>
           <label class="stock-print-paper-option">
-            <input type="radio" name="print_paper" value="80">
+            <input type="radio" name="print_paper" value="80"{% if page.receipts_print_default_paper == "80" %} checked{% endif %}>
             <span>
               <strong>80 mm</strong>
               <small>Thermal roll</small>
             </span>
           </label>
           <label class="stock-print-paper-option">
-            <input type="radio" name="print_paper" value="50">
+            <input type="radio" name="print_paper" value="58"{% if page.receipts_print_default_paper == "58" %} checked{% endif %}>
             <span>
-              <strong>50 mm</strong>
+              <strong>58 mm</strong>
               <small>Narrow thermal</small>
             </span>
           </label>
@@ -975,7 +987,10 @@
         const tokens = q.split(/\s+/).filter(Boolean);
         let visible = 0;
         rows.forEach((row) => {
-          if (row.classList.contains("ax-row--total")) {
+          if (
+            row.classList.contains("ax-row--total") ||
+            row.classList.contains("ax-row--group")
+          ) {
             row.hidden = false;
             return;
           }
@@ -989,6 +1004,21 @@
           row.hidden = !match;
           if (match) visible += 1;
         });
+        // Drop group headers whose rows all filtered out.
+        let pendingGroup = null;
+        rows.forEach((row) => {
+          if (row.classList.contains("ax-row--group")) {
+            if (pendingGroup) pendingGroup.hidden = true;
+            pendingGroup = row;
+            return;
+          }
+          if (row.classList.contains("ax-row--total")) return;
+          if (pendingGroup && !row.hidden) {
+            pendingGroup.hidden = false;
+            pendingGroup = null;
+          }
+        });
+        if (pendingGroup) pendingGroup.hidden = true;
         if (emptyNote) emptyNote.hidden = visible > 0 || !q;
       };
       let timer = 0;

@@ -1258,6 +1258,23 @@ def shop_day_floor_state(
             )
 
     if open_session is None:
+        # Till hand-over: once the shop has run at least one day, the floor
+        # keeps trading after close — receipts made in the gap land on the
+        # next opened session's window, so the next cashier picks them up.
+        # A brand-new shop (no day session yet) still needs its first day
+        # opened before selling.
+        if get_last_closed_shop_day(shop) is not None:
+            return {
+                "is_open": False,
+                "can_trade": True,
+                "needs_action": False,
+                "mode": None,
+                "stale_open": False,
+                "open_session": None,
+                "start_time": start_time,
+                "end_time": end_time,
+                "compulsory": True,
+            }
         # Always require open to trade. After hours on a configured working day,
         # do not auto-prompt reopen — the day already ended.
         after_hours = bool(
@@ -7227,6 +7244,64 @@ def get_last_shop_day_for(shop: Shop, profile):
     )
 
 
+def session_activity_start(session):
+    """Lower bound of a day session's activity window.
+
+    Till hand-over: receipts (and other till activity) stamped after the
+    previous session closed are allocated to the next session that opens,
+    so the window reaches back to that close instead of ``opened_at``.
+    A shop's first-ever session starts at ``opened_at``. The result is
+    cached on the instance as ``_activity_start`` — bulk callers should
+    pre-stamp it with :func:`stamp_session_activity_starts`.
+    """
+    start = getattr(session, "_activity_start", None)
+    if start is not None:
+        return start
+    from .models import ShopDaySession
+
+    start = (
+        ShopDaySession.objects.filter(
+            shop_id=session.shop_id,
+            closed_at__isnull=False,
+            closed_at__lte=session.opened_at,
+        )
+        .order_by("-closed_at")
+        .values_list("closed_at", flat=True)
+        .first()
+    ) or session.opened_at
+    session._activity_start = start
+    return start
+
+
+def stamp_session_activity_starts(sessions) -> None:
+    """Bulk-set ``_activity_start`` for :func:`session_activity_start`.
+
+    One query for every shop covered — for each session the window opens
+    at the latest ``closed_at`` on or before its ``opened_at``.
+    """
+    sessions = [s for s in sessions if s is not None]
+    if not sessions:
+        return
+    from bisect import bisect_right
+
+    from .models import ShopDaySession
+
+    closes = {}
+    for shop_id, closed_at in ShopDaySession.objects.filter(
+        shop_id__in={s.shop_id for s in sessions},
+        closed_at__isnull=False,
+    ).values_list("shop_id", "closed_at"):
+        closes.setdefault(shop_id, []).append(closed_at)
+    for stamps in closes.values():
+        stamps.sort()
+    for session in sessions:
+        stamps = closes.get(session.shop_id) or []
+        idx = bisect_right(stamps, session.opened_at)
+        session._activity_start = (
+            stamps[idx - 1] if idx else session.opened_at
+        )
+
+
 def _money_or_zero(value) -> Decimal:
     try:
         return Decimal(str(value or 0)).quantize(Decimal("0.01"))
@@ -7353,7 +7428,7 @@ def _session_activity_totals(
     """
     from .models import ExpenseCategory
 
-    opened = session.opened_at
+    opened = session_activity_start(session)
     closed = session.closed_at or timezone.now()
     cash_sales = Decimal("0.00")
     mpesa_sales = Decimal("0.00")
@@ -7543,7 +7618,8 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
 
     from items.models import StockMovement, StockMovementType
 
-    min_opened = min(session.opened_at for session in sessions)
+    stamp_session_activity_starts(sessions)
+    min_opened = min(session_activity_start(session) for session in sessions)
     max_closed = max(
         (session.closed_at or timezone.now()) for session in sessions
     )
@@ -7625,10 +7701,11 @@ def day_session_balance_summary(session, counted_statuses=None) -> dict:
         return {}
 
     closed = session.closed_at or timezone.now()
+    window_start = session_activity_start(session)
     sales_qs = ShopReceipt.objects.filter(
         shop_id=session.shop_id,
         kind=ShopReceiptKind.SALE,
-        created_at__gte=session.opened_at,
+        created_at__gte=window_start,
         created_at__lt=closed,
     )
     if counted_statuses is not None:
@@ -7644,14 +7721,14 @@ def day_session_balance_summary(session, counted_statuses=None) -> dict:
     )
     refunds = _collect_return_payment_events(
         shop_id=session.shop_id,
-        start=session.opened_at,
+        start=window_start,
         end=closed,
         counted_statuses=counted_statuses,
     )
     expenses = list(
         Expense.objects.filter(
             shop_id=session.shop_id,
-            created_at__gte=session.opened_at,
+            created_at__gte=window_start,
             created_at__lt=closed,
         ).values(
             "created_at",
@@ -7666,7 +7743,7 @@ def day_session_balance_summary(session, counted_statuses=None) -> dict:
         StockMovement.objects.filter(
             shop_id=session.shop_id,
             movement_type=StockMovementType.IN,
-            created_at__gte=session.opened_at,
+            created_at__gte=window_start,
             created_at__lt=closed,
             amount_paid__gt=0,
         ).values("created_at", "amount_paid")
@@ -7700,7 +7777,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
     closed = session.closed_at or timezone.now()
     window = {
         "shop_id": session.shop_id,
-        "created_at__gte": session.opened_at,
+        "created_at__gte": session_activity_start(session),
         "created_at__lt": closed,
     }
 
@@ -8924,6 +9001,7 @@ def day_sales_status_summary(session) -> dict:
 
     zero = Decimal("0.00")
     closed = session.closed_at or timezone.now()
+    window_start = session_activity_start(session)
     status_bucket = {
         ShopReceiptStatus.ACTIVE: "pending",
         ShopReceiptStatus.CONFIRMED: "confirmed",
@@ -8946,7 +9024,7 @@ def day_sales_status_summary(session) -> dict:
         ShopReceipt.objects.filter(
             shop_id=session.shop_id,
             kind=ShopReceiptKind.SALE,
-            created_at__gte=session.opened_at,
+            created_at__gte=window_start,
             created_at__lt=closed,
         )
         .values("status", "total", "cash_amount", "mpesa_amount", "card_amount")
@@ -8970,7 +9048,7 @@ def day_sales_status_summary(session) -> dict:
     for expense in (
         Expense.objects.filter(
             shop_id=session.shop_id,
-            created_at__gte=session.opened_at,
+            created_at__gte=window_start,
             created_at__lt=closed,
         )
         .exclude(category=ExpenseCategory.OWNER_DRAWINGS)

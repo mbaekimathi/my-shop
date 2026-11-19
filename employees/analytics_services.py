@@ -6136,6 +6136,7 @@ def _analytics_report_pdf(
     """Shared branded landscape A4 layout for analytics PDF downloads."""
     from io import BytesIO
 
+    from reportlab.graphics.shapes import Drawing, Rect
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.pagesizes import A4, landscape
@@ -6143,6 +6144,7 @@ def _analytics_report_pdf(
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas as pdf_canvas
     from reportlab.platypus import (
+        HRFlowable,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
@@ -6158,12 +6160,19 @@ def _analytics_report_pdf(
     printed_at = timezone.localtime()
 
     ink = colors.HexColor("#0b1220")
+    ink_band = colors.HexColor("#0f172a")
+    ink_band_soft = colors.HexColor("#1e293b")
     muted = colors.HexColor("#5b6b7c")
     line = colors.HexColor("#e2e8f0")
     line_strong = colors.HexColor("#cbd5e1")
     surface = colors.HexColor("#f8fafc")
     accent = colors.HexColor("#0f766e")
     accent_soft = colors.HexColor("#ccfbf1")
+    accent_softest = colors.HexColor("#f0fdfa")
+    accent_ice = colors.HexColor("#5eead4")
+    slate_300 = colors.HexColor("#cbd5e1")
+    slate_400 = colors.HexColor("#94a3b8")
+    slate_700 = colors.HexColor("#334155")
     white = colors.white
 
     def _esc(text) -> str:
@@ -6197,25 +6206,25 @@ def _analytics_report_pdf(
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
         fontSize=8,
-        textColor=accent,
+        textColor=accent_ice,
         leading=10,
-        spaceAfter=1,
+        spaceAfter=2,
     )
     title_style = ParagraphStyle(
         "PdfTitle",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=16,
-        textColor=ink,
-        leading=19,
-        spaceAfter=1,
+        fontSize=17,
+        textColor=white,
+        leading=20,
+        spaceAfter=2,
     )
     subtitle_style = ParagraphStyle(
         "PdfSubtitle",
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
         fontSize=9,
-        textColor=muted,
+        textColor=slate_300,
         leading=12,
     )
     meta_right = ParagraphStyle(
@@ -6223,7 +6232,7 @@ def _analytics_report_pdf(
         parent=styles["Normal"],
         fontName=MANROPE_PDF,
         fontSize=8,
-        textColor=muted,
+        textColor=slate_400,
         leading=10,
         alignment=TA_RIGHT,
     )
@@ -6232,7 +6241,7 @@ def _analytics_report_pdf(
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
         fontSize=9,
-        textColor=ink,
+        textColor=colors.HexColor("#f1f5f9"),
         leading=11,
         alignment=TA_RIGHT,
     )
@@ -6243,16 +6252,14 @@ def _analytics_report_pdf(
         fontSize=7,
         textColor=muted,
         leading=9,
-        alignment=TA_CENTER,
     )
     kpi_value = ParagraphStyle(
         "PdfKpiValue",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
-        fontSize=11,
+        fontSize=12,
         textColor=ink,
-        leading=13,
-        alignment=TA_CENTER,
+        leading=14,
     )
     kpi_hint = ParagraphStyle(
         "PdfKpiHint",
@@ -6261,14 +6268,13 @@ def _analytics_report_pdf(
         fontSize=7,
         textColor=muted,
         leading=9,
-        alignment=TA_CENTER,
     )
     head_cell = ParagraphStyle(
         "PdfHead",
         parent=styles["Normal"],
         fontName=MANROPE_PDF_BOLD,
         fontSize=7,
-        textColor=muted,
+        textColor=slate_300,
         leading=8.8,
     )
     head_cell_right = ParagraphStyle(
@@ -6285,7 +6291,7 @@ def _analytics_report_pdf(
         "PdfGroupHead",
         parent=head_cell,
         fontSize=8,
-        textColor=ink,
+        textColor=white,
         alignment=TA_CENTER,
     )
     cell = ParagraphStyle(
@@ -6396,63 +6402,120 @@ def _analytics_report_pdf(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                ("LINEBELOW", (0, 0), (-1, -1), 1.2, accent),
+                ("BACKGROUND", (0, 0), (-1, -1), ink_band),
+                ("LEFTPADDING", (0, 0), (0, -1), 14),
+                ("RIGHTPADDING", (-1, 0), (-1, -1), 14),
+                ("LEFTPADDING", (-1, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 11),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                ("LINEBELOW", (0, 0), (-1, -1), 2.2, accent),
             ]
         )
     )
     story.append(header)
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 7 * mm))
 
     cards = [card for card in (kpi_cards or [])[:6] if card]
     if cards:
-        kpi_cols = []
-        for label, value, hint in cards:
-            block = [
-                Paragraph(_esc(str(label or "")).upper(), kpi_label),
-                Paragraph(_esc(value if value is not None else "—"), kpi_value),
+        gap = 2.6 * mm
+        card_w = (doc.width - gap * (len(cards) - 1)) / max(len(cards), 1)
+        kpi_row = []
+        kpi_widths = []
+        for cidx, (label, value, hint) in enumerate(cards):
+            if cidx:
+                kpi_row.append("")
+                kpi_widths.append(gap)
+            card_rows = [
+                [Paragraph(_esc(str(label or "")).upper(), kpi_label)],
+                [Paragraph(_esc(value if value is not None else "—"), kpi_value)],
             ]
             if hint:
-                block.append(Paragraph(_esc(hint), kpi_hint))
-            kpi_cols.append(block)
-        kpi = Table(
-            [kpi_cols],
-            colWidths=[doc.width / max(len(kpi_cols), 1)] * len(kpi_cols),
-        )
+                card_rows.append([Paragraph(_esc(hint), kpi_hint)])
+            card = Table(card_rows, colWidths=[card_w])
+            card.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, -1), surface),
+                        ("BOX", (0, 0), (-1, -1), 0.6, line_strong),
+                        ("LINEBEFORE", (0, 0), (0, -1), 2.4, accent),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                        ("TOPPADDING", (0, 0), (-1, 0), 7),
+                        ("BOTTOMPADDING", (0, -1), (-1, -1), 7),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ]
+                )
+            )
+            kpi_row.append(card)
+            kpi_widths.append(card_w)
+        kpi = Table([kpi_row], colWidths=kpi_widths)
         kpi.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, -1), surface),
-                    ("BOX", (0, 0), (-1, -1), 0.6, line_strong),
-                    ("LINEABOVE", (0, 0), (-1, 0), 1.4, accent),
-                    ("TOPPADDING", (0, 0), (-1, -1), 7),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                 ]
             )
         )
         story.append(kpi)
-        story.append(Spacer(1, 6 * mm))
+        story.append(Spacer(1, 7 * mm))
+
+    def _share_bar(pct):
+        """Mini teal share bar for '% of sales' cells."""
+        try:
+            fill = max(0.0, min(100.0, float(pct or 0)))
+        except (TypeError, ValueError):
+            return None
+        width, height = 8.5 * mm, 1.5 * mm
+        drawing = Drawing(width, height)
+        drawing.hAlign = "RIGHT"
+        drawing.add(
+            Rect(
+                0,
+                0,
+                width,
+                height,
+                rx=height / 2,
+                ry=height / 2,
+                fillColor=line,
+                strokeColor=None,
+            )
+        )
+        if fill > 0:
+            drawing.add(
+                Rect(
+                    0,
+                    0,
+                    max(width * fill / 100.0, height),
+                    height,
+                    rx=height / 2,
+                    ry=height / 2,
+                    fillColor=accent,
+                    strokeColor=None,
+                )
+            )
+        return drawing
 
     def _style_data_table(n_rows: int, has_total: bool, head_rows: int = 1) -> TableStyle:
         cmds = [
-            ("BACKGROUND", (0, 0), (-1, head_rows - 1), surface),
+            ("BACKGROUND", (0, 0), (-1, 0), ink_band_soft),
+            ("BACKGROUND", (0, head_rows - 1), (-1, head_rows - 1), ink_band),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("TOPPADDING", (0, 0), (-1, head_rows - 1), 5.5),
             ("BOTTOMPADDING", (0, 0), (-1, head_rows - 1), 5.5),
             ("TOPPADDING", (0, head_rows), (-1, -1), 5),
             ("BOTTOMPADDING", (0, head_rows), (-1, -1), 5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("LINEBELOW", (0, 0), (-1, head_rows - 1), 0.9, line_strong),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("LINEBELOW", (0, head_rows - 1), (-1, head_rows - 1), 1.1, accent),
             ("LINEBELOW", (0, head_rows), (-1, -1), 0.4, line),
             ("BACKGROUND", (0, head_rows), (-1, -1), white),
         ]
+        if head_rows > 1:
+            cmds.append(("LINEBELOW", (0, 0), (-1, 0), 0.5, slate_700))
         if has_total:
             cmds.append(("LINEABOVE", (0, -1), (-1, -1), 1.0, accent))
             cmds.append(("BACKGROUND", (0, -1), (-1, -1), accent_soft))
@@ -6465,6 +6528,16 @@ def _analytics_report_pdf(
         )
         story.append(
             Paragraph(_esc(section.get("title") or ""), section_title)
+        )
+        story.append(
+            HRFlowable(
+                width=16 * mm,
+                thickness=1.2,
+                color=accent,
+                hAlign="LEFT",
+                spaceBefore=0,
+                spaceAfter=5,
+            )
         )
         headers = list(section.get("headers") or [])
         aligns = list(section.get("aligns") or []) or ["left"] * len(headers)
@@ -6511,7 +6584,9 @@ def _analytics_report_pdf(
             if header_groups:
                 top_row = [""] * n_cols
                 col = 0
-                for gidx, (label, span) in enumerate(header_groups):
+                for gidx, group in enumerate(header_groups):
+                    label, span = group[0], group[1]
+                    rowspan = len(group) > 2 and bool(group[2])
                     span = int(span or 1)
                     top_row[col] = Paragraph(
                         _esc(str(label or "").upper()), group_head
@@ -6530,8 +6605,8 @@ def _analytics_report_pdf(
                         span_cmds.append(
                             ("SPAN", (col, 0), (col + span - 1, 0))
                         )
-                    elif gidx == 0:
-                        span_cmds.append(("SPAN", (0, 0), (0, 1)))
+                    elif rowspan or gidx == 0:
+                        span_cmds.append(("SPAN", (col, 0), (col, 1)))
                     col += span
                 header_rows = [top_row, head_row]
 
@@ -6563,15 +6638,28 @@ def _analytics_report_pdf(
                     legacy_total and row is rows[-1]
                 )
                 row_kinds.append("total" if is_total else "data")
-                body.append(
-                    [
+                row_cells = []
+                for idx, value in enumerate(cells):
+                    if isinstance(value, dict) and "bar" in value:
+                        block = [
+                            Paragraph(
+                                _esc(value.get("label") or "—"),
+                                _cell_style(aligns[idx], is_total),
+                            )
+                        ]
+                        bar = _share_bar(value.get("bar"))
+                        if bar is not None:
+                            block.append(Spacer(1, 0.5 * mm))
+                            block.append(bar)
+                        row_cells.append(block)
+                        continue
+                    row_cells.append(
                         Paragraph(
                             _esc(value),
                             _cell_style(aligns[idx], is_total),
                         )
-                        for idx, value in enumerate(cells)
-                    ]
-                )
+                    )
+                body.append(row_cells)
             fractions = section.get("widths")
             if fractions and len(fractions) == n_cols:
                 col_widths = [usable * frac for frac in fractions]
@@ -6596,15 +6684,23 @@ def _analytics_report_pdf(
             )
             for cmd in span_cmds:
                 style.add(*cmd)
+            zebra = 0
             for offset, kind in enumerate(row_kinds):
                 r = offset + len(header_rows)
                 if kind == "group":
+                    zebra = 0
                     style.add("SPAN", (0, r), (-1, r))
-                    style.add("BACKGROUND", (0, r), (-1, r), accent_soft)
+                    style.add("BACKGROUND", (0, r), (-1, r), accent_softest)
+                    style.add("LINEBEFORE", (0, r), (0, r), 2.2, accent)
                     style.add("LINEABOVE", (0, r), (-1, r), 0.6, accent)
                 elif kind == "total":
                     style.add("LINEABOVE", (0, r), (-1, r), 1.0, accent)
                     style.add("BACKGROUND", (0, r), (-1, r), accent_soft)
+                elif zebra % 2 == 1:
+                    style.add("BACKGROUND", (0, r), (-1, r), surface)
+                    zebra += 1
+                else:
+                    zebra += 1
             grid.setStyle(style)
             story.append(grid)
             footnote = (section.get("footnote") or "").strip()
@@ -6642,13 +6738,32 @@ def _analytics_report_pdf(
             pdf_canvas.Canvas.save(self)
 
         def _draw_page_number(self, page_count):
+            # Brand ribbon across the top of every page.
+            self.setFillColor(ink_band)
+            self.rect(
+                0,
+                page_size[1] - 2.4 * mm,
+                page_size[0],
+                2.4 * mm,
+                fill=1,
+                stroke=0,
+            )
+            self.setFillColor(accent)
+            self.rect(
+                0, page_size[1] - 2.4 * mm, 34 * mm, 2.4 * mm, fill=1, stroke=0
+            )
+            # Footer: hairline, brand left, page numbers right.
+            self.setStrokeColor(line)
+            self.setLineWidth(0.8)
+            self.line(left_m, 8.5 * mm, page_size[0] - right_m, 8.5 * mm)
             self.setFont(MANROPE_PDF, 7)
             self.setFillColor(muted)
-            label = f"Page {self._pageNumber} of {page_count}"
-            self.drawRightString(page_size[0] - right_m, 6 * mm, label)
-            self.setStrokeColor(accent_soft)
-            self.setLineWidth(2)
-            self.line(left_m, 8.5 * mm, page_size[0] - right_m - 28 * mm, 8.5 * mm)
+            self.drawString(left_m, 5.6 * mm, f"{brand} · {title}")
+            self.drawRightString(
+                page_size[0] - right_m,
+                5.6 * mm,
+                f"Page {self._pageNumber} of {page_count}",
+            )
 
     doc.build(story, canvasmaker=_NumberedCanvas)
     return buffer.getvalue()
@@ -7067,25 +7182,47 @@ def tradings_report_pdf_response(*, page: dict, filters: dict):
     return response
 
 
+def _short_pdf_header(label, default: str) -> str:
+    """Compact PDF sub-header — quad columns are too narrow for long labels."""
+    return (
+        (label or default)
+        .replace("/day", "")
+        .replace("Top day", "Day")
+    )
+
+
 def _item_report_pdf_section(table: dict) -> dict:
     """Item report section mirroring the on-page shop-column matrix."""
     columns = list(table.get("columns") or [])
-    quad_cols = [
-        col for col in columns if isinstance(col, dict) and col.get("quad")
-    ]
 
-    header_groups = [("Item", 1)]
-    headers = [""]
-    aligns = ["left"]
-    for col in quad_cols:
-        header_groups.append((col.get("label") or "Shop", 4))
-        headers += [
-            col.get("sub_qty") or "Qty",
-            col.get("sub_amt") or "Amt",
-            col.get("sub_pct") or "%",
-            col.get("sub_day") or "Day",
-        ]
-        aligns += ["right", "right", "right", "center"]
+    header_groups = []
+    headers = []
+    aligns = []
+    specs = []  # one entry per on-page column: "text" | "share" | "quad"
+    for idx, col in enumerate(columns):
+        if isinstance(col, dict) and col.get("quad"):
+            header_groups.append((col.get("label") or "Shop", 4))
+            headers += [
+                _short_pdf_header(col.get("sub_qty"), "Qty"),
+                _short_pdf_header(col.get("sub_amt"), "Amt"),
+                _short_pdf_header(col.get("sub_pct"), "%"),
+                _short_pdf_header(col.get("sub_day"), "Day"),
+            ]
+            aligns += ["right", "right", "right", "center"]
+            specs.append("quad")
+            continue
+        label = (
+            (col.get("label") or "")
+            if isinstance(col, dict)
+            else str(col or "")
+        )
+        is_share = isinstance(col, dict) and col.get("share")
+        # Single columns span both header rows; the rowspan flag (3rd tuple
+        # item) tells the renderer to merge vertically.
+        header_groups.append((label, 1, True))
+        headers.append("")
+        aligns.append("right" if is_share else "left")
+        specs.append("share" if is_share else "text")
 
     rows = []
     for row in table.get("rows") or []:
@@ -7095,17 +7232,31 @@ def _item_report_pdf_section(table: dict) -> dict:
             rows.append({"kind": "group", "label": row.get("label") or ""})
             continue
         cells = list(row.get("cells") or [])
-        flat = [_pdf_cell_label(cells[0]) if cells else "—"]
-        for cell in cells[1:]:
-            if isinstance(cell, dict) and cell.get("kind") == "quad":
-                flat += [
-                    str(cell.get("qty") or "—"),
-                    str(cell.get("amount") or "—"),
-                    str(cell.get("pct") or "—"),
-                    str(cell.get("day") or "—"),
-                ]
+        flat = []
+        for idx, spec in enumerate(specs):
+            cell = cells[idx] if idx < len(cells) else None
+            if spec == "quad":
+                if isinstance(cell, dict) and cell.get("kind") == "quad":
+                    flat += [
+                        str(cell.get("qty") or "—"),
+                        str(cell.get("amount") or "—"),
+                        str(cell.get("pct") or "—"),
+                        str(cell.get("day") or "—"),
+                    ]
+                else:
+                    flat += ["—", "—", "—", "—"]
+            elif spec == "share":
+                if isinstance(cell, dict) and cell.get("kind") == "share":
+                    flat.append(
+                        {
+                            "bar": cell.get("pct"),
+                            "label": str(cell.get("label") or "—"),
+                        }
+                    )
+                else:
+                    flat.append("—")
             else:
-                flat += ["—", "—", "—", "—"]
+                flat.append(_pdf_cell_label(cell) if cell is not None else "—")
         rows.append(
             {
                 "kind": "total" if row.get("_total") else "data",
@@ -7113,9 +7264,14 @@ def _item_report_pdf_section(table: dict) -> dict:
             }
         )
 
-    fractions = [0.14]
-    for _col in quad_cols:
-        fractions += [0.042, 0.058, 0.04, 0.036]
+    fractions = []
+    for spec in specs:
+        if spec == "quad":
+            fractions += [0.046, 0.056, 0.054, 0.031]
+        elif spec == "share":
+            fractions.append(0.048)
+        else:
+            fractions.append(0.12)
     frac_total = sum(fractions) or 1.0
     widths = [frac / frac_total for frac in fractions]
     return {
@@ -8245,9 +8401,18 @@ def _day_balance_data(filters) -> dict:
     expenses_by_shop: dict[int, list] = defaultdict(list)
     suppliers_by_shop: dict[int, list] = defaultdict(list)
     if activity_sessions:
-        from shops.services import _collect_return_payment_events
+        from shops.services import (
+            _collect_return_payment_events,
+            session_activity_start,
+            stamp_session_activity_starts,
+        )
 
-        min_opened = min(session.opened_at for session in activity_sessions)
+        # Till hand-over: gap activity after the previous close belongs to
+        # the next session — each window opens at that prior closed_at.
+        stamp_session_activity_starts(activity_sessions)
+        min_opened = min(
+            session_activity_start(session) for session in activity_sessions
+        )
         max_closed = max(
             (session.closed_at or now) for session in activity_sessions
         )
@@ -8298,14 +8463,15 @@ def _day_balance_data(filters) -> dict:
             suppliers_by_shop[row["shop_id"]].append(row)
 
     def _activity_for(session, *, window_end):
-        from shops.services import _receipt_original_tender
+        from shops.services import _receipt_original_tender, session_activity_start
 
+        window_start = session_activity_start(session)
         cash_sales = _zero()
         mpesa_sales = _zero()
         card_sales = _zero()
         for sale in sales_by_shop.get(session.shop_id, []):
             when = sale["created_at"]
-            if session.opened_at <= when < window_end:
+            if window_start <= when < window_end:
                 cash, mpesa, card = _receipt_original_tender(
                     sale.get("cash_amount"),
                     sale.get("mpesa_amount"),
@@ -8321,7 +8487,7 @@ def _day_balance_data(filters) -> dict:
         card_refunds = _zero()
         for event in refunds_by_shop.get(session.shop_id, []):
             when = event.get("at")
-            if when is not None and session.opened_at <= when < window_end:
+            if when is not None and window_start <= when < window_end:
                 cash_refunds += Decimal(event.get("cash") or 0)
                 mpesa_refunds += Decimal(event.get("mpesa") or 0)
                 card_refunds += Decimal(event.get("card") or 0)
@@ -8333,7 +8499,7 @@ def _day_balance_data(filters) -> dict:
         drawings_card = _zero()
         for expense in expenses_by_shop.get(session.shop_id, []):
             when = expense["created_at"]
-            if session.opened_at <= when < window_end:
+            if window_start <= when < window_end:
                 paid = Decimal(expense["amount_paid"] or 0)
                 if (
                     str(expense.get("category") or "").strip().lower()
@@ -8354,7 +8520,7 @@ def _day_balance_data(filters) -> dict:
         suppliers_paid = _zero()
         for payment in suppliers_by_shop.get(session.shop_id, []):
             when = payment["created_at"]
-            if session.opened_at <= when < window_end:
+            if window_start <= when < window_end:
                 suppliers_paid += Decimal(payment["amount_paid"] or 0)
 
         opening_cash = Decimal(session.opening_cash or 0)
@@ -9977,6 +10143,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     from shops.services import (
         day_session_balance_summary,
         day_session_report_details,
+        get_effective_pos_settings,
         shop_day_balance_channels,
     )
 
@@ -9995,7 +10162,13 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     details = day_session_report_details(
         session, counted_statuses=counted_statuses
     )
-    channels = shop_day_balance_channels(shop=shop)
+    pos = get_effective_pos_settings(shop)
+    channels = shop_day_balance_channels(shop=shop, pos=pos)
+    print_paper_default = (
+        getattr(pos, "receipt_paper_width", "") or ""
+    ).strip()
+    if print_paper_default not in ("80", "58"):
+        print_paper_default = "a4"
     is_open = session.closed_at is None
 
     requested_back = (request.GET.get("back") or "").strip()
@@ -10534,9 +10707,17 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         "back_href": back_href,
         "back_label": "Back to cashiers",
         "download_href": f"{request.path}?{urlencode({'download': '1'})}",
+        "receipts_print_modal": True,
+        "receipts_print_url": request.path,
+        "receipts_print_title": "Print day report",
+        "receipts_print_lead": (
+            "Pick a paper size, then print or download the A4 PDF."
+        ),
+        "receipts_print_default_paper": print_paper_default,
         "list_table_layout": True,
         "hide_date_filters": True,
         "day_session_layout": True,
+        "sales_count": sales_count,
         "alerts": alerts,
         "metrics": metrics,
         "insights": [],
@@ -11614,12 +11795,28 @@ def _item_report_stats(units, value, cogs, days_count) -> dict:
     }
 
 
+def _item_report_amount(value) -> str:
+    """Dense profit/day cell — whole units on five-figure averages so the
+    matrix and PDF never wrap a number mid-digit (full value stays in title)."""
+    amount = Decimal(value or 0)
+    if abs(amount) >= Decimal("10000"):
+        return f"{int(amount.quantize(Decimal('1'))):,}"
+    return _money_dense(amount)
+
+
+def _item_report_pct_label(pct) -> str:
+    pct = Decimal(pct or 0)
+    if abs(pct) >= Decimal("1000"):
+        return f"{int(pct.quantize(Decimal('1'))):,}%"
+    return f"{pct}%"
+
+
 def _item_report_quad(*, stats, day, title) -> dict:
     return {
         "kind": "quad",
         "qty": _qty_label(stats["avg_qty"]),
-        "amount": _money_dense(stats["avg_profit"]),
-        "pct": f"{stats['pct']}%",
+        "amount": _item_report_amount(stats["avg_profit"]),
+        "pct": _item_report_pct_label(stats["pct"]),
         "day": day,
         "tone": "good" if stats["gross"] >= 0 else "bad",
         "title": title,
@@ -11628,17 +11825,13 @@ def _item_report_quad(*, stats, day, title) -> dict:
 
 def _item_report_empty_quad(label) -> dict:
     return {
-        "kind": "quad",
-        "qty": "—",
-        "amount": "—",
-        "pct": "—",
-        "day": "—",
+        "kind": "empty",
         "title": f"No sales at {label}",
     }
 
 
-def _item_report_row(*, meta, cat, shops, shop_name) -> dict:
-    """One matrix row: item + per-shop quad cells + total."""
+def _item_report_row(*, meta, cat, shops, shop_name, grand_value) -> dict:
+    """One matrix row: item + sales share + per-shop quad cells + total."""
     pairs = dict(meta["pairs"])
     total_units = _zero()
     total_value = _zero()
@@ -11654,7 +11847,27 @@ def _item_report_row(*, meta, cat, shops, shop_name) -> dict:
         for wd, wd_qty in entry["weekdays"].items():
             merged["weekdays"][wd] = merged["weekdays"].get(wd, _zero()) + wd_qty
 
-    cells = [{"label": meta["name"]}]
+    share = (
+        ((total_value / grand_value) * Decimal("100")).quantize(Decimal("0.1"))
+        if grand_value > 0
+        else _zero()
+    )
+    shop_count = sum(1 for entry in pairs.values() if entry["days"])
+    cells = [
+        {
+            "label": meta["name"],
+            "sub": f"{shop_count} shop{'s' if shop_count != 1 else ''}",
+        },
+        {
+            "kind": "share",
+            "label": f"{share}%",
+            "pct": str(share),
+            "title": (
+                f"{meta['name']} — {_money_ksh(total_value)} of "
+                f"{_money_ksh(grand_value)} total sales"
+            ),
+        },
+    ]
     for shop in shops:
         entry = pairs.get(shop.pk)
         label = shop_name.get(shop.pk) or "Shop"
@@ -11817,36 +12030,53 @@ def _build_item_report(filters):
     # with a quad cell per shop (avg qty · avg profit · % profit · day).
     item_gross: dict = {}
     cat_gross: dict = {}
+    cat_value: dict = {}
     item_meta: dict = {}
+    grand_value = _zero()
     for (item_id, shop_id), entry in by_pair.items():
         gross = entry["value"] - entry["cogs"]
         item_gross[item_id] = item_gross.get(item_id, _zero()) + gross
+        grand_value += entry["value"]
         meta = item_meta.get(item_id)
         if meta is None:
             cat = (categories.get(item_id) or "").strip() or "Uncategorised"
             meta = {"name": entry["name"], "cat": cat, "pairs": []}
             item_meta[item_id] = meta
             cat_gross.setdefault(cat, _zero())
+            cat_value.setdefault(cat, _zero())
         meta["pairs"].append((shop_id, entry))
         cat_gross[meta["cat"]] += gross
+        cat_value[meta["cat"]] += entry["value"]
 
     rows = []
     total_sales = _zero()
     total_cogs = _zero()
     for cat in sorted(cat_gross, key=lambda c: (-cat_gross[c], c.lower())):
-        rows.append(
-            {
-                "group_header": True,
-                "label": f"{cat} — {_money_dense(cat_gross[cat])}",
-                "search_text": cat,
-            }
-        )
         cat_item_ids = sorted(
             (iid for iid, m in item_meta.items() if m["cat"] == cat),
             key=lambda iid: (
                 -item_gross[iid],
                 (item_meta[iid]["name"] or "").lower(),
             ),
+        )
+        item_total = len(cat_item_ids)
+        cat_share = (
+            ((cat_value[cat] / grand_value) * Decimal("100")).quantize(
+                Decimal("0.1")
+            )
+            if grand_value > 0
+            else _zero()
+        )
+        rows.append(
+            {
+                "group_header": True,
+                "label": (
+                    f"{cat} — {item_total} item{'s' if item_total != 1 else ''}"
+                    f" · {cat_share}% of sales"
+                    f" · {_money_ksh(cat_gross[cat])} profit"
+                ),
+                "search_text": cat,
+            }
         )
         for iid in cat_item_ids:
             rows.append(
@@ -11855,6 +12085,7 @@ def _build_item_report(filters):
                     cat=cat,
                     shops=shops,
                     shop_name=shop_name,
+                    grand_value=grand_value,
                 )
             )
     for row in rows:
@@ -11901,7 +12132,15 @@ def _build_item_report(filters):
                 )
 
     if rows:
-        total_cells = [{"label": "All items"}]
+        total_cells = [
+            {"label": "All items"},
+            {
+                "kind": "share",
+                "label": "100%",
+                "pct": "100",
+                "title": "All items — full share of total sales",
+            },
+        ]
         for shop in shops:
             bucket = shop_totals.get(shop.pk)
             label = shop_name.get(shop.pk) or "Shop"
@@ -11982,21 +12221,30 @@ def _build_item_report(filters):
         item_count=len(item_gross),
     )
     board["hero"]["label"] = "Profit"
-    board["hero"]["hint"] = board["hero"]["hint"].replace("Margin", "% profit")
+    board["hero"]["hint"] = (
+        f"Margin {overall_margin}% · {len(item_gross)} "
+        f"item{'s' if len(item_gross) != 1 else ''} sold"
+    )
 
-    columns = [{"label": "Item"}]
+    quad_labels = {
+        "quad": True,
+        "sub_qty": "Qty/day",
+        "sub_amt": "Profit/day",
+        "sub_pct": "Margin",
+        "sub_day": "Top day",
+    }
+    columns = [
+        {"label": "Item"},
+        {
+            "label": "% of sales",
+            "share": True,
+            "money": True,
+            "title": "Item's share of total sales value",
+        },
+    ]
     for index, shop in enumerate(shops):
         col = _shop_col(shop)
-        col.update(
-            {
-                "quad": True,
-                "sub_qty": "Avg qty",
-                "sub_amt": "Avg pft",
-                "sub_pct": "% pft",
-                "sub_day": "Day",
-                "band": "flow",
-            }
-        )
+        col.update({**quad_labels, "band": "flow"})
         if index == 0:
             col["band_start"] = True
         columns.append(col)
@@ -12004,11 +12252,7 @@ def _build_item_report(filters):
         {
             "label": "Total",
             "title": "All selected shops — per selling day",
-            "quad": True,
-            "sub_qty": "Avg qty",
-            "sub_amt": "Avg pft",
-            "sub_pct": "% pft",
-            "sub_day": "Day",
+            **quad_labels,
             "total": True,
             "band": "total",
             "band_start": True,
@@ -12017,10 +12261,13 @@ def _build_item_report(filters):
 
     return {
         "headline": "Item report",
-        "lead": "Ranked by profit — each shop column shows avg qty, avg profit, % profit, and best-selling day.",
+        "lead": (
+            "Ranked by profit — each shop column shows qty/day, profit/day, "
+            "margin, and the top-selling weekday."
+        ),
         "alerts": alerts,
         "show_search": True,
-        "search_placeholder": "Search items or shops…",
+        "search_placeholder": "Search items or categories…",
         "search_empty": "No rows match that search.",
         "summary_board": board,
         "insights": [],
@@ -12031,9 +12278,9 @@ def _build_item_report(filters):
                 rows,
                 empty="No items sold in this period.",
                 footnote=(
-                    "Sales and credits, net of returns. Avg qty and avg "
-                    "profit are per selling day in this period. % profit = "
-                    "profit ÷ revenue. Day is the weekday the item sells "
+                    "Sales and credits, net of returns. Qty/day and "
+                    "profit/day are per selling day in this period. Margin = "
+                    "profit ÷ revenue. Top day is the weekday the item sells "
                     "the most at that shop — hover for units and top date."
                 ),
                 shop_grid=True,

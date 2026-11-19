@@ -7,9 +7,11 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
+from django.db.models.deletion import ProtectedError
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -384,7 +386,13 @@ def delete_employee(profile: EmployeeProfile) -> None:
     employee_id = profile.employee_id
     user_id = profile.user_id
     user = profile.user
-    user.delete()
+    try:
+        user.delete()
+    except ProtectedError as exc:
+        raise ValidationError(
+            f"Employee {employee_id} cannot be deleted because related records "
+            "still reference them. Suspend them instead."
+        ) from exc
     invalidate_employee_id_cache(employee_id)
     invalidate_profile_cache(user_id)
 
@@ -802,16 +810,10 @@ def build_employee_analytics(
         F("quantity") - F("returned_quantity"),
         output_field=DecimalField(max_digits=14, decimal_places=3),
     )
-    top_items = [
-        {
-            "name": row["item_name"],
-            "qty": row["qty"],
-            "qty_label": _qty_label(row["qty"]),
-            "amount": row["revenue"],
-            "amount_label": _money_ksh(row["revenue"]),
-        }
-        for row in top_lines.values("item_name")
+    item_rows = list(
+        top_lines.values("item_name")
         .annotate(
+            docs=Count("receipt", distinct=True),
             qty=Coalesce(Sum(remaining), Decimal("0")),
             revenue=Coalesce(
                 Sum(
@@ -825,7 +827,41 @@ def build_employee_analytics(
                 Decimal("0.00"),
             ),
         )
-        .order_by("-revenue", "item_name")[:15]
+        .order_by("-revenue", "item_name")
+    )
+    items_revenue = sum(
+        (row["revenue"] for row in item_rows), Decimal("0.00")
+    )
+    items_sold = []
+    for row in item_rows:
+        share = (
+            (row["revenue"] / items_revenue * Decimal("100")).quantize(
+                Decimal("0.1")
+            )
+            if items_revenue > 0
+            else Decimal("0.0")
+        )
+        items_sold.append(
+            {
+                "name": row["item_name"],
+                "docs": int(row["docs"] or 0),
+                "qty": row["qty"],
+                "qty_label": _qty_label(row["qty"]),
+                "amount": row["revenue"],
+                "amount_label": _money_ksh(row["revenue"]),
+                "share_pct": f"{share}",
+                "share_label": f"{share}%",
+            }
+        )
+    top_items = [
+        {
+            "name": row["item_name"],
+            "qty": row["qty"],
+            "qty_label": _qty_label(row["qty"]),
+            "amount": row["revenue"],
+            "amount_label": _money_ksh(row["revenue"]),
+        }
+        for row in item_rows[:15]
     ]
 
     from .analytics_services import (
@@ -872,6 +908,8 @@ def build_employee_analytics(
         "trend_title": trend_title,
         "trend_subtitle": trend_subtitle,
         "top_items": top_items,
+        "items_sold": items_sold,
+        "items_revenue_label": _money_ksh(items_revenue),
         "trend_line": trend_line,
         "time_columns": time_columns,
         "top_bars": top_bars,

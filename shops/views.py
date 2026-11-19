@@ -21,6 +21,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from employees.access import (
     active_employee_required,
     get_profile_for_request,
+    profile_view_only,
     role_from_url_segment,
     role_home_url_name,
     role_url_segment,
@@ -644,7 +645,7 @@ def _shop_day_prompt_context(shop, profile, *, active=None, day_state=None, pos=
         return {
             "shop_day_can_trade": True,
             "shop_day_stale_open": False,
-            "shop_day_is_open": True,
+            "shop_day_is_open": bool(day_state.get("is_open")),
         }
 
     prompt = build_shop_day_prompt(shop=shop, state=day_state, pos=pos)
@@ -652,7 +653,7 @@ def _shop_day_prompt_context(shop, profile, *, active=None, day_state=None, pos=
         return {
             "shop_day_can_trade": True,
             "shop_day_stale_open": False,
-            "shop_day_is_open": True,
+            "shop_day_is_open": bool(day_state.get("is_open")),
         }
 
     prompt = {**prompt, "redirect_only": True, "compulsory": True}
@@ -1722,6 +1723,7 @@ def _cashier_foreign_day_denied(request, profile, shop, *, as_json=False):
     if (
         profile is None
         or getattr(profile, "role", None) != EmployeeRole.SHOP_CASHIER
+        or profile_view_only(profile)
     ):
         return None
     open_session = get_open_shop_day(shop)
@@ -1744,12 +1746,15 @@ def _cashier_own_days_only(profile) -> bool:
 
     The shop day belongs to whoever opened it (same rule as the foreign-day
     lockout); portal sessions and other roles keep the shop-wide view.
+    A view-only pass (IT support acting as cashier) isn't really in session —
+    it keeps the shop-wide view of every recorded day.
     """
     from employees.models import EmployeeRole
 
     return (
         profile is not None
         and getattr(profile, "role", None) == EmployeeRole.SHOP_CASHIER
+        and not profile_view_only(profile)
     )
 
 
@@ -3680,6 +3685,30 @@ def my_shop_day_report(request, shop_id):
     if session is None:
         messages.info(request, "No day recorded yet — open the shop first.")
         return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
+
+    paper = (request.GET.get("paper") or "").strip().lower()
+    if paper == "50":
+        paper = "58"
+    if paper in ("a4", "80", "58"):
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        context = build_day_session_report_page(
+            profile=profile, request=request, session=session
+        )
+        return render(
+            request,
+            "employees/analytics_day_session_print.html",
+            {
+                "page": context.get("page") or {},
+                "paper": paper,
+                "session": session,
+                "printed_at": timezone.localtime(),
+                "company_name": get_company_display_name(),
+                "auto_print": (request.GET.get("auto") or "").strip() == "1",
+            },
+        )
 
     printed_by = ""
     if profile is not None:

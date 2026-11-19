@@ -1446,6 +1446,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+.ax-table--items-sold th.ax-th--num,
+.ax-table--items-sold td.ax-cell--num,
+.ax-table--items-sold th.ax-th--money {
+  text-align: right;
+}
+
+.ax-table--items-sold td.ax-cell--num,
+.ax-table--items-sold td.ax-cell--money {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 /* Shop matrices may use full frame width; list-table pages stay within normal workspace. */
 .workspace-main:has(.ax-table--shops):not(:has(.ax--list-table)) {
   width: calc(100% - 1rem);
@@ -2540,7 +2552,7 @@
 .ax-pair--quad,
 .ax-th-pair--quad,
 .ax-th-pair-cols--quad {
-  grid-template-columns: 2.4rem 5.4rem 2.7rem 2.2rem;
+  grid-template-columns: 2.6rem 5.1rem 2.6rem 2.5rem;
   width: 13.2rem;
 }
 
@@ -2559,6 +2571,48 @@
   text-align: center;
   font-weight: 700;
   color: var(--mist);
+  justify-self: center;
+  min-width: 1.85rem;
+  padding: 0.06rem 0.2rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--mist) 9%, transparent);
+}
+
+.ax-empty-cell {
+  display: block;
+  text-align: center;
+  color: var(--mist-dim);
+  font-weight: 600;
+}
+
+.ax-share {
+  display: grid;
+  gap: 0.22rem;
+  justify-items: end;
+}
+
+.ax-share-value {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.ax-share-track {
+  display: block;
+  width: 3.6rem;
+  height: 0.2rem;
+  border-radius: 0.1rem;
+  background: color-mix(in srgb, var(--line) 75%, transparent);
+  overflow: hidden;
+}
+
+.ax-share-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
 }
 
 .ax-pair.is-bad .ax-pair-pct {
@@ -3010,6 +3064,37 @@
   color: var(--mist-dim);
 }
 
+/* Group-header cells span the row; keep their band tint over the
+   sticky first-column background overrides. */
+.ax--list-table .ax-table-wrap--scroll .ax-table tbody tr.ax-row--group:nth-child(n) td:first-child,
+.ax--list-table .ax-table-wrap--list .ax-table tbody tr.ax-row--group:nth-child(n) td:first-child {
+  background: color-mix(in srgb, var(--teal) 9%, var(--surface));
+  border-top: 1px solid color-mix(in srgb, var(--teal) 32%, var(--line));
+}
+
+/* Item report — long matrix reads like a data grid: the header and the
+   totals row stay pinned while the body scrolls inside the card. */
+@media (min-width: 900px) {
+  .ax--list-table[data-ax-section="item-report"] .ax-table-wrap--list {
+    max-height: min(48rem, calc(100svh - var(--workspace-header-h, 4.35rem) - 2rem));
+    overflow: auto;
+    overscroll-behavior: contain;
+    border-radius: 10px;
+  }
+
+  .ax--list-table[data-ax-section="item-report"] .ax-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+
+  .ax--list-table[data-ax-section="item-report"] .ax-table tbody tr.ax-row--total td {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+  }
+}
+
 .ax--list-table .ax-table--pl {
   width: max-content;
   max-width: 100%;
@@ -3191,25 +3276,30 @@
     display: none;
   }
 
-  /* Quad cells stay four-across (qty ? amt ? % ? day) in list tables. */
+  /* Quad cells stay four-across (qty/day ? profit/day ? margin ? top day) in list tables. */
   .ax--list-table .ax-table th.ax-th--pair:has(.ax-th-pair--quad),
   .ax--list-table .ax-table td.ax-cell--pair:has(.ax-pair--quad) {
-    width: 13.4rem;
-    min-width: 12.4rem;
-    max-width: 14.5rem;
+    width: 13.9rem;
+    min-width: 13.3rem;
+    max-width: 15rem;
   }
 
   .ax--list-table .ax-table .ax-pair--quad {
-    grid-template-columns: 2.35rem minmax(4.3rem, 1fr) 2.7rem 2.15rem;
+    grid-template-columns: 2.6rem minmax(4.6rem, 1fr) 2.6rem 2.55rem;
     column-gap: 0.35rem;
-    min-width: 12rem;
+    min-width: 12.9rem;
   }
 
   .ax--list-table .ax-table .ax-th-pair-cols--quad {
     display: grid;
-    grid-template-columns: 2.35rem minmax(4.3rem, 1fr) 2.7rem 2.15rem;
+    grid-template-columns: 2.6rem minmax(4.6rem, 1fr) 2.6rem 2.55rem;
     column-gap: 0.35rem;
-    min-width: 12rem;
+    min-width: 12.9rem;
+  }
+
+  .ax--list-table .ax-table .ax-th-pair-cols--quad span:last-child {
+    padding-right: 0;
+    text-align: center;
   }
 
   .ax--list-table .ax-table .ax-pair-qty {
@@ -8724,7 +8814,7 @@ body.ax-credit-due-open {
 
 .ax:not(.ax--account):not(.ax--ledger) .ax-lead,
 .ax-insights,
-.ax-charts,
+.ax .ax-charts,
 .ax-band-legend,
 .ax-card-hint,
 .ax-card-sub,
@@ -8926,7 +9016,7 @@ body.ax-credit-due-open {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .ax-charts {
+  .ax .ax-charts {
     display: none !important;
   }
 

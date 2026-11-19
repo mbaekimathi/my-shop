@@ -98,6 +98,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "core.middleware.AutoHostMiddleware",
     "core.middleware.NoCacheHtmlMiddleware",
+    "employees.middleware.SupportViewOnlyMiddleware",
     "employees.middleware.CashierSessionBlockMiddleware",
 ]
 

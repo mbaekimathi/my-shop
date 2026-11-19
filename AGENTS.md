@@ -183,6 +183,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `build_shop_day_report_pdf`. Session links carry a `?back=` URL so "Back
   to cashiers" restores the filters. Tests:
   `AnalyticsDaySessionReportTests`.
+- The session report page reuses the receipts **print popup**
+  (`page.receipts_print_modal` + `receipts_print_url` = its own path, title/
+  lead via `receipts_print_title`/`receipts_print_lead`):
+  `?paper=a4|80|58` renders `employees/analytics_day_session_print.html`
+  (browser print sheet — A4 portrait, or a thermal strip that stacks wide
+  tables into label:value cards: `table.sheet-grid.stack`), `?estimate=1`
+  returns the modal's A4 page-count JSON, `?download=1` stays the A4 PDF.
+  The same `?paper=` params work on the shop-floor `my_shop_day_report`
+  (`/my-shop/<id>/day/report/`) — day history rows link 80 mm / 58 mm
+  next to the PDF button. Narrow thermal is keyed `58` everywhere now
+  (`analytics_receipts_print` maps legacy `50` → `58`; the receipts sheet
+  uses `body.paper-58`, `@page 58mm auto`).
 
 ## Expense payments (Analytics → Expenses → category)
 - `Expense` tracks `amount_paid` + `payment_status` (unpaid/partial/paid);
@@ -408,6 +420,35 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   that flag — configured days/times survive); per-shop times POST as
   `action=set_open_close_times` → `update_shop_working_hours_from_post`.
   Working days stay under Settings → Working hours.
+
+## Till hand-over (sales after close)
+- Day sessions have no receipt FK — every report computes a session's
+  activity by the `[window_start, closed_at)` time window. The window's
+  lower bound is `session_activity_start(session)` (`shops/services.py`):
+  the previous session's `closed_at`, or `opened_at` for a shop's
+  first-ever session. Receipts, refunds, expenses, drawings and supplier
+  payments stamped **after a cashier closes the till are allocated to the
+  next session that opens** — `day_session_balance_summary`,
+  `day_session_report_details`, `day_sales_status_summary`,
+  `_session_activity_totals`, `list_shop_day_sessions` (bulk-stamps
+  `session._activity_start` via `stamp_session_activity_starts`, one
+  query) and `_day_balance_data`'s `_activity_for` all use it.
+- With `enable_open_close` compulsory ON, a shop that has run at least
+  one day keeps trading while closed — `shop_day_floor_state` returns
+  `can_trade=True, needs_action=False` when a prior closed session
+  exists (no blocking prompt, sidebar shows "Open shop"). A brand-new
+  shop still needs its first day opened; a stale-open session still
+  blocks; `chat/stock.py`'s `require_shop_day_for_sale` mirrors the same
+  rule for the chatbot. Gap sales therefore succeed via floor checkout,
+  the dashboard Sell popup, and offline sync.
+- Opening-balance expectations (`_opening_expectations`) still compare
+  the counted opening against the previous session's counted closing —
+  gap sales show up as the opening variance, then count again in the new
+  session's sales/expected figures (the drawer really holds both).
+- Tests: `shops/tests/test_shop_day_compulsory.py`
+  (`test_sale_allowed_between_close_and_next_open`,
+  `test_gap_receipts_allocated_to_next_session`,
+  `test_first_session_window_starts_at_open`).
 
 ## Role dashboard sidebar groups
 - Sidebar items can collapse into a dropdown group: `group=True` renders the
@@ -654,6 +695,21 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   load fresh profiles so they never see it.
 - `chat` sessions share the key: `chat/auth.py::current_employee` honours
   `employee_active_role` when it is one of the employee's granted roles.
+- **IT support role picks are view-only**: when an IT-support primary acts in
+  a different role (`profile.db_role == it_support` and the picked role
+  differs), `_apply_active_role` sets `profile.view_only_role` (memory only;
+  `access.profile_view_only` reads it). The picked workspace behaves like
+  they are the ones in session — `cashier_session_blocks` returns nothing,
+  `_cashier_foreign_day_denied` passes, and the cashier day-summary /
+  shop-day rows count the open session as "theirs" (`own_session`) so the
+  till figures render and the badge names the employee actually in session
+  ("Open — {opener}") — but `SupportViewOnlyMiddleware` denies every unsafe
+  method outside a session-navigation allowlist (role picker, `my_shop
+  select/switch/leave`, shop login, logout). Mutating affordances are also
+  hidden: Sell/open-close/drawings/buy-stock sidebar links, the sell and
+  buy-stock modals, `can_draw`/`can_open_close` row flags, and a "View only"
+  badge on the day rows. `_cashier_own_days_only` returns False so day
+  report/history stay shop-wide. Tests: `SupportViewOnlyRoleTests`.
 - Tests: `employees/tests_multi_role.py` (`ActingShopRolePickTests` covers the
   shop step).
 

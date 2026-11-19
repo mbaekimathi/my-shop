@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError
 from django.http import Http404, JsonResponse
@@ -914,7 +915,11 @@ def _handle_hr_management_post(request, profile, page_number):
 
         employee_id = target.employee_id
         display_name = target.user.get_full_name() or target.user.username
-        delete_employee(target)
+        try:
+            delete_employee(target)
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
+            return _hr_management_redirect(profile, page_number), None
         messages.success(request, f"Deleted employee {employee_id} ({display_name}).")
         return _hr_management_redirect(profile, page_number), None
 
@@ -1170,7 +1175,7 @@ def hr_pending_approvals_status(request, role_segment):
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def hr_employee_approvals(request, role_segment, page=None):
-    from .module_permissions import require_module_permission
+    from .module_permissions import module_capabilities, require_module_permission
 
     profile = get_profile_for_request(request)
     expected_segment = role_url_segment(profile.role)
@@ -1226,6 +1231,7 @@ def hr_employee_approvals(request, role_segment, page=None):
             "role_choices": EmployeeRole.choices,
             "status_choices": EmployeeStatus.choices,
             "return_to": "hr_approvals",
+            "module_permissions": module_capabilities(profile, "hr-management"),
             "form_data": form_data,
             "form_errors": form_errors,
             "open_register_modal": open_register_modal,

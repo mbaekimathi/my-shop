@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 
-from .access import role_home_url_name, role_url_segment
+from .access import profile_view_only, role_home_url_name, role_url_segment
 from .models import EmployeeRole
 
 ROLE_PAGE_META = {
@@ -1150,7 +1150,11 @@ def buy_stock_modal_context(request, profile):
     from .countries import COUNTRY_DIAL_CODES
     from .module_permissions import employee_may
 
-    if profile is None or not employee_may(profile, "my-shop", "buy_stock"):
+    if (
+        profile is None
+        or profile_view_only(profile)
+        or not employee_may(profile, "my-shop", "buy_stock")
+    ):
         return {}
     shops = actionable_shops_for_profile(profile)
     if len(shops) != 1:
@@ -1252,6 +1256,7 @@ def cashier_day_summaries_context(request, profile):
 
     can_open_close = employee_may(profile, "my-shop", "open_close")
     can_record_drawing = employee_may(profile, "my-shop", "register_expense")
+    view_only = profile_view_only(profile)
     back_url = request.get_full_path()
 
     rows = []
@@ -1261,10 +1266,20 @@ def cashier_day_summaries_context(request, profile):
         is_open = session is not None
         stale_open = bool(state.get("stale_open"))
         # Figures belong to the session THIS cashier opened — a day opened by
-        # a colleague shows status only, no till data.
-        own_session = is_open and session.opened_by_id == profile.pk
+        # a colleague shows status only, no till data. A view-only pass
+        # (IT support acting as cashier) counts as the opener so the till is
+        # visible; actions stay hidden and writes stay denied.
+        own_session = is_open and (
+            session.opened_by_id == profile.pk or view_only
+        )
+        # Keep the real opener's name on view-only rows too — the support
+        # pass needs to see which employee actually owns the session.
         other_opener = ""
-        if is_open and not own_session:
+        if (
+            is_open
+            and session.opened_by_id
+            and session.opened_by_id != profile.pk
+        ):
             other = session.opened_by.user
             other_opener = other.get_full_name() or other.username
         my_session = session if own_session else None
@@ -1306,10 +1321,14 @@ def cashier_day_summaries_context(request, profile):
                     ),
                     urlencode({"back": back_url}),
                 ),
-                "can_open_close": can_open_close,
+                "can_open_close": can_open_close and not view_only,
                 "can_draw": (
-                    can_record_drawing and own_session and not stale_open
+                    can_record_drawing
+                    and own_session
+                    and not stale_open
+                    and not view_only
                 ),
+                "view_only": view_only,
             }
         )
     return {
@@ -1341,6 +1360,7 @@ def cashier_session_blocks(profile):
         profile is None
         or getattr(profile, "role", None) != EmployeeRole.SHOP_CASHIER
         or not profile.is_active_employee
+        or profile_view_only(profile)
     ):
         return []
     blocks = []
@@ -1672,7 +1692,11 @@ def sell_modal_context(request, profile):
 
     from .module_permissions import employee_may
 
-    if profile is None or not employee_may(profile, "my-shop", "workspace"):
+    if (
+        profile is None
+        or profile_view_only(profile)
+        or not employee_may(profile, "my-shop", "workspace")
+    ):
         return {}
     shops = actionable_shops_for_profile(profile)
     if len(shops) != 1:
@@ -1724,9 +1748,15 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
     from shops.services import company_pos_analytics_section_visible
 
     links = []
-    if profile is None or (
-        cashier_sidebar_pref_enabled(profile, "sell")
-        and _sell_link_allowed(profile)
+    # A view-only pass (IT support acting as cashier) keeps read links —
+    # reports, receipts, analytics — but drops every mutating action.
+    view_only = profile_view_only(profile)
+    if not view_only and (
+        profile is None
+        or (
+            cashier_sidebar_pref_enabled(profile, "sell")
+            and _sell_link_allowed(profile)
+        )
     ):
         links.append(sell_action(profile, role))
     if profile is not None and employee_may(profile, "my-shop", "open_close"):
@@ -1748,7 +1778,9 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 ),
                 urlencode({"back": reverse(role_home_url_name(role))}),
             )
-            if cashier_sidebar_pref_enabled(profile, "open_close"):
+            if not view_only and cashier_sidebar_pref_enabled(
+                profile, "open_close"
+            ):
                 links.append(
                     _link(
                         "Close shop" if day_is_open else "Open shop",
@@ -1758,7 +1790,8 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                     )
                 )
             if (
-                own_day_open
+                not view_only
+                and own_day_open
                 and cashier_sidebar_pref_enabled(profile, "drawings")
                 and employee_may(profile, "my-shop", "register_expense")
             ):
@@ -1805,7 +1838,9 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                     )
                 )
         elif len(day_shops) > 1:
-            if cashier_sidebar_pref_enabled(profile, "open_close"):
+            if not view_only and cashier_sidebar_pref_enabled(
+                profile, "open_close"
+            ):
                 links.append(
                     _link(
                         "Open / Close shop",
@@ -1823,7 +1858,8 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 for shop in day_shops
             )
             if (
-                any_own_shop_open
+                not view_only
+                and any_own_shop_open
                 and cashier_sidebar_pref_enabled(profile, "drawings")
                 and employee_may(profile, "my-shop", "register_expense")
             ):
@@ -1909,10 +1945,13 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 active=active_slug == "analytics",
             )
         )
-    if profile is None or (
-        cashier_sidebar_pref_enabled(profile, "buy_stock")
-        and employee_may(profile, "my-shop", "buy_stock")
-        and _buy_stock_sidebar_flag(profile)
+    if not view_only and (
+        profile is None
+        or (
+            cashier_sidebar_pref_enabled(profile, "buy_stock")
+            and employee_may(profile, "my-shop", "buy_stock")
+            and _buy_stock_sidebar_flag(profile)
+        )
     ):
         links.append(buy_stock_action(profile))
     if profile is None or (
@@ -3527,8 +3566,9 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
                     )
                 )
         if section["slug"] == "expenses" and active_view == "expenses":
-            if profile is None or employee_may(
-                profile, "my-shop", "register_expense"
+            if not profile_view_only(profile) and (
+                profile is None
+                or employee_may(profile, "my-shop", "register_expense")
             ):
                 section_links.append(register_expense_action(profile))
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
@@ -3679,7 +3719,9 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                             active=active_view == "return-receipts",
                         )
                     )
-            if section_slug == "expenses" and (
+            if section_slug == "expenses" and not profile_view_only(
+                profile
+            ) and (
                 profile is None
                 or employee_may(profile, "my-shop", "register_expense")
             ):

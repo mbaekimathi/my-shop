@@ -29,13 +29,16 @@
           {% if row.stale_open %}
           Yesterday — left open
           {% elif row.own_session %}
-          Open
+          Open{% if row.view_only and row.other_opener %} — {{ row.other_opener }}{% endif %}
           {% elif row.other_open %}
           Open — {{ row.other_opener }}
           {% else %}
           Closed
           {% endif %}
         </span>
+        {% if row.view_only %}
+        <span class="shop-day-badge">View only</span>
+        {% endif %}
         {% if row.open_session %}
         <small>opened {{ row.open_session.opened_at|date:"M j, H:i" }} by {{ row.open_session.opened_by.user.get_full_name|default:row.open_session.opened_by.user.username }}</small>
         {% endif %}
@@ -139,7 +142,8 @@
           <i data-lucide="history" aria-hidden="true"></i>
           Day history
         </a>
-        {% elif drawing_mode %}
+        {% elif not row.view_only %}
+        {% if drawing_mode %}
         {% if row.can_draw %}
         <a class="btn btn--primary" href="{{ row.drawing_url }}">
           <i data-lucide="hand-coins" aria-hidden="true"></i>
@@ -161,6 +165,7 @@
           <i data-lucide="hand-coins" aria-hidden="true"></i>
           Record drawing
         </a>
+        {% endif %}
         {% endif %}
         {% endif %}
       </div>

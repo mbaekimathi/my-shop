@@ -13,7 +13,13 @@ from django.utils import timezone
 
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
 from items.models import Item, ShopStock
-from shops.models import Shop, ShopDaySession, ShopPaymentMethod, ShopReceiptKind
+from shops.models import (
+    Shop,
+    ShopDaySession,
+    ShopPaymentMethod,
+    ShopReceipt,
+    ShopReceiptKind,
+)
 from shops.services import (
     close_shop_day,
     complete_shop_checkout,
@@ -130,7 +136,10 @@ class CompulsoryShopDayTests(TestCase):
         close_shop_day(shop=self.shop, payload=self._open_payload())
         state = shop_day_floor_state(shop=self.shop)
         self.assertFalse(state["is_open"])
-        self.assertEqual(state["mode"], "open")
+        # Till hand-over: a shop with a closed day keeps trading — gap
+        # receipts land on the next opened session.
+        self.assertTrue(state["can_trade"])
+        self.assertIsNone(state["mode"])
 
         open_shop_day(shop=self.shop, payload=self._open_payload())
         state = shop_day_floor_state(shop=self.shop)
@@ -139,6 +148,84 @@ class CompulsoryShopDayTests(TestCase):
             shop=self.shop, profile=self.profile, payload=self._sale_payload()
         )
         self.assertEqual(result["kind"], ShopReceiptKind.SALE)
+
+    def test_sale_allowed_between_close_and_next_open(self):
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        close_shop_day(shop=self.shop, payload=self._open_payload())
+
+        state = shop_day_floor_state(shop=self.shop)
+        self.assertFalse(state["is_open"])
+        self.assertTrue(state["can_trade"])
+        self.assertFalse(state["needs_action"])
+        self.assertIsNone(state["mode"])
+
+        result = complete_shop_checkout(
+            shop=self.shop, profile=self.profile, payload=self._sale_payload()
+        )
+        self.assertEqual(result["kind"], ShopReceiptKind.SALE)
+
+    def test_gap_receipts_allocated_to_next_session(self):
+        from shops.services import (
+            day_sales_status_summary,
+            day_session_balance_summary,
+            day_session_report_details,
+            get_open_shop_day,
+            list_shop_day_sessions,
+        )
+
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        first = get_open_shop_day(self.shop)
+        complete_shop_checkout(
+            shop=self.shop, profile=self.profile, payload=self._sale_payload()
+        )
+        close_shop_day(shop=self.shop, payload=self._open_payload())
+
+        # Receipt printed after the till closed — before anyone reopens it.
+        gap_payload = self._sale_payload()
+        gap_payload["cash_amount"] = "200"
+        gap_payload["lines"] = [{"id": self.item.pk, "qty": 2, "price": "100"}]
+        gap = complete_shop_checkout(
+            shop=self.shop, profile=self.profile, payload=gap_payload
+        )["receipt"]
+
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        second = get_open_shop_day(self.shop)
+
+        first.refresh_from_db()
+        first_summary = day_session_balance_summary(first)
+        self.assertEqual(first_summary["cash_sales"], Decimal("100"))
+
+        second_summary = day_session_balance_summary(second)
+        self.assertEqual(second_summary["cash_sales"], Decimal("200"))
+        status_summary = day_sales_status_summary(second)
+        self.assertEqual(status_summary["sales_total"], Decimal("200"))
+        self.assertEqual(status_summary["pending_count"], 1)
+
+        details = day_session_report_details(second)
+        self.assertEqual(details["sales_count"], 1)
+        self.assertEqual(details["items_sold"][0]["qty"], Decimal("2"))
+
+        rows = list_shop_day_sessions(self.shop)
+        second_row = next(row for row in rows if row["session"].pk == second.pk)
+        self.assertEqual(second_row["cash_sales"], Decimal("200"))
+        first_row = next(row for row in rows if row["session"].pk == first.pk)
+        self.assertEqual(first_row["cash_sales"], Decimal("100"))
+        self.assertEqual(gap.shop_id, self.shop.pk)
+
+    def test_first_session_window_starts_at_open(self):
+        # No prior close — receipts before the first open are not picked up.
+        from shops.services import day_session_balance_summary, get_open_shop_day
+
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        session = get_open_shop_day(self.shop)
+        result = complete_shop_checkout(
+            shop=self.shop, profile=self.profile, payload=self._sale_payload()
+        )
+        ShopReceipt.objects.filter(pk=result["receipt"].pk).update(
+            created_at=session.opened_at - timedelta(hours=1)
+        )
+        summary = day_session_balance_summary(session)
+        self.assertEqual(summary["cash_sales"], Decimal("0"))
 
     def test_open_and_close_need_no_stock_confirm(self):
         open_shop_day(shop=self.shop, payload=self._open_payload())

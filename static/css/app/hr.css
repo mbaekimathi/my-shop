@@ -708,6 +708,17 @@ a.hr-perm-card:hover .hr-perm-card-arrow {
   }
 }
 
+.hr-approve-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.hr-disallow-form {
+  display: inline-flex;
+  margin: 0;
+}
+
 .hr-approve-save {
   min-height: 1.85rem;
   padding: 0.28rem 0.7rem;

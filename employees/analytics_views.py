@@ -425,6 +425,45 @@ def analytics_day_session(request, role_segment, session_id):
     context = build_day_session_report_page(
         profile=profile, request=request, session=session
     )
+    page = context.get("page") or {}
+
+    if (request.GET.get("estimate") or "").strip() == "1":
+        tables = page.get("tables") or []
+        row_total = sum(len(t.get("rows") or []) for t in tables)
+        # Rough A4 estimate: header/KPIs ≈ a third page, each section
+        # title + footnote ≈ 3 rows, ~34 body rows per page.
+        a4_page_estimate = max(1, (row_total + len(tables) * 3 + 40) // 34)
+        return JsonResponse(
+            {
+                "ok": True,
+                "paper": "a4",
+                "receipt_count": page.get("sales_count") or 0,
+                "a4_page_estimate": a4_page_estimate,
+                "kind_label": "Day report",
+                "period_label": page.get("period_label") or "",
+            }
+        )
+
+    paper = (request.GET.get("paper") or "").strip().lower()
+    if paper == "50":
+        paper = "58"
+    if paper in ("a4", "80", "58"):
+        from django.utils import timezone
+
+        from shops.services import get_company_display_name
+
+        return render(
+            request,
+            "employees/analytics_day_session_print.html",
+            {
+                "page": page,
+                "paper": paper,
+                "session": session,
+                "printed_at": timezone.localtime(),
+                "company_name": get_company_display_name(),
+                "auto_print": (request.GET.get("auto") or "").strip() == "1",
+            },
+        )
     return render(
         request,
         "employees/analytics.html",
@@ -716,9 +755,9 @@ def analytics_receipts_print(request, role_segment):
         return denied
 
     paper = (request.GET.get("paper") or "a4").strip().lower()
-    if paper in ("58",):
-        paper = "50"
-    if paper not in ("a4", "80", "50"):
+    if paper in ("50",):
+        paper = "58"
+    if paper not in ("a4", "80", "58"):
         paper = "a4"
 
     context = build_analytics_page(

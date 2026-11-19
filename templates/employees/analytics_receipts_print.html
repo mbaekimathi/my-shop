@@ -158,38 +158,38 @@
       box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
     }
     body.paper-80,
-    body.paper-50 {
+    body.paper-58 {
       padding: 6px;
       font: 9pt/1.25 "Manrope", system-ui, sans-serif;
     }
     body.paper-80 .sheet,
-    body.paper-50 .sheet {
+    body.paper-58 .sheet {
       margin: 0 auto;
       padding: 2mm;
       background: #fff;
       border: 1px solid #ddd;
     }
     body.paper-80 .sheet { width: 76mm; }
-    body.paper-50 .sheet { width: 46mm; }
+    body.paper-58 .sheet { width: 46mm; }
     body.paper-80 table.sheet-grid,
-    body.paper-50 table.sheet-grid {
+    body.paper-58 table.sheet-grid {
       font-size: 0.68rem;
     }
     body.paper-80 .sheet-brand h1,
-    body.paper-50 .sheet-brand h1 {
+    body.paper-58 .sheet-brand h1 {
       font-size: 0.95rem;
     }
     body.paper-80 .sheet-head,
-    body.paper-50 .sheet-head {
+    body.paper-58 .sheet-head {
       flex-direction: column;
       align-items: flex-start;
     }
     body.paper-80 .sheet-meta,
-    body.paper-50 .sheet-meta {
+    body.paper-58 .sheet-meta {
       text-align: left;
     }
     body.paper-80 .meta-chips,
-    body.paper-50 .meta-chips {
+    body.paper-58 .meta-chips {
       justify-content: flex-start;
     }
 
@@ -212,16 +212,16 @@
         padding: 0;
         box-shadow: none;
       }
-      {% elif paper == "50" %}
-      @page { size: 50mm auto; margin: 1mm; }
-      body.paper-50 {
+      {% elif paper == "58" %}
+      @page { size: 58mm auto; margin: 1mm; }
+      body.paper-58 {
         width: 46mm;
         max-width: 46mm;
         margin: 0;
         padding: 0.8mm;
         background: #fff;
       }
-      body.paper-50 .sheet {
+      body.paper-58 .sheet {
         width: auto;
         border: 0;
         padding: 0;
@@ -272,7 +272,7 @@
           <span class="meta-chip">{{ document.grand_amount }}</span>
           <span class="meta-chip">
             {% if paper == "80" %}80 mm
-            {% elif paper == "50" %}50 mm
+            {% elif paper == "58" %}58 mm
             {% else %}A4{% endif %}
           </span>
           {% if paper == "a4" or paper == "" %}

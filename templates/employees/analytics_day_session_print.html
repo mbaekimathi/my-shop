@@ -1,0 +1,562 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Day report — {{ page.headline|default:company_name }}</title>
+  <link rel="stylesheet" href="{% static 'css/fonts.css' %}?v=20261019-assets">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #000000;
+      --muted: #1a1a1a;
+      --line: #000000;
+      --line-soft: #444444;
+      --head-fill: #d0d0d0;
+      --row-alt: #ececec;
+      --accent-soft: #e8e8e8;
+      --sheet-bg: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #000 !important;
+      background: var(--sheet-bg);
+      font-weight: 700;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    body, body * {
+      color: #000 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .print-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0 0 0.85rem;
+    }
+    .print-toolbar button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 2.35rem;
+      padding: 0.4rem 0.95rem;
+      border: 1px solid #c9d3d6;
+      border-radius: 12px;
+      background: #f4f7f8;
+      color: var(--ink);
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .print-toolbar button.primary {
+      border-color: #111;
+      background: #111;
+      color: #fff;
+    }
+    .print-error {
+      padding: 0.85rem 1rem;
+      border: 1px solid #f0b4b4;
+      border-radius: 8px;
+      background: #fff5f5;
+      color: #8a1f1f;
+      font-weight: 600;
+    }
+
+    /* ===== Header ===== */
+    .sheet-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 0.65rem;
+      margin: 0 0 0.45rem;
+      padding: 0 0 0.4rem;
+      border-bottom: 1.5px solid var(--line);
+    }
+    .sheet-brand { min-width: 0; max-width: 100%; }
+    .doc-kicker {
+      margin: 0 0 0.15rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      overflow-wrap: anywhere;
+    }
+    .sheet-brand h1 {
+      margin: 0;
+      font: 700 1.15rem/1.2 "Manrope", system-ui, sans-serif;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+    .sheet-subtitle {
+      margin: 0.2rem 0 0;
+      font-size: 0.82rem;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+    .sheet-meta {
+      text-align: right;
+      font-size: 0.78rem;
+    }
+    .meta-chips {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 0.3rem;
+      margin-top: 0.35rem;
+    }
+    .meta-chip {
+      display: inline-block;
+      padding: 0.12rem 0.4rem;
+      border: 1px solid #333;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      white-space: nowrap;
+    }
+    .sheet-hint {
+      margin: 0 0 0.6rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    /* ===== KPI strip ===== */
+    .sheet-kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(34mm, 1fr));
+      border: 1px solid var(--line);
+      margin: 0 0 0.7rem;
+    }
+    .kpi {
+      padding: 0.35rem 0.5rem;
+      border-left: 1px solid var(--line-soft);
+    }
+    .kpi:first-child { border-left: 0; }
+    .kpi-label {
+      display: block;
+      font-size: 0.6rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .kpi-value {
+      display: block;
+      font-size: 1rem;
+      line-height: 1.25;
+      font-weight: 800;
+    }
+    .kpi-hint {
+      display: block;
+      font-size: 0.62rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    /* ===== Sections ===== */
+    .sheet-section { margin: 0 0 0.8rem; break-inside: auto; }
+    .sheet-section > h2 {
+      margin: 0 0 0.35rem;
+      padding: 0.1rem 0 0.1rem 0.45rem;
+      border-left: 2.2mm solid var(--line);
+      font: 800 0.95rem/1.25 "Manrope", system-ui, sans-serif;
+      break-after: avoid;
+    }
+    table.sheet-grid {
+      width: 100%;
+      border-collapse: collapse;
+      font: 650 0.78rem/1.25 "Manrope", system-ui, sans-serif;
+    }
+    table.sheet-grid th,
+    table.sheet-grid td {
+      border: 1px solid #111;
+      padding: 0.28rem 0.35rem;
+      vertical-align: top;
+    }
+    table.sheet-grid th {
+      background: var(--head-fill);
+      text-align: left;
+      font-weight: 800;
+    }
+    table.sheet-grid tbody tr:nth-child(even) td {
+      background: var(--row-alt);
+    }
+    table.sheet-grid tr.row-group td {
+      background: var(--accent-soft);
+      font-weight: 800;
+      border-top: 1.5px solid var(--line);
+    }
+    table.sheet-grid .num { text-align: right; white-space: nowrap; }
+    table.sheet-grid small {
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .chip {
+      display: inline-block;
+      padding: 0.05rem 0.35rem;
+      border: 1px solid #333;
+      border-radius: 999px;
+      font-size: 0.66rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .sheet-empty {
+      margin: 0.2rem 0;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .sheet-foot {
+      margin: 0.3rem 0 0;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .sheet-footer {
+      margin-top: 0.9rem;
+      padding-top: 0.4rem;
+      border-top: 1.5px solid var(--line);
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    /* ===== Stacked rows (thermal) ===== */
+    /* Wide tables become label:value cards so every figure stays readable. */
+    table.sheet-grid.stack,
+    table.sheet-grid.stack tbody,
+    table.sheet-grid.stack tr,
+    table.sheet-grid.stack td {
+      display: block;
+      width: 100%;
+    }
+    table.sheet-grid.stack thead { display: none; }
+    table.sheet-grid.stack { border-top: 1px solid var(--line); }
+    table.sheet-grid.stack tbody tr {
+      border: 1px solid #111;
+      border-top: 0;
+      background: #fff !important;
+    }
+    table.sheet-grid.stack tbody tr:nth-child(even) td { background: #fff; }
+    table.sheet-grid.stack td {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 2mm;
+      border: 0;
+      border-bottom: 1px dotted #666;
+      padding: 0.3mm 1.2mm;
+      text-align: right;
+    }
+    table.sheet-grid.stack td:last-child { border-bottom: 0; }
+    table.sheet-grid.stack td[data-label]::before {
+      content: attr(data-label);
+      font-weight: 800;
+      text-align: left;
+      color: var(--muted);
+    }
+    table.sheet-grid.stack td .cell-v {
+      text-align: right;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    table.sheet-grid.stack td:first-child .cell-v { text-align: left; }
+    table.sheet-grid.stack td:first-child {
+      display: block;
+      border-bottom: 1px solid #111;
+      font-weight: 800;
+      text-align: left;
+    }
+    table.sheet-grid.stack td:first-child[data-label]::before { content: none; }
+    table.sheet-grid.stack td .num,
+    table.sheet-grid.stack td.num { text-align: right; }
+    table.sheet-grid.stack td.num::before { align-self: center; }
+    table.sheet-grid.stack tr.row-group td {
+      display: block;
+      border: 0;
+      border-top: 1.5px solid var(--line);
+      background: var(--accent-soft) !important;
+      font-weight: 800;
+      text-align: left;
+    }
+    table.sheet-grid.stack tr.row-group td::before { content: none; }
+    table.sheet-grid.stack td small { display: block; }
+
+    /* ===== A4 ===== */
+    body.paper-a4 {
+      padding: 10px 12px 18px;
+      font: 10.5pt/1.3 "Manrope", system-ui, sans-serif;
+      background: #e8eef0;
+    }
+    body.paper-a4 .sheet {
+      max-width: 210mm;
+      margin: 0 auto;
+      padding: 9mm 10mm 11mm;
+      background: #fff;
+      border: 1px solid #c9d3d6;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    }
+
+    /* ===== Thermal 80 mm ===== */
+    body.paper-80 {
+      padding: 6px;
+      font: 8pt/1.3 "Manrope", system-ui, sans-serif;
+      background: #e8eef0;
+    }
+    body.paper-80 .sheet {
+      width: 76mm;
+      margin: 0 auto;
+      padding: 2mm;
+      background: #fff;
+      border: 1px solid #ddd;
+    }
+    body.paper-80 .sheet-head { flex-direction: column; align-items: flex-start; }
+    body.paper-80 .sheet-meta { text-align: left; }
+    body.paper-80 .meta-chips { justify-content: flex-start; }
+    body.paper-80 .sheet-brand h1 { font-size: 0.95rem; }
+    body.paper-80 .doc-kicker { font-size: 0.6rem; }
+    body.paper-80 .sheet-subtitle { font-size: 0.7rem; }
+    body.paper-80 .sheet-hint { font-size: 0.66rem; }
+    body.paper-80 .sheet-kpis {
+      grid-template-columns: 1fr 1fr;
+      margin-bottom: 0.55rem;
+    }
+    body.paper-80 .kpi { border-top: 1px solid var(--line-soft); padding: 0.25rem 0.35rem; }
+    body.paper-80 .kpi:nth-child(-n+2) { border-top: 0; }
+    body.paper-80 .kpi:nth-child(odd) { border-left: 0; }
+    body.paper-80 .kpi-value { font-size: 0.85rem; }
+    body.paper-80 .kpi-label { font-size: 0.52rem; }
+    body.paper-80 .kpi-hint { font-size: 0.52rem; }
+    body.paper-80 .sheet-section > h2 { font-size: 0.8rem; }
+    body.paper-80 table.sheet-grid { font-size: 0.68rem; }
+    body.paper-80 table.sheet-grid th,
+    body.paper-80 table.sheet-grid td { padding: 0.2rem 0.25rem; }
+    body.paper-80 table.sheet-grid.stack td { font-size: 0.72rem; padding: 0.45mm 1.2mm; }
+    body.paper-80 .sheet-empty,
+    body.paper-80 .sheet-foot,
+    body.paper-80 .sheet-footer { font-size: 0.62rem; }
+
+    /* ===== Thermal 58 mm ===== */
+    body.paper-58 {
+      padding: 4px;
+      font: 7pt/1.3 "Manrope", system-ui, sans-serif;
+      background: #e8eef0;
+    }
+    body.paper-58 .sheet {
+      width: 52mm;
+      margin: 0 auto;
+      padding: 1.5mm;
+      background: #fff;
+      border: 1px solid #ddd;
+    }
+    body.paper-58 .sheet-head { flex-direction: column; align-items: flex-start; }
+    body.paper-58 .sheet-meta { text-align: left; font-size: 0.62rem; }
+    body.paper-58 .meta-chips { justify-content: flex-start; }
+    body.paper-58 .meta-chip { font-size: 0.54rem; padding: 0.08rem 0.3rem; }
+    body.paper-58 .sheet-brand h1 { font-size: 0.82rem; }
+    body.paper-58 .doc-kicker { font-size: 0.52rem; }
+    body.paper-58 .sheet-subtitle { font-size: 0.62rem; }
+    body.paper-58 .sheet-hint { font-size: 0.58rem; }
+    body.paper-58 .sheet-kpis {
+      grid-template-columns: 1fr;
+      margin-bottom: 0.5rem;
+    }
+    body.paper-58 .kpi {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 2mm;
+      border-left: 0;
+      border-top: 1px solid var(--line-soft);
+      padding: 0.2rem 0.3rem;
+    }
+    body.paper-58 .kpi:first-child { border-top: 0; }
+    body.paper-58 .kpi-label { font-size: 0.5rem; }
+    body.paper-58 .kpi-value { font-size: 0.78rem; }
+    body.paper-58 .kpi-hint { font-size: 0.5rem; }
+    body.paper-58 .sheet-section { margin-bottom: 0.6rem; }
+    body.paper-58 .sheet-section > h2 { font-size: 0.68rem; border-left-width: 1.6mm; }
+    body.paper-58 table.sheet-grid { font-size: 0.62rem; }
+    body.paper-58 table.sheet-grid th,
+    body.paper-58 table.sheet-grid td { padding: 0.16rem 0.2rem; }
+    body.paper-58 table.sheet-grid.stack td { font-size: 0.66rem; padding: 0.4mm 1mm; }
+    body.paper-58 .chip { font-size: 0.52rem; }
+    body.paper-58 .sheet-empty,
+    body.paper-58 .sheet-foot,
+    body.paper-58 .sheet-footer { font-size: 0.54rem; }
+
+    @media print {
+      .print-toolbar { display: none !important; }
+      thead { display: table-header-group; }
+      table.sheet-grid.stack thead { display: none; }
+      tr { break-inside: avoid; }
+      .sheet-section > h2 { break-after: avoid; }
+      {% if paper == "80" %}
+      @page { size: 80mm auto; margin: 1.5mm; }
+      body.paper-80 {
+        width: auto;
+        max-width: 76mm;
+        margin: 0;
+        padding: 0.5mm;
+        background: #fff;
+      }
+      body.paper-80 .sheet {
+        width: auto;
+        border: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+      {% elif paper == "58" %}
+      @page { size: 58mm auto; margin: 1mm; }
+      body.paper-58 {
+        width: auto;
+        max-width: 52mm;
+        margin: 0;
+        padding: 0.4mm;
+        background: #fff;
+      }
+      body.paper-58 .sheet {
+        width: auto;
+        border: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+      {% else %}
+      @page { size: A4; margin: 7mm 7mm 8mm; }
+      body.paper-a4 {
+        padding: 0;
+        width: auto;
+        background: #fff;
+      }
+      body.paper-a4 .sheet {
+        width: auto;
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        box-shadow: none;
+      }
+      {% endif %}
+    }
+  </style>
+</head>
+<body class="paper-{{ paper|default:'a4' }}">
+  <div class="print-toolbar">
+    <button type="button" class="primary" onclick="window.print()">Print / Save PDF</button>
+    <button type="button" onclick="window.close()">Close</button>
+  </div>
+
+  {% if page %}
+  <div class="sheet">
+    <header class="sheet-head">
+      <div class="sheet-brand">
+        <p class="doc-kicker">Analytics · Cashiers</p>
+        <h1>{{ company_name }}</h1>
+        <p class="sheet-subtitle">
+          Day accounting report · {{ session.shop.name }}
+          {% if page.period_label %} · {{ page.period_label }}{% endif %}
+        </p>
+      </div>
+      <div class="sheet-meta">
+        <strong>{{ printed_at|date:"d M Y" }} · {{ printed_at|time:"H:i" }}</strong>
+        <div class="meta-chips">
+          <span class="meta-chip">{{ page.sales_count }} sale{{ page.sales_count|pluralize }}</span>
+          <span class="meta-chip">
+            {% if paper == "80" %}80 mm
+            {% elif paper == "58" %}58 mm
+            {% else %}A4{% endif %}
+          </span>
+          {% if paper == "a4" or paper == "" %}
+          <span class="meta-chip">Office copy</span>
+          {% else %}
+          <span class="meta-chip">Thermal roll</span>
+          {% endif %}
+        </div>
+      </div>
+    </header>
+
+    {% if page.lead %}<p class="sheet-hint">{{ page.lead }}</p>{% endif %}
+
+    {% if page.metrics %}
+    <div class="sheet-kpis">
+      {% for metric in page.metrics %}
+      <div class="kpi">
+        <span class="kpi-label">{{ metric.label }}{% if metric.hint %}<span class="kpi-hint">{{ metric.hint }}</span>{% endif %}</span>
+        <strong class="kpi-value">{{ metric.value }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% for table in page.tables %}
+    <section class="sheet-section">
+      <h2>{{ table.title }}</h2>
+      {% if table.rows %}
+      {% with col_count=table.columns|length %}
+      <table class="sheet-grid{% if paper == "58" or paper == "80" %} stack{% endif %}">
+        <thead>
+          <tr>
+            {% for col in table.columns %}
+            <th{% if col.money %} class="num"{% endif %}>
+              {% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in table.rows %}
+          {% if row.group_header %}
+          <tr class="row-group">
+            <td colspan="{{ col_count }}">{{ row.label }}</td>
+          </tr>
+          {% else %}
+          {% with cells=row.cells|default:row %}
+          <tr>
+            {% for cell in cells %}
+            {% for col in table.columns %}
+            {% if forloop.parentloop.counter0 == forloop.counter0 %}
+            <td
+              data-label="{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}"
+              {% if cell.kind == "money" or cell.kind == "pct" or col.money %}class="num"{% endif %}
+            >
+              <span class="cell-v">{% if cell.href %}{{ cell.label }}{% elif cell.kind == "money" or cell.kind == "pct" %}{{ cell.label }}{% elif cell.kind == "qty_amount" %}{{ cell.qty }} · {{ cell.amount }}{% elif cell.kind == "status" %}<span class="chip">{{ cell.label }}</span>{% elif cell.kind == "empty" %}&mdash;{% elif cell.label and cell.sub %}<strong>{{ cell.label }}</strong><br><small>{{ cell.sub }}</small>{% elif cell.label %}{{ cell.label }}{% else %}{{ cell }}{% endif %}</span>
+            </td>
+            {% endif %}
+            {% endfor %}
+            {% endfor %}
+          </tr>
+          {% endwith %}
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endwith %}
+      {% else %}
+      <p class="sheet-empty">{{ table.empty }}</p>
+      {% endif %}
+      {% if table.footnote %}<p class="sheet-foot">{{ table.footnote }}</p>{% endif %}
+    </section>
+    {% endfor %}
+
+    <footer class="sheet-footer">
+      Generated {{ printed_at|date:"d M Y H:i" }}
+      — {{ company_name }} · Day accounting report.
+    </footer>
+  </div>
+  {% else %}
+  <p class="print-error">Nothing to print for this day session.</p>
+  {% endif %}
+
+  {% if auto_print %}
+  <script>
+    window.addEventListener("load", () => {
+      window.setTimeout(() => window.print(), 120);
+    });
+  </script>
+  {% endif %}
+</body>
+</html>
