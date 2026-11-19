@@ -119,6 +119,7 @@ from .services import (
     get_daraja_settings,
     get_effective_pos_settings,
     get_last_closed_shop_day,
+    get_last_shop_day_for,
     get_open_shop_day,
     get_shop_pos_settings,
     get_shop_receipt_detail,
@@ -1736,6 +1737,20 @@ def _cashier_foreign_day_denied(request, profile, shop, *, as_json=False):
         return JsonResponse({"ok": False, "error": message}, status=403)
     messages.error(request, message, extra_tags="unauthorized")
     return redirect("employees:role_shop_cashier")
+
+
+def _cashier_own_days_only(profile) -> bool:
+    """A cashier's day report/history covers only sessions they opened.
+
+    The shop day belongs to whoever opened it (same rule as the foreign-day
+    lockout); portal sessions and other roles keep the shop-wide view.
+    """
+    from employees.models import EmployeeRole
+
+    return (
+        profile is not None
+        and getattr(profile, "role", None) == EmployeeRole.SHOP_CASHIER
+    )
 
 
 def _require_active_shop_session(request, shop_id):
@@ -3649,17 +3664,21 @@ def my_shop_day_report(request, shop_id):
         return denied
 
     session_id = (request.GET.get("session") or "").strip()
+    own_days = _cashier_own_days_only(profile)
     if session_id:
         from .models import ShopDaySession
 
-        session = ShopDaySession.objects.filter(
-            shop=shop, pk=session_id
-        ).first()
+        session_qs = ShopDaySession.objects.filter(shop=shop, pk=session_id)
+        if own_days:
+            session_qs = session_qs.filter(opened_by=profile)
+        session = session_qs.first()
         if session is None:
             messages.info(request, "That day was not found.")
             return redirect(
                 "employees:my_shop_day_history", shop_id=shop.pk
             )
+    elif own_days:
+        session = get_last_shop_day_for(shop, profile)
     else:
         session = get_open_shop_day(shop) or get_last_closed_shop_day(shop)
     if session is None:
@@ -3704,7 +3723,11 @@ def my_shop_day_history(request, shop_id):
         return denied
 
     shops = _shops_for_floor(profile, shop)
-    day_sessions = list_shop_day_sessions(shop, limit=100)
+    day_sessions = list_shop_day_sessions(
+        shop,
+        limit=100,
+        opened_by=profile if _cashier_own_days_only(profile) else None,
+    )
     balance_channels = shop_day_balance_channels(shop=shop)
     day_url = reverse(
         "employees:my_shop_day_toggle", kwargs={"shop_id": shop.pk}

@@ -7162,6 +7162,22 @@ def get_last_closed_shop_day(shop: Shop):
     )
 
 
+def get_last_shop_day_for(shop: Shop, profile):
+    """Most recent day session this employee opened (open or closed).
+
+    A shop day belongs to the cashier who opened it — their day report and
+    day history cover their own sessions, not a colleague's.
+    """
+    from .models import ShopDaySession
+
+    return (
+        ShopDaySession.objects.filter(shop=shop, opened_by=profile)
+        .select_related("closed_by__user", "opened_by__user")
+        .order_by("-opened_at")
+        .first()
+    )
+
+
 def _money_or_zero(value) -> Decimal:
     try:
         return Decimal(str(value or 0)).quantize(Decimal("0.01"))
@@ -7453,8 +7469,12 @@ def _session_activity_totals(
     }
 
 
-def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
-    """Recent open/closed day sessions for a shop (newest first), with balances."""
+def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
+    """Recent open/closed day sessions for a shop (newest first), with balances.
+
+    `opened_by` narrows the list to one employee's sessions — a cashier's day
+    history only shows the days they opened.
+    """
     from .models import Expense, ShopDaySession, ShopReceipt
 
     try:
@@ -7462,9 +7482,11 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30):
     except (TypeError, ValueError):
         limit_n = 30
 
+    session_qs = ShopDaySession.objects.filter(shop=shop)
+    if opened_by is not None:
+        session_qs = session_qs.filter(opened_by=opened_by)
     sessions = list(
-        ShopDaySession.objects.filter(shop=shop)
-        .select_related("opened_by__user", "closed_by__user")
+        session_qs.select_related("opened_by__user", "closed_by__user")
         .order_by("-opened_at")[:limit_n]
     )
     if not sessions:
@@ -8075,7 +8097,24 @@ def build_shop_day_report_pdf(
     )
 
     story = []
-    day_label = timezone.localtime(session.opened_at).strftime("%d %b %Y")
+    opened_local = timezone.localtime(session.opened_at)
+    closed_local = (
+        timezone.localtime(session.closed_at) if session.closed_at else None
+    )
+    if is_open:
+        period_label = (
+            f"{opened_local:%d %b %Y} · {opened_local:%H:%M} — still open"
+        )
+    elif closed_local.date() == opened_local.date():
+        period_label = (
+            f"{opened_local:%d %b %Y} · "
+            f"{opened_local:%H:%M} — {closed_local:%H:%M}"
+        )
+    else:
+        period_label = (
+            f"{opened_local:%d %b %Y %H:%M} — "
+            f"{closed_local:%d %b %Y %H:%M}"
+        )
     status_label = "Open — preview" if is_open else "Closed"
     status_fg = money_out if is_open else accent
     status_bg = colors.HexColor("#fef3c7") if is_open else accent_soft
@@ -8113,7 +8152,7 @@ def build_shop_day_report_pdf(
                     Paragraph("Day accounting report", title_style),
                     Paragraph(
                         _esc(shop.name)
-                        + f" · {day_label}"
+                        + f" · {period_label}"
                         + (
                             f" · {_esc(sales_scope_label)}"
                             if sales_scope_label

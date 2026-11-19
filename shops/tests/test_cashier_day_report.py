@@ -1,0 +1,256 @@
+"""Cashier day report/history is scoped to the sessions that cashier opened.
+
+/my-shop/<id>/day/report/ shows the day the acting cashier opened → closed —
+a colleague's session never fills the report, and ?session=<id> only picks
+one of the cashier's own days. Portal sessions and non-cashier roles keep the
+shop-wide view (open session, else last closed).
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+from django.contrib.auth.hashers import make_password
+from django.contrib.auth.models import User
+from django.test import Client, TestCase, override_settings
+from django.urls import reverse
+
+from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+from shops.models import Shop
+from shops.services import close_shop_day, open_shop_day
+
+
+def _employee(username, *, role, first_name, last_name, password):
+    user = User.objects.create_user(
+        username=username,
+        password=password,
+        email=f"{username}@test.local",
+        first_name=first_name,
+        last_name=last_name,
+        is_active=True,
+    )
+    return EmployeeProfile.objects.create(
+        user=user,
+        employee_id=username,
+        phone_country_code="+254",
+        phone_number="700001001",
+        status=EmployeeStatus.ACTIVE,
+        role=role,
+    )
+
+
+@override_settings(
+    ALLOWED_HOSTS=["testserver", "localhost"],
+    RATE_LIMITS={
+        "login": {"max": 10_000, "window": 60},
+        "check_employee_id": {"max": 10_000, "window": 60},
+        "register": {"max": 10_000, "window": 60},
+        "sync": {"max": 10_000, "window": 60},
+    },
+)
+class CashierDayReportScopeTests(TestCase):
+    PASSWORD = "day-report-pass"
+
+    def setUp(self):
+        self.previous = _employee(
+            "870001",
+            role=EmployeeRole.SHOP_CASHIER,
+            first_name="PREVIOUS",
+            last_name="CASHIER",
+            password=self.PASSWORD,
+        )
+        self.next = _employee(
+            "870002",
+            role=EmployeeRole.SHOP_CASHIER,
+            first_name="NEXT",
+            last_name="CASHIER",
+            password=self.PASSWORD,
+        )
+        self.manager = _employee(
+            "870003",
+            role=EmployeeRole.SHOP_MANAGER,
+            first_name="SHOP",
+            last_name="MANAGER",
+            password=self.PASSWORD,
+        )
+        self.shop = Shop.objects.create(
+            name="REPORT SHOP",
+            location="NAIROBI",
+            email="report-shop@test.local",
+            phone_number="0700008701",
+            login_code="880870",
+            password_hash=make_password(self.PASSWORD),
+            created_by=self.previous,
+        )
+        for profile in (self.previous, self.next, self.manager):
+            profile.assigned_shops.add(self.shop)
+
+    def _login(self, profile, client=None):
+        client = client or Client()
+        response = client.post(
+            reverse("employees:login"),
+            {"username": profile.employee_id, "password": self.PASSWORD},
+        )
+        self.assertEqual(response.status_code, 302)
+        return client
+
+    def _login_shop(self, client=None):
+        client = client or Client()
+        response = client.post(
+            reverse("employees:shop_login"),
+            {"login_code": self.shop.login_code, "password": self.PASSWORD},
+        )
+        self.assertEqual(response.status_code, 302)
+        return client
+
+    def _open_day(self, profile):
+        return open_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "1000",
+                "mpesa_amount": "500",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": profile.employee_id,
+            },
+        )["session"]
+
+    def _close_day(self, profile):
+        close_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "1000",
+                "mpesa_amount": "500",
+                "card_amount": "0",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": profile.employee_id,
+            },
+        )
+
+    def _report_url(self, session=None):
+        url = reverse(
+            "employees:my_shop_day_report", kwargs={"shop_id": self.shop.pk}
+        )
+        if session is not None:
+            url = f"{url}?session={session.pk}"
+        return url
+
+    def _report_session(self, client, url):
+        """GET the report with the PDF builder mocked; return its session."""
+        with patch(
+            "shops.views.build_shop_day_report_pdf",
+            return_value=b"%PDF-fake",
+        ) as pdf:
+            response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(pdf.called)
+        return pdf.call_args.kwargs["session"]
+
+    def test_report_uses_cashier_own_session(self):
+        """Shop-latest session is a colleague's — report still picks mine."""
+        own = self._open_day(self.next)
+        self._close_day(self.next)
+        colleague = self._open_day(self.previous)
+        self._close_day(self.previous)
+
+        client = self._login(self.next)
+        session = self._report_session(client, self._report_url())
+        self.assertEqual(session.pk, own.pk)
+        self.assertNotEqual(session.pk, colleague.pk)
+
+    def test_report_live_preview_of_own_open_session(self):
+        own = self._open_day(self.next)
+        client = self._login(self.next)
+        session = self._report_session(client, self._report_url())
+        self.assertEqual(session.pk, own.pk)
+
+    def test_report_without_own_session_redirects_to_open(self):
+        self._open_day(self.previous)
+        self._close_day(self.previous)
+        client = self._login(self.next)
+        response = client.get(self._report_url())
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse(
+                "employees:my_shop_day_toggle",
+                kwargs={"shop_id": self.shop.pk},
+            ),
+        )
+
+    def test_session_param_scoped_to_cashier(self):
+        colleague = self._open_day(self.previous)
+        self._close_day(self.previous)
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=colleague))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse(
+                "employees:my_shop_day_history",
+                kwargs={"shop_id": self.shop.pk},
+            ),
+        )
+
+    def test_session_param_accepts_own_session(self):
+        own = self._open_day(self.next)
+        self._close_day(self.next)
+        self._open_day(self.previous)
+        self._close_day(self.previous)
+        client = self._login(self.next)
+        session = self._report_session(client, self._report_url(session=own))
+        self.assertEqual(session.pk, own.pk)
+
+    def test_foreign_open_session_still_blocks(self):
+        self._open_day(self.previous)
+        client = self._login(self.next)
+        response = client.get(self._report_url())
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("employees:role_shop_cashier"))
+
+    def test_manager_sees_shop_latest_session(self):
+        own = self._open_day(self.next)
+        self._close_day(self.next)
+        colleague = self._open_day(self.previous)
+        self._close_day(self.previous)
+        client = self._login(self.manager)
+        session = self._report_session(client, self._report_url())
+        self.assertEqual(session.pk, colleague.pk)
+        self.assertNotEqual(session.pk, own.pk)
+
+    def test_portal_sees_shop_latest_session(self):
+        own = self._open_day(self.next)
+        self._close_day(self.next)
+        colleague = self._open_day(self.previous)
+        self._close_day(self.previous)
+        client = self._login_shop()
+        session = self._report_session(client, self._report_url())
+        self.assertEqual(session.pk, colleague.pk)
+        self.assertNotEqual(session.pk, own.pk)
+
+    def test_history_lists_only_cashier_own_days(self):
+        own = self._open_day(self.next)
+        self._close_day(self.next)
+        colleague = self._open_day(self.previous)
+        self._close_day(self.previous)
+
+        url = reverse(
+            "employees:my_shop_day_history", kwargs={"shop_id": self.shop.pk}
+        )
+        client = self._login(self.next)
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        session_ids = {
+            row["session"].pk for row in response.context["day_sessions"]
+        }
+        self.assertEqual(session_ids, {own.pk})
+
+        manager = self._login(self.manager)
+        response = manager.get(url)
+        self.assertEqual(response.status_code, 200)
+        session_ids = {
+            row["session"].pk for row in response.context["day_sessions"]
+        }
+        self.assertEqual(session_ids, {own.pk, colleague.pk})

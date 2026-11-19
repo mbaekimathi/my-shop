@@ -363,7 +363,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   stock-out) footered as "Estimated value lost". Transfers are `REQUEST`
   movements — not listed in either. Reports the open
   session ("Expected in till" preview) or the last closed one (counted
-  closing + variance). On the cashier dashboard, "Day report" + "Day history"
+  closing + variance). For `SHOP_CASHIER` profiles the report and
+  `my_shop_day_history` are scoped to sessions that cashier **opened**
+  (`_cashier_own_days_only` in shops/views.py → `get_last_shop_day_for` /
+  `list_shop_day_sessions(opened_by=…)` in shops/services.py) — the report
+  covers their own open→close, never a colleague's day; `?session=` picks are
+  likewise restricted to their own sessions. Portal sessions and other roles
+  keep the shop-wide view. On the cashier dashboard, "Day report" + "Day history"
   are **sidebar-only links** (`sidebar_only=True` keeps them off the
   role_home "Quick actions" cards, which render `page_sidebar.quick_actions` —
   `resolve_sidebar_hrefs` filters flagged items into that key); both are
