@@ -777,7 +777,7 @@ class WhatsAppAutomationsPageTests(TestCase):
         )
         self.assertContains(
             response,
-            "Send a credit sale notice to the customer phone when credit is taken at the cart.",
+            "Send a credit sale notice (WhatsApp, SMS, and email when those channels are on).",
         )
         self.assertNotContains(response, "Who to share with")
         self.assertNotContains(response, "Join Twilio sandbox")
