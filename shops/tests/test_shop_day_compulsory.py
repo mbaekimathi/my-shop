@@ -76,7 +76,6 @@ class CompulsoryShopDayTests(TestCase):
             "cash_amount": "1000",
             "mpesa_amount": "500",
             "credit_amount": "0",
-            "stock_confirmed": True,
             "login_code": "200001",
         }
 
@@ -140,6 +139,43 @@ class CompulsoryShopDayTests(TestCase):
             shop=self.shop, profile=self.profile, payload=self._sale_payload()
         )
         self.assertEqual(result["kind"], ShopReceiptKind.SALE)
+
+    def test_open_and_close_need_no_stock_confirm(self):
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        self.assertTrue(shop_day_floor_state(shop=self.shop)["can_trade"])
+        close_shop_day(shop=self.shop, payload=self._open_payload())
+        self.assertFalse(shop_day_floor_state(shop=self.shop)["is_open"])
+
+    def test_day_toggle_page_has_no_stock_checkbox(self):
+        from django.test import Client
+        from django.urls import reverse
+
+        client = Client()
+        response = client.post(
+            reverse("employees:shop_login"),
+            {"login_code": self.shop.login_code, "password": "pass"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        url = reverse("employees:my_shop_day_toggle", kwargs={"shop_id": self.shop.pk})
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "stock_confirmed")
+        self.assertNotContains(response, "Stock is up to date")
+        self.assertNotContains(response, "data-stock-confirmed")
+
+        response = client.post(url, self._open_payload())
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(shop_day_floor_state(shop=self.shop)["is_open"])
+
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "stock_confirmed")
+        self.assertNotContains(response, "Stock is up to date")
+
+        response = client.post(url, self._open_payload())
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(shop_day_floor_state(shop=self.shop)["is_open"])
 
     def test_quotation_allowed_when_closed(self):
         payload = self._sale_payload()

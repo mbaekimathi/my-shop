@@ -285,6 +285,40 @@ class ReceiptReturnCancelPermissionTests(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_set_status_pending_denied_on_confirmed_when_return_off(self):
+        # Reverting a CONFIRMED receipt is an undo — same return toggle.
+        _deny(self.profile, "analytics", "return-receipts")
+        resp = self.client.post(
+            self._url("analytics_receipt_set_status"), {"status": "pending"}
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_set_pending_service_denied_on_confirmed_when_return_off(self):
+        from django.core.exceptions import ValidationError
+
+        from shops.services import set_confirm_receipt_status
+
+        _deny(self.profile, "analytics", "return-receipts")
+        with self.assertRaises(ValidationError):
+            set_confirm_receipt_status(
+                shop=self.shop,
+                receipt_id=self.receipt.pk,
+                actor=self.profile,
+                status="pending",
+            )
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_set_status_pending_on_confirmed_allowed_by_default(self):
+        resp = self.client.post(
+            self._url("analytics_receipt_set_status"), {"status": "pending"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, ShopReceiptStatus.ACTIVE)
+
     def test_return_denied_for_viewer_when_return_receipts_off(self):
         _deny(self.profile, "analytics", "return-receipts")
         resp = self.client.post(

@@ -48,6 +48,7 @@
     confDate: root.querySelector("[data-rcpt-conf-date]"),
     confTime: root.querySelector("[data-rcpt-conf-time]"),
     confRefLabel: root.querySelector("[data-rcpt-conf-reflabel]"),
+    confRefWrap: root.querySelector("[data-rcpt-conf-ref-wrap]"),
     confRef: root.querySelector("[data-rcpt-conf-ref]"),
     confAmountWrap: root.querySelector("[data-rcpt-conf-amount-wrap]"),
     confAmount: root.querySelector("[data-rcpt-conf-amount]"),
@@ -405,7 +406,29 @@
     });
   }
 
+  function methodNeedsRef(method) {
+    var channels = METHOD_CHANNELS[(method || "").toLowerCase()] || [];
+    return channels.some(function (c) {
+      return c !== "cash";
+    });
+  }
+
+  function confirmRefApplies() {
+    // Credits pick the method in this modal; sales keep each receipt's
+    // own method (not selectable here) — a reference only makes sense
+    // for M-Pesa/Card channels.
+    if (els.confMethodWrap && !els.confMethodWrap.hidden) {
+      return methodNeedsRef(els.confMethod ? els.confMethod.value : "");
+    }
+    return selectedRows().some(function (r) {
+      return methodNeedsRef(r.payment_method);
+    });
+  }
+
   function syncConfirmChannels() {
+    if (els.confRefWrap) {
+      els.confRefWrap.hidden = !confirmRefApplies();
+    }
     if (!els.confChannels) return;
     var method = els.confMethod ? els.confMethod.value : "";
     var channels = METHOD_CHANNELS[method] || [];
@@ -473,7 +496,12 @@
     if (action === "confirm" && els.confDetails && !els.confDetails.hidden) {
       var date = (els.confDate.value || "").trim();
       var time = (els.confTime.value || "").trim();
-      if (REQUIRE_DETAILS && !(els.confRef.value || "").trim()) {
+      var refApplies = confirmRefApplies();
+      if (
+        REQUIRE_DETAILS &&
+        refApplies &&
+        !(els.confRef.value || "").trim()
+      ) {
         showToast("Enter the M-Pesa reference number.");
         els.confRef.focus();
         return;
@@ -483,7 +511,9 @@
         (date ? els.confTime : els.confDate).focus();
         return;
       }
-      payload.mpesa_receipt_number = (els.confRef.value || "").trim();
+      payload.mpesa_receipt_number = refApplies
+        ? (els.confRef.value || "").trim()
+        : "";
       payload.payment_at = date ? date + "T" + (time || "00:00") : "";
       if (!els.confAmountWrap.hidden && (els.confAmount.value || "").trim()) {
         payload.amount = els.confAmount.value.trim();

@@ -111,7 +111,7 @@
     );
     var syncRangeFields = function (range) {
       rangeFields.forEach(function (field) {
-        var match = field.getAttribute("data-range-field") === range;
+        var match = (field.getAttribute("data-range-field") || "").split(" ").includes(range);
         field.hidden = !match;
         field.querySelectorAll("input").forEach(function (input) {
           input.disabled = !match;

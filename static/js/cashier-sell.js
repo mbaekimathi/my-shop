@@ -188,7 +188,7 @@
   const serialsNeeded = (line) => line.trackSerial && currentKind() !== "quotation";
 
   // ── Rendering ─────────────────────────────────────────────────────────────
-  const KIND_LABELS = { sale: "sale", credit: "credit sale", quotation: "quotation" };
+  const KIND_LABELS = { sale: "sale", credit: "credit sale", quotation: "quotation", gift: "gift" };
 
   const updateCartSummary = () => {
     const size = cart.size;
@@ -535,7 +535,10 @@
     syncSplitUI();
 
     if (clientWrap) {
-      const required = requireClientPhone || requireClientName || kind !== "sale";
+      const required =
+        requireClientPhone ||
+        requireClientName ||
+        (kind !== "sale" && kind !== "gift");
       clientWrap.classList.toggle("is-required", required);
       if (clientHeading) {
         clientHeading.innerHTML = required
@@ -549,7 +552,7 @@
           clientNote.textContent = "Client phone is required.";
         } else if (requireClientName) {
           clientNote.textContent = "Client full name is required.";
-        } else if (kind === "sale") {
+        } else if (kind === "sale" || kind === "gift") {
           clientNote.textContent = "Optional. Enter a name, a phone number, or both.";
         } else {
           clientNote.textContent = "Enter a name, a phone number, or both.";

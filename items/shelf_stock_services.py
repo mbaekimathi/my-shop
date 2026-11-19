@@ -47,6 +47,8 @@ SHELF_UNIT_CHOICES = (
     "METRES",
     "SETS",
     "PAIRS",
+    "PORTIONS",
+    "CUPS",
 )
 
 

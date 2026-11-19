@@ -130,6 +130,12 @@ ANALYTICS_SECTIONS = (
         "summary": "Quotations by shop — count and value, plus totals.",
     },
     {
+        "slug": "gifts",
+        "label": "Gifts",
+        "icon": "gift",
+        "summary": "Gifts issued by shop — count and value, plus totals.",
+    },
+    {
         "slug": "tradings",
         "label": "Tradings",
         "icon": "repeat",
@@ -180,6 +186,7 @@ ANALYTICS_LIST_TABLE_SECTIONS = frozenset(
         "stock",
         "supply",
         "credits",
+        "gifts",
         "tradings",
         "clients",
         "employees",
@@ -374,6 +381,7 @@ def _pos_feature_flags() -> dict:
         "sale": bool(getattr(row, "enable_sale", True)),
         "credit": credit,
         "quotation": bool(getattr(row, "enable_quotation", True)),
+        "gift": bool(getattr(row, "enable_gift", True)),
         "trade_out": trade_out,
         "trade_in": trade_in,
         "tradings": trade_out or trade_in,
@@ -415,6 +423,8 @@ _POS_GATED_LABELS = {
     "Credits": ("credit",),
     "All credits": ("credit",),
     "Quotations": ("quotation",),
+    "Gifts": ("gift",),
+    "All gifts": ("gift",),
     "Trade out": ("trade_out",),
     "Trade in": ("trade_in",),
     "Cash": ("cash",),
@@ -3205,6 +3215,53 @@ def _opex_and_drawings_by_shop(expenses_qs) -> tuple[dict, dict]:
     return opex_by_shop, drawings_by_shop
 
 
+def _analytics_time_filter_enabled() -> bool:
+    from shops.services import get_company_pos_settings
+
+    return bool(
+        getattr(
+            get_company_pos_settings(), "enable_analytics_time_filter", False
+        )
+    )
+
+
+def _parse_filter_time(raw):
+    """Parse an ``HH:MM`` / ``HH:MM:SS`` time input value; None when blank/invalid."""
+    from datetime import time as _time
+
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return _time.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _apply_time_filter_bounds(start, end, *, time_from=None, time_to=None):
+    """Narrow [start, end) to the picked clock times on the boundary dates.
+
+    ``time_from`` moves the start to that time on the first day; ``time_to``
+    moves the exclusive end to the end of that minute on the last day, so a
+    "to 17:00" pick still counts sales made during 17:00.
+    """
+    from datetime import datetime, timedelta
+
+    from django.utils import timezone
+
+    tz = timezone.get_current_timezone()
+    if time_from is not None:
+        start = timezone.make_aware(
+            datetime.combine(start.date(), time_from), tz
+        )
+    if time_to is not None:
+        last_day = (end - timedelta(days=1)).date()
+        end = timezone.make_aware(
+            datetime.combine(last_day, time_to), tz
+        ) + timedelta(minutes=1)
+    return start, end
+
+
 def _date_filter_context(
     request=None, *, data=None, allow_all_time=False, default_all_time=None
 ) -> dict:
@@ -3220,8 +3277,13 @@ def _date_filter_context(
             else request.GET
         )
     range_raw = ""
+    time_from_raw = ""
+    time_to_raw = ""
     if getter is not None and hasattr(getter, "get"):
         range_raw = (getter.get("range") or "").strip().lower()
+        time_from_raw = (getter.get("time_from") or "").strip()
+        time_to_raw = (getter.get("time_to") or "").strip()
+    time_filter = _analytics_time_filter_enabled()
     today = timezone.localdate()
     if default_all_time is None:
         default_all_time = allow_all_time
@@ -3243,6 +3305,9 @@ def _date_filter_context(
             "end": None,
             "prev_start": None,
             "prev_end": None,
+            "time_filter_enabled": time_filter,
+            "report_time_from": "",
+            "report_time_to": "",
         }
 
     class _QueryRequest:
@@ -3253,14 +3318,24 @@ def _date_filter_context(
         if request is not None and not allow_all_time and data is None
         else _QueryRequest()
     )
-    delta = end - start
+    prev_shift = end - start
+    if time_filter and range_type in ("day", "period"):
+        start, end = _apply_time_filter_bounds(
+            start,
+            end,
+            time_from=_parse_filter_time(time_from_raw),
+            time_to=_parse_filter_time(time_to_raw),
+        )
     return {
         **filter_context,
         "range_type": range_type,
         "start": start,
         "end": end,
-        "prev_start": start - delta,
-        "prev_end": start,
+        "prev_start": start - prev_shift,
+        "prev_end": end - prev_shift,
+        "time_filter_enabled": time_filter,
+        "report_time_from": time_from_raw if time_filter else "",
+        "report_time_to": time_to_raw if time_filter else "",
     }
 
 
@@ -3378,6 +3453,7 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         "supply": _build_supply,
         "deliveries": _build_deliveries,
         "quotations": _build_quotations,
+        "gifts": _build_gifts,
         "tradings": _build_tradings,
         "credits": _build_credits,
         "clients": _build_clients,
@@ -3516,6 +3592,11 @@ ANALYTICS_RECEIPT_KINDS = {
         "label": "Quotations",
         "short_label": "Quotations",
     },
+    "gifts": {
+        "slug": "gifts",
+        "label": "Gift receipts",
+        "short_label": "Gifts",
+    },
     "tradings": {
         "slug": "tradings",
         "label": "Trade outs",
@@ -3553,6 +3634,8 @@ def _analytics_receipt_kind_filter(kind: str):
         return Q(kind=ShopReceiptKind.QUOTATION) & ~Q(
             status=ShopReceiptStatus.CANCELLED
         )
+    if key in {"gift", "gifts"}:
+        return Q(kind=ShopReceiptKind.GIFT) & ~Q(status=ShopReceiptStatus.CANCELLED)
     if key == "trade_in":
         return Q(kind=ShopReceiptKind.TRADE_IN) & ~Q(status=ShopReceiptStatus.CANCELLED)
     if key == "trade_out":
@@ -3578,6 +3661,7 @@ _RECEIPT_KIND_FLAG = {
     "sales": "sale",
     "credits": "credit",
     "quotations": "quotation",
+    "gifts": "gift",
     "tradings": "tradings",
 }
 
@@ -4560,13 +4644,17 @@ def _confirm_receipts_collect_rows(
 
 
 def _confirm_rows_apply_permissions(rows, profile):
-    """Hide cancel affordances when the profile may not return receipts."""
+    """Hide cancel/undo affordances when the profile may not return receipts."""
     from .module_permissions import employee_may
 
     if employee_may(profile, "analytics", "return-receipts"):
         return rows
     for row in rows:
         row["can_cancel"] = False
+        # Confirmed receipts may only be set back to pending under the same
+        # return/undo toggle.
+        if row.get("status") == "confirmed":
+            row["can_set_pending"] = False
     return rows
 
 
@@ -12774,6 +12862,108 @@ def _build_quotations(filters):
     }
 
 
+def _build_gifts(filters):
+    shop_ids = filters["active_shop_ids"]
+    shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
+    gifts = _receipts_qs(
+        shop_ids=shop_ids,
+        start=filters["start"],
+        end=filters["end"],
+        kinds=[ShopReceiptKind.GIFT],
+        receipt_status=filters.get("receipt_status"),
+    )
+    query = filters.get("query") or ""
+    role = filters["role"]
+
+    gifts_by_shop: dict[int, tuple[int, Decimal]] = {}
+    for row in gifts.values("shop_id").annotate(
+        docs=Count("id"),
+        amount=Coalesce(Sum("total"), _zero()),
+    ):
+        gifts_by_shop[row["shop_id"]] = (
+            int(row["docs"] or 0),
+            Decimal(row["amount"] or 0),
+        )
+
+    shops_sorted = sorted(
+        shops,
+        key=lambda shop: (
+            -gifts_by_shop.get(shop.pk, (0, _zero()))[1],
+            shop.name.lower(),
+        ),
+    )
+
+    columns = [
+        "Shop",
+        {
+            "label": "Gifts",
+            "pair": True,
+            "pair_qty": "Docs",
+            "pair_amt": "Amt",
+            "total": True,
+        },
+    ]
+
+    list_base = analytics_receipts_list_url(role, "gifts")
+    from urllib.parse import parse_qs, urlencode
+
+    base_params = parse_qs(query, keep_blank_values=True) if query else {}
+
+    table_rows = []
+    for shop in shops_sorted:
+        qty, amount = gifts_by_shop.get(shop.pk, (0, _zero()))
+        params = {k: v[0] for k, v in base_params.items()}
+        params["shop_id"] = str(shop.pk)
+        shop_query = urlencode(params)
+        table_rows.append(
+            [
+                {
+                    "href": f"{list_base}?{shop_query}" if shop_query else list_base,
+                    "label": shop.name,
+                },
+                _qty_amount_cell(
+                    qty,
+                    amount,
+                    title=f"{int(qty or 0)} · {_money_ksh(amount)}",
+                ),
+            ]
+        )
+
+    if shops_sorted:
+        total_qty = 0
+        total_amount = _zero()
+        for shop in shops_sorted:
+            qty, amount = gifts_by_shop.get(shop.pk, (0, _zero()))
+            total_qty += int(qty or 0)
+            total_amount += Decimal(amount or 0)
+        table_rows.append(
+            [
+                "Total",
+                _qty_amount_cell(
+                    total_qty,
+                    total_amount,
+                    title=f"{total_qty} · {_money_ksh(total_amount)}",
+                ),
+            ]
+        )
+
+    return {
+        "headline": "Gifts",
+        "lead": "",
+        "alerts": [],
+        "metrics": [],
+        "insights": [],
+        "tables": [
+            _table(
+                "Gifts by shop",
+                columns,
+                table_rows,
+                empty="No gifts for selected shops and period.",
+            )
+        ],
+    }
+
+
 def _trade_receipts_qs(shop_ids, start, end, *, receipt_status=None, flags=None):
     flags = flags or _pos_feature_flags()
     kinds_q = Q(pk__in=[])
@@ -16865,6 +17055,8 @@ def _normalize_analytics_receipt_kind(raw: str) -> str:
         return "credits"
     if receipt_kind in ("quotation", "quotations", "quote"):
         return "quotations"
+    if receipt_kind in ("gift", "gifts"):
+        return "gifts"
     if receipt_kind in ("trade_out", "trade-out"):
         return "trade_out"
     if receipt_kind in ("trade_in", "trade-in"):
@@ -16889,6 +17081,7 @@ _BROWSE_KIND_FLAG = {
     "sales": "sale",
     "credits": "credit",
     "quotations": "quotation",
+    "gifts": "gift",
     "trade_out": "trade_out",
     "trade_in": "trade_in",
 }
@@ -16906,6 +17099,7 @@ _RECEIPT_KIND_CELL_TONE = {
     ShopReceiptKind.QUOTATION: "info",
     ShopReceiptKind.TRADE_OUT: "violet",
     ShopReceiptKind.TRADE_IN: "violet",
+    ShopReceiptKind.GIFT: "violet",
     "stock": "shops",
     "expense": "cost",
 }
@@ -16967,6 +17161,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             ("sales", "Sales"),
             ("credits", "Credits"),
             ("quotations", "Quotations"),
+            ("gifts", "Gifts"),
             ("trade_out", "Trade out"),
             ("trade_in", "Trade in"),
             ("stock", "Stock suppliers"),

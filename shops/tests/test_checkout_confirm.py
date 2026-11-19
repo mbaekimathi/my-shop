@@ -176,8 +176,38 @@ class CheckoutConfirmTests(TestCase):
                 profile=self.profile,
                 payload=self._sale_payload(confirm=True),
             )
-        self.assertIn("reference number", str(ctx.exception))
+        # Cash sales carry no reference — the payment time is still required.
+        self.assertIn("payment date and time", str(ctx.exception))
         # Checkout rolls back — no half-confirmed receipt left behind.
+        self.assertEqual(ShopReceipt.objects.count(), before)
+
+        result = complete_shop_checkout(
+            shop=self.shop,
+            profile=self.profile,
+            payload=self._sale_payload(
+                confirm=True, confirm_payment_at="2026-11-14T10:30"
+            ),
+        )
+        self.assertTrue(result["confirmed"])
+        self.assertEqual(result["receipt"].mpesa_receipt_number, "")
+
+    def test_confirm_mpesa_requires_reference_when_pos_setting_on(self):
+        set_company_pos_setting(
+            field="require_mpesa_reference_on_confirm", enabled=True
+        )
+        before = ShopReceipt.objects.count()
+        with self.assertRaises(ValidationError) as ctx:
+            complete_shop_checkout(
+                shop=self.shop,
+                profile=self.profile,
+                payload=self._sale_payload(
+                    payment_method=ShopPaymentMethod.MPESA,
+                    cash_amount="0",
+                    mpesa_amount="100",
+                    confirm=True,
+                ),
+            )
+        self.assertIn("reference number", str(ctx.exception))
         self.assertEqual(ShopReceipt.objects.count(), before)
 
     def test_confirm_denied_without_receipts_permission(self):

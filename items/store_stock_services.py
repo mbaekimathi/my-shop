@@ -737,3 +737,153 @@ def build_store_stock_report(*, request) -> dict:
             ("out", "Stock out"),
         ),
     }
+
+
+def build_store_item_stock_report(*, day_start, day_end, item_id=None) -> dict:
+    """Opening / in / transfers / trades / out / closing per central-store item.
+
+    ``day_start``/``day_end`` bound the report period (end exclusive); either
+    may be ``None`` for an open-ended side (all-time). Starting and closing
+    balances come from each item's ``balance_after`` trail; movements inside
+    the period bucket as:
+
+    - ``in`` — stock ins, excluding trade-ins and transfer receipts.
+    - ``transfers`` — ``reason='transfer'`` legs, net received − sent.
+    - ``trades`` — ``trade_in`` − ``trade_out``, shown net.
+    - ``out`` — stock outs that are neither trades nor transfers.
+
+    ``item_id`` narrows the rows to one catalog item.
+    """
+    from items.shelf_stock_services import _qty_display, _signed_qty
+
+    items = list(
+        Item.objects.order_by("category", "name").only(
+            "id", "name", "category", "is_suspended"
+        )
+    )
+    item_options = [
+        {"id": item.pk, "name": item.name}
+        for item in items
+        if not item.is_suspended
+    ]
+    selected_item_id = (
+        item_id if item_id in {item.pk for item in items} else None
+    )
+    report_items = (
+        [item for item in items if item.pk == selected_item_id]
+        if selected_item_id is not None
+        else items
+    )
+
+    movements = StoreStockMovement.objects.order_by(
+        "item_id", "created_at", "id"
+    ).only(
+        "item_id",
+        "movement_type",
+        "reason",
+        "quantity",
+        "balance_after",
+        "created_at",
+    )
+    if day_end is not None:
+        movements = movements.filter(created_at__lt=day_end)
+
+    bounds = {}  # item_id -> [balance before day_start, balance before day_end]
+    buckets = {}  # item_id -> per-kind period sums
+    for mv in movements.iterator():
+        slot = bounds.setdefault(mv.item_id, [None, None])
+        slot[1] = mv.balance_after
+        if day_start is not None and mv.created_at < day_start:
+            slot[0] = mv.balance_after
+            continue
+        bucket = buckets.setdefault(
+            mv.item_id,
+            {
+                "in": Decimal("0"),
+                "out": Decimal("0"),
+                "transfer_in": Decimal("0"),
+                "transfer_out": Decimal("0"),
+                "trade_in": Decimal("0"),
+                "trade_out": Decimal("0"),
+            },
+        )
+        reason = (mv.reason or "").strip().lower()
+        if mv.movement_type == StoreStockMovementType.OUT:
+            if reason == StockOutReason.TRADE_OUT:
+                bucket["trade_out"] += mv.quantity
+            elif reason == StockOutReason.TRANSFER:
+                bucket["transfer_out"] += mv.quantity
+            else:
+                bucket["out"] += mv.quantity
+        elif mv.movement_type == StoreStockMovementType.IN:
+            if reason == StockOutReason.TRADE_IN:
+                bucket["trade_in"] += mv.quantity
+            elif reason == StockOutReason.TRANSFER:
+                bucket["transfer_in"] += mv.quantity
+            else:
+                bucket["in"] += mv.quantity
+        else:
+            bucket["in"] += mv.quantity
+
+    rows = []
+    totals = {
+        key: Decimal("0")
+        for key in ("start", "in", "transfers", "trades", "out", "close")
+    }
+    for item in report_items:
+        slot = bounds.get(item.pk)
+        bucket = buckets.get(item.pk)
+        if slot is None and bucket is None:
+            continue  # never moved through the central store
+        start = slot[0] if slot and slot[0] is not None else Decimal("0")
+        close = slot[1] if slot and slot[1] is not None else Decimal("0")
+        bucket = bucket or {}
+        in_qty = bucket.get("in", Decimal("0"))
+        out_qty = bucket.get("out", Decimal("0"))
+        transfers = bucket.get("transfer_in", Decimal("0")) - bucket.get(
+            "transfer_out", Decimal("0")
+        )
+        trades = bucket.get("trade_in", Decimal("0")) - bucket.get(
+            "trade_out", Decimal("0")
+        )
+        rows.append(
+            {
+                "id": item.pk,
+                "name": item.name,
+                "category": item.category,
+                "is_suspended": item.is_suspended,
+                "start": start,
+                "in": in_qty,
+                "transfers": transfers,
+                "trades": trades,
+                "out": out_qty,
+                "close": close,
+                "start_display": _qty_display(start),
+                "in_display": _qty_display(in_qty),
+                "transfers_display": _signed_qty(transfers),
+                "trades_display": _signed_qty(trades),
+                "out_display": _qty_display(out_qty),
+                "close_display": _qty_display(close),
+            }
+        )
+        totals["start"] += start
+        totals["in"] += in_qty
+        totals["transfers"] += transfers
+        totals["trades"] += trades
+        totals["out"] += out_qty
+        totals["close"] += close
+
+    return {
+        "rows": rows,
+        "row_count": len(rows),
+        "item_options": item_options,
+        "selected_item_id": selected_item_id,
+        "totals": {
+            "start_display": _qty_display(totals["start"]),
+            "in_display": _qty_display(totals["in"]),
+            "transfers_display": _signed_qty(totals["transfers"]),
+            "trades_display": _signed_qty(totals["trades"]),
+            "out_display": _qty_display(totals["out"]),
+            "close_display": _qty_display(totals["close"]),
+        },
+    }

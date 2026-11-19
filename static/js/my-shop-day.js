@@ -4,7 +4,6 @@
   const form = root.querySelector("[data-shop-day-form]");
 
   const codeInput = form?.querySelector("[data-day-login-code]");
-  const stockInput = form?.querySelector("[data-stock-confirmed]");
   const statusEl = form?.querySelector("[data-day-status]");
   const submitBtn = form?.querySelector("[data-day-submit]");
   const verifyUrl = root.getAttribute("data-verify-login-url") || "";
@@ -141,8 +140,7 @@
   };
 
   const syncSubmit = () => {
-    const stockOk = Boolean(stockInput?.checked);
-    if (submitBtn) submitBtn.disabled = !(verified && stockOk);
+    if (submitBtn) submitBtn.disabled = !verified;
   };
 
   const verifyCode = async () => {
@@ -219,7 +217,6 @@
   codeInput?.addEventListener("blur", () => {
     verifyCode();
   });
-  stockInput?.addEventListener("change", syncSubmit);
 
   form.addEventListener("submit", async (event) => {
     const missing = ["cash_amount", "mpesa_amount", "card_amount"].filter(
@@ -239,11 +236,6 @@
             : "card";
       setStatus(`Enter the ${label} balance.`, { error: true });
       form.querySelector(`[name="${missing[0]}"]`)?.focus();
-      return;
-    }
-    if (!stockInput?.checked) {
-      event.preventDefault();
-      setStatus("Confirm that stock is up to date first.", { error: true });
       return;
     }
     if (!verified) {

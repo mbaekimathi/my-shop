@@ -48,6 +48,67 @@
   </section>
   {% endif %}
 
+  {% if store_report %}
+  <section
+    class="home-section"
+    aria-labelledby="home-store-report-title"
+    data-store-stock-report
+    data-item-search-url="{{ store_report.item_search_url }}"
+  >
+    <h3 class="home-section-title" id="home-store-report-title">Stock report</h3>
+    <div class="store-stock-panel">
+      <div class="store-stock-panel-head">
+        <div>
+          <h3>Generate stock report</h3>
+          <p>Pick a period and optionally one item, then generate the central store stock report (PDF).</p>
+        </div>
+      </div>
+      <form class="store-stock-filters" method="get" action="{{ store_report.form_url }}" data-store-report-filters>
+        <div class="store-stock-field store-stock-field--range">
+          <span>Range</span>
+          <div class="store-stock-range-fields">
+            {% include "employees/partials/analytics_date_range_fields.html" with include_all_time=True %}
+          </div>
+        </div>
+
+        <label class="store-stock-field store-stock-search" data-store-report-item-root>
+          <span>Item</span>
+          <div class="store-stock-input-wrap">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input
+              type="search"
+              autocomplete="off"
+              placeholder="All items — search to filter one"
+              data-store-report-item-query
+              aria-autocomplete="list"
+              aria-controls="home-store-report-item-results"
+            >
+          </div>
+          <input type="hidden" name="item_id" value="" data-store-report-item-id>
+          <p class="store-stock-selected" data-store-report-item-selected hidden></p>
+          <ul
+            class="store-stock-results"
+            id="home-store-report-item-results"
+            role="listbox"
+            data-store-report-item-results
+            hidden
+          ></ul>
+          <button type="button" class="store-stock-clear-item" data-store-report-item-clear hidden>
+            Clear item filter
+          </button>
+        </label>
+
+        <div class="store-stock-filter-actions">
+          <button type="submit" class="store-stock-btn store-stock-btn--primary" name="download" value="1">
+            <i data-lucide="download" aria-hidden="true"></i> Generate report
+          </button>
+          <a class="store-stock-btn store-stock-btn--ghost" href="{{ store_report.form_url }}">Open report page</a>
+        </div>
+      </form>
+    </div>
+  </section>
+  {% endif %}
+
   {% if cashier_day_summaries %}
   <section class="home-section" aria-labelledby="home-money-title">
     <div class="home-money-head">
@@ -225,8 +286,11 @@
 
 {% block extra_js %}
 {{ block.super }}
+{% if store_report %}
+<script defer src="{% static 'js/store-stock-report.js' %}?v=1"></script>
+{% endif %}
 {% if sell_modal %}
-<script defer src="{% static 'js/cashier-sell.js' %}?v=1"></script>
+<script defer src="{% static 'js/cashier-sell.js' %}?v=2"></script>
 {% endif %}
 {% if buy_stock_modal %}
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261118-avg-cost"></script>

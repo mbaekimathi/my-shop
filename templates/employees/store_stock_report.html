@@ -96,6 +96,11 @@
 
       <div class="store-stock-filter-actions">
         <button type="submit" class="store-stock-btn store-stock-btn--primary">Apply</button>
+        {% if store_report_download_url %}
+        <a class="store-stock-btn store-stock-btn--ghost" href="{{ store_report_download_url }}">
+          <i data-lucide="download" aria-hidden="true"></i> Download PDF
+        </a>
+        {% endif %}
         <a class="store-stock-btn store-stock-btn--ghost" href="{% url 'employees:store_stock_report' %}">Reset</a>
       </div>
     </form>

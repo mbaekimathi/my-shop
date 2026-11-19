@@ -358,6 +358,7 @@
     if (refInput && !refInput.value) {
       refInput.value = String(receipt.mpesa_receipt_number || "").trim();
     }
+    syncConfirmRefField();
     const amountInput = modalBody?.querySelector("[data-confirm-credit-amount]");
     if (amountInput) {
       const due = creditDueValue(receipt);
@@ -373,7 +374,7 @@
     const creditNotice = String(receipt.credit_confirm_notice || "").trim();
     setConfirmStatus(
       creditNotice ||
-        (receipt.require_mpesa_reference_on_confirm
+        (receipt.require_mpesa_reference_on_confirm && confirmRefApplies()
           ? "Date defaults to today. Enter time, reference number, and staff 6-digit ID."
           : "Date defaults to today. Enter time and staff 6-digit ID to confirm.")
     );
@@ -478,6 +479,29 @@
   };
   const confirmMethodChannels = (method) =>
     CONFIRM_METHOD_CHANNELS[String(method || "").toLowerCase()] || [];
+  const confirmMethodNeedsRef = (method) =>
+    confirmMethodChannels(method).some((channel) => channel !== "cash");
+  const confirmRefApplies = () => {
+    const receipt = currentDetail?.receipt || {};
+    if (isCreditReceipt(receipt)) return true;
+    const select = modalBody?.querySelector("[data-confirm-payment-method]");
+    if (!select) return true;
+    return confirmMethodNeedsRef(select.value);
+  };
+  const syncConfirmRefField = () => {
+    const wrap = modalBody?.querySelector("[data-confirm-mpesa-ref-wrap]");
+    if (!wrap) return;
+    const input = wrap.querySelector("[data-confirm-mpesa-ref]");
+    const visible = confirmRefApplies();
+    wrap.hidden = !visible;
+    if (input) {
+      const required =
+        visible &&
+        Boolean(currentDetail?.receipt?.require_mpesa_reference_on_confirm);
+      input.required = required;
+      input.setAttribute("aria-required", required ? "true" : "false");
+    }
+  };
 
   const confirmFieldValues = () => {
     const receipt = currentDetail?.receipt || {};
@@ -527,6 +551,7 @@
       cashAmount,
       mpesaAmount,
       cardAmount,
+      refApplies: confirmRefApplies(),
     };
   };
 
@@ -544,10 +569,12 @@
       cashAmount,
       mpesaAmount,
       cardAmount,
+      refApplies,
     } = confirmFieldValues();
     const detailsOk =
       !requireDetails ||
-      ((Boolean(ref) || Boolean(existingRef)) && Boolean(paymentAt));
+      (Boolean(paymentAt) &&
+        (!refApplies || Boolean(ref) || Boolean(existingRef)));
     const amountOk =
       !credit || due <= 0 || (Boolean(amount) && Number(amount) > 0);
     const splitValues = {
@@ -873,6 +900,12 @@
       </div>`;
     }
 
+    const refAppliesInitial =
+      isCredit || !saleMethod || confirmMethodNeedsRef(saleMethod);
+    const refAttrs =
+      requireConfirmDetails && refAppliesInitial
+        ? requiredAttrs
+        : `aria-required="false"`;
     const paidAtLabel = paymentTimeLabel(receipt);
     const paymentSplitParts = confirmMethodChannels(receipt.payment_method)
       .filter(
@@ -986,7 +1019,7 @@
     ${confirmLead}
     ${
       requireConfirmDetails
-        ? "Reference number is compulsory."
+        ? "Reference number is compulsory for M-Pesa and Card payments."
         : "Reference number is optional."
     }
   </p>
@@ -1027,7 +1060,9 @@
           >
         </div>
       </div>
-      <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap>
+      <div class="shop-receipt-mpesa-ref" data-confirm-mpesa-ref-wrap${
+        refAppliesInitial ? "" : " hidden"
+      }>
         <label class="shop-receipt-mpesa-ref-label" for="shop-confirm-mpesa-ref">
           Reference number
           <span class="shop-receipt-muted">(${optionalHint})</span>
@@ -1043,7 +1078,7 @@
           autocomplete="off"
           spellcheck="false"
           data-confirm-mpesa-ref
-          ${requiredAttrs}
+          ${refAttrs}
         >
       </div>
     </div>
@@ -1263,9 +1298,10 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
       cashAmount,
       mpesaAmount,
       cardAmount,
+      refApplies,
     } = confirmFieldValues();
     if (requireDetails) {
-      if (!ref && !existingRef) {
+      if (refApplies && !ref && !existingRef) {
         setConfirmStatus(
           "Enter the reference number before confirming this receipt.",
           { error: true }
@@ -1374,7 +1410,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     try {
       const body = {
         login_code: code,
-        mpesa_receipt_number: ref,
+        mpesa_receipt_number: refApplies ? ref : "",
         payment_at: paymentAt,
       };
       if (credit) {
@@ -1629,6 +1665,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
     const target = event.target;
     if (target?.matches?.("[data-confirm-payment-method]")) {
       syncConfirmPaymentSplit();
+      syncConfirmRefField();
       syncSubmitConfirm();
       return;
     }

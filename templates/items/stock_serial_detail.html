@@ -234,7 +234,7 @@
 
     const syncRangeFields = (range) => {
       rangeFields.forEach((field) => {
-        const match = field.getAttribute("data-range-field") === range;
+        const match = (field.getAttribute("data-range-field") || "").split(" ").includes(range);
         field.hidden = !match;
         field.querySelectorAll("input").forEach((input) => {
           input.disabled = !match;

@@ -327,6 +327,12 @@
             <span>Quotation</span>
           </label>
           {% endif %}
+          {% if "gift" in cart_kinds %}
+          <label class="shop-cart-seg-option">
+            <input type="radio" name="kind" value="gift" data-cart-kind{% if default_kind == "gift" %} checked{% endif %}>
+            <span>Gift</span>
+          </label>
+          {% endif %}
         </div>
       </div>
       {% elif default_kind %}
@@ -1039,7 +1045,7 @@
 <script defer src="{% static 'js/item-search.js' %}?v=7"></script>
 <script defer src="{% static 'js/shop-printer-session.js' %}?v=1"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=20261217-batch-copies"></script>
-<script defer src="{% static 'js/my-shop.js' %}?v=20261217-batch-copies"></script>
+<script defer src="{% static 'js/my-shop.js' %}?v=20261119-gift"></script>
 <script defer src="{% static 'js/stock-catalog.js' %}?v=20261118-avg-cost"></script>
 <script defer src="{% static 'js/shop-stock-take.js' %}?v=8"></script>
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>

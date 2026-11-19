@@ -77,6 +77,7 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
         "set_role_shop_store_manager",
         "set_role_company_manager",
         "set_role_it_support",
+        "set_role_company_accountant",
         "set_role_rider",
         "set_role_super_admin",
     ]
@@ -186,6 +187,13 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
     def set_role_it_support(self, request, queryset):
         updated = queryset.update(role=EmployeeRole.IT_SUPPORT)
         self.message_user(request, f"{updated} employee(s) set to IT Support.")
+
+    @admin.action(description="Set role → Company Accountant")
+    def set_role_company_accountant(self, request, queryset):
+        updated = queryset.update(role=EmployeeRole.COMPANY_ACCOUNTANT)
+        self.message_user(
+            request, f"{updated} employee(s) set to Company Accountant."
+        )
 
     @admin.action(description="Set role → Rider")
     def set_role_rider(self, request, queryset):

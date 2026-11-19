@@ -75,6 +75,7 @@
         <div class="sell-cart">
           <div class="sell-cart-head">
             <p class="sell-cart-title">
+              <i data-lucide="shopping-cart" aria-hidden="true"></i>
               Cart
               <span class="sell-cart-count" data-sell-count hidden>0</span>
             </p>
@@ -98,6 +99,10 @@
         </div>
 
         <form class="sell-checkout" data-sell-checkout novalidate>
+          <p class="sell-checkout-title">
+            <i data-lucide="receipt" aria-hidden="true"></i>
+            Checkout
+          </p>
           {% if show_document_picker %}
           <div class="shop-cart-field">
             <span class="shop-cart-field-label">Document</span>
@@ -118,6 +123,12 @@
               <label class="shop-cart-seg-option">
                 <input type="radio" name="sell_kind" value="quotation" data-sell-kind{% if default_kind == "quotation" %} checked{% endif %}>
                 <span>Quotation</span>
+              </label>
+              {% endif %}
+              {% if "gift" in cart_kinds %}
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="sell_kind" value="gift" data-sell-kind{% if default_kind == "gift" %} checked{% endif %}>
+                <span>Gift</span>
               </label>
               {% endif %}
             </div>

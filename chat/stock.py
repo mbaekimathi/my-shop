@@ -1933,7 +1933,22 @@ def _confirm_one_receipt(
     ref = (mpesa_receipt_number or "").strip()[:40]
     existing_ref = (receipt.mpesa_receipt_number or "").strip()
     require_details = bool(pos.get("require_mpesa_reference_on_confirm"))
-    if require_details and not ref and not existing_ref:
+    # A reference only makes sense for M-Pesa/Card channels — a cash-only
+    # confirm has nothing to reference.
+    if is_credit:
+        ref_method = (payment_method or "").strip().lower()
+        ref_applies = ref_method in {"mpesa", "card"} or (
+            ref_method != "cash" and bool(ref or existing_ref)
+        )
+    else:
+        confirm_method = (payment_method or "").strip().lower() or (
+            receipt.payment_method or ""
+        ).strip().lower()
+        ref_applies = any(
+            channel != "cash"
+            for channel in _PAYMENT_CHANNELS.get(confirm_method, ())
+        )
+    if require_details and ref_applies and not ref and not existing_ref:
         raise StockError(
             "Enter the reference number before confirming this receipt."
         )

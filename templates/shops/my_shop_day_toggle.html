@@ -211,7 +211,7 @@
             <h3>{% if is_open %}Close shop{% else %}Open shop{% endif %}</h3>
             <p>
               {% if is_open %}
-              Count {{ balance_channels.count_copy }}, confirm stock, enter staff ID.
+              Count {{ balance_channels.count_copy }}, enter staff ID.
               {% elif last_closed %}
               Prefills from last close — change if different.
               {% else %}
@@ -274,18 +274,6 @@
           {% endif %}
         </div>
 
-        <label class="shop-cart-check shop-day-confirm">
-          <input
-            type="checkbox"
-            name="stock_confirmed"
-            value="1"
-            data-stock-confirmed
-            {% if form_data.stock_confirmed %}checked{% endif %}
-            required
-          >
-          <span><i data-lucide="package-check" aria-hidden="true"></i> Stock is up to date</span>
-        </label>
-
         <label class="shop-cart-input">
           <span><i data-lucide="key-round" aria-hidden="true"></i> Staff ID</span>
           <input
@@ -323,5 +311,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/my-shop-day.js' %}?v=15"></script>
+<script src="{% static 'js/my-shop-day.js' %}?v=16"></script>
 {% endblock %}

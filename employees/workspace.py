@@ -55,6 +55,12 @@ ROLE_PAGE_META = {
         "summary": "Your IT support workspace.",
         "icon": "monitor-cog",
     },
+    EmployeeRole.COMPANY_ACCOUNTANT: {
+        "title": "Company Accountant",
+        "headline": "Accountant workspace",
+        "summary": "Review analytics, cashier reports, and stock movement across the company.",
+        "icon": "calculator",
+    },
     EmployeeRole.RIDER: {
         "title": "Rider",
         "headline": "Rider workspace",
@@ -159,6 +165,7 @@ WORKSPACE_DASHBOARD_VIEWS = frozenset(
         "employees:role_shop_store_manager",
         "employees:role_shop_cashier",
         "employees:role_it_support",
+        "employees:role_company_accountant",
         "employees:role_rider",
     }
 )
@@ -606,6 +613,10 @@ def _dashboard_analytics_section_links(role, *, active_slug=None, profile=None):
         wanted = ()
     elif role == EmployeeRole.EMPLOYEE:
         wanted = ("credits",)
+    elif role == EmployeeRole.COMPANY_ACCOUNTANT:
+        # Dashboard shortcuts mirror the accountant's read-only scope:
+        # Cashiers report + Suppliers.
+        wanted = ("balances", "suppliers")
     elif role in (
         EmployeeRole.IT_SUPPORT,
         EmployeeRole.COMPANY_MANAGER,
@@ -1458,6 +1469,7 @@ SELL_POPUP_TOGGLES = (
     ("sell_sale", 'Sell popup — "Sale"'),
     ("sell_credit", 'Sell popup — "Credit"'),
     ("sell_quotation", 'Sell popup — "Quotation"'),
+    ("sell_gift", 'Sell popup — "Gift"'),
     ("sell_pay_cash", "Sell popup — Cash payments"),
     ("sell_pay_mpesa", "Sell popup — M-Pesa payments"),
     ("sell_pay_card", "Sell popup — Card payments"),
@@ -1531,7 +1543,7 @@ def sell_kinds_allowed(profile) -> list:
 
     return [
         kind
-        for kind in ("sale", "credit", "quotation")
+        for kind in ("sale", "credit", "quotation", "gift")
         if cashier_sell_pref_enabled(profile, f"sell_{kind}")
         and employee_may_unrestricted(profile, "my-shop", kind)
     ]

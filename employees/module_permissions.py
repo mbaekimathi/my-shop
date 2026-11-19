@@ -4,6 +4,8 @@ Semantics match the permissions UI:
 - Missing row ⇒ allowed (default allow) for most roles
 - Store manager roles (company / shop) missing row ⇒ store-ops allow-list
   only (default deny elsewhere)
+- Company Accountant missing row ⇒ read-only analytics + stock allow-list
+  (ACCOUNTANT_ALLOWED_KEYS, default deny elsewhere)
 - Rider missing row ⇒ deny all modules (empty dashboard for now)
 - Explicit allowed=True / allowed=False always wins over role defaults
 - Super Admin always allowed (cannot be locked out of the system)
@@ -70,6 +72,7 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
         ("my-shop", "quotation"),
         ("my-shop", "trade_out"),
         ("my-shop", "trade_in"),
+        ("my-shop", "gift"),
         ("my-shop", "buy_stock"),
         ("my-shop", "stock_count"),
         ("my-shop", "shelf_stock"),
@@ -95,6 +98,22 @@ STORE_MANAGER_ROLES = frozenset(
     }
 )
 
+# Company accountant: read-only financial oversight. Default-deny like the
+# store managers — explicit HR rows still override. Sees the analytics
+# overview hub, the Cashiers report (balances), stock + supplier analytics,
+# and the stock-management view / movement / report pages.
+ACCOUNTANT_ALLOWED_KEYS = frozenset(
+    {
+        ("analytics", "view"),
+        ("analytics", "balances"),
+        ("analytics", "stock"),
+        ("analytics", "suppliers"),
+        ("stock-management", "view"),
+        ("stock-management", "movements"),
+        ("stock-management", "report"),
+    }
+)
+
 
 def role_default_permission(profile, module_slug: str, submodule_slug: str) -> bool:
     """Default allow/deny when no EmployeeModulePermission row exists."""
@@ -104,6 +123,8 @@ def role_default_permission(profile, module_slug: str, submodule_slug: str) -> b
         return False
     if role in STORE_MANAGER_ROLES:
         return (module_slug, submodule_slug) in STORE_MANAGER_ALLOWED_KEYS
+    if role == EmployeeRole.COMPANY_ACCOUNTANT:
+        return (module_slug, submodule_slug) in ACCOUNTANT_ALLOWED_KEYS
     return True
 
 

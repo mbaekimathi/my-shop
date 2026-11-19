@@ -3778,7 +3778,8 @@
     const syncClientRequirements = () => {
       const kind = selectedKind();
       const isTrade = kind === "trade_out" || kind === "trade_in";
-      if (!clientDataEnabled && !isTrade) {
+      const collectsClient = isTrade || kind === "gift";
+      if (!clientDataEnabled && !collectsClient) {
         if (clientBlock) clientBlock.hidden = true;
         if (clientHint) {
           clientHint.hidden = true;
@@ -3821,6 +3822,9 @@
           clientNote.textContent = tradeNeedsClient
             ? "Client who brought the goods. Name and phone are required. Settle later."
             : "Optional. Client who brought the goods. Settle later.";
+        } else if (kind === "gift") {
+          clientNote.textContent =
+            "Optional. Enter the recipient name, a phone number, or both.";
         } else if (phoneRequired && nameRequired) {
           clientNote.textContent = "Client phone and full name are required.";
         } else if (phoneRequired) {
@@ -4555,7 +4559,12 @@
             return;
           }
         }
-        if (clientDataEnabled || kind === "trade_out" || kind === "trade_in") {
+        if (
+          clientDataEnabled ||
+          kind === "trade_out" ||
+          kind === "trade_in" ||
+          kind === "gift"
+        ) {
           const phone = normalizeClientPhoneField({ force: true });
           const name = (clientNameInput?.value || "").trim();
           if (requireClientPhone && !phone) {
@@ -4637,6 +4646,7 @@
             clientDataEnabled ||
             kind === "trade_out" ||
             kind === "trade_in" ||
+            kind === "gift" ||
             deliveryWanted
               ? (
                   checkoutForm.querySelector("[data-cart-client-name]")?.value || ""
@@ -4648,6 +4658,7 @@
             clientDataEnabled ||
             kind === "trade_out" ||
             kind === "trade_in" ||
+            kind === "gift" ||
             deliveryWanted
               ? normalizeClientPhoneField({ force: true })
               : "",
@@ -4951,7 +4962,8 @@
               kind === "credit" ||
               kind === "quotation" ||
               kind === "trade_out" ||
-              kind === "trade_in");
+              kind === "trade_in" ||
+              kind === "gift");
           if (shouldPrint) {
             const fontStyle = {
               ...(data.receipt_font || {}),

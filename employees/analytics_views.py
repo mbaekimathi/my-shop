@@ -2338,6 +2338,9 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
     if not employee_may(profile, "analytics", "return-receipts"):
         payload["can_return"] = False
         payload["can_cancel"] = False
+        # Confirmed receipts may only be reverted under the same return toggle.
+        if payload.get("status") == "confirmed":
+            payload["can_set_pending"] = False
     return JsonResponse(payload)
 
 
@@ -2472,13 +2475,13 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
 
     status = request.POST.get("status") or ""
     try:
-        from shops.models import ShopReceiptStatus
+        from shops.models import ShopReceipt, ShopReceiptStatus
         from shops.services import _resolve_confirm_receipt_status
 
-        cancelling = (
-            _resolve_confirm_receipt_status(status) == ShopReceiptStatus.CANCELLED
-        )
+        target_status = _resolve_confirm_receipt_status(status)
+        cancelling = target_status == ShopReceiptStatus.CANCELLED
     except Exception:
+        target_status = None
         cancelling = False
     if cancelling:
         # Setting a receipt to cancelled restocks it — same as a return.
@@ -2491,6 +2494,21 @@ def analytics_receipt_set_status(request, role_segment, shop_id, receipt_id):
     shop = _analytics_receipt_shop_access(profile, shop_id)
     if shop is None:
         return JsonResponse({"ok": False, "error": "Shop not found."}, status=404)
+
+    if target_status != ShopReceiptStatus.CONFIRMED:
+        current_status = (
+            ShopReceipt.objects.filter(pk=receipt_id, shop=shop)
+            .values_list("status", flat=True)
+            .first()
+        )
+        if current_status == ShopReceiptStatus.CONFIRMED:
+            # Undoing a confirmed receipt is held to the same elevated
+            # toggle as returns/cancels.
+            denied = require_module_permission(
+                request, profile, "analytics", "return-receipts", as_json=True
+            )
+            if denied is not None:
+                return denied
 
     mpesa_receipt_number = (request.POST.get("mpesa_receipt_number") or "").strip()
     payment_at = (request.POST.get("payment_at") or "").strip()

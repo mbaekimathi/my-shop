@@ -275,6 +275,7 @@ class CompanyPosSettings(models.Model):
     enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
+    enable_gift = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
     enable_card = models.BooleanField(default=False)
@@ -295,6 +296,7 @@ class CompanyPosSettings(models.Model):
     receipt_format_quotation = models.CharField(max_length=8, default="Q")
     receipt_format_trade_out = models.CharField(max_length=8, default="T")
     receipt_format_trade_in = models.CharField(max_length=8, default="TI")
+    receipt_format_gift = models.CharField(max_length=8, default="GF")
 
     class Meta:
         managed = False
@@ -316,6 +318,7 @@ class ShopPosSettings(models.Model):
     enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
+    enable_gift = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
     enable_card = models.BooleanField(default=False)
@@ -336,6 +339,7 @@ class ShopPosSettings(models.Model):
     receipt_format_quotation = models.CharField(max_length=8, default="Q")
     receipt_format_trade_out = models.CharField(max_length=8, default="T")
     receipt_format_trade_in = models.CharField(max_length=8, default="TI")
+    receipt_format_gift = models.CharField(max_length=8, default="GF")
 
     class Meta:
         managed = False

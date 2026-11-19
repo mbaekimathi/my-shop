@@ -374,6 +374,7 @@ class StockOutReason(models.TextChoices):
     RETURN = "return", "Supplier return"
     TRADE_OUT = "trade_out", "Trade out"
     TRADE_IN = "trade_in", "Trade in"
+    GIFT = "gift", "Gift"
     CUSTOM = "custom", "Custom"
 
 

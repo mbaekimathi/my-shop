@@ -134,6 +134,7 @@ class ShopReceiptKind(models.TextChoices):
     QUOTATION = "quotation", "Quotation"
     TRADE_OUT = "trade_out", "Trade out"
     TRADE_IN = "trade_in", "Trade in"
+    GIFT = "gift", "Gift"
 
 
 class ShopReceiptStatus(models.TextChoices):
@@ -740,6 +741,7 @@ class CompanyPosSettings(models.Model):
     enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
+    enable_gift = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
     enable_card = models.BooleanField(default=False)
@@ -879,6 +881,7 @@ class CompanyPosSettings(models.Model):
     receipt_format_quotation = models.CharField(max_length=8, default="Q")
     receipt_format_trade_out = models.CharField(max_length=8, default="T")
     receipt_format_trade_in = models.CharField(max_length=8, default="TI")
+    receipt_format_gift = models.CharField(max_length=8, default="GF")
     mpesa_collection_type = models.CharField(
         max_length=16,
         choices=(
@@ -937,7 +940,8 @@ class CompanyPosSettings(models.Model):
     require_mpesa_reference_on_confirm = models.BooleanField(
         default=False,
         help_text=(
-            "When on, confirming a sale requires a reference number. "
+            "When on, confirming a sale requires a reference number for "
+            "M-Pesa/Card payments (cash has no reference). "
             "When off, the reference is optional."
         ),
     )
@@ -946,6 +950,14 @@ class CompanyPosSettings(models.Model):
         help_text="When on, receipts print a 'System maintained by' line with the maintainer phone.",
     )
     maintainer_phone = models.CharField(max_length=40, blank=True, default="")
+    enable_analytics_time_filter = models.BooleanField(
+        default=False,
+        help_text=(
+            "When on, analytics date filters also offer from/to time fields. "
+            "Left blank they cover the full 24 hours; set times narrow the "
+            "day/period window."
+        ),
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -967,6 +979,8 @@ class CompanyPosSettings(models.Model):
             kinds.append(ShopReceiptKind.TRADE_OUT)
         if getattr(self, "enable_trade_in", True):
             kinds.append(ShopReceiptKind.TRADE_IN)
+        if getattr(self, "enable_gift", True):
+            kinds.append(ShopReceiptKind.GIFT)
         return kinds
 
     def enabled_payment_methods(self):
@@ -1135,6 +1149,7 @@ class ShopPosSettings(models.Model):
     enable_quotation = models.BooleanField(default=True)
     enable_trade_out = models.BooleanField(default=True)
     enable_trade_in = models.BooleanField(default=True)
+    enable_gift = models.BooleanField(default=True)
     enable_cash = models.BooleanField(default=True)
     enable_mpesa = models.BooleanField(default=True)
     enable_card = models.BooleanField(default=False)
@@ -1254,6 +1269,7 @@ class ShopPosSettings(models.Model):
     receipt_format_quotation = models.CharField(max_length=8, default="Q")
     receipt_format_trade_out = models.CharField(max_length=8, default="T")
     receipt_format_trade_in = models.CharField(max_length=8, default="TI")
+    receipt_format_gift = models.CharField(max_length=8, default="GF")
     mpesa_collection_type = models.CharField(
         max_length=16,
         choices=(
@@ -1312,7 +1328,8 @@ class ShopPosSettings(models.Model):
     require_mpesa_reference_on_confirm = models.BooleanField(
         default=False,
         help_text=(
-            "When on, confirming a sale requires a reference number. "
+            "When on, confirming a sale requires a reference number for "
+            "M-Pesa/Card payments (cash has no reference). "
             "When off, the reference is optional."
         ),
     )

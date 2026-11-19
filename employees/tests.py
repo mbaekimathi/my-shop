@@ -616,7 +616,8 @@ class ConfirmSalesReceiptTests(TestCase):
         self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
         self.assertEqual(sale.mpesa_receipt_number, "ALREADYHERE")
 
-    def test_confirm_requires_reference_for_cash_when_setting_on(self):
+    def test_confirm_cash_skips_reference_when_setting_on(self):
+        """Cash-only confirms carry no M-Pesa/Card reference."""
         from django.core.exceptions import ValidationError
 
         from shops.services import confirm_shop_receipt, set_company_pos_setting
@@ -625,9 +626,10 @@ class ConfirmSalesReceiptTests(TestCase):
             field="require_mpesa_reference_on_confirm", enabled=True
         )
         sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-CASH-OK")
+        # No reference needed for cash — but the payment time is still required.
         with self.assertRaisesMessage(
             ValidationError,
-            "Enter the reference number before confirming this receipt.",
+            "Enter the payment date and time before confirming this receipt.",
         ):
             confirm_shop_receipt(
                 shop=self.shop, receipt_id=sale.pk, actor=self.staff
@@ -636,13 +638,35 @@ class ConfirmSalesReceiptTests(TestCase):
             shop=self.shop,
             receipt_id=sale.pk,
             actor=self.staff,
-            mpesa_receipt_number="CASHREF99",
             payment_at="2026-11-12T09:15",
         )
         sale.refresh_from_db()
         self.assertTrue(result["ok"])
         self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
-        self.assertEqual(sale.mpesa_receipt_number, "CASHREF99")
+        self.assertEqual(sale.mpesa_receipt_number, "")
+
+    def test_confirm_method_switch_to_cash_skips_reference(self):
+        """Confirming an M-Pesa receipt as cash-only needs no reference."""
+        from shops.services import confirm_shop_receipt, set_company_pos_setting
+
+        set_company_pos_setting(
+            field="require_mpesa_reference_on_confirm", enabled=True
+        )
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-SWITCH-CASH")
+        sale.payment_method = ShopPaymentMethod.MPESA
+        sale.save(update_fields=["payment_method"])
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=sale.pk,
+            actor=self.staff,
+            payment_method="cash",
+            payment_at="2026-11-12T09:15",
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertEqual(sale.status, ShopReceiptStatus.CONFIRMED)
+        self.assertEqual(sale.payment_method, "cash")
+        self.assertEqual(sale.mpesa_receipt_number, "")
 
     def test_confirm_page_lists_sales_only(self):
         from django.test import RequestFactory
@@ -3997,6 +4021,117 @@ class StoreManagerRoleTests(TestCase):
         self.assertEqual(whatsapp.status_code, 302)
         self.assertEqual(item_mgmt.status_code, 200)
 
+    def test_dashboard_offers_stock_report_generator(self):
+        self.client.login(username="830031", password=self.password)
+        response = self.client.get("/company-store-manager/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Generate stock report")
+        self.assertContains(
+            response, 'action="/company-store-manager/store-report/"'
+        )
+        self.assertContains(response, 'name="download"')
+        self.assertContains(response, 'name="item_id"')
+
+    def test_store_report_download_streams_period_pdf(self):
+        from decimal import Decimal
+
+        from items.models import Item
+        from items.store_stock_services import (
+            build_store_item_stock_report,
+            record_store_stock_in,
+            record_store_stock_out,
+        )
+
+        item = Item.objects.create(
+            category="PARTS",
+            name="REPORT BOLT",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("12.00"),
+        )
+        record_store_stock_in(
+            actor=self.manager,
+            item_id=item.pk,
+            quantity="5",
+            received_by_id=self.manager.pk,
+        )
+        record_store_stock_out(
+            actor=self.manager,
+            item_id=item.pk,
+            quantity="2",
+            received_by_id=self.manager.pk,
+        )
+
+        report = build_store_item_stock_report(day_start=None, day_end=None)
+        row = next(r for r in report["rows"] if r["id"] == item.pk)
+        self.assertEqual(row["start"], Decimal("0"))
+        self.assertEqual(row["in"], Decimal("5.000"))
+        self.assertEqual(row["out"], Decimal("2.000"))
+        self.assertEqual(row["close"], Decimal("3.000"))
+
+        self.client.login(username="830031", password=self.password)
+        pdf = self.client.get(
+            "/company-store-manager/store-report/", {"download": "1"}
+        )
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
+        self.assertIn("store-stock-report", pdf["Content-Disposition"])
+
+    def test_store_item_stock_report_period_bounds(self):
+        from datetime import timedelta
+        from decimal import Decimal
+
+        from django.utils import timezone
+
+        from items.models import Item, StoreStockMovement
+        from items.store_stock_services import (
+            build_store_item_stock_report,
+            record_store_stock_in,
+            record_store_stock_out,
+            record_store_trade,
+        )
+
+        item = Item.objects.create(
+            category="PARTS",
+            name="PERIOD BOLT",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("12.00"),
+        )
+        record_store_stock_in(
+            actor=self.manager,
+            item_id=item.pk,
+            quantity="5",
+            received_by_id=self.manager.pk,
+        )
+        StoreStockMovement.objects.filter(item=item).update(
+            created_at=timezone.now() - timedelta(days=10)
+        )
+        record_store_stock_out(
+            actor=self.manager,
+            item_id=item.pk,
+            quantity="2",
+            received_by_id=self.manager.pk,
+        )
+        record_store_trade(
+            actor=self.manager,
+            kind="trade_out",
+            person_name="Jane Trader",
+            person_phone="0722000000",
+            lines=[(item.pk, Decimal("1"), None)],
+        )
+
+        now = timezone.now()
+        report = build_store_item_stock_report(
+            day_start=now - timedelta(days=2),
+            day_end=now + timedelta(days=1),
+        )
+        row = next(r for r in report["rows"] if r["id"] == item.pk)
+        self.assertEqual(row["start"], Decimal("5.000"))
+        self.assertEqual(row["in"], Decimal("0"))
+        self.assertEqual(row["out"], Decimal("2.000"))
+        self.assertEqual(row["trades"], Decimal("-1.000"))
+        self.assertEqual(row["close"], Decimal("2.000"))
+
     def test_shop_manager_role_still_exists(self):
         self.assertNotEqual(EmployeeRole.SHOP_MANAGER, EmployeeRole.COMPANY_STORE_MANAGER)
         self.assertEqual(EmployeeRole.SHOP_MANAGER.label, "Shop Manager")
@@ -4187,6 +4322,165 @@ class RiderRoleTests(TestCase):
         stock = self.client.get("/rider/stock-management/")
         self.assertEqual(stock.status_code, 302)
         self.assertIn("/rider/", stock.url)
+
+
+class CompanyAccountantRoleTests(TestCase):
+    """Company accountant: read-only analytics + stock oversight, all shops."""
+
+    def setUp(self):
+        from employees.module_permissions import employee_may, profile_has_shop_allocation
+        from employees.workspace import sidebar_for_role_dashboard
+
+        self.employee_may = employee_may
+        self.profile_has_shop_allocation = profile_has_shop_allocation
+        self.sidebar_for_role_dashboard = sidebar_for_role_dashboard
+
+        self.password = "acct-pass"
+        self.user = User.objects.create_user(
+            username="850051",
+            password=self.password,
+            email="acct@test.local",
+            first_name="ACCOUNT",
+            last_name="ANT",
+            is_active=True,
+        )
+        self.accountant = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="850051",
+            phone_country_code="+254",
+            phone_number="700000951",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.COMPANY_ACCOUNTANT,
+        )
+        self.shop = Shop.objects.create(
+            name="ACCT SHOP",
+            location="NAIROBI",
+            email="acct-shop@test.local",
+            phone_number="0700000951",
+            login_code="850151",
+            password_hash="x",
+            created_by=self.accountant,
+        )
+
+    def test_role_label_and_portal_home(self):
+        self.assertEqual(
+            self.accountant.get_role_display(), "Company Accountant"
+        )
+        self.client.login(username="850051", password=self.password)
+        response = self.client.get("/company-accountant/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Accountant workspace")
+
+        via_dashboard = self.client.get("/employees/dashboard/")
+        self.assertEqual(via_dashboard.status_code, 302)
+        self.assertIn("/company-accountant/", via_dashboard.url)
+
+    def test_dashboard_sidebar_links(self):
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.COMPANY_ACCOUNTANT, profile=self.accountant
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertEqual(
+            labels,
+            ["Stock Management", "Analytics", "Cashiers", "Suppliers"],
+        )
+
+    def test_default_permissions_read_only_scope(self):
+        for module, submodule in (
+            ("analytics", "view"),
+            ("analytics", "balances"),
+            ("analytics", "stock"),
+            ("analytics", "suppliers"),
+            ("stock-management", "view"),
+            ("stock-management", "movements"),
+            ("stock-management", "report"),
+        ):
+            self.assertTrue(
+                self.employee_may(self.accountant, module, submodule),
+                f"{module}/{submodule} should be allowed by default",
+            )
+        for module, submodule in (
+            ("analytics", "revenue"),
+            ("analytics", "expenses"),
+            ("analytics", "account_pay"),
+            ("analytics", "confirm-receipts"),
+            ("analytics", "return-receipts"),
+            ("stock-management", "in"),
+            ("stock-management", "out"),
+            ("stock-management", "request"),
+            ("stock-management", "serials"),
+            ("stock-management", "settings"),
+            ("item-management", "view"),
+            ("hr-management", "home"),
+            ("shop-management", "view"),
+            ("my-shop", "workspace"),
+            ("settings", "home"),
+        ):
+            self.assertFalse(
+                self.employee_may(self.accountant, module, submodule),
+                f"{module}/{submodule} should be denied by default",
+            )
+
+    def test_sees_all_shops_without_allocation(self):
+        self.assertFalse(self.accountant.assigned_shops.exists())
+        self.assertTrue(self.profile_has_shop_allocation(self.accountant))
+        shop_ids = {
+            shop.pk for shop in actionable_shops_for_profile(self.accountant)
+        }
+        self.assertIn(self.shop.pk, shop_ids)
+
+    def test_allowed_pages_render(self):
+        self.client.login(username="850051", password=self.password)
+        for url in (
+            "/company-accountant/analytics/",
+            "/company-accountant/analytics/balances/",
+            "/company-accountant/analytics/stock/",
+            "/company-accountant/analytics/suppliers/",
+            "/company-accountant/stock-management/?mode=view",
+            "/company-accountant/stock-management/?mode=movements",
+            "/company-accountant/stock-management/?mode=report",
+        ):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, url)
+
+    def test_denied_pages_redirect_home(self):
+        self.client.login(username="850051", password=self.password)
+        for url in (
+            "/company-accountant/analytics/revenue/",
+            "/company-accountant/stock-management/?mode=in",
+            "/company-accountant/stock-management/?mode=out",
+            "/company-accountant/stock-management/?mode=serials",
+            "/company-accountant/item-management/",
+            "/company-accountant/hr-management/",
+            "/company-accountant/shop-management/",
+        ):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 302, url)
+            self.assertIn("/company-accountant/", response.url, url)
+
+    def test_explicit_permission_row_overrides_default(self):
+        from employees.models import EmployeeModulePermission
+
+        EmployeeModulePermission.objects.create(
+            employee=self.accountant,
+            module_slug="analytics",
+            submodule_slug="revenue",
+            allowed=True,
+        )
+        self.assertTrue(
+            self.employee_may(self.accountant, "analytics", "revenue")
+        )
+        EmployeeModulePermission.objects.create(
+            employee=self.accountant,
+            module_slug="analytics",
+            submodule_slug="balances",
+            allowed=False,
+        )
+        # The permission cache is per profile instance — refetch to see the row.
+        fresh = EmployeeProfile.objects.get(pk=self.accountant.pk)
+        self.assertFalse(
+            self.employee_may(fresh, "analytics", "balances")
+        )
 
 
 class EmployeeHomeReceiptPreviewTests(TestCase):

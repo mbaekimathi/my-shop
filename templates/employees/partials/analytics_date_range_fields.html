@@ -23,3 +23,25 @@
   {% if report_range == 'year' %}required{% endif %}
   aria-label="Year"
 >
+{% if time_filter_enabled %}
+<input
+  type="time"
+  name="time_from"
+  value="{{ report_time_from }}"
+  data-range-field="day period"
+  data-range-optional
+  {% if report_range != 'day' and report_range != 'period' %}hidden disabled{% endif %}
+  aria-label="From time"
+  title="From this time (blank = start of day)"
+>
+<input
+  type="time"
+  name="time_to"
+  value="{{ report_time_to }}"
+  data-range-field="day period"
+  data-range-optional
+  {% if report_range != 'day' and report_range != 'period' %}hidden disabled{% endif %}
+  aria-label="To time"
+  title="Up to this time (blank = end of day)"
+>
+{% endif %}

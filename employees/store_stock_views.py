@@ -19,6 +19,7 @@ from items.models import (
     StoreStockMovementType,
 )
 from items.store_stock_services import (
+    build_store_item_stock_report,
     build_store_stock_report,
     list_store_stock_items,
     parse_stock_out_details,
@@ -852,6 +853,92 @@ def store_shelf_stock(request):
     )
 
 
+def _store_report_download(*, report, filter_context):
+    """PDF download of the per-item store report (same engine as shelf reports)."""
+    import re
+
+    from django.http import HttpResponse
+    from django.utils import timezone
+
+    from items.services import build_stock_report_pdf
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    logo_path = ""
+    if getattr(company, "logo", None):
+        try:
+            logo_path = company.logo.path
+        except Exception:
+            logo_path = ""
+
+    period_label = (
+        (filter_context.get("report_period_label") or "").strip() or "—"
+    )
+    headers = [
+        "Item", "Category", "Start", "In", "Transfers", "Trades", "Out", "Close",
+    ]
+    rows = []
+    for row in report["rows"]:
+        label = row["name"]
+        if row["is_suspended"]:
+            label = f"{label} (suspended)"
+        rows.append(
+            [
+                label,
+                row["category"] or "—",
+                row["start_display"],
+                row["in_display"],
+                row["transfers_display"],
+                row["trades_display"],
+                row["out_display"],
+                row["close_display"],
+            ]
+        )
+    if rows:
+        totals = report["totals"]
+        rows.append(
+            [
+                "Total",
+                "",
+                totals["start_display"],
+                totals["in_display"],
+                totals["transfers_display"],
+                totals["trades_display"],
+                totals["out_display"],
+                totals["close_display"],
+            ]
+        )
+
+    pdf_bytes = build_stock_report_pdf(
+        company_name=company_name,
+        page_mode="report",
+        period_label=period_label,
+        event_filter_label="Item stock",
+        view_label="By item",
+        shop_label="Central store",
+        logo_path=logo_path,
+        company_phone=(getattr(company, "phone_number", None) or "").strip(),
+        company_email=(getattr(company, "email", None) or "").strip(),
+        company_location=(getattr(company, "location", None) or "").strip(),
+        report_headers=headers,
+        report_rows=rows,
+    )
+    safe_period = (
+        re.sub(r"[^\w\-]+", "-", period_label, flags=re.UNICODE)
+        .strip("-")
+        .lower()
+        or "export"
+    )
+    stamp = timezone.localtime(timezone.now()).strftime("%Y-%m-%d-%H%M")
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="store-stock-report-{safe_period}-{stamp}.pdf"'
+    )
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
+
+
 @role_required(EmployeeRole.COMPANY_STORE_MANAGER)
 @require_GET
 def store_stock_report(request):
@@ -865,6 +952,35 @@ def store_stock_report(request):
     if denied is not None:
         return denied
     page = build_store_stock_report(request=request)
+    download_params = [
+        (key, value)
+        for key in (
+            "range",
+            "date",
+            "date_from",
+            "date_to",
+            "month",
+            "year",
+            "time_from",
+            "time_to",
+        )
+        if (value := (request.GET.get(key) or "").strip())
+    ]
+    if page["selected_item_id"] != "":
+        download_params.append(("item_id", str(page["selected_item_id"])))
+    download_params.append(("download", "1"))
+    from urllib.parse import urlencode
+
+    store_report_download_url = f"?{urlencode(download_params)}"
+    if (request.GET.get("download") or "").strip() == "1":
+        return _store_report_download(
+            report=build_store_item_stock_report(
+                day_start=page.get("start"),
+                day_end=page.get("end"),
+                item_id=page["selected_item_id"] or None,
+            ),
+            filter_context=page,
+        )
     return render(
         request,
         "employees/store_stock_report.html",
@@ -890,6 +1006,7 @@ def store_stock_report(request):
             "item_toggle_url": reverse("employees:store_stock_item_count_toggle"),
             "stock_req": _stock_requirements(),
             "stock_out_reasons": _stock_out_reasons(),
+            "store_report_download_url": store_report_download_url,
             "page_sidebar": sidebar_for_store_stock(
                 EmployeeRole.COMPANY_STORE_MANAGER, profile=profile, active="report"
             ),

@@ -24,6 +24,7 @@ class EmployeeRole(models.TextChoices):
     SHOP_STORE_MANAGER = "shop_store_manager", "Shop Store Manager"
     SHOP_CASHIER = "shop_cashier", "Shop Cashier"
     IT_SUPPORT = "it_support", "IT Support"
+    COMPANY_ACCOUNTANT = "company_accountant", "Company Accountant"
     RIDER = "rider", "Rider"
 
 
@@ -45,7 +46,10 @@ SHOP_ALLOCATION_ROLES = frozenset(
     }
 )
 
-# Roles with full stock workflow (in / out / transfer / serials / report).
+# Roles eligible for the full stock workflow pages (in / out / transfer /
+# serials / report). This only gates which modes a role may ever open — the
+# HR permission matrix still decides each mode, so the Company Accountant's
+# read-only default reaches movements / report but not stock in / out.
 FULL_STOCK_WORKFLOW_ROLES = frozenset(
     {
         EmployeeRole.SUPER_ADMIN,
@@ -54,6 +58,7 @@ FULL_STOCK_WORKFLOW_ROLES = frozenset(
         EmployeeRole.COMPANY_STORE_MANAGER,
         EmployeeRole.SHOP_STORE_MANAGER,
         EmployeeRole.IT_SUPPORT,
+        EmployeeRole.COMPANY_ACCOUNTANT,
     }
 )
 
@@ -64,6 +69,7 @@ COMPANY_WIDE_SHOP_ROLES = frozenset(
         EmployeeRole.COMPANY_MANAGER,
         EmployeeRole.COMPANY_STORE_MANAGER,
         EmployeeRole.IT_SUPPORT,
+        EmployeeRole.COMPANY_ACCOUNTANT,
     }
 )
 

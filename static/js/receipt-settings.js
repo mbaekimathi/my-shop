@@ -258,7 +258,8 @@
   }
 
   function updateFormatPreviews(map) {
-    ["sale", "credit", "quotation", "trade_out", "trade_in"].forEach((kind) => {
+    ["sale", "credit", "quotation", "trade_out", "trade_in", "gift"].forEach(
+      (kind) => {
       const el = root.querySelector(`[data-receipt-format-preview="${kind}"]`);
       if (!el) return;
       const value = map?.[kind] || localPreview(
@@ -331,13 +332,16 @@
           root.querySelector('[data-receipt-format="trade_out"]')?.value || "",
         receipt_format_trade_in:
           root.querySelector('[data-receipt-format="trade_in"]')?.value || "",
+        receipt_format_gift:
+          root.querySelector('[data-receipt-format="gift"]')?.value || "",
       };
       const unchanged =
         payload.receipt_format_sale === saved.sale &&
         payload.receipt_format_credit === saved.credit &&
         payload.receipt_format_quotation === saved.quotation &&
         payload.receipt_format_trade_out === saved.trade_out &&
-        payload.receipt_format_trade_in === saved.trade_in;
+        payload.receipt_format_trade_in === saved.trade_in &&
+        payload.receipt_format_gift === saved.gift;
       if (unchanged) return;
 
       formatInputs.forEach((input) => input.classList.add("is-saving"));
@@ -348,6 +352,7 @@
         saved.quotation = data.receipt_format_quotation;
         saved.trade_out = data.receipt_format_trade_out;
         saved.trade_in = data.receipt_format_trade_in;
+        saved.gift = data.receipt_format_gift;
         const saleInput = root.querySelector('[data-receipt-format="sale"]');
         const creditInput = root.querySelector('[data-receipt-format="credit"]');
         const quotationInput = root.querySelector(
@@ -364,6 +369,8 @@
           '[data-receipt-format="trade_in"]'
         );
         if (tradeInInput) tradeInInput.value = saved.trade_in;
+        const giftInput = root.querySelector('[data-receipt-format="gift"]');
+        if (giftInput) giftInput.value = saved.gift;
         formatInputs.forEach((input) => input.classList.remove("is-error"));
         updateFormatPreviews({
           sale: data.preview_sale,
@@ -371,6 +378,7 @@
           quotation: data.preview_quotation,
           trade_out: data.preview_trade_out,
           trade_in: data.preview_trade_in,
+          gift: data.preview_gift,
         });
       } catch (error) {
         formatInputs.forEach((input) => {
@@ -383,6 +391,7 @@
           quotation: localPreview(saved.quotation),
           trade_out: localPreview(saved.trade_out),
           trade_in: localPreview(saved.trade_in),
+          gift: localPreview(saved.gift),
         });
         window.alert(error.message || "Could not save receipt formats.");
       } finally {

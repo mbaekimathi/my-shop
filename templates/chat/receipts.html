@@ -149,7 +149,7 @@
             <input type="time" data-rcpt-conf-time aria-label="Payment time">
           </label>
         </div>
-        <label class="rcpt-field">
+        <label class="rcpt-field" data-rcpt-conf-ref-wrap>
           <span data-rcpt-conf-reflabel>M-Pesa reference</span>
           <input type="text" data-rcpt-conf-ref maxlength="40" autocomplete="off"
                  placeholder="e.g. QK7H2X9P1A" aria-label="M-Pesa reference">
@@ -225,5 +225,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script defer src="{% static 'js/receipts.js' %}?v=4"></script>
+<script defer src="{% static 'js/receipts.js' %}?v=5"></script>
 {% endblock %}

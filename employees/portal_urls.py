@@ -365,6 +365,11 @@ urlpatterns = [
         name="role_shop_cashier_settings",
     ),
     path("it-support/", views.role_it_support, name="role_it_support"),
+    path(
+        "company-accountant/",
+        views.role_company_accountant,
+        name="role_company_accountant",
+    ),
     path("rider/", views.role_rider, name="role_rider"),
     path(
         "rider/open/",

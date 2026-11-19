@@ -3350,7 +3350,7 @@ def my_shop_receipt_confirm(request, shop_id, receipt_id):
 @shop_floor_required
 @require_http_methods(["GET", "POST"])
 def my_shop_day_toggle(request, shop_id):
-    """Open or close the shop day with balances, stock confirm, and staff ID."""
+    """Open or close the shop day with balances and staff ID."""
     profile, shop, denied = _require_allocated_shop_access(request, shop_id)
     if denied:
         return denied
@@ -3369,7 +3369,6 @@ def my_shop_day_toggle(request, shop_id):
         "mpesa_amount": "",
         "card_amount": "",
         "credit_amount": "",
-        "stock_confirmed": False,
         "login_code": "",
     }
     drawing_data = {
@@ -3481,8 +3480,6 @@ def my_shop_day_toggle(request, shop_id):
                 "mpesa_amount": (request.POST.get("mpesa_amount") or "").strip(),
                 "card_amount": (request.POST.get("card_amount") or "").strip(),
                 "credit_amount": (request.POST.get("credit_amount") or "").strip(),
-                "stock_confirmed": request.POST.get("stock_confirmed")
-                in ("1", "true", "on", "yes"),
                 "login_code": (request.POST.get("login_code") or "").strip(),
             }
             payload = {
@@ -3490,7 +3487,6 @@ def my_shop_day_toggle(request, shop_id):
                 "mpesa_amount": form_data["mpesa_amount"],
                 "card_amount": form_data["card_amount"],
                 "credit_amount": form_data["credit_amount"],
-                "stock_confirmed": form_data["stock_confirmed"],
                 "login_code": form_data["login_code"],
             }
             try:
@@ -4024,7 +4020,7 @@ def my_shop_checkout(request, shop_id):
     kind = str(payload.get("kind") or "").strip().lower()
     perm_key = (
         kind
-        if kind in {"sale", "credit", "quotation", "trade_out", "trade_in"}
+        if kind in {"sale", "credit", "quotation", "trade_out", "trade_in", "gift"}
         else "workspace"
     )
     # The dashboard Sell popup is exempt from the company/shop POS toggles.
@@ -5040,6 +5036,7 @@ SHOP_POS_SETTING_GROUPS = (
             ("enable_quotation", "Quotation"),
             ("enable_trade_out", "Trade out"),
             ("enable_trade_in", "Trade in"),
+            ("enable_gift", "Gift"),
         ),
     },
     {
@@ -5346,6 +5343,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                 quotation=request.POST.get("receipt_format_quotation"),
                 trade_out=request.POST.get("receipt_format_trade_out"),
                 trade_in=request.POST.get("receipt_format_trade_in"),
+                gift=request.POST.get("receipt_format_gift"),
             )
         except ValidationError as exc:
             message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -5360,6 +5358,7 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     "receipt_format_quotation": row.receipt_format_quotation,
                     "receipt_format_trade_out": row.receipt_format_trade_out,
                     "receipt_format_trade_in": row.receipt_format_trade_in,
+                    "receipt_format_gift": row.receipt_format_gift,
                     "preview_sale": preview_receipt_number(
                         kind="sale", settings_row=effective
                     ),
@@ -5374,6 +5373,9 @@ def _handle_shop_settings_post(request, shop, *, section: str):
                     ),
                     "preview_trade_in": preview_receipt_number(
                         kind="trade_in", settings_row=effective
+                    ),
+                    "preview_gift": preview_receipt_number(
+                        kind="gift", settings_row=effective
                     ),
                     "custom_fields": _shop_custom_fields_payload(row),
                 }
@@ -5679,12 +5681,15 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
         or "T",
         "receipt_format_trade_in": getattr(pos, "receipt_format_trade_in", None)
         or "TI",
+        "receipt_format_gift": getattr(pos, "receipt_format_gift", None)
+        or "GF",
         "receipt_format_previews": {
             "sale": preview_receipt_number(kind="sale", settings_row=pos),
             "credit": preview_receipt_number(kind="credit", settings_row=pos),
             "quotation": preview_receipt_number(kind="quotation", settings_row=pos),
             "trade_out": preview_receipt_number(kind="trade_out", settings_row=pos),
             "trade_in": preview_receipt_number(kind="trade_in", settings_row=pos),
+            "gift": preview_receipt_number(kind="gift", settings_row=pos),
         },
         "mpesa_collection_type": pos.mpesa_collection_type or "",
         "mpesa_business_number": pos.mpesa_business_number or "",

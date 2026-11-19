@@ -23,10 +23,10 @@
     const sync = () => {
       const range = rangeSelect?.value || "all";
       rangeFields.forEach((field) => {
-        const match = field.getAttribute("data-range-field") === range;
+        const match = (field.getAttribute("data-range-field") || "").split(" ").includes(range);
         field.hidden = !match;
         field.disabled = !match;
-        field.required = match && range !== "all";
+        field.required = match && range !== "all" && !field.hasAttribute("data-range-optional");
       });
     };
     rangeSelect?.addEventListener("change", sync);

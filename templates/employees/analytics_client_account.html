@@ -285,10 +285,10 @@
       const syncRange = () => {
         const range = rangeSelect?.value || "day";
         rangeFields.forEach((field) => {
-          const match = field.getAttribute("data-range-field") === range;
+          const match = (field.getAttribute("data-range-field") || "").split(" ").includes(range);
           field.hidden = !match;
           field.disabled = !match;
-          field.required = match;
+          field.required = match && !field.hasAttribute("data-range-optional");
         });
       };
       rangeSelect?.addEventListener("change", syncRange);

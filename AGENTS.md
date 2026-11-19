@@ -199,6 +199,26 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   linked supplier (matched by pk + shop scope). Tests:
   `employees/tests_analytics_suppliers.py::ExpenseReceiptPayTests`.
 
+## Analytics time filter (Settings → POS → Analytics)
+- `CompanyPosSettings.enable_analytics_time_filter` (off by default) adds
+  optional `time_from`/`time_to` `type="time"` inputs to the shared
+  `employees/partials/analytics_date_range_fields.html` filter partial, so
+  every analytics page that includes it gets them at once.
+- `_date_filter_context` (`employees/analytics_services.py`) parses the two
+  params and, for `day`/`period` ranges only, narrows the `start`/`end`
+  bounds: `time_from` moves the start to that time on the first day,
+  `time_to` moves the exclusive end to the end of that minute on the last
+  day (so "to 17:00" still counts 17:00:xx sales). Blank times = the full
+  24-hour window; month/year/all-time ranges ignore the params. Helpers:
+  `_parse_filter_time` / `_apply_time_filter_bounds` /
+  `_analytics_time_filter_enabled`.
+- The time inputs carry `data-range-field="day period"` +
+  `data-range-optional`: every `data-range-field` sync snippet now matches a
+  space-separated token list (`split(" ").includes(range)`) and skips
+  `required` on `data-range-optional` fields. Any page missing the JS update
+  just hides the time inputs — degrade, no break.
+- Tests: `shops/tests/test_analytics_time_filter.py`.
+
 ## Shop floor sidebar toggles (Settings → POS)
 - `enable_sidebar_*` on `CompanyPosSettings` (+ per-shop `ShopPosSettings`
   override) are **link-only**: they hide menu links in the `/my-shop/<id>/`
@@ -268,8 +288,9 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   action (`sell_action`, first quick action, gated by `my-shop/workspace` +
   any of sale/credit/quotation, per-employee `sell` sidebar pref) opens
   `shops/partials/sell_modal.html` (`data-modal="sell"`, `cashier-sell.js`)
-  — a lean floor-style cart: live `my_shop_catalog` search, sale/credit/quotation
-  picker, payment methods + splits, client name/phone autosuggest
+  — a lean floor-style cart: live `my_shop_catalog` search,
+  sale/credit/quotation/gift picker, payment methods + splits, client
+  name/phone autosuggest
   (`my_shop_client_lookup`), serial picker (`my_shop_serial_search`; serial
   lines' qty = picked serials), staff-ID verify, then POSTs the same
   `my_shop_checkout` payload the floor sends. Skips STK push, delivery, trades,
@@ -278,7 +299,7 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   feature toggles** — its own per-employee toggles live under Cashier settings
   → "Sell popup" (`SELL_POPUP_TOGGLES` in employees/workspace.py, stored in
   `sidebar_prefs` as `sell_*` keys, POSTed as `sell_<key>` fields): document
-  types (sale/credit/quotation), payment channels (cash/M-Pesa/card — split
+  types (sale/credit/quotation/gift), payment channels (cash/M-Pesa/card — split
   methods derive from enabled channels), and "Edit item prices". Client
   fields are always shown, optional for sales. The payload sends
   `dashboard_popup: true` → `my_shop_checkout` honours it only for a logged-in
@@ -562,9 +583,39 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Both share the `STORE_MANAGER_ALLOWED_KEYS` default allow-list via
   `STORE_MANAGER_ROLES` (`employees/module_permissions.py`); explicit HR
   permission rows still override.
+- The company store manager dashboard (`role_home.html`, `store_report`
+  context from `_render_role_page`) carries a **Stock report** card — the
+  shared `analytics_date_range_fields.html` period picker plus the item
+  search (`store_stock_item_search` + `store-stock-report.js`) — whose
+  Generate button GET-submits to `store-report/` with `download=1`. The card
+  only renders while item stock tracking is on and the profile has
+  `stock-management/report`. `store_stock_report` streams a branded
+  per-item PDF (Start / In / Transfers / Trades / Out / Close over the
+  filtered period, `build_store_item_stock_report` in
+  `items/store_stock_services.py` — the store-side mirror of
+  `build_shelf_stock_report`) via `_store_report_download` →
+  `build_stock_report_pdf`; the report page's own "Download PDF" button
+  uses the same URL (`store_report_download_url`).
 - Data migration `employees/migrations/0017_*` rewrites `role` +
   `extra_roles` CSV `store_manager` → `company_store_manager` (widens the
   MySQL ENUM first, then shrinks to the final set).
+
+## Company accountant role
+- `company_accountant` (**Company Accountant**, home `/company-accountant/`)
+  is a read-only oversight role: company-wide (`COMPANY_WIDE_SHOP_ROLES`,
+  sees every active shop without allocation — not shop-scoped).
+- Its permission default is the `ACCOUNTANT_ALLOWED_KEYS` allow-list in
+  `employees/module_permissions.py` (`role_default_permission`) — analytics
+  `view`/`balances`/`stock`/`suppliers` + stock-management
+  `view`/`movements`/`report`; everything else defaults to deny. Explicit HR
+  permission rows still override (the matrix works as for any role).
+- It is also in `FULL_STOCK_WORKFLOW_ROLES` so the stock-management view's
+  role gate lets `movements`/`report` open — the per-mode permission check
+  still blocks in/out/transfer/serials; treat the set as "eligible for the
+  full stock pages", not "can run every stock action".
+- Dashboard sidebar (`sidebar_for_role_dashboard` →
+  `_dashboard_analytics_section_links`) shows: Stock Management, Analytics,
+  Cashiers, Suppliers. Tests: `employees/tests.py::CompanyAccountantRoleTests`.
 
 ## Multi-role employees
 - `EmployeeProfile.role` stays the **primary** role; `extra_roles` is a CSV
@@ -606,6 +657,27 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Tests: `employees/tests_multi_role.py` (`ActingShopRolePickTests` covers the
   shop step).
 
+## Gift receipts (POS document kind `gift`)
+- `ShopReceiptKind.GIFT` is a payment-free issue of stock: no payment method
+  (`payment_method=NONE`, no till channels), no delivery, no confirm step
+  (created `CONFIRMED`), no WhatsApp share. Stock still deducts like a sale
+  (`StockOutReason.GIFT` on the store movement mirror) and serial-tracked
+  items still need serials; COGS is recorded on the line. `total` records
+  the value of the goods given. The client name/phone section always shows
+  for gift (same always-on treatment as the trade kinds — it survives
+  `enable_client_data` being off) and fields stay optional unless the
+  `require_client_*` flags apply.
+- Toggled by `enable_gift` on `CompanyPosSettings` (+ `ShopPosSettings`
+  override), permission `my-shop/gift`, analytics section slug `gifts`,
+  receipt-number field `receipt_format_gift` (default prefix `GF`). The
+  dashboard Sell popup offers it via per-employee `sell_gift` pref and it is
+  exempt from POS kind toggles there (same exemption as sale/credit/
+  quotation). Returns work (restock) — `can_return` includes gift.
+- Gifts never touch the day report / till totals (`day_session_*` only reads
+  `kind=sale`) and never join sales/credit revenue figures — they live in
+  their own analytics section + receipt browse filter (`kind=gift`).
+- Tests: `shops/tests/test_gift.py`.
+
 ## Receipt return / cancel permission
 - Cancel IS a return: `cancel_pending_shop_receipt` restocks the remaining
   lines, so every cancel path also requires the **Return receipt** toggle —
@@ -617,12 +689,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   the authorising staff code; `my_shop_receipt_return` requires
   `my-shop/return_receipt` on the floor profile (portal sessions fall through
   to the staff-code check inside `return_shop_receipt_items`).
-- `can_return` / `can_cancel` in receipt-detail payloads and `can_cancel` on
-  confirm-receipts rows are masked off when the viewing profile lacks the
-  matching return toggle (`_confirm_rows_apply_permissions`), so the buttons
-  hide instead of 403ing.
+- Confirmed receipts are protected: any status change off CONFIRMED
+  (pending or cancelled) requires `analytics/return-receipts` on the
+  viewer (`analytics_receipt_set_status`) plus a belt-and-braces
+  `ensure_employee_may` inside `set_confirm_receipt_status` — confirm-side
+  staff (`analytics/confirm-receipts` only) cannot undo a confirmed sale.
+- `can_return` / `can_cancel` in receipt-detail payloads and `can_cancel` +
+  `can_set_pending` (confirmed rows) on confirm-receipts rows are masked off
+  when the viewing profile lacks the matching return toggle
+  (`_confirm_rows_apply_permissions`, `analytics_receipt_detail`), so the
+  buttons hide instead of 403ing.
 - Checkout perm keys map 1:1 to `my-shop/<kind>` (`sale`, `credit`,
-  `quotation`, `trade_out`, `trade_in`) — unknown kinds fall back to
+  `quotation`, `trade_out`, `trade_in`, `gift`) — unknown kinds fall back to
   `workspace`; `complete_shop_checkout` re-checks the authorising code's
   `my-shop/<kind>` and `my-shop/receipts` when confirm-at-checkout is used.
 - Tests: `shops/tests/test_permission_enforcement.py`

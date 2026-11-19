@@ -206,6 +206,42 @@ def _render_role_page(request, expected_role):
         "status_label": profile.get_status_display(),
         "page_sidebar": sidebar_for_role_dashboard(expected_role, profile=profile),
     }
+    if expected_role == EmployeeRole.COMPANY_STORE_MANAGER:
+        from .module_permissions import employee_may
+        from .store_stock_views import item_stock_tracking_enabled
+
+        if item_stock_tracking_enabled() and employee_may(
+            profile, "stock-management", "report"
+        ):
+            from .analytics_services import _date_filter_context
+
+            date_filter = _date_filter_context(
+                request, allow_all_time=True, default_all_time=True
+            )
+            context.update(
+                {
+                    "store_report": {
+                        "form_url": reverse("employees:store_stock_report"),
+                        "item_search_url": reverse(
+                            "employees:store_stock_item_search"
+                        ),
+                    },
+                    **{
+                        key: date_filter[key]
+                        for key in (
+                            "report_range",
+                            "report_date_value",
+                            "report_date_from",
+                            "report_date_to",
+                            "report_month_value",
+                            "report_year_value",
+                            "time_filter_enabled",
+                            "report_time_from",
+                            "report_time_to",
+                        )
+                    },
+                }
+            )
     if expected_role == EmployeeRole.SHOP_CASHIER:
         context.update(sell_modal_context(request, profile))
         context.update(buy_stock_modal_context(request, profile))
@@ -1649,6 +1685,11 @@ def _shop_website_variants(request, shop_id):
 @role_required(EmployeeRole.IT_SUPPORT)
 def role_it_support(request):
     return _render_role_page(request, EmployeeRole.IT_SUPPORT)
+
+
+@role_required(EmployeeRole.COMPANY_ACCOUNTANT)
+def role_company_accountant(request):
+    return _render_role_page(request, EmployeeRole.COMPANY_ACCOUNTANT)
 
 
 def _rider_page_context(request, *, active="dashboard"):
@@ -3165,6 +3206,7 @@ POS_SETTING_GROUPS = (
             ("enable_quotation", "Quotation"),
             ("enable_trade_out", "Trade out"),
             ("enable_trade_in", "Trade in"),
+            ("enable_gift", "Gift"),
         ),
     },
     {
@@ -3255,6 +3297,13 @@ POS_SETTING_GROUPS = (
             ("enable_sidebar_printer", 'Show "Connect to printer"'),
             ("enable_sidebar_receipts", 'Show "Receipts"'),
             ("enable_sidebar_website", 'Show "Shop website"'),
+        ),
+    },
+    {
+        "title": "Analytics",
+        "summary": "Filter controls on the analytics pages.",
+        "toggles": (
+            ("enable_analytics_time_filter", "Time filter on analytics"),
         ),
     },
 )
@@ -3512,6 +3561,7 @@ def _company_pos_settings(
                     quotation=request.POST.get("receipt_format_quotation"),
                     trade_out=request.POST.get("receipt_format_trade_out"),
                     trade_in=request.POST.get("receipt_format_trade_in"),
+                    gift=request.POST.get("receipt_format_gift"),
                 )
             except ValidationError as exc:
                 message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -3528,6 +3578,7 @@ def _company_pos_settings(
                         "receipt_format_quotation": row.receipt_format_quotation,
                         "receipt_format_trade_out": row.receipt_format_trade_out,
                         "receipt_format_trade_in": row.receipt_format_trade_in,
+                        "receipt_format_gift": row.receipt_format_gift,
                         "preview_sale": preview_receipt_number(kind="sale", settings_row=row),
                         "preview_credit": preview_receipt_number(
                             kind="credit", settings_row=row
@@ -3540,6 +3591,9 @@ def _company_pos_settings(
                         ),
                         "preview_trade_in": preview_receipt_number(
                             kind="trade_in", settings_row=row
+                        ),
+                        "preview_gift": preview_receipt_number(
+                            kind="gift", settings_row=row
                         ),
                     }
                 )
@@ -3798,12 +3852,15 @@ def _company_pos_settings(
             or "T",
             "receipt_format_trade_in": getattr(pos, "receipt_format_trade_in", None)
             or "TI",
+            "receipt_format_gift": getattr(pos, "receipt_format_gift", None)
+            or "GF",
             "receipt_format_previews": {
                 "sale": preview_receipt_number(kind="sale", settings_row=pos),
                 "credit": preview_receipt_number(kind="credit", settings_row=pos),
                 "quotation": preview_receipt_number(kind="quotation", settings_row=pos),
                 "trade_out": preview_receipt_number(kind="trade_out", settings_row=pos),
                 "trade_in": preview_receipt_number(kind="trade_in", settings_row=pos),
+                "gift": preview_receipt_number(kind="gift", settings_row=pos),
             },
             "mpesa_collection_type": pos.mpesa_collection_type or "",
             "mpesa_business_number": pos.mpesa_business_number or "",

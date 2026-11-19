@@ -71,6 +71,7 @@ POS_SETTING_FIELDS = {
     "enable_quotation",
     "enable_trade_out",
     "enable_trade_in",
+    "enable_gift",
     "enable_cash",
     "enable_mpesa",
     "enable_card",
@@ -114,6 +115,7 @@ POS_SETTING_FIELDS = {
     "show_return_notice_on_receipt",
     "require_mpesa_reference_on_confirm",
     "show_maintainer_on_receipt",
+    "enable_analytics_time_filter",
 }
 
 # Shop override sections (POS page vs Receipt page).
@@ -124,6 +126,7 @@ SHOP_POS_FIELD_NAMES = frozenset(
         "enable_quotation",
         "enable_trade_out",
     "enable_trade_in",
+        "enable_gift",
         "enable_cash",
         "enable_mpesa",
         "enable_card",
@@ -174,6 +177,7 @@ SHOP_RECEIPT_FIELD_NAMES = frozenset(
         "receipt_format_quotation",
         "receipt_format_trade_out",
         "receipt_format_trade_in",
+        "receipt_format_gift",
         "mpesa_collection_type",
         "mpesa_business_number",
         "mpesa_account_number",
@@ -245,6 +249,7 @@ RECEIPT_FORMAT_FIELDS = {
     "quotation": "receipt_format_quotation",
     "trade_out": "receipt_format_trade_out",
     "trade_in": "receipt_format_trade_in",
+    "gift": "receipt_format_gift",
 }
 RECEIPT_FORMAT_DEFAULTS = {
     "sale": "S",
@@ -252,6 +257,7 @@ RECEIPT_FORMAT_DEFAULTS = {
     "quotation": "Q",
     "trade_out": "T",
     "trade_in": "TI",
+    "gift": "GF",
 }
 DOC_NUMBER_PREFIX = {
     "stock_in": "I",
@@ -654,6 +660,7 @@ def set_shop_receipt_number_formats(
     quotation: str | None = None,
     trade_out: str | None = None,
     trade_in: str | None = None,
+    gift: str | None = None,
 ) -> ShopPosSettings:
     row = get_shop_pos_settings(shop)
     if not row.override_receipt:
@@ -682,6 +689,9 @@ def set_shop_receipt_number_formats(
             trade_in, label="Trade in"
         )
         updates.append("receipt_format_trade_in")
+    if gift is not None:
+        row.receipt_format_gift = _clean_receipt_format(gift, label="Gift")
+        updates.append("receipt_format_gift")
     if not updates:
         raise ValidationError("No receipt formats to update.")
     custom_attrs = _sync_shop_custom_fields(row, *updates)
@@ -1329,7 +1339,6 @@ def build_shop_day_prompt(
         "mpesa_amount": "",
         "card_amount": "",
         "credit_amount": "",
-        "stock_confirmed": False,
         "login_code": "",
     }
 
@@ -3470,6 +3479,7 @@ def set_receipt_number_formats(
     quotation: str | None = None,
     trade_out: str | None = None,
     trade_in: str | None = None,
+    gift: str | None = None,
 ) -> CompanyPosSettings:
     settings_row = get_company_pos_settings()
     updates = []
@@ -3494,6 +3504,11 @@ def set_receipt_number_formats(
             trade_in, label="Trade in"
         )
         updates.append("receipt_format_trade_in")
+    if gift is not None:
+        settings_row.receipt_format_gift = _clean_receipt_format(
+            gift, label="Gift"
+        )
+        updates.append("receipt_format_gift")
     if not updates:
         raise ValidationError("No receipt formats to update.")
     settings_row.save(update_fields=[*updates, "updated_at"])
@@ -3705,6 +3720,7 @@ POS_EMPLOYEE_PERMISSION_LINKS: dict[str, tuple[str, str, str]] = {
     "enable_quotation": ("my-shop", "quotation", "Quotation"),
     "enable_trade_out": ("my-shop", "trade_out", "Trade out"),
     "enable_trade_in": ("my-shop", "trade_in", "Trade in"),
+    "enable_gift": ("my-shop", "gift", "Gift"),
 }
 
 _POS_FIELD_TO_ANALYTICS_SECTION = {
@@ -3712,6 +3728,7 @@ _POS_FIELD_TO_ANALYTICS_SECTION = {
     "enable_credit": "credits",
     "enable_quotation": "quotations",
     "enable_trade_out": "tradings",
+    "enable_gift": "gifts",
 }
 
 # Fields with no permission-matrix link still hide their analytics section.
@@ -3725,6 +3742,7 @@ _POS_FIELD_TO_RECEIPT_KIND = {
     "enable_quotation": "quotation",
     "enable_trade_out": "trade_out",
     "enable_trade_in": "trade_in",
+    "enable_gift": "gift",
 }
 
 # The "Shop floor sidebar" toggles only hide menu links on the shop page —
@@ -3953,6 +3971,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_quotation": row.enable_quotation,
         "enable_trade_out": getattr(row, "enable_trade_out", True),
         "enable_trade_in": getattr(row, "enable_trade_in", True),
+        "enable_gift": getattr(row, "enable_gift", True),
         "enable_cash": row.enable_cash,
         "enable_mpesa": row.enable_mpesa,
         "enable_card": bool(getattr(row, "enable_card", False)),
@@ -3969,6 +3988,9 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_client_data": bool(getattr(row, "enable_client_data", True)),
         "require_client_phone": bool(getattr(row, "require_client_phone", False)),
         "require_client_name": bool(getattr(row, "require_client_name", False)),
+        "enable_analytics_time_filter": bool(
+            getattr(row, "enable_analytics_time_filter", False)
+        ),
         "enable_cart_confirm_receipt": bool(
             getattr(row, "enable_cart_confirm_receipt", True)
         ),
@@ -4850,6 +4872,15 @@ def _sales_ticket_document_meta(receipt) -> dict:
             "party_label": "Client",
             "authorised_label": "Served by",
             "footer": "Items received on trade — settle the amount owed later",
+        }
+    if kind == ShopReceiptKind.GIFT:
+        return {
+            "doc_type": "gift",
+            "document_title": "Gift note",
+            "doc_number_label": "No.",
+            "party_label": "Recipient",
+            "authorised_label": "Issued by",
+            "footer": "Items issued as a gift — no payment collected",
         }
     return {
         "doc_type": "sale",
@@ -6290,13 +6321,16 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
 
     kind = (payload.get("kind") or ShopReceiptKind.SALE).strip().lower()
     if kind not in ShopReceiptKind.values:
-        raise ValidationError("Choose sale, credit, quotation, trade out, or trade in.")
+        raise ValidationError(
+            "Choose sale, credit, quotation, trade out, trade in, or gift."
+        )
 
     if kind in (
         ShopReceiptKind.SALE,
         ShopReceiptKind.CREDIT,
         ShopReceiptKind.TRADE_OUT,
         ShopReceiptKind.TRADE_IN,
+        ShopReceiptKind.GIFT,
     ):
         require_shop_day_for_sale(shop=shop)
 
@@ -6306,7 +6340,12 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
         and not (
             pos_unrestricted
             and kind
-            in (ShopReceiptKind.SALE, ShopReceiptKind.CREDIT, ShopReceiptKind.QUOTATION)
+            in (
+                ShopReceiptKind.SALE,
+                ShopReceiptKind.CREDIT,
+                ShopReceiptKind.QUOTATION,
+                ShopReceiptKind.GIFT,
+            )
         )
     ):
         raise ValidationError("That transaction type is disabled in POS settings.")
@@ -6403,6 +6442,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
         not in {
             ShopReceiptKind.TRADE_OUT,
             ShopReceiptKind.TRADE_IN,
+            ShopReceiptKind.GIFT,
         }
     ):
         client_name = ""
@@ -6858,6 +6898,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
             share_whatsapp=share_whatsapp,
             credit_due_date=credit_due_date,
             created_by=authorising,
+            status=(
+                ShopReceiptStatus.CONFIRMED
+                if kind == ShopReceiptKind.GIFT
+                else ShopReceiptStatus.ACTIVE
+            ),
         )
 
         if delivery_payload is not None:
@@ -7011,7 +7056,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
                         reason=(
                             StockOutReason.TRADE_OUT
                             if kind == ShopReceiptKind.TRADE_OUT
-                            else ""
+                            else (
+                                StockOutReason.GIFT
+                                if kind == ShopReceiptKind.GIFT
+                                else ""
+                            )
                         ),
                         note=(
                             f"{receipt.receipt_number} · "
@@ -9068,12 +9117,6 @@ def _parse_balance_fields(
     }
 
 
-def _truthy(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in ("1", "true", "on", "yes")
-
-
 @transaction.atomic
 def open_shop_day(*, shop: Shop, payload: dict):
     """Open a shop day with opening balances and staff authorisation."""
@@ -9103,9 +9146,6 @@ def open_shop_day(*, shop: Shop, payload: dict):
         message="You do not have permission to open this shop.",
     )
 
-    if not _truthy(payload.get("stock_confirmed")):
-        raise ValidationError("Confirm that stock is up to date before opening.")
-
     last_closed = get_last_closed_shop_day(shop)
     defaults = {}
     if last_closed is not None:
@@ -9122,7 +9162,6 @@ def open_shop_day(*, shop: Shop, payload: dict):
         opening_mpesa=balances["mpesa"],
         opening_card=balances["card"],
         opening_credit=balances["credit"],
-        stock_confirmed_open=True,
         opened_by=authorising,
     )
     return {
@@ -9163,9 +9202,6 @@ def close_shop_day(*, shop: Shop, payload: dict):
         message="You do not have permission to close this shop.",
     )
 
-    if not _truthy(payload.get("stock_confirmed")):
-        raise ValidationError("Confirm that stock is up to date before closing.")
-
     summary = day_session_balance_summary(session)
     balances = _parse_balance_fields(
         payload,
@@ -9181,7 +9217,6 @@ def close_shop_day(*, shop: Shop, payload: dict):
     session.closing_mpesa = balances["mpesa"]
     session.closing_card = balances["card"]
     session.closing_credit = balances["credit"]
-    session.stock_confirmed_close = True
     session.closed_by = authorising
     session.closed_at = timezone.now()
     session.save(
@@ -9190,7 +9225,6 @@ def close_shop_day(*, shop: Shop, payload: dict):
             "closing_mpesa",
             "closing_card",
             "closing_credit",
-            "stock_confirmed_close",
             "closed_by",
             "closed_at",
         ]
@@ -9807,6 +9841,7 @@ def _receipt_list_item(receipt) -> dict:
                 ShopReceiptKind.SALE,
                 ShopReceiptKind.CREDIT,
                 ShopReceiptKind.TRADE_OUT,
+                ShopReceiptKind.GIFT,
             }
             and receipt.status != ShopReceiptStatus.CANCELLED
         ),
@@ -10023,6 +10058,8 @@ def list_shop_receipts(
         kind_key = "trade_out"
     elif kind_key in ("trade_in", "trade-in"):
         kind_key = "trade_in"
+    elif kind_key in ("gift", "gifts"):
+        kind_key = "gift"
     elif kind_key in ("stock", "stock-suppliers", "stock_suppliers"):
         kind_key = "stock"
     elif kind_key in ("expense", "expenses", "expense-suppliers", "expense_suppliers"):
@@ -10037,6 +10074,7 @@ def list_shop_receipts(
         "quotation",
         "trade_out",
         "trade_in",
+        "gift",
         "sales_credits",
     )
     include_stock = kind_key in ("all", "stock")
@@ -10061,7 +10099,14 @@ def list_shop_receipts(
         )
         if kind_key == "sales_credits":
             pos_qs = pos_qs.filter(kind__in=("sale", "credit"))
-        elif kind_key in ("sale", "credit", "quotation", "trade_out", "trade_in"):
+        elif kind_key in (
+            "sale",
+            "credit",
+            "quotation",
+            "trade_out",
+            "trade_in",
+            "gift",
+        ):
             pos_qs = pos_qs.filter(kind=kind_key)
         if q:
             pos_qs = pos_qs.filter(
@@ -12078,7 +12123,22 @@ def confirm_shop_receipt(
     require_details = bool(
         getattr(pos, "require_mpesa_reference_on_confirm", False)
     )
-    if require_details and not ref and not existing_ref:
+    # A reference only makes sense for M-Pesa/Card channels — a cash-only
+    # confirm has nothing to reference.
+    if is_credit:
+        ref_method = (payment_method or "").strip().lower()
+        ref_applies = ref_method in {"mpesa", "card"} or (
+            ref_method != "cash" and bool(ref or existing_ref)
+        )
+    else:
+        confirm_method = (payment_method or "").strip().lower() or (
+            receipt.payment_method or ""
+        ).strip().lower()
+        ref_applies = any(
+            channel != "cash"
+            for channel in payment_method_channels(confirm_method)
+        )
+    if require_details and ref_applies and not ref and not existing_ref:
         raise ValidationError(
             "Enter the reference number before confirming this receipt."
         )
@@ -12359,6 +12419,16 @@ def set_confirm_receipt_status(
 
     # target == pending (ACTIVE)
     if current == ShopReceiptStatus.CONFIRMED:
+        # Reverting a confirmed sale is held to the same elevated toggle as
+        # returns/cancels — confirm-receipts alone may not undo it.
+        from employees.module_permissions import ensure_employee_may
+
+        ensure_employee_may(
+            actor,
+            "analytics",
+            "return-receipts",
+            message="You do not have permission to change confirmed receipts.",
+        )
         locked = ShopReceipt.objects.select_for_update().get(pk=receipt_pk, shop=shop)
         locked.status = ShopReceiptStatus.ACTIVE
         locked.save(update_fields=["status"])

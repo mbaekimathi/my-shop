@@ -10550,26 +10550,55 @@ body.serial-scan-open {
 }
 
 /* ── Cashier "Sell" modal (role dashboards) ─────────────────────────── */
+.sell-modal .workspace-modal-backdrop {
+  background: rgba(6, 18, 20, 0.58);
+  backdrop-filter: blur(7px);
+}
+
 .sell-modal-dialog {
-  width: min(1060px, calc(100% - 1.5rem));
-  height: min(760px, calc(100dvh - 1.5rem));
+  width: min(1080px, calc(100% - 1.5rem));
+  height: min(780px, calc(100dvh - 1.5rem));
   display: flex;
   flex-direction: column;
   overflow: hidden;
   margin: auto;
   box-sizing: border-box;
-  border-radius: 18px;
+  border-radius: 22px;
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.04) inset,
-    0 32px 80px rgba(0, 0, 0, 0.32);
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 24px 48px rgba(6, 18, 20, 0.18),
+    0 48px 110px rgba(6, 18, 20, 0.3);
+  animation: sell-modal-in 0.28s var(--ease);
+}
+
+@keyframes sell-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .sell-modal .buy-stock-modal-head {
-  padding: 1rem 1.25rem;
+  padding: 1.05rem 1.35rem;
   border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(130% 180% at 0% 0%, rgba(var(--teal-rgb), 0.09), transparent 55%),
+    var(--surface);
   flex: none;
+}
+
+.sell-modal .buy-stock-modal-kicker {
+  box-shadow: inset 0 0 0 1px rgba(var(--teal-rgb), 0.18);
+}
+
+.sell-modal .buy-stock-modal-head h2 {
+  letter-spacing: -0.025em;
 }
 
 .sell-modal .buy-stock-modal-lead {
@@ -10588,25 +10617,32 @@ body.serial-scan-open {
   min-height: 0;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 1rem 1.1rem 1.25rem;
+  padding: 1.1rem 1.25rem 1.4rem;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.8rem;
   align-content: start;
-  background: color-mix(in srgb, var(--panel-muted) 55%, var(--surface));
+  background: color-mix(in srgb, var(--panel-muted) 70%, var(--surface));
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .sell-search-field {
   position: sticky;
   top: 0;
   z-index: 4;
-  border-radius: 12px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+  padding: 0.8rem 1rem;
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
 }
 
 .sell-results {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.5rem;
   align-content: start;
+}
+
+.sell-results .buy-stock-simple-empty-card {
+  padding: 2.5rem 1rem;
 }
 
 .sell-result-item {
@@ -10615,10 +10651,11 @@ body.serial-scan-open {
   justify-content: space-between;
   gap: 0.75rem;
   width: 100%;
-  padding: 0.65rem 0.8rem;
+  padding: 0.7rem 0.85rem;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface);
+  box-shadow: var(--shadow-sm);
   text-align: left;
   cursor: pointer;
   transition:
@@ -10629,8 +10666,8 @@ body.serial-scan-open {
 
 .sell-result-item:hover,
 .sell-result-item:focus-visible {
-  border-color: color-mix(in srgb, var(--accent, #2b7) 50%, var(--line));
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: var(--shadow-md);
   transform: translateY(-1px);
 }
 
@@ -10665,6 +10702,7 @@ body.serial-scan-open {
 .sell-result-item-side strong {
   color: var(--text-strong);
   font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -10676,21 +10714,24 @@ body.serial-scan-open {
   min-height: 0;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 1rem 1.1rem 1.25rem;
+  padding: 1.1rem 1.25rem 1.4rem;
   display: grid;
-  gap: 0.9rem;
+  gap: 1rem;
   align-content: start;
   border-left: 1px solid var(--line);
   background: var(--surface);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .sell-cart {
   display: grid;
-  gap: 0.55rem;
-  padding: 0.8rem;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem 1rem;
   border: 1px solid var(--line);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--panel-muted) 30%, var(--surface));
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .sell-cart-head {
@@ -10702,35 +10743,43 @@ body.serial-scan-open {
 
 .sell-cart-title {
   margin: 0;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--mist-dim);
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
+}
+
+.sell-cart-title i,
+.sell-cart-title svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--teal);
 }
 
 .sell-cart-count {
   min-width: 1.4rem;
-  padding: 0.05rem 0.45rem;
+  padding: 0.08rem 0.5rem;
   border-radius: 999px;
-  background: var(--accent, #2b7);
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: 800;
   text-align: center;
 }
 
 .sell-cart-empty {
   margin: 0;
-  padding: 0.5rem 0.15rem;
+  padding: 0.75rem 0.5rem;
   color: var(--mist-dim);
   font-size: 0.8rem;
   text-align: center;
   border: 1px dashed var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
 }
 
 .sell-cart-lines {
@@ -10738,16 +10787,17 @@ body.serial-scan-open {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.45rem;
+  gap: 0.5rem;
 }
 
 .sell-line {
   display: grid;
   gap: 0.45rem;
-  padding: 0.6rem 0.7rem;
+  padding: 0.65rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .sell-line-head {
@@ -10760,7 +10810,7 @@ body.serial-scan-open {
 .sell-line-name {
   margin: 0;
   font-size: 0.84rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-strong);
   min-width: 0;
 }
@@ -10781,8 +10831,8 @@ body.serial-scan-open {
 }
 
 .sell-line-remove:hover {
-  color: var(--danger, #c0392b);
-  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+  color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .sell-line-mid {
@@ -10799,24 +10849,26 @@ body.serial-scan-open {
   background: var(--surface);
   color: var(--text-strong);
   font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .sell-line-price input:focus {
   outline: none;
-  border-color: var(--accent, #2b7);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #2b7) 18%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .sell-line-price-static {
   font-size: 0.8rem;
   color: var(--mist-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .sell-line-qty {
   display: inline-flex;
   align-items: stretch;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 10px;
   overflow: hidden;
   margin-left: auto;
   background: var(--surface);
@@ -10851,12 +10903,14 @@ body.serial-scan-open {
   background: var(--surface);
   color: var(--text-strong);
   font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .sell-line-total {
   font-size: 0.84rem;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -10918,8 +10972,8 @@ body.serial-scan-open {
 }
 
 .sell-serial-option:has(input:checked) {
-  border-color: var(--accent, #2b7);
-  background: color-mix(in srgb, var(--accent, #2b7) 12%, var(--surface));
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 
 .sell-serial-note {
@@ -10932,49 +10986,86 @@ body.serial-scan-open {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 0.55rem;
+  margin-top: 0.15rem;
+  padding-top: 0.7rem;
   border-top: 1px solid var(--line);
-  font-size: 0.9rem;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--mist-dim);
 }
 
 .sell-cart-total strong {
   color: var(--text-strong);
-  font-size: 1.05rem;
+  font-size: 1.2rem;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .sell-checkout {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.85rem;
   align-content: start;
+  padding: 0.95rem 1rem 1.05rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.sell-checkout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.sell-checkout-title i,
+.sell-checkout-title svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--teal);
 }
 
 .sell-modal .shop-cart-field {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.4rem;
 }
 
 .sell-modal .shop-cart-field-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--mist-dim);
 }
 
 .sell-modal .shop-cart-seg {
   grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border-radius: 14px;
+}
+
+.sell-modal .shop-cart-seg-option span {
+  border-radius: 10px;
 }
 
 .sell-modal .shop-cart-seg-option input:focus-visible + span {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #2b7) 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .sell-modal .shop-cart-input input:focus,
 .sell-modal .shop-cart-input select:focus,
 .sell-modal .sell-search-field:focus-within {
-  border-color: var(--accent, #2b7);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #2b7) 18%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .sell-modal .shop-cart-input input:focus,
@@ -10989,51 +11080,80 @@ body.serial-scan-open {
 }
 
 .sell-modal .shop-cart-client {
+  padding: 0.8rem 0.85rem;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel-muted) 30%, var(--surface));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-muted) 40%, var(--surface));
+}
+
+.sell-modal .shop-cart-client.is-required {
+  border-color: rgba(var(--teal-rgb), 0.3);
+  background: rgba(var(--teal-rgb), 0.05);
 }
 
 .sell-login input {
-  letter-spacing: 0.25em;
-  font-weight: 600;
+  letter-spacing: 0.3em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
 .sell-submit {
   width: 100%;
-  min-height: 2.75rem;
-  border-radius: 12px;
-  font-size: 0.95rem;
-  font-weight: 700;
+  min-height: 3rem;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--accent-ink);
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  box-shadow: var(--accent-glow);
+}
+
+.sell-submit:hover:not(:disabled) {
+  box-shadow: var(--accent-glow-strong);
+}
+
+.sell-submit:disabled {
+  opacity: 0.5;
+  box-shadow: none;
 }
 
 .sell-status {
   min-height: 1rem;
+  text-align: center;
 }
 
 .sell-status.is-error {
-  color: var(--danger, #c0392b);
+  color: var(--danger);
 }
 
 .sell-result {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.7rem;
+  padding: 1rem;
+  border: 1px solid var(--ok-border);
+  border-radius: 16px;
+  background: var(--ok-bg);
+  box-shadow: var(--shadow-sm);
 }
 
 .sell-result-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   margin: 0;
-  font-weight: 700;
-  color: var(--text-strong);
+  font-weight: 800;
+  color: var(--ok-text);
 }
 
 .sell-result-receipt {
   margin: 0;
-  padding: 0.75rem;
+  padding: 0.85rem;
   border: 1px dashed var(--line);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel-muted) 40%, var(--surface));
-  font-family: monospace;
+  border-radius: 12px;
+  background: var(--surface);
+  font-family: var(--font-mono);
   font-size: 0.74rem;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -11077,6 +11197,7 @@ body.serial-scan-open {
     height: 100vh;
     border-radius: 0;
     border: 0;
+    animation: none;
   }
 
   .sell-modal .buy-stock-modal-head {
@@ -11086,5 +11207,16 @@ body.serial-scan-open {
   .sell-modal-main,
   .sell-modal-side {
     padding: 0.85rem 0.9rem 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sell-modal-dialog {
+    animation: none;
+  }
+
+  .sell-result-item,
+  .sell-submit {
+    transition: none;
   }
 }
