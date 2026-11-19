@@ -4232,8 +4232,9 @@ def _confirm_receipt_sale_rows(
                 sold_as = "shop"
                 sold_as_label = "Shop"
             if is_credit:
-                # Pending credits confirm with an amount (full clear or partial).
-                can_confirm = is_pending or is_cancelled
+                # Pending/partially returned credits confirm with an amount
+                # (full clear or partial).
+                can_confirm = is_pending or is_cancelled or is_partial
                 can_cancel = False
                 can_set_pending = False
                 can_edit_status = can_confirm
@@ -4248,7 +4249,7 @@ def _confirm_receipt_sale_rows(
                 credit_due = str((credit_state or {}).get("due") or "0.00")
                 credit_paid = str((credit_state or {}).get("paid") or "0.00")
             else:
-                can_confirm = is_pending or is_cancelled
+                can_confirm = is_pending or is_cancelled or is_partial
                 can_cancel = is_pending or is_confirmed or is_partial
                 can_set_pending = is_confirmed or is_cancelled
                 can_edit_status = True

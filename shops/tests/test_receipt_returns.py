@@ -229,6 +229,78 @@ class ReceiptReturnScenarioTests(TestCase):
         ).latest("occurred_at")
         self.assertEqual(event.amount, Decimal("100.00"))
 
+    def test_partial_return_sale_can_be_confirmed(self):
+        """A partially returned sale still confirms — and keeps its status."""
+        from shops.services import confirm_shop_receipt, get_shop_receipt_detail
+
+        receipt = self._sale_receipt(qty=2)
+        line = receipt.lines.get()
+        return_shop_receipt_items(
+            shop=self.shop,
+            receipt_id=receipt.pk,
+            payload=self._return_payload([{"line_id": line.pk, "qty": 1}]),
+        )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, ShopReceiptStatus.PARTIAL_RETURN)
+
+        detail = get_shop_receipt_detail(shop=self.shop, receipt_id=receipt.pk)
+        self.assertTrue(detail["receipt"]["can_confirm"])
+
+        result = confirm_shop_receipt(
+            shop=self.shop, receipt_id=receipt.pk, actor=self.staff
+        )
+        receipt.refresh_from_db()
+        self.assertTrue(result["ok"])
+        # Confirming does not erase the partial-return marker.
+        self.assertEqual(receipt.status, ShopReceiptStatus.PARTIAL_RETURN)
+        self.assertEqual(result["status"], ShopReceiptStatus.PARTIAL_RETURN)
+
+    def test_partial_return_credit_confirms_with_amount(self):
+        """Partially returned credit collects the balance via the confirm flow."""
+        from shops.services import confirm_shop_receipt, get_shop_receipt_detail
+
+        receipt = self._credit_receipt(amount_paid=Decimal("80.00"))
+        line = receipt.lines.get()
+        return_shop_receipt_items(
+            shop=self.shop,
+            receipt_id=receipt.pk,
+            payload=self._return_payload([{"line_id": line.pk, "qty": 1}]),
+        )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, ShopReceiptStatus.PARTIAL_RETURN)
+        self.assertEqual(receipt.total - receipt.amount_paid, Decimal("20.00"))
+
+        detail = get_shop_receipt_detail(shop=self.shop, receipt_id=receipt.pk)
+        self.assertTrue(detail["receipt"]["can_confirm"])
+        self.assertTrue(detail["receipt"]["is_credit"])
+
+        partial = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=receipt.pk,
+            actor=self.staff,
+            amount="10.00",
+            payment_method="cash",
+        )
+        receipt.refresh_from_db()
+        self.assertTrue(partial["ok"])
+        self.assertTrue(partial.get("partial_credit"))
+        self.assertEqual(receipt.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(receipt.amount_paid, Decimal("90.00"))
+        self.assertEqual(receipt.status, ShopReceiptStatus.PARTIAL_RETURN)
+
+        full = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=receipt.pk,
+            actor=self.staff,
+            amount="10.00",
+            payment_method="cash",
+        )
+        receipt.refresh_from_db()
+        self.assertTrue(full["ok"])
+        self.assertTrue(full.get("cleared_credit"))
+        self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
+        self.assertEqual(receipt.status, ShopReceiptStatus.PARTIAL_RETURN)
+
     def test_credit_return_caps_overpayment(self):
         """Credit 200, paid 150, return 1 → total 100, amount_paid capped to 100."""
         receipt = self._credit_receipt(amount_paid=Decimal("150.00"))

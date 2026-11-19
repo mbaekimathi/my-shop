@@ -1579,7 +1579,9 @@ def _receipt_list_row(receipt) -> dict:
     credit_due = Decimal("0.00")
     if kind == "credit" and status != STATUS_CANCELLED:
         _paid, credit_due = _credit_paid_and_due(receipt)
-    can_confirm = (kind == "sale" and status == STATUS_ACTIVE) or (
+    can_confirm = (
+        kind == "sale" and status in (STATUS_ACTIVE, STATUS_PARTIAL_RETURN)
+    ) or (
         kind == "credit" and status != STATUS_CANCELLED and credit_due > 0
     )
     can_cancel = kind == "sale" and status == STATUS_ACTIVE
@@ -1925,10 +1927,13 @@ def _confirm_one_receipt(
             "receipt": receipt_detail(shop, receipt.pk),
             "receipt_number": receipt.receipt_number,
         }
-    elif receipt.status != STATUS_ACTIVE:
+    elif receipt.status not in (STATUS_ACTIVE, STATUS_PARTIAL_RETURN):
         raise StockError(
-            "Only pending or cancelled receipts can be confirmed."
+            "Only pending, cancelled, or partially returned receipts can be "
+            "confirmed."
         )
+
+    keep_partial_return = receipt.status == STATUS_PARTIAL_RETURN
 
     ref = (mpesa_receipt_number or "").strip()[:40]
     existing_ref = (receipt.mpesa_receipt_number or "").strip()
@@ -2033,7 +2038,9 @@ def _confirm_one_receipt(
         if not cleared_credit and receipt.kind != "sale":
             raise StockError("Could not clear this credit receipt.")
 
-    receipt.status = STATUS_CONFIRMED
+    receipt.status = (
+        STATUS_PARTIAL_RETURN if keep_partial_return else STATUS_CONFIRMED
+    )
     update_fields = ["status"]
     if not is_credit:
         # The confirmer may correct how the sale was paid (incl. card combos).

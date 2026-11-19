@@ -12018,6 +12018,7 @@ def _receipt_can_confirm(receipt) -> bool:
     if receipt.status not in {
         ShopReceiptStatus.ACTIVE,
         ShopReceiptStatus.CANCELLED,
+        ShopReceiptStatus.PARTIAL_RETURN,
     }:
         return False
     if receipt.kind in {ShopReceiptKind.SALE, ShopReceiptKind.CREDIT}:
@@ -12114,8 +12115,17 @@ def confirm_shop_receipt(
             "status_label": receipt.get_status_display(),
             "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
         }
-    elif receipt.status != ShopReceiptStatus.ACTIVE:
-        raise ValidationError("Only pending or cancelled receipts can be confirmed.")
+    elif receipt.status not in {
+        ShopReceiptStatus.ACTIVE,
+        ShopReceiptStatus.PARTIAL_RETURN,
+    }:
+        raise ValidationError(
+            "Only pending, cancelled, or partially returned receipts can be confirmed."
+        )
+
+    # A partially returned receipt keeps that status on confirm — the return
+    # marker must survive so it still shows in the returns audit.
+    keep_partial_return = receipt.status == ShopReceiptStatus.PARTIAL_RETURN
 
     ref = (mpesa_receipt_number or "").strip()[:40]
     existing_ref = (receipt.mpesa_receipt_number or "").strip()
@@ -12259,7 +12269,11 @@ def confirm_shop_receipt(
         if not cleared_credit and receipt.kind != ShopReceiptKind.SALE:
             raise ValidationError("Could not clear this credit receipt.")
 
-    receipt.status = ShopReceiptStatus.CONFIRMED
+    receipt.status = (
+        ShopReceiptStatus.PARTIAL_RETURN
+        if keep_partial_return
+        else ShopReceiptStatus.CONFIRMED
+    )
     update_fields = ["status"]
     if not is_credit:
         # The confirmer may correct how the sale was paid (incl. card combos).
@@ -12380,9 +12394,12 @@ def set_confirm_receipt_status(
         raise ValidationError("Only sales and credits can change status here.")
 
     current = receipt.status
-    if current == ShopReceiptStatus.PARTIAL_RETURN and target != ShopReceiptStatus.CANCELLED:
+    if current == ShopReceiptStatus.PARTIAL_RETURN and target not in {
+        ShopReceiptStatus.CANCELLED,
+        ShopReceiptStatus.CONFIRMED,
+    }:
         raise ValidationError(
-            "Partially returned receipts can only be fully cancelled here."
+            "Partially returned receipts can only be confirmed or fully cancelled here."
         )
 
     if current == target:
