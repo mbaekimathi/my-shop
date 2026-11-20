@@ -3652,7 +3652,14 @@ def my_shop_day_toggle(request, shop_id):
 
 
 def my_shop_day_report(request, shop_id):
-    """Day accounting report as PDF — live preview while open, final once closed."""
+    """Day accounting report — on-screen page first, then print or download.
+
+    The default GET renders the same report page as the analytics session
+    report (inside the shop-floor chrome) so the user picks the action:
+    the Print/download popup offers A4/80mm/58mm sheets and the A4 PDF.
+    ``?download=1`` streams the PDF directly, ``?paper=a4|80|58`` renders
+    the print sheet, ``?session=<id>`` picks a specific day.
+    """
     from django.utils import timezone
 
     profile, shop, denied = _require_allocated_shop_access(request, shop_id)
@@ -3686,22 +3693,68 @@ def my_shop_day_report(request, shop_id):
         messages.info(request, "No day recorded yet — open the shop first.")
         return redirect("employees:my_shop_day_toggle", shop_id=shop.pk)
 
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "download",
+        "print",
+    ):
+        printed_by = ""
+        if profile is not None:
+            printed_by = profile.user.get_full_name() or profile.user.username
+        report_mode = day_report_status_mode(profile)
+        pdf_bytes = build_shop_day_report_pdf(
+            shop=shop,
+            session=session,
+            printed_by=printed_by,
+            company_name=get_company_display_name(),
+            counted_statuses=day_report_counted_statuses(profile),
+            sales_scope_label=(
+                "Pending sales only"
+                if report_mode == "pending"
+                else "Confirmed sales only" if report_mode == "confirmed" else ""
+            ),
+        )
+        stamp = timezone.localtime(session.opened_at).strftime("%Y%m%d")
+        filename = f"day-report-{slugify(shop.name) or 'shop'}-{stamp}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        response["Content-Length"] = str(len(pdf_bytes))
+        return response
+
+    from employees.analytics_services import build_day_session_report_page
+
+    context = build_day_session_report_page(
+        profile=profile, request=request, session=session
+    )
+    page = context.get("page") or {}
+
+    if (request.GET.get("estimate") or "").strip() == "1":
+        tables = page.get("tables") or []
+        row_total = sum(len(t.get("rows") or []) for t in tables)
+        # Rough A4 estimate: header/KPIs ≈ a third page, each section
+        # title + footnote ≈ 3 rows, ~34 body rows per page.
+        a4_page_estimate = max(1, (row_total + len(tables) * 3 + 40) // 34)
+        return JsonResponse(
+            {
+                "ok": True,
+                "paper": "a4",
+                "receipt_count": page.get("sales_count") or 0,
+                "a4_page_estimate": a4_page_estimate,
+                "kind_label": "Day report",
+                "period_label": page.get("period_label") or "",
+            }
+        )
+
     paper = (request.GET.get("paper") or "").strip().lower()
     if paper == "50":
         paper = "58"
     if paper in ("a4", "80", "58"):
-        from employees.analytics_services import (
-            build_day_session_report_page,
-        )
-
-        context = build_day_session_report_page(
-            profile=profile, request=request, session=session
-        )
         return render(
             request,
             "employees/analytics_day_session_print.html",
             {
-                "page": context.get("page") or {},
+                "page": page,
                 "paper": paper,
                 "session": session,
                 "printed_at": timezone.localtime(),
@@ -3710,28 +3763,44 @@ def my_shop_day_report(request, shop_id):
             },
         )
 
-    printed_by = ""
-    if profile is not None:
-        printed_by = profile.user.get_full_name() or profile.user.username
-    report_mode = day_report_status_mode(profile)
-    pdf_bytes = build_shop_day_report_pdf(
+    # Pin the resolved session in the URL so the print popup and later
+    # reloads keep reporting the day on screen (not whatever is latest).
+    if not session_id:
+        params = {"session": session.pk}
+        requested_back = (request.GET.get("back") or "").strip()
+        if requested_back:
+            params["back"] = requested_back
+        return redirect(f"{request.path}?{urlencode(params)}")
+
+    requested_back = (request.GET.get("back") or "").strip()
+    if requested_back and url_has_allowed_host_and_scheme(
+        requested_back, allowed_hosts={request.get_host()}
+    ):
+        page["back_href"] = requested_back
+        page["back_label"] = "Back"
+    else:
+        page["back_href"] = reverse(
+            "employees:my_shop_day_history", kwargs={"shop_id": shop.pk}
+        )
+        page["back_label"] = "Back to day history"
+
+    return _render_my_shop_tool_page(
+        request,
         shop=shop,
-        session=session,
-        printed_by=printed_by,
-        company_name=get_company_display_name(),
-        counted_statuses=day_report_counted_statuses(profile),
-        sales_scope_label=(
-            "Pending sales only"
-            if report_mode == "pending"
-            else "Confirmed sales only" if report_mode == "confirmed" else ""
-        ),
+        profile=profile,
+        shops=_shops_for_floor(profile, shop),
+        active="day_history",
+        title=f"Day report — {shop.name}",
+        headline="Day report",
+        summary="Every report for this shop day — print or download it.",
+        icon="file-text",
+        template_name="employees/analytics.html",
+        extra_context={
+            "section_slug": context.get("section_slug") or "balances",
+            "include_all_time": context.get("include_all_time"),
+            "page": page,
+        },
     )
-    stamp = timezone.localtime(session.opened_at).strftime("%Y%m%d")
-    filename = f"day-report-{slugify(shop.name) or 'shop'}-{stamp}.pdf"
-    response = HttpResponse(pdf_bytes, content_type="application/pdf")
-    response["Content-Disposition"] = f'inline; filename="{filename}"'
-    response["Content-Length"] = str(len(pdf_bytes))
-    return response
 
 
 @shop_floor_required
@@ -3987,6 +4056,12 @@ def my_shop_verify_login_code(request, shop_id):
         )
     from employees.module_permissions import my_shop_capabilities
 
+    from employees.attendance import (
+        clock_in_compulsory,
+        open_entry_for as open_clock_entry_for,
+    )
+
+    clock_in_required = clock_in_compulsory()
     name = authorising.user.get_full_name() or authorising.user.username
     allocated = profile_allocated_to_shop(authorising, shop)
     return JsonResponse(
@@ -4000,6 +4075,16 @@ def my_shop_verify_login_code(request, shop_id):
                 [] if allocated else allocated_shop_names_for_profile(authorising)
             ),
             "shop_name": shop.name,
+            "require_clock_in": clock_in_required,
+            "clocked_in": (
+                open_clock_entry_for(authorising) is not None
+                if clock_in_required
+                else True
+            ),
+            "login_url": (
+                f"{reverse('employees:login')}?next="
+                f"{reverse('employees:employee_clock')}"
+            ),
         }
     )
 
@@ -4121,10 +4206,19 @@ def my_shop_checkout(request, shop_id):
         )
     except ValidationError as exc:
         errors = _validation_errors(exc)
-        return JsonResponse(
-            {"ok": False, "error": errors[0] if errors else "Checkout failed.", "errors": errors},
-            status=400,
-        )
+        payload_out = {
+            "ok": False,
+            "error": errors[0] if errors else "Checkout failed.",
+            "errors": errors,
+        }
+        codes = [e.code for e in getattr(exc, "error_list", [])]
+        if getattr(exc, "code", None) == "clock_in_required" or "clock_in_required" in codes:
+            payload_out["clock_in_required"] = True
+            payload_out["login_url"] = (
+                f"{reverse('employees:login')}?next="
+                f"{reverse('employees:employee_clock')}"
+            )
+        return JsonResponse(payload_out, status=400)
 
     response_payload = {
         "ok": True,

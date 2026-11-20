@@ -179,7 +179,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `day_session_balance_summary` / `day_session_report_details` with the
   employee's day-report counted-status pick; `_apply_pos_visibility` strips
   M-Pesa/Card-labelled columns when the POS flags are off — keep channel
-  names in labels). `?download=1` streams the same
+  names in labels). Money-flow channel columns come from
+  `day_report_channel_columns` (shop-**effective** channels plus any channel
+  with non-zero figures so rows still reconcile), and the page passes the
+  effective settings to `_pos_feature_flags` + force-keeps displayed
+  channels — a shop override that enables M-Pesa/Card survives the company
+  flag strip. A "Credit & gift — not in the till" table follows the
+  money flow when `enable_credit`/`enable_gift` are on
+  (`day_report_not_till_lines` → Docs/Value/Collected/Still due; credit
+  collected+left-to-collect, gift value with "—" collected columns, footnote
+  shows the counted credit-slips trail opened/counted/diff). Credit and
+  gift value never enters Expected in till or Variance — credit is a
+  receivable and gifts are free issues. `?download=1` streams the same
   `build_shop_day_report_pdf`. Session links carry a `?back=` URL so "Back
   to cashiers" restores the filters. Tests:
   `AnalyticsDaySessionReportTests`.
@@ -187,14 +198,24 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   (`page.receipts_print_modal` + `receipts_print_url` = its own path, title/
   lead via `receipts_print_title`/`receipts_print_lead`):
   `?paper=a4|80|58` renders `employees/analytics_day_session_print.html`
-  (browser print sheet — A4 portrait, or a thermal strip that stacks wide
-  tables into label:value cards: `table.sheet-grid.stack`), `?estimate=1`
+  (browser print sheet — A4 portrait, or a thermal strip: narrow tables
+  stay real columns — up to 5 on 80 mm, up to 4 on 58 mm — while wider
+  ones get `table.sheet-grid.stack` = bold title cell then wrapped
+  "Label: value" pairs; to save roll paper the thermal sheet also hides
+  the kicker, meta chips, the KPI strip, table footnotes and whole empty
+  sections — `.sheet-section:has(.sheet-empty)`), `?estimate=1`
   returns the modal's A4 page-count JSON, `?download=1` stays the A4 PDF.
-  The same `?paper=` params work on the shop-floor `my_shop_day_report`
-  (`/my-shop/<id>/day/report/`) — day history rows link 80 mm / 58 mm
-  next to the PDF button. Narrow thermal is keyed `58` everywhere now
-  (`analytics_receipts_print` maps legacy `50` → `58`; the receipts sheet
-  uses `body.paper-58`, `@page 58mm auto`).
+  The shop-floor `my_shop_day_report` (`/my-shop/<id>/day/report/`) now
+  opens the same on-screen report page first — `analytics.html` inside
+  the shop-floor chrome (`_render_my_shop_tool_page`, `active="day_history"`,
+  portal-safe via `_shop_floor_chrome`) with the same print popup —
+  and redirects `?session=`less hits to `?session=<pk>` so print/download
+  stay pinned to the day on screen (the popup JS merges
+  `location.search`). `?download=1` streams the PDF, `?paper=` the print
+  sheet, `?estimate=1` the page-count JSON — day history rows link
+  Report / PDF (`&download=1`) / 80 mm / 58 mm. Narrow thermal is keyed
+  `58` everywhere now (`analytics_receipts_print` maps legacy `50` →
+  `58`; the receipts sheet uses `body.paper-58`, `@page 58mm auto`).
 
 ## Expense payments (Analytics → Expenses → category)
 - `Expense` tracks `amount_paid` + `payment_status` (unpaid/partial/paid);
@@ -382,9 +403,10 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `day_session_balance_summary`. The cashier dashboard has a "Drawings" link
   (single shop → day page `#drawings`; multi → picker with per-shop "Record
   drawing" buttons on open days).
-- Day accounting report PDF: `my_shop_day_report`
-  (`/my-shop/<id>/day/report/`, same `my-shop/open_close` gate, inline
-  `application/pdf`). `build_shop_day_report_pdf` + `day_session_report_details`
+- Day accounting report: `my_shop_day_report`
+  (`/my-shop/<id>/day/report/`, same `my-shop/open_close` gate) opens the
+  on-screen report page; `?download=1` streams the inline
+  `application/pdf`. `build_shop_day_report_pdf` + `day_session_report_details`
   in `shops/services.py` — KPI strip + money-flow table (opening / sales /
   returns / expenses / stock bought / drawings / expected, per channel) plus
   per-line drawings, expenses, and stock movement rows. "Stocked in" lists
@@ -729,9 +751,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   dashboard Sell popup offers it via per-employee `sell_gift` pref and it is
   exempt from POS kind toggles there (same exemption as sale/credit/
   quotation). Returns work (restock) — `can_return` includes gift.
-- Gifts never touch the day report / till totals (`day_session_*` only reads
-  `kind=sale`) and never join sales/credit revenue figures — they live in
-  their own analytics section + receipt browse filter (`kind=gift`).
+- Gifts never touch the day report till totals (`day_session_*` only reads
+  `kind=sale` for money flow) — they appear only in the report's
+  "Credit & gift — not in the till" section (`day_report_not_till_lines`,
+  `gifts` aggregate in `day_session_report_details`), alongside credit, as
+  value-not-money. They never join sales/credit revenue figures — they live
+  in their own analytics section + receipt browse filter (`kind=gift`).
 - Tests: `shops/tests/test_gift.py`.
 
 ## Receipt return / cancel permission

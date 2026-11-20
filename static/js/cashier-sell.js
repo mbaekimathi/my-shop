@@ -857,6 +857,13 @@
           ? data.message || "Your session expired. Sign in again."
           : data.error || errors[0] || "Checkout failed.";
       setStatus(message, { error: true });
+      if (data.clock_in_required && data.login_url && statusEl) {
+        const link = document.createElement("a");
+        link.href = data.login_url;
+        link.className = "sell-status-link";
+        link.textContent = " Sign in as an employee to clock in.";
+        statusEl.appendChild(link);
+      }
       return;
     }
 

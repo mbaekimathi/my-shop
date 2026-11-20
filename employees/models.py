@@ -244,6 +244,62 @@ class WebPushSubscription(models.Model):
         return super().save(*args, **kwargs)
 
 
+class EmployeeAttendance(models.Model):
+    """One clock-in / clock-out work session for an employee."""
+
+    employee = models.ForeignKey(
+        EmployeeProfile,
+        on_delete=models.CASCADE,
+        related_name="attendance_entries",
+    )
+    work_date = models.DateField(db_index=True)
+    clock_in = models.DateTimeField()
+    clock_out = models.DateTimeField(null=True, blank=True)
+    auto_clocked_out = models.BooleanField(
+        default=False,
+        help_text="True when the system closed the entry (idle), not the employee.",
+    )
+    last_activity_at = models.DateTimeField(null=True, blank=True)
+    check_prompted_at = models.DateTimeField(null=True, blank=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-clock_in"]
+        indexes = [
+            models.Index(
+                fields=["employee", "work_date"],
+                name="emp_att_emp_date_idx",
+            ),
+        ]
+
+    def __str__(self):
+        state = "open" if self.is_open else "closed"
+        return f"{self.employee_id}: {self.work_date} ({state})"
+
+    @property
+    def is_open(self):
+        return self.clock_out is None
+
+    @property
+    def duration(self):
+        if self.clock_out is None:
+            return None
+        return self.clock_out - self.clock_in
+
+    @property
+    def duration_label(self):
+        delta = self.duration
+        if delta is None:
+            return ""
+        minutes = int(delta.total_seconds() // 60)
+        hours, mins = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h {mins}m"
+        return f"{mins}m"
+
+
 class EmployeeModulePermission(models.Model):
     """Per-employee allow/deny for a module submodule capability."""
 

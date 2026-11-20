@@ -226,7 +226,9 @@
     }
 
     /* ===== Stacked rows (thermal) ===== */
-    /* Wide tables become label:value cards so every figure stays readable. */
+    /* Wide tables become a compact list, not cards — each record is a bold
+       title line then wrapped "Label: value" pairs separated by " · ", so
+       the thermal roll stays short. */
     table.sheet-grid.stack,
     table.sheet-grid.stack tbody,
     table.sheet-grid.stack tr,
@@ -235,56 +237,93 @@
       width: 100%;
     }
     table.sheet-grid.stack thead { display: none; }
-    table.sheet-grid.stack { border-top: 1px solid var(--line); }
+    table.sheet-grid.stack {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
     table.sheet-grid.stack tbody tr {
-      border: 1px solid #111;
-      border-top: 0;
+      border-top: 1px dashed #666;
+      padding: 0.4mm 0;
       background: #fff !important;
     }
-    table.sheet-grid.stack tbody tr:nth-child(even) td { background: #fff; }
+    table.sheet-grid.stack tbody tr:first-child { border-top: 0; }
+    table.sheet-grid.stack tbody tr:nth-child(even) td {
+      background: transparent;
+    }
     table.sheet-grid.stack td {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 2mm;
+      display: inline;
+      width: auto;
       border: 0;
-      border-bottom: 1px dotted #666;
-      padding: 0.3mm 1.2mm;
-      text-align: right;
-    }
-    table.sheet-grid.stack td:last-child { border-bottom: 0; }
-    table.sheet-grid.stack td[data-label]::before {
-      content: attr(data-label);
-      font-weight: 800;
+      padding: 0;
       text-align: left;
-      color: var(--muted);
+      background: transparent !important;
     }
-    table.sheet-grid.stack td .cell-v {
-      text-align: right;
-      min-width: 0;
-      overflow-wrap: anywhere;
+    table.sheet-grid.stack td[data-label]::before {
+      content: attr(data-label) ": ";
+      font-weight: 800;
     }
-    table.sheet-grid.stack td:first-child .cell-v { text-align: left; }
+    table.sheet-grid.stack td:not(:first-child):not(:last-child)::after {
+      content: " · ";
+    }
     table.sheet-grid.stack td:first-child {
       display: block;
-      border-bottom: 1px solid #111;
       font-weight: 800;
-      text-align: left;
     }
-    table.sheet-grid.stack td:first-child[data-label]::before { content: none; }
+    table.sheet-grid.stack td:first-child::before { content: none; }
     table.sheet-grid.stack td .num,
-    table.sheet-grid.stack td.num { text-align: right; }
-    table.sheet-grid.stack td.num::before { align-self: center; }
+    table.sheet-grid.stack td.num {
+      text-align: left;
+      white-space: normal;
+    }
+    table.sheet-grid.stack td .cell-v { overflow-wrap: anywhere; }
+    table.sheet-grid.stack td .cell-v br { display: none; }
+    table.sheet-grid.stack td .cell-v small { display: inline; }
+    table.sheet-grid.stack td .cell-v small::before { content: " · "; }
     table.sheet-grid.stack tr.row-group td {
       display: block;
       border: 0;
-      border-top: 1.5px solid var(--line);
       background: var(--accent-soft) !important;
       font-weight: 800;
       text-align: left;
+      padding: 0.3mm 1mm;
     }
-    table.sheet-grid.stack tr.row-group td::before { content: none; }
-    table.sheet-grid.stack td small { display: block; }
+    table.sheet-grid.stack tr.row-group td::before,
+    table.sheet-grid.stack tr.row-group td::after { content: none; }
+
+    /* Thermal trims to the essentials — the kicker, meta chips, KPI
+       strip (its figures repeat in Money flow), table footnotes and
+       empty sections are A4/PDF detail, not roll paper. */
+    body.paper-80 .doc-kicker,
+    body.paper-58 .doc-kicker,
+    body.paper-80 .meta-chips,
+    body.paper-58 .meta-chips,
+    body.paper-80 .sheet-kpis,
+    body.paper-58 .sheet-kpis,
+    body.paper-80 .sheet-foot,
+    body.paper-58 .sheet-foot,
+    body.paper-80 .sheet-section:has(.sheet-empty),
+    body.paper-58 .sheet-section:has(.sheet-empty) {
+      display: none;
+    }
+
+    /* Narrow tables keep real columns on thermal — tight padding, and
+       money cells may wrap instead of overflowing the roll width. */
+    body.paper-80 table.sheet-grid:not(.stack) { font-size: 0.68rem; }
+    body.paper-80 table.sheet-grid:not(.stack) th,
+    body.paper-80 table.sheet-grid:not(.stack) td {
+      padding: 0.16rem 0.2rem;
+      overflow-wrap: anywhere;
+    }
+    body.paper-58 table.sheet-grid:not(.stack) { font-size: 0.6rem; }
+    body.paper-58 table.sheet-grid:not(.stack) th,
+    body.paper-58 table.sheet-grid:not(.stack) td {
+      padding: 0.12rem 0.16rem;
+      overflow-wrap: anywhere;
+    }
+    body.paper-80 table.sheet-grid:not(.stack) .num,
+    body.paper-58 table.sheet-grid:not(.stack) .num {
+      white-space: normal;
+    }
 
     /* ===== A4 ===== */
     body.paper-a4 {
@@ -321,21 +360,8 @@
     body.paper-80 .doc-kicker { font-size: 0.6rem; }
     body.paper-80 .sheet-subtitle { font-size: 0.7rem; }
     body.paper-80 .sheet-hint { font-size: 0.66rem; }
-    body.paper-80 .sheet-kpis {
-      grid-template-columns: 1fr 1fr;
-      margin-bottom: 0.55rem;
-    }
-    body.paper-80 .kpi { border-top: 1px solid var(--line-soft); padding: 0.25rem 0.35rem; }
-    body.paper-80 .kpi:nth-child(-n+2) { border-top: 0; }
-    body.paper-80 .kpi:nth-child(odd) { border-left: 0; }
-    body.paper-80 .kpi-value { font-size: 0.85rem; }
-    body.paper-80 .kpi-label { font-size: 0.52rem; }
-    body.paper-80 .kpi-hint { font-size: 0.52rem; }
     body.paper-80 .sheet-section > h2 { font-size: 0.8rem; }
     body.paper-80 table.sheet-grid { font-size: 0.68rem; }
-    body.paper-80 table.sheet-grid th,
-    body.paper-80 table.sheet-grid td { padding: 0.2rem 0.25rem; }
-    body.paper-80 table.sheet-grid.stack td { font-size: 0.72rem; padding: 0.45mm 1.2mm; }
     body.paper-80 .sheet-empty,
     body.paper-80 .sheet-foot,
     body.paper-80 .sheet-footer { font-size: 0.62rem; }
@@ -361,29 +387,9 @@
     body.paper-58 .doc-kicker { font-size: 0.52rem; }
     body.paper-58 .sheet-subtitle { font-size: 0.62rem; }
     body.paper-58 .sheet-hint { font-size: 0.58rem; }
-    body.paper-58 .sheet-kpis {
-      grid-template-columns: 1fr;
-      margin-bottom: 0.5rem;
-    }
-    body.paper-58 .kpi {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 2mm;
-      border-left: 0;
-      border-top: 1px solid var(--line-soft);
-      padding: 0.2rem 0.3rem;
-    }
-    body.paper-58 .kpi:first-child { border-top: 0; }
-    body.paper-58 .kpi-label { font-size: 0.5rem; }
-    body.paper-58 .kpi-value { font-size: 0.78rem; }
-    body.paper-58 .kpi-hint { font-size: 0.5rem; }
     body.paper-58 .sheet-section { margin-bottom: 0.6rem; }
     body.paper-58 .sheet-section > h2 { font-size: 0.68rem; border-left-width: 1.6mm; }
     body.paper-58 table.sheet-grid { font-size: 0.62rem; }
-    body.paper-58 table.sheet-grid th,
-    body.paper-58 table.sheet-grid td { padding: 0.16rem 0.2rem; }
-    body.paper-58 table.sheet-grid.stack td { font-size: 0.66rem; padding: 0.4mm 1mm; }
     body.paper-58 .chip { font-size: 0.52rem; }
     body.paper-58 .sheet-empty,
     body.paper-58 .sheet-foot,
@@ -497,7 +503,7 @@
       <h2>{{ table.title }}</h2>
       {% if table.rows %}
       {% with col_count=table.columns|length %}
-      <table class="sheet-grid{% if paper == "58" or paper == "80" %} stack{% endif %}">
+      <table class="sheet-grid{% if paper == "80" and col_count > 5 %} stack{% elif paper == "58" and col_count > 4 %} stack{% endif %}">
         <thead>
           <tr>
             {% for col in table.columns %}

@@ -1,0 +1,99 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}Clock in / out — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<div class="employee-home">
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <p class="stock-kicker">Employee · Attendance</p>
+        <h2>Clock in / out</h2>
+        <p>
+          {% if open_entry %}
+          Clocked in since {{ open_entry.clock_in|date:"j M Y · H:i" }}.
+          {% else %}
+          You are not clocked in.
+          {% endif %}
+        </p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          {% if open_entry %}
+          <strong>Clocked in</strong>
+          <span>since {{ open_entry.clock_in|date:"H:i" }}</span>
+          {% else %}
+          <strong>Clocked out</strong>
+          <span>no open shift</span>
+          {% endif %}
+        </p>
+      </div>
+    </div>
+    <form class="stock-report-filters stock-report-filters--serials" method="post">
+      {% csrf_token %}
+      {% if open_entry %}
+      <button type="submit" name="action" value="clock_out" class="stock-report-apply">Clock out</button>
+      {% else %}
+      <button type="submit" name="action" value="clock_in" class="stock-report-apply">Clock in</button>
+      {% endif %}
+    </form>
+  </header>
+</section>
+
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
+        <h2>My records</h2>
+        <p>Every clock in / out, newest first.</p>
+      </div>
+    </div>
+  </header>
+
+  {% if entries_page.object_list %}
+  <div class="item-table-wrap item-table-wrap--receipts">
+    <table class="item-table item-table--dense">
+      <thead>
+        <tr>
+          <th scope="col">Date</th>
+          <th scope="col">Clock in</th>
+          <th scope="col">Clock out</th>
+          <th scope="col">Duration</th>
+          <th scope="col" class="item-col--status">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries_page.object_list %}
+        <tr>
+          <td data-label="Date">{{ entry.work_date|date:"j M Y" }}</td>
+          <td data-label="Clock in">{{ entry.clock_in|date:"H:i" }}</td>
+          <td data-label="Clock out">
+            {% if entry.clock_out %}{{ entry.clock_out|date:"H:i" }}{% else %}—{% endif %}
+          </td>
+          <td data-label="Duration">{{ entry.duration_label|default:"—" }}</td>
+          <td class="item-cell--status" data-label="Status">
+            {% if entry.is_open %}
+            <span class="status-pill status-pill--active">Clocked in</span>
+            {% elif entry.auto_clocked_out %}
+            <span class="status-pill status-pill--serial">Auto clock-out</span>
+            {% else %}
+            <span class="status-pill status-pill--hidden">Complete</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "employees/partials/pagination_nav.html" with employees_page=entries_page pagination_label="Record pages" %}
+  {% else %}
+  <div class="dashboard-placeholder">
+    <i data-lucide="clock" aria-hidden="true"></i>
+    <p><strong>No records yet.</strong> Clock in to start tracking your hours.</p>
+  </div>
+  {% endif %}
+</section>
+</div>
+{% endblock %}

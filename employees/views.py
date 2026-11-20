@@ -943,6 +943,8 @@ def role_employee(request):
         receipt_status=receipt_status,
         page=request.GET.get("page") or 1,
     )
+    from .attendance import open_entry_for
+
     return render(
         request,
         "employees/employee_home.html",
@@ -951,6 +953,7 @@ def role_employee(request):
             "meta": ROLE_PAGE_META[EmployeeRole.EMPLOYEE],
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
+            "open_entry": open_entry_for(profile),
             "perf": perf,
             "receipts_page": perf["receipts_page"],
             "pagination": _employee_home_pagination(request, perf["receipts_page"]),
@@ -997,6 +1000,106 @@ def employee_my_analytics(request):
             ),
         },
     )
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def employee_clock(request):
+    from .attendance import clock_in, clock_out, entries_for, open_entry_for
+
+    profile = get_profile_for_request(request)
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip().lower()
+        open_entry = open_entry_for(profile)
+        if action == "clock_in":
+            if open_entry is not None:
+                messages.error(request, "You are already clocked in.")
+            else:
+                clock_in(profile)
+                messages.success(request, "Clocked in.")
+        elif action == "clock_out":
+            if open_entry is None:
+                messages.error(request, "You are not clocked in.")
+            else:
+                clock_out(open_entry)
+                messages.success(request, "Clocked out.")
+        else:
+            messages.error(request, "Unknown clock action.")
+        return_to = (request.POST.get("next") or "").strip()
+        if url_has_allowed_host_and_scheme(
+            return_to, allowed_hosts={request.get_host()}
+        ):
+            return redirect(return_to)
+        return redirect("employees:employee_clock")
+
+    open_entry = open_entry_for(profile)
+    entries_page = Paginator(entries_for(profile), 15).get_page(
+        request.GET.get("page") or 1
+    )
+    return render(
+        request,
+        "employees/employee_clock.html",
+        {
+            "profile": profile,
+            "meta": {
+                "title": "Clock in / out",
+                "headline": "Clock in / out",
+                "summary": "Track your work hours and review past records.",
+                "icon": "clock",
+            },
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "open_entry": open_entry,
+            "entries_page": entries_page,
+            "pagination": _employee_home_pagination(request, entries_page),
+            "page_sidebar": sidebar_for_role_dashboard(
+                profile.role,
+                profile=profile,
+                active_slug="clock",
+            ),
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def employee_clock_status(request):
+    """Heartbeat for the compulsory clock-in check widget."""
+    from .attendance import status_payload
+
+    profile = get_profile_for_request(request)
+    active = (request.GET.get("active") or "").strip() in ("1", "true", "yes")
+    return JsonResponse(status_payload(profile, active=active))
+
+
+@active_employee_required
+@require_POST
+def employee_clock_confirm(request):
+    """Employee confirms they're still clocked in for the 6h check."""
+    from .attendance import confirm_check
+
+    profile = get_profile_for_request(request)
+    return JsonResponse(confirm_check(profile))
+
+
+@active_employee_required
+@require_POST
+def employee_clock_check_prompt(request):
+    """Stamp that the confirm prompt was shown (starts the grace window)."""
+    from .attendance import mark_check_prompted
+
+    profile = get_profile_for_request(request)
+    return JsonResponse(mark_check_prompted(profile))
+
+
+@active_employee_required
+@require_POST
+def employee_clock_auto_out(request):
+    """System clock-out for an idle, unconfirmed entry past the check."""
+    from .attendance import auto_clock_out
+
+    profile = get_profile_for_request(request)
+    return JsonResponse(auto_clock_out(profile))
 
 
 @role_required(EmployeeRole.EMPLOYEE)
@@ -3313,7 +3416,10 @@ POS_SETTING_GROUPS = (
     {
         "title": "Open & close",
         "summary": "",
-        "toggles": (("enable_open_close", "Compulsory open & close"),),
+        "toggles": (
+            ("enable_open_close", "Compulsory open & close"),
+            ("require_clock_in", "Compulsory clock in"),
+        ),
         "show_open_close_schedule": True,
     },
     {

@@ -137,12 +137,13 @@ class CashierDayReportScopeTests(TestCase):
         return url
 
     def _report_session(self, client, url):
-        """GET the report with the PDF builder mocked; return its session."""
+        """GET the report PDF with the builder mocked; return its session."""
+        sep = "&" if "?" in url else "?"
         with patch(
             "shops.views.build_shop_day_report_pdf",
             return_value=b"%PDF-fake",
         ) as pdf:
-            response = client.get(url)
+            response = client.get(f"{url}{sep}download=1")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertTrue(pdf.called)
@@ -202,6 +203,193 @@ class CashierDayReportScopeTests(TestCase):
         client = self._login(self.next)
         session = self._report_session(client, self._report_url(session=own))
         self.assertEqual(session.pk, own.pk)
+
+    def test_default_get_pins_session_then_renders_page(self):
+        """No ?session= → redirect pins the resolved day, then the page renders."""
+        own = self._open_day(self.next)
+        client = self._login(self.next)
+
+        response = client.get(self._report_url())
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url, f"{self._report_url()}?session={own.pk}"
+        )
+
+        response = client.get(response.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"], "text/html; charset=utf-8"
+        )
+        page = response.context["page"]
+        self.assertTrue(page["receipts_print_modal"])
+        self.assertEqual(
+            page["receipts_print_url"],
+            reverse(
+                "employees:my_shop_day_report",
+                kwargs={"shop_id": self.shop.pk},
+            ),
+        )
+
+    def test_paper_param_renders_print_sheet(self):
+        own = self._open_day(self.next)
+        client = self._login(self.next)
+        response = client.get(f"{self._report_url(session=own)}&paper=58")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'class="paper-58"')
+
+    def test_report_lists_credit_and_gift_not_in_till(self):
+        """Credit sales and gift issues show as not-in-till lines."""
+        from decimal import Decimal
+
+        from shops.models import (
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+
+        session = self._open_day(self.next)
+        ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="CR-TEST-1",
+            kind=ShopReceiptKind.CREDIT,
+            status=ShopReceiptStatus.CONFIRMED,
+            total=Decimal("5000.00"),
+            amount_paid=Decimal("1200.00"),
+            created_by=self.next,
+        )
+        ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="GF-TEST-1",
+            kind=ShopReceiptKind.GIFT,
+            status=ShopReceiptStatus.CONFIRMED,
+            total=Decimal("800.00"),
+            created_by=self.next,
+        )
+
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        tables = response.context["page"]["tables"]
+        not_till = next(
+            t for t in tables if "not in the till" in t["title"]
+        )
+        credit_row, gift_row = not_till["rows"]
+        self.assertEqual(credit_row[0], "Credit sales")
+        self.assertEqual(credit_row[1], "1")
+        self.assertIn("5,000", credit_row[2])
+        self.assertIn("1,200", credit_row[3])
+        self.assertIn("3,800", credit_row[4])
+        self.assertEqual(gift_row[0], "Gift items")
+        self.assertEqual(gift_row[1], "1")
+        self.assertIn("800", gift_row[2])
+        self.assertEqual(gift_row[3], "—")
+        self.assertEqual(gift_row[4], "—")
+        self.assertIn("Expected in till", not_till["footnote"])
+        self.assertIn("Credit slips counted", not_till["footnote"])
+
+    def test_money_flow_shows_shop_activated_mpesa(self):
+        """A shop-level M-Pesa override survives the company flag strip."""
+        from shops.services import (
+            _invalidate_pos_settings_cache,
+            get_company_pos_settings,
+            get_shop_pos_settings,
+        )
+
+        company = get_company_pos_settings()
+        company.enable_mpesa = False
+        company.enable_cash_mpesa = False
+        company.enable_mpesa_card = False
+        company.enable_cash_mpesa_card = False
+        company.save(
+            update_fields=[
+                "enable_mpesa",
+                "enable_cash_mpesa",
+                "enable_mpesa_card",
+                "enable_cash_mpesa_card",
+            ]
+        )
+        shop_row = get_shop_pos_settings(self.shop)
+        shop_row.override_pos = True
+        shop_row.enable_mpesa = True
+        shop_row.custom_pos_fields = ["enable_mpesa"]
+        shop_row.save(
+            update_fields=[
+                "override_pos",
+                "enable_mpesa",
+                "custom_pos_fields",
+            ]
+        )
+        _invalidate_pos_settings_cache(shop_id=self.shop.pk)
+        self.addCleanup(
+            _invalidate_pos_settings_cache, shop_id=self.shop.pk
+        )
+
+        session = self._open_day(self.next)
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        tables = response.context["page"]["tables"]
+        money = next(t for t in tables if t["title"] == "Money flow")
+        labels = [
+            (c.get("label") if isinstance(c, dict) else c)
+            for c in money["columns"]
+        ]
+        self.assertEqual(labels, ["Flow", "Cash", "M-Pesa", "Total"])
+
+    def test_money_flow_shows_disabled_channel_with_money(self):
+        """A channel with actual figures stays visible even when off."""
+        from decimal import Decimal
+
+        from shops.models import (
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+        from shops.services import (
+            _invalidate_pos_settings_cache,
+            get_company_pos_settings,
+        )
+
+        company = get_company_pos_settings()
+        company.enable_mpesa = False
+        company.enable_cash_mpesa = False
+        company.enable_mpesa_card = False
+        company.enable_cash_mpesa_card = False
+        company.save(
+            update_fields=[
+                "enable_mpesa",
+                "enable_cash_mpesa",
+                "enable_mpesa_card",
+                "enable_cash_mpesa_card",
+            ]
+        )
+        _invalidate_pos_settings_cache(shop_id=self.shop.pk)
+        self.addCleanup(
+            _invalidate_pos_settings_cache, shop_id=self.shop.pk
+        )
+
+        session = self._open_day(self.next)
+        ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="SALE-MPESA-1",
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.CONFIRMED,
+            total=Decimal("300.00"),
+            amount_paid=Decimal("300.00"),
+            mpesa_amount=Decimal("300.00"),
+            created_by=self.next,
+        )
+
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        tables = response.context["page"]["tables"]
+        money = next(t for t in tables if t["title"] == "Money flow")
+        labels = [
+            (c.get("label") if isinstance(c, dict) else c)
+            for c in money["columns"]
+        ]
+        self.assertIn("M-Pesa", labels)
 
     def test_foreign_open_session_still_blocks(self):
         self._open_day(self.previous)

@@ -116,6 +116,9 @@ export async function verifyStaffLoginCode({ url, code, csrfToken } = {}) {
       allocated_to_shop: data.allocated_to_shop,
       allocated_shop_names: data.allocated_shop_names || [],
       shop_name: data.shop_name || "",
+      require_clock_in: Boolean(data.require_clock_in),
+      clocked_in: data.clocked_in !== false,
+      login_url: data.login_url || "",
     };
   } catch (_err) {
     return offlineFallback();

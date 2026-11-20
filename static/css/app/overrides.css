@@ -964,3 +964,99 @@ html[data-theme="dark"] .wa-chip--warn {
     display: none;
   }
 }
+
+/* Compulsory clock-in check — top-right toasts / confirm prompt. */
+.clock-toast-stack {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 1600;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: min(21rem, calc(100vw - 2rem));
+  pointer-events: none;
+}
+
+.clock-toast {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  padding: 0.8rem 0.95rem;
+  border-radius: 14px;
+  border: 1px solid rgba(var(--ok-rgb, 47, 158, 68), 0.4);
+  background:
+    linear-gradient(145deg, rgba(var(--ok-rgb, 47, 158, 68), 0.16), rgba(var(--ok-rgb, 47, 158, 68), 0.06)),
+    var(--surface, #101a1d);
+  color: var(--ok-text, #d3f0dd);
+  box-shadow: 0 16px 34px rgba(8, 24, 28, 0.3);
+  pointer-events: auto;
+  animation: clock-toast-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.clock-toast--warn {
+  border-color: var(--warning-border, rgba(233, 169, 59, 0.45));
+  background:
+    linear-gradient(145deg, rgba(233, 169, 59, 0.16), rgba(233, 169, 59, 0.05)),
+    var(--surface, #101a1d);
+  color: var(--warning-text, #f5ddb0);
+}
+
+.clock-toast.is-hiding {
+  opacity: 0;
+  transform: translateY(-0.5rem) scale(0.97);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.clock-toast__emoji {
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.clock-toast__title {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.clock-toast__text {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  opacity: 0.9;
+}
+
+.clock-prompt__btn {
+  margin-top: 0.55rem;
+  padding: 0.42rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--warning-border, rgba(233, 169, 59, 0.55));
+  background: rgba(233, 169, 59, 0.18);
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.clock-prompt__btn:hover {
+  background: rgba(233, 169, 59, 0.3);
+}
+
+.cart-status-link,
+.sell-status-link {
+  color: var(--accent, #4cc3ff);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+@keyframes clock-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

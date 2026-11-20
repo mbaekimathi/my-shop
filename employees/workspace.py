@@ -2058,6 +2058,14 @@ def sidebar_for_role_dashboard(
                 active=active_slug == "my-analytics",
             )
         )
+    primary.append(
+        _link(
+            "Clock in / out",
+            "clock",
+            url_name="employees:employee_clock",
+            active=active_slug == "clock",
+        )
+    )
     if role in comms_roles:
         primary.append(
             _link(

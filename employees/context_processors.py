@@ -134,9 +134,41 @@ def _request_shop_id(request):
     return str(value) if value is not None else ""
 
 
+def _clock_check_context(request):
+    """Status/ping URLs for the compulsory clock-in check widget.
+
+    Emitted on every page (portal + shop floor) whenever an active employee
+    session exists and POS settings require clock-in, so the 6h idle check
+    runs wherever the employee is working.
+    """
+    try:
+        meta = get_employee_meta_for_request(request) or request.session.get(
+            SESSION_PROFILE_KEY
+        ) or {}
+        if meta.get("status") != EmployeeStatus.ACTIVE:
+            return {}
+        from shops.services import get_company_pos_settings
+
+        if not getattr(
+            get_company_pos_settings(), "require_clock_in", False
+        ):
+            return {}
+        return {
+            "clock_check": {
+                "status_url": reverse("employees:employee_clock_status"),
+                "confirm_url": reverse("employees:employee_clock_confirm"),
+                "prompt_url": reverse("employees:employee_clock_check_prompt"),
+                "auto_out_url": reverse("employees:employee_clock_auto_out"),
+            }
+        }
+    except Exception:
+        return {}
+
+
 def employee_workspace(request):
     """Expose workspace chrome data — one profile load per request max."""
     context = _company_brand_context()
+    context.update(_clock_check_context(request))
     try:
         from shops.services import developer_payment_prompt_for_request
 

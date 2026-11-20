@@ -19,7 +19,7 @@
 <link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261119-sell-modal">
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261108-act-view">
 <link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261119-my-analytics-polish">
+<link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261120-clock-check">
 <link rel="stylesheet" href="{% static 'css/web-push.css' %}?v=20261112-webpush-fab">
 <link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=20261118-shelf-polish">
 {% endblock %}
@@ -42,6 +42,12 @@
   data-rider-alerts
   data-status-url="{% url 'employees:rider_delivery_status' %}"
   data-home-url="{% url 'employees:role_rider' %}"
+  {% endif %}
+  {% if clock_check %}
+  data-clock-status-url="{{ clock_check.status_url }}"
+  data-clock-confirm-url="{{ clock_check.confirm_url }}"
+  data-clock-prompt-url="{{ clock_check.prompt_url }}"
+  data-clock-auto-out-url="{{ clock_check.auto_out_url }}"
   {% endif %}
 >
   <div class="workspace-overlay" data-workspace-overlay hidden></div>
@@ -125,6 +131,9 @@
 {% endif %}
 {% if developer_payment_prompt %}
 <script defer src="{% static 'js/developer-payment-prompt.js' %}?v=2"></script>
+{% endif %}
+{% if clock_check %}
+<script defer src="{% static 'js/clock-check.js' %}?v=1"></script>
 {% endif %}
 {% if workspace.is_shop_portal or workspace.can_shop_switch %}
 <script defer src="{% static 'js/shop-switch.js' %}?v=1"></script>

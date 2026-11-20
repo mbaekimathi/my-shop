@@ -4398,10 +4398,14 @@
         cartStaffAllocatedShopNames = Array.isArray(data.allocated_shop_names)
           ? data.allocated_shop_names.filter(Boolean)
           : [];
+        const verifiedMessage =
+          data.message ||
+          `Verified: ${data.name || "staff"} (${data.employee_id || code}).`;
         setCartVerified(
           true,
-          data.message ||
-            `Verified: ${data.name || "staff"} (${data.employee_id || code}).`
+          data.require_clock_in && data.clocked_in === false
+            ? `${verifiedMessage} Not clocked in — sales will be blocked until they clock in.`
+            : verifiedMessage
         );
         if (autoCheckout && checkoutEnabled && cart.size > 0 && !checkoutInFlight) {
           await submitCheckout();
@@ -5055,6 +5059,13 @@
             setCartStatus(errorText, {
               error: true,
             });
+            if (data.clock_in_required && data.login_url && cartStatus) {
+              const link = document.createElement("a");
+              link.href = data.login_url;
+              link.className = "cart-status-link";
+              link.textContent = " Sign in as an employee to clock in.";
+              cartStatus.appendChild(link);
+            }
             return;
           }
           await finishSuccessfulCheckout(data);

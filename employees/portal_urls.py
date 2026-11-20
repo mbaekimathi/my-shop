@@ -784,6 +784,31 @@ urlpatterns = [
         name="employee_my_analytics",
     ),
     path(
+        "employee/clock/",
+        views.employee_clock,
+        name="employee_clock",
+    ),
+    path(
+        "employee/clock/status/",
+        views.employee_clock_status,
+        name="employee_clock_status",
+    ),
+    path(
+        "employee/clock/confirm/",
+        views.employee_clock_confirm,
+        name="employee_clock_confirm",
+    ),
+    path(
+        "employee/clock/check-prompt/",
+        views.employee_clock_check_prompt,
+        name="employee_clock_check_prompt",
+    ),
+    path(
+        "employee/clock/auto-out/",
+        views.employee_clock_auto_out,
+        name="employee_clock_auto_out",
+    ),
+    path(
         "employee/receipts/<int:receipt_id>/",
         views.employee_receipt_detail,
         name="employee_receipt_detail",

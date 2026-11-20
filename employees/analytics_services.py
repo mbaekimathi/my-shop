@@ -352,16 +352,19 @@ def _credit_account_receipts_q() -> Q:
     )
 
 
-def _pos_feature_flags() -> dict:
+def _pos_feature_flags(row=None) -> dict:
     """Company POS toggles that decide which analytics columns are in use.
 
     ``cash``/``mpesa`` describe receipt payment columns — a combined
     cash+M-Pesa tender still feeds both columns. ``pay_cash``/``pay_mpesa``
     describe the single-method account-payment choices (cash or M-Pesa).
+    Pass ``row`` (e.g. a shop-effective merge from
+    ``get_effective_pos_settings``) to scope the flags to a shop's
+    overrides; defaults to the company row.
     """
     from shops.services import get_company_pos_settings
 
-    row = get_company_pos_settings()
+    row = row if row is not None else get_company_pos_settings()
     combo = bool(getattr(row, "enable_cash_mpesa", True))
     cash = bool(getattr(row, "enable_cash", True))
     mpesa = bool(getattr(row, "enable_mpesa", True))
@@ -10141,6 +10144,8 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     from django.utils.http import url_has_allowed_host_and_scheme
 
     from shops.services import (
+        day_report_channel_columns,
+        day_report_not_till_lines,
         day_session_balance_summary,
         day_session_report_details,
         get_effective_pos_settings,
@@ -10178,7 +10183,12 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     ):
         back_href = requested_back
     if not back_href:
-        back_href = analytics_section_url(profile.role, "balances")
+        role = getattr(profile, "role", None)
+        back_href = (
+            analytics_section_url(role, "balances")
+            if role is not None
+            else ""
+        )
 
     def _person(row):
         if row is None or getattr(row, "user", None) is None:
@@ -10280,15 +10290,9 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             )
         )
 
-    channel_cols = [
-        (key, label)
-        for key, label in (
-            ("cash", "Cash"),
-            ("mpesa", "M-Pesa"),
-            ("card", "Card"),
-        )
-        if channels.get(key)
-    ]
+    channel_cols = day_report_channel_columns(
+        summary=summary, channels=channels
+    )
 
     def _money_cell(value, *, minus=False, tone=""):
         if value is None:
@@ -10418,6 +10422,64 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             ),
         ),
     ]
+
+    not_till = day_report_not_till_lines(
+        summary=summary, details=details, pos=pos
+    )
+    not_till_rows = []
+    for line in not_till.get("lines") or []:
+        not_till_rows.append(
+            [
+                line["label"],
+                str(line.get("count") or 0),
+                _money_ksh(line.get("value")),
+                (
+                    _money_ksh(line.get("collected"))
+                    if line.get("collected") is not None
+                    else "—"
+                ),
+                (
+                    _money_ksh(line.get("due"))
+                    if line.get("due") is not None
+                    else "—"
+                ),
+            ]
+        )
+    if not_till_rows:
+        not_till_footnote = (
+            "Credit is collected later and gifts are free issues — "
+            "neither adds to Expected in till."
+        )
+        slips = not_till.get("slips")
+        if slips:
+            not_till_footnote += (
+                f" Credit slips counted: opened "
+                f"{_money_ksh(slips.get('opened'))}"
+            )
+            if not is_open:
+                not_till_footnote += (
+                    f" · counted {_money_ksh(slips.get('counted'))}"
+                )
+                if slips.get("variance") is not None:
+                    not_till_footnote += (
+                        f" · diff {_money_ksh(slips['variance'])}"
+                    )
+            not_till_footnote += "."
+        tables.append(
+            _table(
+                "Credit & gift — not in the till",
+                [
+                    "Document",
+                    {"label": "Docs", "money": True},
+                    {"label": "Value", "money": True},
+                    {"label": "Collected", "money": True},
+                    {"label": "Still due", "money": True},
+                ],
+                not_till_rows,
+                empty="",
+                footnote=not_till_footnote,
+            )
+        )
 
     items_sold = details.get("items_sold") or []
     items_qty_total = sum(
@@ -10723,7 +10785,12 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         "insights": [],
         "tables": tables,
     }
-    page = _apply_pos_visibility(page, _pos_feature_flags())
+    flags = _pos_feature_flags(pos)
+    for key, _label in channel_cols:
+        # A channel the money flow shows (activated or carrying figures)
+        # must keep its columns — never let company-level flags strip it.
+        flags[key] = True
+    page = _apply_pos_visibility(page, flags)
     return {
         "section_slug": "balances",
         "include_all_time": False,

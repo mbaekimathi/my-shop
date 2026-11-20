@@ -83,6 +83,7 @@ POS_SETTING_FIELDS = {
     "enable_stock_tracking",
     "enable_shelf_mode",
     "enable_open_close",
+    "require_clock_in",
     "enable_passwordless_shop_switch",
     "enable_employee_session_timeout",
     "enable_shop_session_timeout",
@@ -4002,6 +4003,7 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
         "enable_shelf_mode": bool(getattr(row, "enable_shelf_mode", False)),
         "enable_open_close": bool(getattr(row, "enable_open_close", True)),
+        "require_clock_in": bool(getattr(row, "require_clock_in", False)),
         "enable_client_data": bool(getattr(row, "enable_client_data", True)),
         "require_client_phone": bool(getattr(row, "require_client_phone", False)),
         "require_client_name": bool(getattr(row, "require_client_name", False)),
@@ -6394,6 +6396,19 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
     if authorising is None:
         raise ValidationError(invalid_staff_code_message(login_code, shop=shop))
 
+    if kind in (
+        ShopReceiptKind.SALE,
+        ShopReceiptKind.CREDIT,
+        ShopReceiptKind.TRADE_OUT,
+        ShopReceiptKind.TRADE_IN,
+        ShopReceiptKind.GIFT,
+    ):
+        from employees.attendance import clock_in_block_message
+
+        block_message = clock_in_block_message(authorising, pos=pos_settings)
+        if block_message:
+            raise ValidationError(block_message, code="clock_in_required")
+
     from employees.module_permissions import (
         employee_may_unrestricted,
         ensure_employee_may,
@@ -8021,16 +8036,116 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         1 for receipt in receipts if receipt.status in counted
     )
 
+    def _kind_totals(kind):
+        from django.db.models import Count, Sum
+
+        row = (
+            ShopReceipt.objects.filter(kind=kind, **window)
+            .filter(status__in=counted)
+            .aggregate(
+                count=Count("pk"),
+                total=Sum("total"),
+                paid=Sum("amount_paid"),
+            )
+        )
+        total = row["total"] or Decimal("0.00")
+        paid = row["paid"] or Decimal("0.00")
+        return {
+            "count": row["count"] or 0,
+            "total": total,
+            "paid": paid,
+            "due": max(Decimal("0.00"), total - paid),
+        }
+
     return {
         "sales_count": sales_count,
         "items_sold": items_sold,
         "flagged_receipts": flagged_receipts,
+        "credit_sales": _kind_totals(ShopReceiptKind.CREDIT),
+        "gifts": _kind_totals(ShopReceiptKind.GIFT),
         "expenses": expense_rows,
         "drawings": drawing_rows,
         "stock_purchases": stock_rows,
         "stock_out": stock_out_rows,
         "stock_out_est_total": stock_out_est_total,
     }
+
+
+def day_report_not_till_lines(*, summary, details, pos=None, shop=None):
+    """Credit & gift figures for the day report — value, not till money.
+
+    Cash/M-Pesa/card live in the money flow; credit is collected later and
+    gifts are free issues, so they report separately as "not in the till".
+    A line is emitted only while that POS feature is enabled. `slips` is the
+    counted credit-notes trail (opening count → closing count → variance)
+    from `day_session_balance_summary`, when credit is enabled.
+    """
+    if pos is None and shop is not None:
+        pos = get_effective_pos_settings(shop)
+
+    lines = []
+    slips = None
+    if pos is not None and getattr(pos, "enable_credit", False):
+        credit = details.get("credit_sales") or {}
+        lines.append(
+            {
+                "label": "Credit sales",
+                "count": int(credit.get("count") or 0),
+                "value": credit.get("total"),
+                "collected": credit.get("paid"),
+                "due": credit.get("due"),
+            }
+        )
+        slips = {
+            "opened": summary.get("opening_credit") or Decimal("0.00"),
+            "counted": summary.get("closing_credit"),
+            "variance": summary.get("credit_variance"),
+        }
+    if pos is not None and getattr(pos, "enable_gift", True):
+        gifts = details.get("gifts") or {}
+        lines.append(
+            {
+                "label": "Gift items",
+                "count": int(gifts.get("count") or 0),
+                "value": gifts.get("total"),
+                "collected": None,
+                "due": None,
+            }
+        )
+    return {"lines": lines, "slips": slips}
+
+
+def _summary_channel_touched(summary: dict, key: str) -> bool:
+    """True when any summary figure names this till channel with a non-zero
+    amount (``cash_sales``, ``opening_cash``, ``mpesa_variance``, …)."""
+    prefix, suffix = f"{key}_", f"_{key}"
+    for name, value in (summary or {}).items():
+        if not (name.startswith(prefix) or name.endswith(suffix)):
+            continue
+        try:
+            if Decimal(value or 0) != 0:
+                return True
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+    return False
+
+
+def day_report_channel_columns(*, summary: dict, channels: dict) -> list:
+    """Money-flow channel columns for the day report.
+
+    Every activated till channel, plus any channel the session actually
+    moved money through — a disabled channel with figures must stay visible
+    or the flow rows stop reconciling with Total.
+    """
+    return [
+        (key, label)
+        for key, label in (
+            ("cash", "Cash"),
+            ("mpesa", "M-Pesa"),
+            ("card", "Card"),
+        )
+        if channels.get(key) or _summary_channel_touched(summary, key)
+    ]
 
 
 def build_shop_day_report_pdf(
@@ -8080,7 +8195,8 @@ def build_shop_day_report_pdf(
     details = day_session_report_details(
         session, counted_statuses=counted_statuses
     )
-    channels = shop_day_balance_channels(shop=shop)
+    pos = get_effective_pos_settings(shop)
+    channels = shop_day_balance_channels(shop=shop, pos=pos)
     printed_at = timezone.localtime()
     is_open = session.closed_at is None
     opened_by = (
@@ -8385,9 +8501,9 @@ def build_shop_day_report_pdf(
     story.append(Spacer(1, 10))
 
     # ---- Money summary table ------------------------------------------------
-    channel_cols = [("cash", "Cash"), ("mpesa", "M-Pesa")]
-    if channels.get("card"):
-        channel_cols.append(("card", "Card"))
+    channel_cols = day_report_channel_columns(
+        summary=summary, channels=channels
+    )
     ncol = len(channel_cols) + 2
     col_widths = [doc.width * 0.34] + [
         doc.width * 0.66 / (ncol - 1)
@@ -8666,6 +8782,68 @@ def build_shop_day_report_pdf(
 
     def _time(at):
         return timezone.localtime(at).strftime("%H:%M")
+
+    # -- Credit & gift (not in the till) --------------------------------------
+    not_till = day_report_not_till_lines(
+        summary=summary, details=details, pos=pos
+    )
+    not_till_rows = []
+    for line_row in not_till.get("lines") or []:
+        not_till_rows.append(
+            [
+                _p(line_row["label"], cell_sm),
+                _p(str(line_row.get("count") or 0), cell_sm_right),
+                _p(_fmt(line_row.get("value")), cell_sm_right),
+                _p(
+                    _fmt(line_row["collected"])
+                    if line_row.get("collected") is not None
+                    else "—",
+                    cell_sm_right,
+                ),
+                _p(
+                    _fmt(line_row["due"])
+                    if line_row.get("due") is not None
+                    else "—",
+                    cell_sm_right,
+                ),
+            ]
+        )
+    if not_till_rows:
+        _detail_table(
+            "Credit & gift — not in the till",
+            ["Document", "Docs", "Value", "Collected", "Still due"],
+            not_till_rows,
+            [
+                doc.width * 0.4,
+                doc.width * 0.11,
+                doc.width * 0.17,
+                doc.width * 0.16,
+                doc.width * 0.16,
+            ],
+            aligns=["l", "r", "r", "r", "r"],
+            dense=True,
+        )
+        slips_text = ""
+        slips = not_till.get("slips")
+        if slips:
+            slips_text = (
+                f" Credit slips counted: opened {_fmt(slips.get('opened'))}"
+            )
+            if not is_open:
+                slips_text += f" · counted {_fmt(slips.get('counted'))}"
+                if slips.get("variance") is not None:
+                    slips_text += f" · diff {_fmt(slips['variance'])}"
+            slips_text += "."
+        story.append(
+            Paragraph(
+                _esc(
+                    "Credit is collected later and gifts are free issues — "
+                    "neither adds to Expected in till."
+                    + slips_text
+                ),
+                note_style,
+            )
+        )
 
     # -- Items sold -----------------------------------------------------------
     sold_rows = details.get("items_sold") or []

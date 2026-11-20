@@ -762,6 +762,10 @@ class CompanyPosSettings(models.Model):
         default=True,
         help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",
     )
+    require_clock_in = models.BooleanField(
+        default=False,
+        help_text="When on, employees must be clocked in before a sale can complete.",
+    )
     enable_passwordless_shop_switch = models.BooleanField(
         default=False,
         help_text="When on, a signed-in shop session can switch to another shop without re-entering the shop password.",

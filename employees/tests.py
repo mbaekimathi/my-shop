@@ -1504,6 +1504,7 @@ class AnalyticsDaySessionReportTests(TestCase):
             [t["title"] for t in page["tables"]],
             [
                 "Money flow",
+                "Credit & gift — not in the till",
                 "Items sold",
                 "Pending & cancelled sales",
                 "Drawings done",
@@ -1515,7 +1516,7 @@ class AnalyticsDaySessionReportTests(TestCase):
         flow_labels = [r[0] for r in page["tables"][0]["rows"]]
         self.assertIn("Counted closing", flow_labels)
         self.assertIn("Variance", flow_labels)
-        items = page["tables"][1]
+        items = page["tables"][2]
         self.assertEqual(items["rows"][0][0], "Charger")
         metric_labels = [m["label"] for m in page["metrics"]]
         self.assertIn("Counted closing", metric_labels)

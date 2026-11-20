@@ -9,6 +9,45 @@
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
+        <p class="stock-kicker">Employee · Attendance</p>
+        <h2>Clock in / out</h2>
+        <p>
+          {% if open_entry %}
+          Clocked in since {{ open_entry.clock_in|date:"j M Y · H:i" }}.
+          {% else %}
+          You are not clocked in.
+          {% endif %}
+        </p>
+      </div>
+      <div class="stock-stats">
+        <p class="stock-stat">
+          {% if open_entry %}
+          <strong>Clocked in</strong>
+          <span>since {{ open_entry.clock_in|date:"H:i" }}</span>
+          {% else %}
+          <strong>Clocked out</strong>
+          <span>no open shift</span>
+          {% endif %}
+        </p>
+      </div>
+    </div>
+    <form class="stock-report-filters stock-report-filters--serials" method="post" action="{% url 'employees:employee_clock' %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      {% if open_entry %}
+      <button type="submit" name="action" value="clock_out" class="stock-report-apply">Clock out</button>
+      {% else %}
+      <button type="submit" name="action" value="clock_in" class="stock-report-apply">Clock in</button>
+      {% endif %}
+      <a class="pagination-link" href="{% url 'employees:employee_clock' %}">View records</a>
+    </form>
+  </header>
+</section>
+
+<section class="item-panel item-panel--dense" data-animate="rise">
+  <header class="item-panel-head">
+    <div class="item-panel-head-top">
+      <div>
         <p class="stock-kicker">Employee · Performance</p>
         <h2>My performance</h2>
         <p>
