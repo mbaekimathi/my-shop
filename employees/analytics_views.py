@@ -471,6 +471,9 @@ def analytics_day_session(request, role_segment, session_id):
                 "auto_print": (request.GET.get("auto") or "").strip() == "1",
             },
         )
+    from .analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(context.get("page"))
     return render(
         request,
         "employees/analytics.html",
@@ -547,6 +550,9 @@ def analytics_item_report(request, role_segment):
     page["back_label"] = "Back to items"
     context["page"] = page
 
+    from .analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(context.get("page"))
     return render(
         request,
         "employees/analytics.html",
@@ -629,6 +635,9 @@ def analytics_credit_report(request, role_segment):
     if query:
         clients_href = f"{clients_href}?{query}"
 
+    from .analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(context.get("page"))
     return render(
         request,
         "employees/analytics.html",
@@ -704,6 +713,9 @@ def analytics_credit_clients(request, role_segment):
     if context.get("query"):
         report_href = f"{report_href}?{context['query']}"
 
+    from .analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(context.get("page"))
     return render(
         request,
         "employees/analytics.html",
@@ -1072,6 +1084,10 @@ def analytics_return_receipts(request, role_segment):
         return denied
 
     context = build_return_receipts_page(profile=profile, request=request)
+
+    from .analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(context.get("page"))
     return render(
         request,
         "employees/analytics.html",

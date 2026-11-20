@@ -3809,6 +3809,9 @@ def my_shop_day_report(request, shop_id):
         )
         page["back_label"] = "Back to day history"
 
+    from employees.analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(page)
     return _render_my_shop_tool_page(
         request,
         shop=shop,
