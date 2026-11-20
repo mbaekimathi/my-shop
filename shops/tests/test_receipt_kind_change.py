@@ -135,7 +135,10 @@ class ReceiptKindChangeServiceTests(TestCase):
             cash_amount=Decimal("200.00"),
         )
         result = self._change(
-            receipt, "credit", credit_due_date="2026-12-01"
+            receipt,
+            "credit",
+            credit_due_date="2026-12-01",
+            client_name="Credit Buyer",
         )
         self.assertTrue(result["ok"])
         receipt.refresh_from_db()
@@ -170,7 +173,9 @@ class ReceiptKindChangeServiceTests(TestCase):
         self.item.stock = 8
         self.item.save(update_fields=["stock"])
         receipt = self._receipt(ShopReceiptKind.SALE)
-        result = self._change(receipt, "quotation")
+        result = self._change(
+            receipt, "quotation", client_name="Quote Client"
+        )
         self.assertTrue(result["ok"])
         receipt.refresh_from_db()
         self.assertEqual(receipt.kind, ShopReceiptKind.QUOTATION)
@@ -224,7 +229,9 @@ class ReceiptKindChangeServiceTests(TestCase):
 
     def test_quotation_to_credit_deducts_stock(self):
         receipt = self._receipt(ShopReceiptKind.QUOTATION)
-        result = self._change(receipt, "credit")
+        result = self._change(
+            receipt, "credit", client_name="Quote To Credit"
+        )
         self.assertTrue(result["ok"])
         receipt.refresh_from_db()
         self.assertEqual(receipt.kind, ShopReceiptKind.CREDIT)
@@ -256,6 +263,81 @@ class ReceiptKindChangeServiceTests(TestCase):
         receipt.refresh_from_db()
         self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
         self.assertEqual(receipt.status, ShopReceiptStatus.ACTIVE)
+
+    def test_sale_to_credit_requires_client_details(self):
+        receipt = self._receipt(ShopReceiptKind.SALE)
+        with self.assertRaises(ValidationError) as ctx:
+            self._change(receipt, "credit")
+        self.assertIn("client", str(ctx.exception))
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
+
+    def test_sale_to_credit_links_client_details(self):
+        from shops.models import Client, ClientCreditAccountEvent
+
+        receipt = self._receipt(ShopReceiptKind.SALE)
+        result = self._change(
+            receipt,
+            "credit",
+            credit_due_date="2026-12-01",
+            client_name="Jane Mwanza",
+            client_phone="0712 345 678",
+        )
+        self.assertTrue(result["ok"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(receipt.client_name, "JANE MWANZA")
+        self.assertEqual(receipt.client_phone, "+254712345678")
+        self.assertIsNotNone(receipt.client_id)
+        client = Client.objects.get(pk=receipt.client_id)
+        self.assertEqual(client.full_name, "JANE MWANZA")
+        # The linked client is what writes the issued-credit audit event.
+        self.assertTrue(
+            ClientCreditAccountEvent.objects.filter(receipt=receipt).exists()
+        )
+
+    def test_sale_to_credit_phone_only_registers_client(self):
+        from shops.models import Client
+
+        receipt = self._receipt(ShopReceiptKind.SALE)
+        result = self._change(receipt, "credit", client_phone="0733 111 222")
+        self.assertTrue(result["ok"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.client_phone, "+254733111222")
+        client = Client.objects.get(pk=receipt.client_id)
+        self.assertEqual(client.full_name, "CUSTOMER")
+
+    def test_kind_change_keeps_existing_client_details(self):
+        receipt = self._receipt(
+            ShopReceiptKind.SALE,
+            client_name="KEEP ME",
+            client_phone="+254722000111",
+        )
+        result = self._change(receipt, "credit", credit_due_date="2026-12-01")
+        self.assertTrue(result["ok"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.client_name, "KEEP ME")
+        self.assertEqual(receipt.client_phone, "+254722000111")
+
+    def test_sale_to_credit_rejects_bad_phone(self):
+        receipt = self._receipt(ShopReceiptKind.SALE)
+        with self.assertRaises(ValidationError) as ctx:
+            self._change(receipt, "credit", client_phone="not-a-phone")
+        self.assertIn("phone", str(ctx.exception))
+
+    def test_sale_to_gift_stores_optional_client_details(self):
+        receipt = self._receipt(ShopReceiptKind.SALE)
+        result = self._change(
+            receipt,
+            "gift",
+            client_name="Gift Recipient",
+            client_phone="0700111222",
+        )
+        self.assertTrue(result["ok"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.GIFT)
+        self.assertEqual(receipt.client_name, "GIFT RECIPIENT")
+        self.assertEqual(receipt.client_phone, "+254700111222")
 
 
 class ReceiptKindChangePermissionTests(TestCase):

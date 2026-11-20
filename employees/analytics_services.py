@@ -2973,6 +2973,90 @@ def _overview_metric_cards(
     ]
 
 
+def _row_search_haystack(row) -> str:
+    """Text the client-side table filter matches on for this row — mirrors
+    the ``data-search-text`` attribute (explicit search_text, else the first
+    cell's label/sub or plain value)."""
+    if isinstance(row, dict):
+        text = (row.get("search_text") or "").strip()
+        if text:
+            return text
+        cells = row.get("cells") or []
+    else:
+        cells = row or []
+    first = cells[0] if cells else ""
+    if isinstance(first, dict):
+        return f"{first.get('label') or ''} {first.get('sub') or ''}".strip()
+    return str(first or "")
+
+
+ANALYTICS_TABLE_PAGE_SIZE = 200
+
+
+def _page_table_rows(
+    rows,
+    filters,
+    *,
+    searchable: bool,
+    tail_rows: int = 0,
+    page_size: int = ANALYTICS_TABLE_PAGE_SIZE,
+):
+    """Server-side ``?q=`` filter + ``?page=N`` slice for the big matrix
+    tables (clients / suppliers / stock).
+
+    Pinned ``tail_rows`` trailing rows (grand totals) are excluded from
+    filtering and slicing and ride along on every page. ``?download`` keeps
+    the full set so PDF exports are unaffected. Returns
+    ``(page_rows, pager_or_None)``.
+    """
+    from urllib.parse import parse_qsl, urlencode
+
+    rows = list(rows or [])
+    tail = rows[-tail_rows:] if tail_rows else []
+    body = rows[:-tail_rows] if tail_rows else rows
+    if searchable:
+        tokens = [
+            token
+            for token in (filters.get("search_query") or "").strip().lower().split()
+            if token
+        ]
+        if tokens:
+            body = [
+                row
+                for row in body
+                if all(
+                    token in _row_search_haystack(row).lower() for token in tokens
+                )
+            ]
+    params = dict(parse_qsl(filters.get("query") or "", keep_blank_values=True))
+    try:
+        page_no = max(1, int(params.pop("page", "") or 1))
+    except (TypeError, ValueError):
+        page_no = 1
+    total = len(body)
+    if total <= page_size or params.get("download"):
+        return [*body, *tail], None
+    pages = (total + page_size - 1) // page_size
+    page_no = min(page_no, pages)
+    pager = {
+        "page": page_no,
+        "pages": pages,
+        "total": total,
+        "prev_url": (
+            f"?{urlencode({**params, 'page': page_no - 1})}"
+            if page_no > 1
+            else ""
+        ),
+        "next_url": (
+            f"?{urlencode({**params, 'page': page_no + 1})}"
+            if page_no < pages
+            else ""
+        ),
+    }
+    start = (page_no - 1) * page_size
+    return [*body[start : start + page_size], *tail], pager
+
+
 def _table(
     title,
     columns,
@@ -2984,6 +3068,7 @@ def _table(
     searchable=False,
     table_class="",
     section="",
+    pager=None,
 ):
     if shop_grid is None:
         shop_grid = any(
@@ -3000,7 +3085,42 @@ def _table(
         "searchable": bool(searchable),
         "table_class": (table_class or "").strip(),
         "section": section,
+        "pager": pager,
     }
+
+
+def hydrate_table_zrows(page: dict | None) -> dict | None:
+    """Pre-pair every table row's cells with their column dicts for the
+    template.
+
+    Done at render time (not in _table) because page post-processors still
+    rewrite ``table["rows"]`` / ``table["columns"]`` afterwards — zipping
+    early would leave the pairs stale. Without this the template nests a
+    per-column loop inside the per-cell loop: rows × cells × columns node
+    renders on the big matrix tables (clients, suppliers, stock).
+    """
+    for table in (page or {}).get("tables") or []:
+        columns = table.get("columns") or []
+        zrows = []
+        for row in table.get("rows") or []:
+            if isinstance(row, dict) and row.get("group_header"):
+                zrows.append(
+                    {"group_header": True, "label": row.get("label")}
+                )
+                continue
+            if isinstance(row, dict):
+                cells = row.get("cells") or row
+            else:
+                cells = row
+            zrows.append(
+                {
+                    "row": row,
+                    "cells": cells,
+                    "zipped": list(zip(cells, columns)),
+                }
+            )
+        table["zrows"] = zrows
+    return page
 
 
 def _insight(title, body):
@@ -8534,7 +8654,7 @@ def _day_balance_data(filters) -> dict:
     suppliers_by_shop: dict[int, list] = defaultdict(list)
     if activity_sessions:
         from shops.services import (
-            _collect_return_payment_events,
+            _collect_return_payment_events_for_shops,
             session_activity_start,
             stamp_session_activity_starts,
         )
@@ -8566,11 +8686,11 @@ def _day_balance_data(filters) -> dict:
             "return_payment_events",
         ):
             sales_by_shop[row["shop_id"]].append(row)
-        for shop_id in shop_ids:
-            for event in _collect_return_payment_events(
-                shop_id=shop_id, start=min_opened, end=max_closed
-            ):
-                refunds_by_shop[shop_id].append(event)
+        refunds_by_shop.update(
+            _collect_return_payment_events_for_shops(
+                shop_ids=shop_ids, start=min_opened, end=max_closed
+            )
+        )
         for row in Expense.objects.filter(
             shop_id__in=shop_ids,
             created_at__gte=min_opened,
@@ -12959,6 +13079,9 @@ def _build_stock(filters):
             )
         )
 
+    stock_page_rows, stock_pager = _page_table_rows(
+        table_rows, filters, searchable=True
+    )
     return {
         "headline": "Stock on hand",
         "lead": (
@@ -12985,7 +13108,7 @@ def _build_stock(filters):
             _table(
                 "Stock value by shop",
                 columns,
-                table_rows,
+                stock_page_rows,
                 empty="No stock for selected shops.",
                 footnote=(
                     "Qty/Amt cells show quantity and stock value. "
@@ -12995,6 +13118,7 @@ def _build_stock(filters):
                 shop_grid=True,
                 searchable=True,
                 table_class="ax-table--stock",
+                pager=stock_pager,
             )
         ],
     }
@@ -16267,6 +16391,12 @@ def _build_clients(filters):
         }.get(receipt_kind, "Clients by shop")
         lead = f"Clients with {kind_label} · {scope_note}."
 
+    client_rows, client_pager = _page_table_rows(
+        client_rows,
+        filters,
+        searchable=True,
+        tail_rows=1 if credit_mode and client_rows else 0,
+    )
     return {
         "headline": "Clients",
         "lead": lead,
@@ -16287,6 +16417,7 @@ def _build_clients(filters):
                 footnote=footnote,
                 shop_grid=True,
                 searchable=True,
+                pager=client_pager,
             )
         ],
     }
@@ -17192,6 +17323,9 @@ def _build_suppliers(filters):
         rows, view_stats, shop_totals = _rows_from(
             item_entries, mode_shops=item_shops
         )
+        rows, view_pager = _page_table_rows(
+            rows, filters, searchable=True, tail_rows=1 if rows else 0
+        )
         for key in stats:
             stats[key] += view_stats[key]
         balance_shop_ids.update(
@@ -17212,6 +17346,7 @@ def _build_suppliers(filters):
                 shop_grid=True,
                 searchable=True,
                 table_class="ax-table--suppliers",
+                pager=view_pager,
             )
         )
     elif view == "shelf":
@@ -17221,6 +17356,9 @@ def _build_suppliers(filters):
             cell_for=lambda supplier: _shelf_supplier_cell(
                 supplier, role=role, query=query
             ),
+        )
+        rows, view_pager = _page_table_rows(
+            rows, filters, searchable=True, tail_rows=1 if rows else 0
         )
         for key in stats:
             stats[key] += view_stats[key]
@@ -17242,6 +17380,7 @@ def _build_suppliers(filters):
                 shop_grid=True,
                 searchable=True,
                 table_class="ax-table--suppliers",
+                pager=view_pager,
             )
         )
     else:
@@ -17252,6 +17391,9 @@ def _build_suppliers(filters):
             status_key=status_key,
             role=role,
             query=query,
+        )
+        rows, merged_pager = _page_table_rows(
+            rows, filters, searchable=True, tail_rows=1 if rows else 0
         )
         for key in stats:
             stats[key] += merged_stats[key]
@@ -17273,6 +17415,7 @@ def _build_suppliers(filters):
                 shop_grid=True,
                 searchable=True,
                 table_class="ax-table--suppliers",
+                pager=merged_pager,
             )
         )
 

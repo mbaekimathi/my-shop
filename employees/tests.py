@@ -1610,7 +1610,10 @@ class AnalyticsDaySessionReportTests(TestCase):
 
     def test_day_report_hides_stock_modes_disabled_on_the_shop(self):
         from shops.models import ShopPosSettings
-        from shops.services import set_company_pos_setting
+        from shops.services import (
+            _invalidate_pos_settings_cache,
+            set_company_pos_setting,
+        )
 
         set_company_pos_setting(field="enable_shelf_mode", enabled=True)
         self.addCleanup(
@@ -1631,6 +1634,8 @@ class AnalyticsDaySessionReportTests(TestCase):
             enable_stock_tracking=False,
             enable_shelf_mode=True,
         )
+        # Direct writes bypass the service layer — drop the cached shop row.
+        _invalidate_pos_settings_cache(shop_id=self.shop.pk)
         titles = self._report_tables(session)
         self.assertNotIn("Stocked in", titles)
         self.assertNotIn("Stocked out", titles)
@@ -1641,6 +1646,7 @@ class AnalyticsDaySessionReportTests(TestCase):
         ShopPosSettings.objects.filter(shop=self.shop).update(
             enable_stock_tracking=True
         )
+        _invalidate_pos_settings_cache(shop_id=self.shop.pk)
         set_company_pos_setting(field="enable_shelf_mode", enabled=False)
         titles = self._report_tables(session)
         self.assertIn("Stocked in", titles)

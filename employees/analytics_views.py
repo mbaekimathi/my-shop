@@ -228,6 +228,9 @@ def _render_analytics(
         from .workspace import expense_modal_context
 
         context.update(expense_modal_context(request, profile))
+    from .analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(context.get("page"))
     return render(
         request,
         (
@@ -2382,6 +2385,22 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
         payload["receipt"]["can_change_kind"] = employee_may(
             profile, "analytics", "change-receipt-type"
         )
+        from shops.services import get_effective_pos_settings
+
+        pos = get_effective_pos_settings(shop)
+        collect = bool(getattr(pos, "enable_client_data", True))
+        payload["receipt"]["collect_client_data"] = collect
+        payload["receipt"]["require_client_name"] = collect and bool(
+            getattr(pos, "require_client_name", False)
+        )
+        payload["receipt"]["require_client_phone"] = collect and bool(
+            getattr(pos, "require_client_phone", False)
+        )
+        from communications.automations import credit_whatsapp_required
+
+        payload["receipt"]["credit_whatsapp_required"] = bool(
+            credit_whatsapp_required()
+        )
     if not employee_may(profile, "analytics", "return-receipts"):
         payload["can_return"] = False
         payload["can_cancel"] = False
@@ -2484,6 +2503,8 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
                     ).strip(),
                     payment_at=(payload.get("payment_at") or "").strip()
                     or None,
+                    client_name=payload.get("client_name"),
+                    client_phone=payload.get("client_phone"),
                 )
             except ValidationError as exc:
                 message = (

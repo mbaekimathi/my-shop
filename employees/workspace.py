@@ -2189,7 +2189,7 @@ def sidebar_for_my_shop(
     home_role=None,
 ):
     """Sidebar for MY-SHOP entry picker and shop floor workspace."""
-    from .module_permissions import employee_may
+    from .module_permissions import employee_may, employee_may_any
     from shops.services import (
         get_company_pos_settings,
         get_effective_pos_settings,
@@ -2215,6 +2215,13 @@ def sidebar_for_my_shop(
     shops = shops or []
     print_channels = list(print_channels or [])
     omit_dashboard_link = False
+    # Shop cashiers never manage shop settings — every settings surface is
+    # their per-employee Cashier settings page.
+    is_cashier = (
+        not portal
+        and profile is not None
+        and getattr(profile, "role", None) == EmployeeRole.SHOP_CASHIER
+    )
     settings_actives = frozenset(
         {
             "settings",
@@ -2405,6 +2412,19 @@ def sidebar_for_my_shop(
                         active=active == "website",
                     )
                 )
+        elif (
+            active in settings_actives
+            and is_cashier
+            and employee_may_any(profile, "settings")
+        ):
+            primary.append(
+                _link(
+                    "Cashier settings",
+                    "sliders-horizontal",
+                    href=cashier_settings_url(),
+                    active=True,
+                )
+            )
         elif active in settings_actives and _allowed("shop_settings"):
             primary.append(
                 _link(
@@ -2571,7 +2591,7 @@ def sidebar_for_my_shop(
         )
 
     shop_settings_link = None
-    if shop is not None and _allowed("shop_settings"):
+    if shop is not None and _allowed("shop_settings") and not is_cashier:
         shop_settings_link = _link(
             "Shop settings",
             "settings",

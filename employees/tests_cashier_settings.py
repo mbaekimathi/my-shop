@@ -14,6 +14,7 @@ from django.urls import reverse
 
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
 from shops.models import Shop
+from shops.session import SESSION_SHOP_KEY
 from shops.services import (
     get_company_pos_settings,
     get_company_working_hours_settings,
@@ -472,6 +473,61 @@ class CashierSettingsTests(TestCase):
         self.assertIsNone(
             self.cashier.sidebar_prefs.get("day_report_sec_bogus")
         )
+
+    def _unlock_floor(self):
+        session = self.client.session
+        session[SESSION_SHOP_KEY] = str(self.shop.pk)
+        session.save()
+
+    def test_floor_footer_shows_cashier_settings_not_shop_settings(self):
+        self._unlock_floor()
+        response = self.client.get(
+            reverse(
+                "employees:my_shop_workspace",
+                kwargs={"shop_id": self.shop.pk},
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        footer = {
+            item["label"]: item
+            for item in response.context["page_sidebar"]["footer"]
+            if item.get("type") == "link"
+        }
+        self.assertIn("Cashier settings", footer)
+        self.assertNotIn("Shop settings", footer)
+        self.assertEqual(
+            footer["Cashier settings"]["href"], "/shop-cashier/settings/"
+        )
+
+    def test_shop_settings_pages_redirect_to_cashier_settings(self):
+        self._unlock_floor()
+        for name in (
+            "employees:my_shop_settings",
+            "employees:my_shop_settings_theme",
+            "employees:my_shop_settings_pos",
+            "employees:my_shop_settings_receipt",
+            "employees:my_shop_settings_messages",
+        ):
+            response = self.client.get(
+                reverse(name, kwargs={"shop_id": self.shop.pk})
+            )
+            self.assertEqual(response.status_code, 302, name)
+            self.assertEqual(
+                response["Location"], "/shop-cashier/settings/"
+            )
+
+    def test_shop_portal_keeps_shop_settings(self):
+        from shops.session import SESSION_SHOP_PORTAL_SHOP_KEY
+
+        client = Client()
+        session = client.session
+        session[SESSION_SHOP_PORTAL_SHOP_KEY] = str(self.shop.pk)
+        session["shop_portal_auth"] = True
+        session.save()
+        response = client.get(
+            reverse("employees:my_shop_settings", kwargs={"shop_id": self.shop.pk})
+        )
+        self.assertEqual(response.status_code, 200)
 
     def test_non_cashier_cannot_open_page(self):
         other_user = User.objects.create_user(

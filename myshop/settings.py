@@ -316,6 +316,11 @@ STORAGES = {
     },
 }
 
+# WhiteNoise default Cache-Control is max-age=60, so browsers revalidate the
+# shop floor's ~850KB of deferred JS/CSS every minute. All asset URLs carry
+# ?v= busts on change, so a day of real caching is safe.
+WHITENOISE_MAX_AGE = int(os.getenv("WHITENOISE_MAX_AGE", "86400"))
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 

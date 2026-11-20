@@ -642,6 +642,12 @@
     const creditDue = (
       modalBody?.querySelector("[data-confirm-credit-due]")?.value || ""
     ).trim();
+    const clientName = (
+      modalBody?.querySelector("[data-confirm-client-name]")?.value || ""
+    ).trim();
+    const clientPhone = (
+      modalBody?.querySelector("[data-confirm-client-phone]")?.value || ""
+    ).trim();
     const cashAmount = (
       modalBody?.querySelector("[data-confirm-cash-amount]")?.value || ""
     ).trim();
@@ -664,6 +670,8 @@
       method,
       targetKind,
       creditDue,
+      clientName,
+      clientPhone,
       kindChanged:
         Boolean(targetKind) &&
         targetKind !== String(receipt.kind || "").toLowerCase(),
@@ -687,12 +695,21 @@
       method,
       targetKind,
       kindChanged,
+      clientName,
+      clientPhone,
       cashAmount,
       mpesaAmount,
       cardAmount,
       refApplies,
     } = confirmFieldValues();
     const saleConvert = kindChanged && targetKind === "sale";
+    const clientRules = confirmClientRules();
+    const clientOk =
+      !kindChanged ||
+      !clientRules.visible ||
+      ((!clientRules.nameRequired || Boolean(clientName)) &&
+        (!clientRules.phoneRequired || Boolean(clientPhone)) &&
+        (!clientRules.pairRequired || clientName || clientPhone));
     const detailsOk =
       (kindChanged && !saleConvert) ||
       !requireDetails ||
@@ -724,7 +741,8 @@
       confirmVerified &&
       detailsOk &&
       amountOk &&
-      splitOk
+      splitOk &&
+      clientOk
     );
   };
 
@@ -895,6 +913,22 @@
     const target = confirmTargetKind();
     return Boolean(target) && target !== current;
   };
+  const confirmClientRules = () => {
+    const receipt = currentDetail?.receipt || {};
+    const collect = Boolean(receipt.collect_client_data);
+    const target = confirmTargetKind();
+    return {
+      visible: confirmKindChanged(),
+      nameRequired: collect && Boolean(receipt.require_client_name),
+      phoneRequired:
+        collect &&
+        (Boolean(receipt.require_client_phone) ||
+          (target === "credit" &&
+            Boolean(receipt.credit_whatsapp_required))),
+      pairRequired:
+        collect && (target === "credit" || target === "quotation"),
+    };
+  };
   const confirmRefApplies = () => {
     const receipt = currentDetail?.receipt || {};
     if (confirmKindChanged()) {
@@ -963,6 +997,34 @@
     const paidAtWrap = modalBody?.querySelector(
       "[data-confirm-payment-at-wrap]"
     );
+    const clientWrap = modalBody?.querySelector("[data-confirm-client-wrap]");
+    if (clientWrap) {
+      const rules = confirmClientRules();
+      clientWrap.hidden = !changed;
+      const nameHint = clientWrap.querySelector(
+        "[data-confirm-client-name-hint]"
+      );
+      const phoneHint = clientWrap.querySelector(
+        "[data-confirm-client-phone-hint]"
+      );
+      const nameRequired = rules.nameRequired || rules.pairRequired;
+      const phoneRequired = rules.phoneRequired || rules.pairRequired;
+      if (nameHint) {
+        nameHint.textContent = nameRequired ? "(required)" : "(optional)";
+      }
+      if (phoneHint) {
+        phoneHint.textContent = phoneRequired ? "(required)" : "(optional)";
+      }
+      const nameInput = clientWrap.querySelector("[data-confirm-client-name]");
+      const phoneInput = clientWrap.querySelector(
+        "[data-confirm-client-phone]"
+      );
+      nameInput?.setAttribute("aria-required", nameRequired ? "true" : "false");
+      phoneInput?.setAttribute(
+        "aria-required",
+        phoneRequired ? "true" : "false"
+      );
+    }
     if (paidbyWrap) paidbyWrap.hidden = changed ? !saleTarget : isCreditSrc;
     if (creditAmtWrap) creditAmtWrap.hidden = changed || !isCreditSrc;
     if (dueWrap) dueWrap.hidden = !(changed && target === "credit");
@@ -1137,6 +1199,42 @@
       >
     </div>`
       : "";
+    const clientField = canChangeKind
+      ? `<div class="shop-receipt-confirm-datetime" data-confirm-client-wrap hidden>
+      <div class="shop-receipt-mpesa-ref">
+        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-client-name">
+          Client name
+          <span class="shop-receipt-muted" data-confirm-client-name-hint>(optional)</span>
+        </label>
+        <input
+          id="ax-confirm-client-name"
+          class="shop-receipt-mpesa-ref-input"
+          type="text"
+          name="client_name"
+          value="${escapeHtml(receipt.client_name || "")}"
+          maxlength="200"
+          autocomplete="off"
+          data-confirm-client-name
+        >
+      </div>
+      <div class="shop-receipt-mpesa-ref">
+        <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-client-phone">
+          Client phone
+          <span class="shop-receipt-muted" data-confirm-client-phone-hint>(optional)</span>
+        </label>
+        <input
+          id="ax-confirm-client-phone"
+          class="shop-receipt-mpesa-ref-input"
+          type="tel"
+          name="client_phone"
+          value="${escapeHtml(receipt.client_phone || "")}"
+          maxlength="40"
+          autocomplete="off"
+          data-confirm-client-phone
+        >
+      </div>
+    </div>`
+      : "";
     let paidByField = "";
     let paymentSplitField = "";
     if ((!isCredit && saleMethod) || canChangeKind) {
@@ -1239,6 +1337,7 @@
       ${paidByField}
       ${paymentSplitField}
       ${creditDueField}
+      ${clientField}
       ${creditAmountField}
       <div class="shop-receipt-confirm-datetime" data-confirm-payment-at-wrap>
         <div class="shop-receipt-mpesa-ref">
@@ -1798,7 +1897,7 @@ ${confirmPanelHtml}`;
     }
     if (
       target?.matches?.(
-        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
+        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount], [data-confirm-client-name], [data-confirm-client-phone], [data-confirm-credit-due]"
       )
     ) {
       syncSubmitConfirm();
@@ -1824,7 +1923,7 @@ ${confirmPanelHtml}`;
     }
     if (
       target?.matches?.(
-        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount]"
+        "[data-confirm-payment-date], [data-confirm-payment-time], [data-confirm-mpesa-ref], [data-confirm-credit-amount], [data-confirm-client-name], [data-confirm-client-phone], [data-confirm-credit-due]"
       )
     ) {
       syncSubmitConfirm();
@@ -1876,6 +1975,8 @@ ${confirmPanelHtml}`;
       targetKind,
       creditDue,
       kindChanged,
+      clientName,
+      clientPhone,
       cashAmount,
       mpesaAmount,
       cardAmount,
@@ -1883,6 +1984,34 @@ ${confirmPanelHtml}`;
     } = confirmFieldValues();
     const receipt = currentDetail?.receipt || {};
     const saleConvert = kindChanged && targetKind === "sale";
+    if (kindChanged) {
+      const clientRules = confirmClientRules();
+      if (clientRules.nameRequired && !clientName) {
+        setConfirmStatus("Enter the client full name before completing.", {
+          error: true,
+        });
+        modalBody?.querySelector("[data-confirm-client-name]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+      if (clientRules.phoneRequired && !clientPhone) {
+        setConfirmStatus("Enter the client phone number before completing.", {
+          error: true,
+        });
+        modalBody?.querySelector("[data-confirm-client-phone]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+      if (clientRules.pairRequired && !clientName && !clientPhone) {
+        setConfirmStatus(
+          "Enter a client name, a phone number, or both for credit and quotation.",
+          { error: true }
+        );
+        modalBody?.querySelector("[data-confirm-client-name]")?.focus();
+        syncSubmitConfirm();
+        return;
+      }
+    }
     if (requireDetails && (!kindChanged || saleConvert)) {
       if (refApplies && !ref && !existingRef) {
         setConfirmStatus(
@@ -2017,6 +2146,8 @@ ${confirmPanelHtml}`;
       };
       if (kindChanged) {
         body.receipt_kind = targetKind;
+        body.client_name = clientName;
+        body.client_phone = clientPhone;
         if (targetKind === "credit" && creditDue) {
           body.credit_due_date = creditDue;
         }

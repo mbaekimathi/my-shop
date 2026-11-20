@@ -3683,6 +3683,14 @@ def my_shop_day_report(request, shop_id):
     if denied:
         return denied
 
+    # A shop portal session resolves profile=None above even when an employee
+    # is signed in on the same browser — day report prefs (hidden sections,
+    # counted statuses) belong to the viewing employee, so fall back to the
+    # request profile for them. Portal-only visitors keep profile=None.
+    prefs_profile = (
+        profile if profile is not None else get_profile_for_request(request)
+    )
+
     session_id = (request.GET.get("session") or "").strip()
     own_days = _cashier_own_days_only(profile)
     if session_id:
@@ -3712,17 +3720,19 @@ def my_shop_day_report(request, shop_id):
         "print",
     ):
         printed_by = ""
-        if profile is not None:
-            printed_by = profile.user.get_full_name() or profile.user.username
-        report_mode = day_report_status_mode(profile)
+        if prefs_profile is not None:
+            printed_by = (
+                prefs_profile.user.get_full_name() or prefs_profile.user.username
+            )
+        report_mode = day_report_status_mode(prefs_profile)
         pdf_bytes = build_shop_day_report_pdf(
             shop=shop,
             session=session,
             printed_by=printed_by,
             company_name=get_company_display_name(),
-            counted_statuses=day_report_counted_statuses(profile),
+            counted_statuses=day_report_counted_statuses(prefs_profile),
             section_visible=lambda key: day_report_section_enabled(
-                profile, key
+                prefs_profile, key
             ),
             sales_scope_label=(
                 "Pending sales only"
@@ -3740,7 +3750,7 @@ def my_shop_day_report(request, shop_id):
     from employees.analytics_services import build_day_session_report_page
 
     context = build_day_session_report_page(
-        profile=profile, request=request, session=session
+        profile=prefs_profile, request=request, session=session
     )
     page = context.get("page") or {}
 
@@ -5937,11 +5947,26 @@ def _shop_pos_settings_page_context(shop, *, setting_groups):
     }
 
 
+def _cashier_shop_settings_redirect(request, profile):
+    """Shop cashiers only have Cashier settings — never the shop settings pages."""
+    from employees.models import EmployeeRole
+
+    if profile is not None and getattr(profile, "role", None) == EmployeeRole.SHOP_CASHIER:
+        messages.info(
+            request, "Shop cashiers manage their options under Cashier settings."
+        )
+        return redirect("employees:role_shop_cashier_settings")
+    return None
+
+
 @shop_floor_required
 @require_http_methods(["GET"])
 def my_shop_settings(request, shop_id):
     """Shop settings hub: theme, POS, and receipt overrides for this shop."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _cashier_shop_settings_redirect(request, profile)
     if denied:
         return denied
     denied = _require_my_shop_permission(
@@ -5996,6 +6021,9 @@ def my_shop_settings_theme(request, shop_id):
     from .themes import COMPANY_THEME_BY_SLUG, shop_theme_options
 
     profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _cashier_shop_settings_redirect(request, profile)
     if denied:
         return denied
     denied = _require_my_shop_permission(
@@ -6061,6 +6089,9 @@ def my_shop_settings_pos(request, shop_id):
     profile, shop, denied = _require_active_shop_session(request, shop_id)
     if denied:
         return denied
+    denied = _cashier_shop_settings_redirect(request, profile)
+    if denied:
+        return denied
     denied = _require_my_shop_permission(
         request, profile, "shop_settings", portal_ok=True
     )
@@ -6095,6 +6126,9 @@ def my_shop_settings_pos(request, shop_id):
 def my_shop_settings_receipt(request, shop_id):
     """Per-shop receipt settings (overrides company defaults when enabled)."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _cashier_shop_settings_redirect(request, profile)
     if denied:
         return denied
     denied = _require_my_shop_permission(
@@ -6290,6 +6324,9 @@ def my_shop_settings_receipt(request, shop_id):
 def my_shop_settings_messages(request, shop_id):
     """Per-shop auto messages (overrides company message drafts when enabled)."""
     profile, shop, denied = _require_active_shop_session(request, shop_id)
+    if denied:
+        return denied
+    denied = _cashier_shop_settings_redirect(request, profile)
     if denied:
         return denied
     denied = _require_my_shop_permission(

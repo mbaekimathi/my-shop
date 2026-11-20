@@ -381,13 +381,38 @@ def _shop_pos_defaults_from_company(company: CompanyPosSettings | None = None) -
     return {name: getattr(company, name) for name in SHOP_POS_COPY_FIELDS}
 
 
+_SHOP_POS_UNSET = object()
+
+
+def _shop_pos_settings_row(shop: Shop) -> ShopPosSettings | None:
+    """Cached no-create read of the shop override row (None = no row yet).
+
+    Floor/analytics pages call this several times per request through
+    get_shop_pos_settings / get_effective_pos_settings / shop_stock_mode_flags
+    — the cache key is already cleared by every writer via
+    _invalidate_pos_settings_cache(shop_id=...).
+    """
+    cache_key = SHOP_POS_SETTINGS_CACHE_KEY.format(shop_id=shop.pk)
+    cached = cache.get(cache_key, _SHOP_POS_UNSET)
+    if cached is not _SHOP_POS_UNSET:
+        return cached
+    row = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
+    cache.set(cache_key, row, POS_SETTINGS_CACHE_TTL)
+    return row
+
+
 def get_shop_pos_settings(shop: Shop) -> ShopPosSettings:
     """Return (and lazily create) the shop override row, seeded from company defaults."""
-    existing = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
+    existing = _shop_pos_settings_row(shop)
     if existing is not None:
         return existing
     defaults = _shop_pos_defaults_from_company()
     settings_row, _ = ShopPosSettings.objects.get_or_create(shop=shop, defaults=defaults)
+    cache.set(
+        SHOP_POS_SETTINGS_CACHE_KEY.format(shop_id=shop.pk),
+        settings_row,
+        POS_SETTINGS_CACHE_TTL,
+    )
     return settings_row
 
 
@@ -404,7 +429,7 @@ def get_effective_pos_settings(shop: Shop | None = None) -> CompanyPosSettings:
     company = get_company_pos_settings()
     if shop is None:
         return company
-    shop_row = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
+    shop_row = _shop_pos_settings_row(shop)
     if shop_row is None or (
         not shop_row.override_pos and not shop_row.override_receipt
     ):
@@ -528,7 +553,7 @@ def shop_stock_mode_flags(shop, *, pos=None) -> tuple[bool, bool]:
     pos = pos if pos is not None else get_effective_pos_settings(shop)
     items_on = bool(getattr(pos, "enable_stock_tracking", True))
     shelf_on = bool(getattr(pos, "enable_shelf_mode", False))
-    shop_row = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
+    shop_row = _shop_pos_settings_row(shop)
     if shop_row is not None and shop_row.override_pos:
         items_on = items_on and bool(shop_row.enable_stock_tracking)
         shelf_on = shelf_on and bool(shop_row.enable_shelf_mode)
@@ -7800,26 +7825,40 @@ def _collect_return_payment_events(
     *, shop_id, start, end, counted_statuses=None
 ) -> list:
     """Flat refund events for a shop whose timestamp falls in [start, end)."""
+    return _collect_return_payment_events_for_shops(
+        shop_ids=[shop_id], start=start, end=end,
+        counted_statuses=counted_statuses,
+    ).get(shop_id, [])
+
+
+def _collect_return_payment_events_for_shops(
+    *, shop_ids, start, end, counted_statuses=None
+) -> dict:
+    """``shop_id -> flat refund events`` in one query.
+
+    Same result as calling _collect_return_payment_events per shop, but a
+    single receipt scan — analytics pages iterate every active shop.
+    """
     from .models import ShopReceipt
 
-    if start >= end:
-        return []
+    events_by_shop = {shop_id: [] for shop_id in shop_ids}
+    if start >= end or not shop_ids:
+        return events_by_shop
     qs = ShopReceipt.objects.filter(
-        shop_id=shop_id,
+        shop_id__in=shop_ids,
         kind=ShopReceiptKind.SALE,
         last_returned_at__gte=start,
     )
     if counted_statuses is not None:
         qs = qs.filter(status__in=counted_statuses)
     rows = qs.exclude(return_payment_events=[]).values(
-        "return_payment_events"
+        "shop_id", "return_payment_events"
     )
-    events = []
     for row in rows:
         for event in _iter_return_payment_events(row.get("return_payment_events")):
             if start <= event["at"] < end:
-                events.append(event)
-    return events
+                events_by_shop.setdefault(row["shop_id"], []).append(event)
+    return events_by_shop
 
 
 def _session_activity_totals(
@@ -13508,6 +13547,8 @@ def change_shop_receipt_kind(
     card_amount=None,
     mpesa_receipt_number: str = "",
     payment_at=None,
+    client_name=None,
+    client_phone=None,
 ) -> dict:
     """Convert a pending sale/credit receipt to another receipt kind."""
     from .models import ShopReceipt
@@ -13573,6 +13614,73 @@ def change_shop_receipt_kind(
         paid_at = _parse_delivery_payment_at(paid_at)
     elif timezone.is_naive(paid_at):
         paid_at = timezone.make_aware(paid_at, timezone.get_current_timezone())
+
+    # Client details can be refreshed on any conversion. Credit and
+    # quotation targets need them whenever client data collection is on —
+    # the same rules checkout applies to those kinds.
+    new_client_name = (receipt.client_name or "").strip().upper()
+    new_client_phone = (receipt.client_phone or "").strip()
+    client_obj = receipt.client
+    client_fields_changed = False
+    if bool(getattr(pos, "enable_client_data", True)):
+        posted_client = client_name is not None or client_phone is not None
+        if client_name is not None:
+            new_client_name = (client_name or "").strip().upper()
+        if client_phone is not None:
+            new_client_phone = (client_phone or "").strip()
+        if new_client_phone:
+            if not _normalize_phone(new_client_phone):
+                raise ValidationError(
+                    "Enter a valid Kenyan phone number "
+                    "(e.g. 07XX XXX XXX or +2547XXXXXXXX)."
+                )
+            new_client_phone = format_kenya_phone(new_client_phone)
+        if getattr(pos, "require_client_phone", False) and not new_client_phone:
+            raise ValidationError(
+                "Enter the client phone number before completing."
+            )
+        if getattr(pos, "require_client_name", False) and not new_client_name:
+            raise ValidationError(
+                "Enter the client full name before completing."
+            )
+        if target_kind in {ShopReceiptKind.CREDIT, ShopReceiptKind.QUOTATION}:
+            if not new_client_name and not new_client_phone:
+                raise ValidationError(
+                    "Enter a client name, a phone number, or both for "
+                    "credit and quotation."
+                )
+            if target_kind == ShopReceiptKind.CREDIT:
+                from communications.automations import credit_whatsapp_required
+
+                if credit_whatsapp_required() and not new_client_phone:
+                    raise ValidationError(
+                        "Enter the client phone number so the credit sale "
+                        "can be sent on WhatsApp."
+                    )
+        if posted_client:
+            client_fields_changed = (
+                new_client_name != (receipt.client_name or "").strip().upper()
+                or new_client_phone != (receipt.client_phone or "").strip()
+            )
+        if client_fields_changed:
+            client_obj = None
+            if new_client_phone:
+                if new_client_name:
+                    client_obj = upsert_client(
+                        full_name=new_client_name,
+                        phone=new_client_phone,
+                        profile=actor,
+                    )
+                elif target_kind == ShopReceiptKind.CREDIT:
+                    client_obj = find_client_by_phone(new_client_phone)
+                    if client_obj is None:
+                        client_obj = upsert_client(
+                            full_name="CUSTOMER",
+                            phone=new_client_phone,
+                            profile=actor,
+                        )
+                else:
+                    client_obj = find_client_by_phone(new_client_phone)
 
     if target_kind == ShopReceiptKind.SALE:
         # Converting into a sale confirms it — payment details are required.
@@ -13717,6 +13825,11 @@ def change_shop_receipt_kind(
             receipt.confirmed_payment_at = paid_at
             if "confirmed_payment_at" not in update_fields:
                 update_fields.append("confirmed_payment_at")
+        if client_fields_changed:
+            receipt.client = client_obj
+            receipt.client_name = new_client_name
+            receipt.client_phone = new_client_phone
+            update_fields += ["client", "client_name", "client_phone"]
         receipt.save(update_fields=update_fields)
         detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
         return {
@@ -13790,6 +13903,12 @@ def change_shop_receipt_kind(
         receipt.confirmed_payment_at = None
         update_fields += ["credit_due_date", "confirmed_payment_at"]
         message = f"Receipt {receipt.receipt_number} converted to a quotation."
+
+    if client_fields_changed:
+        receipt.client = client_obj
+        receipt.client_name = new_client_name
+        receipt.client_phone = new_client_phone
+        update_fields += ["client", "client_name", "client_phone"]
 
     receipt.save(update_fields=update_fields)
 

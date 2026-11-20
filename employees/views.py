@@ -1839,12 +1839,19 @@ def _marketing_is_hosted(request=None):
     return False
 
 
-def _shop_website_variants(request, shop_id):
+def _shop_website_variants(
+    request, shop_id, *, local_origin=None, hosted_origin=None, is_hosted=None
+):
     path = reverse("employees:shop_website", kwargs={"shop_id": shop_id})
-    local_url = f"{_local_site_origin(request)}{path}"
-    hosted_origin = _hosted_site_origin(request)
+    # Callers rendering many shops pass the origins in — _hosted_site_origin
+    # can probe the ngrok API, so it must not run once per shop row.
+    local_url = f"{local_origin or _local_site_origin(request)}{path}"
+    if hosted_origin is None:
+        hosted_origin = _hosted_site_origin(request)
     hosted_url = f"{hosted_origin}{path}" if hosted_origin else ""
-    if _marketing_is_hosted(request):
+    if is_hosted is None:
+        is_hosted = _marketing_is_hosted(request)
+    if is_hosted:
         url = hosted_url or local_url
         variants = [
             {
@@ -2144,9 +2151,17 @@ def marketing_links(request):
     shops = list(
         Shop.objects.filter(is_hidden=False, is_suspended=False).order_by("name")
     )
+    local_origin = _local_site_origin(request)
+    hosted_origin = _hosted_site_origin(request)
     links = []
     for shop in shops:
-        variants, local_url, hosted_url = _shop_website_variants(request, shop.pk)
+        variants, local_url, hosted_url = _shop_website_variants(
+            request,
+            shop.pk,
+            local_origin=local_origin,
+            hosted_origin=hosted_origin,
+            is_hosted=is_hosted,
+        )
         links.append(
             {
                 "id": shop.pk,

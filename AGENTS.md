@@ -333,6 +333,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `cashier_settings_url()` labeled "Cashier settings" instead. The page needs
   `settings/home` permission; it shadows `role_settings` for the cashier
   segment (registered before `<role_segment>/settings/` in portal_urls).
+- Cashiers never see Shop settings: `sidebar_for_my_shop` skips the footer
+  "Shop settings" link for `SHOP_CASHIER` (falls through to the usual
+  "Cashier settings" footer link) and points settings-page primary nav at
+  `cashier_settings_url()`; the five `my_shop_settings*` views redirect a
+  cashier profile there (`_cashier_shop_settings_redirect` in shops/views.py,
+  checked before the `my-shop/shop_settings` permission gate). Shop portal
+  sessions (profile=None) and other roles keep the shop settings pages.
 - "Dashboard sidebar" toggles are **per-employee**, stored as keys in
   `EmployeeProfile.sidebar_prefs` JSON (missing key = shown) —
   `CASHIER_SIDEBAR_LINKS` / `cashier_sidebar_pref_enabled` /
@@ -893,10 +900,25 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `record_credit_collection` (single-channel method only), quotation
   sources deduct stock first. A credit with `amount_paid > 0` may only
   convert to sale.
+- The modal shows **Client name + Client phone** on every kind change
+  (prefilled from the receipt). `analytics_receipt_detail` also sends
+  `collect_client_data` / `require_client_name` / `require_client_phone` /
+  `credit_whatsapp_required` so the JS can mark them required. The service
+  applies the checkout rules: credit + quotation targets need a name or
+  phone while `enable_client_data` is on (phone compulsory when
+  `require_client_phone` or `credit_whatsapp_required`, name when
+  `require_client_name`); posted values relink `receipt.client` via
+  `upsert_client` / `find_client_by_phone` (phone-only credit registers a
+  "CUSTOMER" client). Posted blanks replace the stored details; keys left
+  out of the payload keep them.
 - `analytics-confirm-receipts.js` carries `can_change_kind` forward across
   `renderDetail` payloads (confirm/set-status responses don't resend it),
   hides payment fields for non-sale targets, and restricts "Paid by" to
   single-channel methods when a credit converts to a sale.
+- `sw.js` serves every `/static/` asset **cache-first keyed on the `?v=`
+  URL** — bump the template `?v=` whenever the JS changes, or browsers
+  keep running the stale file (a feature can look "missing" while the
+  backend is correct).
 - Tests: `shops/tests/test_receipt_kind_change.py`.
 
 ## Shop switching (role workspaces + portal)

@@ -10,6 +10,7 @@ from decimal import Decimal
 from datetime import datetime
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -320,17 +321,28 @@ def detect_ngrok_public_base_url() -> str:
     """
     Read the local ngrok agent API for an active HTTPS tunnel.
     Lets STK work even when the admin is still browsing localhost.
+
+    The probe is a synchronous HTTP call on the request path, and some pages
+    (marketing links) call it once per shop — so the result is cached briefly.
+    A dead/filtered ngrok port otherwise costs the full socket timeout on
+    every call.
     """
     if getattr(settings, "IS_HOSTED", False):
         return ""
     api = (
         getattr(settings, "DARAJA_NGROK_API_URL", "") or "http://127.0.0.1:4040/api/tunnels"
     ).strip()
+    cache_key = f"myshop:ngrok-base:{api}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
     try:
         request = urllib.request.Request(api, method="GET", headers={"Accept": "application/json"})
         with urllib.request.urlopen(request, timeout=1.5) as response:
             payload = json.loads(response.read().decode("utf-8") or "{}")
     except Exception:
+        # Negative result — retry soon so a freshly started tunnel is picked up.
+        cache.set(cache_key, "", timeout=10)
         return ""
 
     tunnels = payload.get("tunnels") or []
@@ -340,11 +352,15 @@ def detect_ngrok_public_base_url() -> str:
         if public_url.lower().startswith("https://"):
             https_urls.append(public_url)
     if not https_urls:
+        cache.set(cache_key, "", timeout=10)
         return ""
     try:
-        return normalize_callback_base_url(https_urls[0], allow_local=False)
+        base = normalize_callback_base_url(https_urls[0], allow_local=False)
     except ValidationError:
-        return ""
+        base = ""
+    # Positive results live longer — the tunnel URL rarely changes while ngrok runs.
+    cache.set(cache_key, base, timeout=120 if base else 10)
+    return base
 
 
 def ensure_callback_secret(row: CompanyDarajaSettings | None = None) -> str:

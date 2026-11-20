@@ -481,6 +481,7 @@
             placeholder="{% firstof table.search_placeholder page.search_placeholder 'Search…' %}"
             aria-label="{% firstof table.search_placeholder page.search_placeholder 'Search' %}"
             data-ax-table-search
+            {% if table.pager %}data-ax-server-search title="Enter searches all {{ table.pager.total }} rows"{% endif %}
             autocomplete="off"
           >
         </label>
@@ -627,13 +628,13 @@
             </tr>
           </thead>
           <tbody>
-            {% for row in table.rows %}
-            {% if row.group_header %}
+            {% for entry in table.zrows %}
+            {% if entry.group_header %}
             <tr class="ax-row--group">
-              <td colspan="{{ table.columns|length }}">{{ row.label }}</td>
+              <td colspan="{{ table.columns|length }}">{{ entry.label }}</td>
             </tr>
             {% else %}
-            {% with cells=row.cells|default:row %}
+            {% with row=entry.row cells=entry.cells %}
             <tr
               {% if row.receipt_id %}
               class="ax-receipt-row"
@@ -647,11 +648,10 @@
               data-search-text="{% if row.search_text %}{{ row.search_text }}{% elif cells.0.label %}{{ cells.0.label }}{% if cells.0.sub %} {{ cells.0.sub }}{% endif %}{% elif cells.0 %}{{ cells.0 }}{% endif %}"
               {% endif %}
             >
-              {% for cell in cells %}
-              {% for col in table.columns %}
-              {% if forloop.parentloop.counter0 == forloop.counter0 %}
+              {% for pair in entry.zipped %}
+              {% with cell=pair.0 col=pair.1 %}
               <td
-                class="{% if forloop.parentloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair or col.quad %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or cell.kind == 'quad' or col.pair or col.quad %} ax-cell--pair{% endif %}{% if col.pair_stack %} ax-cell--pair-stack{% endif %}{% if cell.kind == 'money' or cell.kind == 'pct' or col.money %} ax-cell--money{% endif %}{% if col.phone %} ax-cell--phone{% endif %}{% if col.total %} ax-cell--total{% endif %}{% if col.band %} ax-cell--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-cell--band-start{% endif %}"
+                class="{% if forloop.first %}ax-cell--primary{% endif %}{% if col.compact or col.pair or col.quad %} ax-cell--shop{% endif %}{% if cell.kind == 'qty_amount' or cell.kind == 'quad' or col.pair or col.quad %} ax-cell--pair{% endif %}{% if col.pair_stack %} ax-cell--pair-stack{% endif %}{% if cell.kind == 'money' or cell.kind == 'pct' or col.money %} ax-cell--money{% endif %}{% if col.phone %} ax-cell--phone{% endif %}{% if col.total %} ax-cell--total{% endif %}{% if col.band %} ax-cell--band-{{ col.band }}{% endif %}{% if col.band_start %} ax-cell--band-start{% endif %}"
                 data-label="{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}"
               >
                 {% if cell.href %}
@@ -730,8 +730,7 @@
                 {{ cell }}
                 {% endif %}
               </td>
-              {% endif %}
-              {% endfor %}
+              {% endwith %}
               {% endfor %}
             </tr>
             {% endwith %}
@@ -743,6 +742,21 @@
         <p class="ax-empty">{{ table.empty }}</p>
         {% endif %}
       </div>
+      {% if table.pager %}
+      <nav class="pagination ax-table-pager" aria-label="Table pages">
+        {% if table.pager.prev_url %}
+        <a class="pagination-link" href="{{ table.pager.prev_url }}">← Previous</a>
+        {% else %}
+        <span class="pagination-link pagination-link--disabled">← Previous</span>
+        {% endif %}
+        <span class="pagination-status">Page {{ table.pager.page }} of {{ table.pager.pages }} · {{ table.pager.total }} rows</span>
+        {% if table.pager.next_url %}
+        <a class="pagination-link" href="{{ table.pager.next_url }}">Next →</a>
+        {% else %}
+        <span class="pagination-link pagination-link--disabled">Next →</span>
+        {% endif %}
+      </nav>
+      {% endif %}
       {% if table.footnote %}
       <p class="ax-footnote">{{ table.footnote }}</p>
       {% endif %}
@@ -945,14 +959,37 @@
         if (pendingGroup) pendingGroup.hidden = true;
         if (emptyNote) emptyNote.hidden = visible > 0 || !q;
       };
+      const submitServerSearch = () => {
+        if (!search.hasAttribute("data-ax-server-search")) return false;
+        try {
+          const url = new URL(window.location.href);
+          const q = (search.value || "").trim();
+          if (q) url.searchParams.set("q", q);
+          else url.searchParams.delete("q");
+          url.searchParams.delete("page");
+          if (url.toString() !== window.location.href) {
+            window.location.href = url.toString();
+          }
+        } catch (err) {
+          /* keep local filter */
+        }
+        return true;
+      };
       let timer = 0;
       search.addEventListener("input", () => {
         window.clearTimeout(timer);
         timer = window.setTimeout(filterRows, 80);
       });
-      search.addEventListener("search", filterRows);
+      search.addEventListener("search", () => {
+        // Cleared via the × affordance — drop the server filter too.
+        if (!search.value && submitServerSearch()) return;
+        filterRows();
+      });
       search.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") event.preventDefault();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitServerSearch();
+        }
       });
       filterRows();
 

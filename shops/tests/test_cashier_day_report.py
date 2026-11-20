@@ -418,6 +418,37 @@ class CashierDayReportScopeTests(TestCase):
         self.assertEqual(session.pk, colleague.pk)
         self.assertNotEqual(session.pk, own.pk)
 
+    def test_employee_section_prefs_apply_with_portal_session(self):
+        """Employee + portal session in one browser: the portal branch of
+        _require_allocated_shop_access resolves profile=None, but the
+        employee's day-report section picks must still hide tables."""
+        session = self._open_day(self.next)
+        self.next.sidebar_prefs = {"day_report_sec_item_stock": False}
+        self.next.save(update_fields=["sidebar_prefs"])
+
+        client = self._login(self.next)
+        portal = client.session
+        portal["shop_portal_auth"] = True
+        portal["shop_portal_shop_id"] = str(self.shop.pk)
+        portal.save()
+
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        titles = [t["title"] for t in response.context["page"]["tables"]]
+        self.assertNotIn("Stocked in", titles)
+        self.assertNotIn("Stocked out", titles)
+        self.assertIn("Money flow", titles)
+
+    def test_portal_view_shows_all_sections(self):
+        """A portal-only visitor has no employee prefs — every section stays."""
+        session = self._open_day(self.next)
+        client = self._login_shop()
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        titles = [t["title"] for t in response.context["page"]["tables"]]
+        self.assertIn("Stocked in", titles)
+        self.assertIn("Stocked out", titles)
+
     def test_history_lists_only_cashier_own_days(self):
         own = self._open_day(self.next)
         self._close_day(self.next)
