@@ -13718,6 +13718,7 @@ def change_shop_receipt_kind(
         "card_amount",
         "mpesa_receipt_number",
         "amount_paid",
+        "settled_from_credit",
     ]
     receipt.kind = target_kind
     receipt.payment_method = ShopPaymentMethod.NONE
@@ -13726,6 +13727,7 @@ def change_shop_receipt_kind(
     receipt.card_amount = Decimal("0.00")
     receipt.mpesa_receipt_number = ""
     receipt.amount_paid = Decimal("0.00")
+    receipt.settled_from_credit = False
 
     if source_kind == ShopReceiptKind.QUOTATION:
         # Quotation stock was never deducted — deduct it for the new kind.
