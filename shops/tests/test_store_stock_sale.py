@@ -234,6 +234,10 @@ class StoreStockItemToggleViewTests(TestCase):
         self.assertFalse(payload["stock_count_enabled"])
         self.item.refresh_from_db()
         self.assertFalse(self.item.stock_count_enabled)
+        # The Sale stock tracking switch is the same setting — off here
+        # means off there too, and the pick is marked custom.
+        self.assertFalse(self.item.deduct_stock_on_sale)
+        self.assertTrue(self.item.sale_tracking_custom)
 
         response = self.client.post(
             "/company-store-manager/item-stock/toggle/",
@@ -242,6 +246,7 @@ class StoreStockItemToggleViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.item.refresh_from_db()
         self.assertTrue(self.item.stock_count_enabled)
+        self.assertTrue(self.item.deduct_stock_on_sale)
 
     def test_toggle_endpoint_rejects_bad_item(self):
         self.client.login(username="770012", password="pass")

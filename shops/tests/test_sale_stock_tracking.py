@@ -353,6 +353,8 @@ class SaleStockTrackingPageTests(TestCase):
         self.assertFalse(payload["deduct_stock_on_sale"])
         self.item.refresh_from_db()
         self.assertFalse(self.item.deduct_stock_on_sale)
+        # The item-stock page "Stock count" switch is the same setting.
+        self.assertFalse(self.item.stock_count_enabled)
 
         response = self.client.post(
             self.url,
@@ -368,6 +370,7 @@ class SaleStockTrackingPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.item.refresh_from_db()
         self.assertTrue(self.item.deduct_stock_on_sale)
+        self.assertTrue(self.item.stock_count_enabled)
 
     def test_track_all_endpoint(self):
         self._login()
@@ -384,6 +387,7 @@ class SaleStockTrackingPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.item.refresh_from_db()
         self.assertFalse(self.item.deduct_stock_on_sale)
+        self.assertFalse(self.item.stock_count_enabled)
 
     def test_toggle_rejects_unknown_item(self):
         self._login()

@@ -77,8 +77,15 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   re-stamps them to `enable_stock_tracking` on the sale-tracking page GET and
   whenever the flag changes in `set_company_pos_setting`; a per-item toggle or
   "Track all" marks the item custom so manual picks survive later mode flips.
-  Manual Stock In/Out and transfers still move counts; serial tracking and the
-  central-store mirror flag (`stock_count_enabled`) are separate. Floor JS
+  Manual Stock In/Out and transfers still move counts; serial tracking is
+  separate. The central-store mirror flag (`stock_count_enabled`, the "Stock
+  count" column on the Company Store Manager item-stock page) is the **same
+  switch**: `set_item_stock_count_enabled` also writes `deduct_stock_on_sale`
+  + `sale_tracking_custom`, the sale-tracking toggle/Track-all write
+  `stock_count_enabled`, `sync_sale_tracking_defaults()` re-stamps both, and
+  new items register with both OFF. Migration
+  `0068_link_stock_count_and_sale_tracking` unified existing rows off-wins.
+  Floor JS
   reads `sale_stock_tracked` from the catalog payload (`data-item-sale-tracked`
   on cards) — untracked items show no stock number on the floor card, product
   popup, serial modal, or trade search. Tests:

@@ -47,7 +47,8 @@ class Item(models.Model):
         db_index=True,
         help_text=(
             "Whether POS sales/returns move this item's central store count "
-            "(StoreStock). Off = the item's store count is manual only."
+            "(StoreStock). Kept in sync with deduct_stock_on_sale — the "
+            "item-stock page and Sale stock tracking page drive one switch."
         ),
     )
     deduct_stock_on_sale = models.BooleanField(
@@ -55,7 +56,8 @@ class Item(models.Model):
         db_index=True,
         help_text=(
             "Whether selling/returning this item on the shop page moves its "
-            "stock counts. Off = the item sells freely; its stock is manual only."
+            "stock counts. Kept in sync with stock_count_enabled — off on "
+            "either page means the item sells freely and its stock is manual only."
         ),
     )
     sale_tracking_custom = models.BooleanField(

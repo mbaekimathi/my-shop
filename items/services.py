@@ -1988,6 +1988,7 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
             image=cleaned.get("image"),
             track_serial_number=cleaned["track_serial_number"],
             deduct_stock_on_sale=False,
+            stock_count_enabled=False,
             sale_tracking_custom=True,
             created_by=profile,
         )
@@ -2013,7 +2014,9 @@ def sync_sale_tracking_defaults() -> int:
     Items never toggled by hand (``sale_tracking_custom=False``) follow
     ``CompanyPosSettings.enable_stock_tracking``: when the default is on the
     item tracks sale stock too, when off it stops. Manual picks are left
-    alone. Returns the number of items updated.
+    alone. The central-store count flag (``stock_count_enabled``) moves with
+    it — the item-stock page and the Sale stock tracking page drive the same
+    switch. Returns the number of items updated.
     """
     from shops.services import get_company_pos_settings
 
@@ -2022,8 +2025,14 @@ def sync_sale_tracking_defaults() -> int:
     )
     return int(
         Item.objects.filter(sale_tracking_custom=False)
-        .exclude(deduct_stock_on_sale=default)
-        .update(deduct_stock_on_sale=default)
+        .exclude(
+            deduct_stock_on_sale=default,
+            stock_count_enabled=default,
+        )
+        .update(
+            deduct_stock_on_sale=default,
+            stock_count_enabled=default,
+        )
     )
 
 

@@ -7239,10 +7239,12 @@ def stock_sale_tracking(request, profile, meta, module):
                 return redirect(page_url)
             enabled = _truthy(request.POST.get("enabled"))
             item.deduct_stock_on_sale = enabled
+            item.stock_count_enabled = enabled
             item.sale_tracking_custom = True
             item.save(
                 update_fields=[
                     "deduct_stock_on_sale",
+                    "stock_count_enabled",
                     "sale_tracking_custom",
                     "updated_at",
                 ]
@@ -7253,6 +7255,7 @@ def stock_sale_tracking(request, profile, meta, module):
                         "ok": True,
                         "item_id": item.pk,
                         "deduct_stock_on_sale": item.deduct_stock_on_sale,
+                        "stock_count_enabled": item.stock_count_enabled,
                     }
                 )
             messages.success(request, f"Stock tracking saved for {item.name}.")
@@ -7262,6 +7265,7 @@ def stock_sale_tracking(request, profile, meta, module):
             enabled = _truthy(request.POST.get("enabled") or "1")
             updated = Item.objects.filter(is_suspended=False).update(
                 deduct_stock_on_sale=enabled,
+                stock_count_enabled=enabled,
                 sale_tracking_custom=True,
                 updated_at=timezone.now(),
             )

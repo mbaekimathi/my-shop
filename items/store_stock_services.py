@@ -331,10 +331,24 @@ def _resolve_item(item_id) -> Item:
 
 
 def set_item_stock_count_enabled(*, item_id, enabled: bool) -> Item:
-    """Toggle whether POS sales/returns move this item's StoreStock count."""
+    """Toggle whether POS sales/returns move this item's StoreStock count.
+
+    Kept in sync with the Sale stock tracking pick: flipping the item-stock
+    page switch also flips deduct_stock_on_sale and marks the item custom so
+    the company-default sync won't switch it back.
+    """
     item = _resolve_item(item_id)
     item.stock_count_enabled = bool(enabled)
-    item.save(update_fields=["stock_count_enabled", "updated_at"])
+    item.deduct_stock_on_sale = bool(enabled)
+    item.sale_tracking_custom = True
+    item.save(
+        update_fields=[
+            "stock_count_enabled",
+            "deduct_stock_on_sale",
+            "sale_tracking_custom",
+            "updated_at",
+        ]
+    )
     return item
 
 
