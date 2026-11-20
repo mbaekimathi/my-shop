@@ -363,6 +363,19 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   The PDF subtitle shows "Pending sales only" / "Confirmed sales only" when
   filtered. Tests: `shops/tests/test_day_sales_summary.py
   ::DayReportCountedStatusesTests`.
+- The "Day report sections" group is also **per-employee** —
+  `DAY_REPORT_SECTION_TOGGLES` (employees/workspace.py) stores
+  `sidebar_prefs["day_report_sec_<section>"]` keys (missing = on), POSTed as
+  the pref key itself through `action=toggle_pos_setting`:
+  money flow / not-in-till / items sold / sales by employee / pending &
+  cancelled / drawings / expenses / item stock in-out / shelf stock in-out.
+  `day_report_section_enabled(profile, key)` checks them; the on-screen
+  report tags each table via `_table(section=…)` and filters
+  `page["tables"]`, while `build_shop_day_report_pdf` takes a
+  `section_visible` predicate the callers (`my_shop_day_report`,
+  `analytics_day_session`) build from the viewing profile's prefs — a
+  disabled section is dropped even when it has rows (unlike the stock-mode
+  gate, which keeps a pair alive for since-disabled modes with data).
 - The "Open & close" group edits the shared company rows
   (`enable_open_close`, `CompanyWorkingHoursSettings.enabled`, per-shop
   `ShopWorkingHoursSettings` times — same as Settings → POS) and is gated by

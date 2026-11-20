@@ -1625,6 +1625,49 @@ def day_report_counted_statuses(profile) -> frozenset:
     )
 
 
+# Day report sections — which tables the employee's day accounting report
+# includes. Per-employee, stored in sidebar_prefs (missing key = on); the
+# posted toggle field is the pref key itself (day_report_sec_<section>).
+DAY_REPORT_SECTION_TOGGLES = (
+    ("day_report_sec_money_flow", "Money flow"),
+    ("day_report_sec_not_till", "Credit & gift — not in the till"),
+    ("day_report_sec_items_sold", "Items sold"),
+    ("day_report_sec_sellers", "Sales by employee"),
+    ("day_report_sec_flagged", "Pending & cancelled sales"),
+    ("day_report_sec_drawings", "Drawings done"),
+    ("day_report_sec_expenses", "Expenses incurred"),
+    ("day_report_sec_item_stock", "Stocked in & stocked out"),
+    ("day_report_sec_shelf_stock", "Shelf stocked in & out"),
+)
+DAY_REPORT_SECTION_PREF_KEYS = frozenset(
+    key for key, _label in DAY_REPORT_SECTION_TOGGLES
+)
+
+
+def day_report_section_enabled(profile, key: str) -> bool:
+    """True unless the employee hid this section in Cashier settings."""
+    if profile is None or not key:
+        return True
+    prefs = getattr(profile, "sidebar_prefs", None) or {}
+    value = prefs.get(key)
+    return True if value is None else bool(value)
+
+
+def cashier_day_report_section_key_from_field(field: str) -> str:
+    field = (field or "").strip()
+    return field if field in DAY_REPORT_SECTION_PREF_KEYS else ""
+
+
+def set_cashier_day_report_section_pref(profile, key: str, enabled: bool):
+    if key not in DAY_REPORT_SECTION_PREF_KEYS:
+        raise ValidationError("Unknown day report section.")
+    prefs = dict(getattr(profile, "sidebar_prefs", None) or {})
+    prefs[key] = bool(enabled)
+    profile.sidebar_prefs = prefs
+    profile.save(update_fields=["sidebar_prefs", "updated_at"])
+    return profile
+
+
 def buy_stock_action(profile):
     """Buy-stock sidebar action — popup when the modal exists, else href."""
     from items.services import actionable_shops_for_profile

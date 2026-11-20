@@ -2108,7 +2108,7 @@
 .shop-day-table tbody tr:last-child td { border-bottom: 0; }
 .shop-day-table td strong { display: block; font-size: 0.8rem; font-weight: 650; color: var(--text-strong); }
 .shop-day-table-sub { display: block; margin-top: 0.1rem; color: var(--mist-soft); font-size: 0.72rem; }
-.shop-day-table-balances { display: grid; gap: 0.1rem; font-size: 0.72rem; color: var(--mist-dim); white-space: nowrap; }
+.shop-day-table-balances { font-size: 0.72rem; color: var(--mist-dim); }
 .shop-day-table-total { display: block; margin-bottom: 0.1rem; color: var(--text-strong); font-size: 0.84rem; }
 .shop-day-variance {
   display: inline-flex; align-items: center; padding: 0.12rem 0.55rem;
@@ -2134,21 +2134,29 @@
 .shop-day-pill.is-closed { background: color-mix(in srgb, var(--mist) 12%, var(--surface)); color: var(--mist-dim); }
 
 /* — Day history ledger — */
-.shop-day-history-page .shop-day-shell { width: min(56rem, calc(100% - 1.5rem)); }
+.shop-day-history-page .shop-day-shell { width: min(58rem, calc(100% - 1.5rem)); }
 .shop-day-history-wrap {
   border: 1px solid var(--line); border-radius: 16px;
   background: var(--surface);
   box-shadow: 0 10px 26px color-mix(in srgb, var(--text-strong) 5%, transparent);
 }
-.shop-day-history-table { min-width: 46rem; }
+.shop-day-history-table { min-width: 30rem; }
 .shop-day-history-table th.num, .shop-day-history-table td.num { text-align: right; }
 .shop-day-history-table th.shop-day-table-report,
 .shop-day-history-table td.shop-day-table-report { text-align: right; }
 .shop-day-history-table tbody tr { transition: background 0.15s ease; }
+.shop-day-history-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--mist) 4%, transparent); }
+.shop-day-history-table tbody tr.is-open td { background: color-mix(in srgb, var(--teal) 6%, transparent); }
 .shop-day-history-table tbody tr:hover td { background: color-mix(in srgb, var(--teal) 4%, transparent); }
 .shop-day-history-table tbody tr.is-open:hover td { background: color-mix(in srgb, var(--teal) 9%, transparent); }
 .shop-day-history-table tbody tr.is-open td:first-child { box-shadow: inset 3px 0 0 var(--teal); }
 .shop-day-cell-stack { display: grid; gap: 0.12rem; }
+.shop-day-when { display: flex; align-items: center; flex-wrap: wrap; gap: 0.12rem 0.45rem; }
+.shop-day-when .shop-day-pill { margin: 0; }
+.shop-day-when strong { white-space: nowrap; }
+.shop-day-when-times { white-space: nowrap; }
+.shop-day-history-table td.num .shop-day-cell-stack { justify-items: end; }
+.shop-day-history-table td.num .shop-day-chans { justify-content: flex-end; }
 .shop-day-chans { display: flex; flex-wrap: wrap; gap: 0.2rem 0.45rem; }
 .shop-day-chan {
   display: inline-flex; align-items: center; gap: 0.22rem;
@@ -2169,9 +2177,12 @@
   background: color-mix(in srgb, var(--mist) 14%, var(--surface)); color: var(--mist-dim);
 }
 .shop-day-report-actions {
-  display: inline-flex; align-items: center; justify-content: flex-end;
-  flex-wrap: wrap; gap: 0.3rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1.95rem);
+  justify-content: end;
+  gap: 0.3rem;
 }
+.shop-day-report-actions > .btn { grid-column: 1 / -1; justify-content: center; }
 .shop-day-mini-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.12rem;
   min-width: 1.95rem; height: 1.95rem; padding: 0 0.35rem;
@@ -2208,12 +2219,13 @@
   }
   .shop-day-table-balances { text-align: right; }
   .shop-day-cell-stack { justify-items: end; text-align: right; }
+  .shop-day-when { justify-content: flex-end; }
   .shop-day-history-table tbody tr.is-open td:first-child { box-shadow: none; }
   .shop-day-history-table tbody tr.is-open {
     background: color-mix(in srgb, var(--teal) 6%, var(--surface));
     box-shadow: inset 3px 0 0 var(--teal);
   }
-  .shop-day-report-actions { justify-content: flex-end; }
+  .shop-day-report-actions { justify-content: end; grid-template-columns: repeat(3, 2.4rem); }
   .shop-day-mini-btn { min-width: 2.4rem; height: 2.4rem; font-size: 0.64rem; }
 }
 

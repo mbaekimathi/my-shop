@@ -124,9 +124,11 @@ from .services import (
 from .throttle import rate_limit
 from .workspace import (
     CASHIER_SIDEBAR_LINKS,
+    DAY_REPORT_SECTION_TOGGLES,
     ROLE_PAGE_META,
     SELL_POPUP_TOGGLES,
     buy_stock_modal_context,
+    cashier_day_report_section_key_from_field,
     cashier_day_summaries_context,
     cashier_sell_key_from_field,
     cashier_sell_pref_enabled,
@@ -134,6 +136,7 @@ from .workspace import (
     cashier_sidebar_key_from_field,
     cashier_sidebar_pref_enabled,
     cashier_sidebar_pref_field,
+    day_report_section_enabled,
     day_report_status_mode,
     day_report_status_mode_from_field,
     day_report_status_pref_field,
@@ -141,6 +144,7 @@ from .workspace import (
     get_settings_section,
     get_settings_sections,
     sell_modal_context,
+    set_cashier_day_report_section_pref,
     set_cashier_sell_pref,
     set_cashier_sidebar_pref,
     set_day_report_status_pref,
@@ -1425,6 +1429,26 @@ def cashier_settings(request):
                     )
                 messages.success(request, "Sell popup updated.")
                 return redirect(request.path)
+            section_key = cashier_day_report_section_key_from_field(field)
+            if section_key:
+                try:
+                    set_cashier_day_report_section_pref(
+                        profile, section_key, enabled
+                    )
+                except ValidationError as exc:
+                    return _fail("; ".join(exc.messages))
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "field": field,
+                            "enabled": day_report_section_enabled(
+                                profile, section_key
+                            ),
+                        }
+                    )
+                messages.success(request, "Day report sections updated.")
+                return redirect(request.path)
             report_mode = day_report_status_mode_from_field(field)
             if report_mode:
                 if not enabled:
@@ -1546,6 +1570,14 @@ def cashier_settings(request):
                     ("pending", "Pending receipts only"),
                     ("confirmed", "Confirmed receipts only"),
                 )
+            ],
+            "day_report_section_toggles": [
+                {
+                    "field": key,
+                    "label": label,
+                    "enabled": day_report_section_enabled(profile, key),
+                }
+                for key, label in DAY_REPORT_SECTION_TOGGLES
             ],
             "pos_settings": pos,
             "can_edit_open_close": can_edit_open_close,

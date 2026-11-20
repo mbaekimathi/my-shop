@@ -170,6 +170,7 @@ class CashierSettingsTests(TestCase):
                 "sell_sale",
                 "sell_credit",
                 "sell_quotation",
+                "sell_gift",
                 "sell_pay_cash",
                 "sell_pay_mpesa",
                 "sell_pay_card",
@@ -413,6 +414,63 @@ class CashierSettingsTests(TestCase):
         self.cashier.refresh_from_db()
         self.assertIsNone(
             self.cashier.sidebar_prefs.get("day_report_status")
+        )
+
+    def test_day_report_section_toggle_persists(self):
+        from employees.workspace import DAY_REPORT_SECTION_TOGGLES
+
+        response = self.client.get("/shop-cashier/settings/")
+        toggles = response.context["day_report_section_toggles"]
+        self.assertEqual(
+            {toggle["field"] for toggle in toggles},
+            {key for key, _label in DAY_REPORT_SECTION_TOGGLES},
+        )
+        self.assertTrue(all(toggle["enabled"] for toggle in toggles))
+
+        response = self.client.post(
+            "/shop-cashier/settings/",
+            {
+                "action": "toggle_pos_setting",
+                "field": "day_report_sec_expenses",
+                "enabled": "0",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.content),
+            {
+                "ok": True,
+                "field": "day_report_sec_expenses",
+                "enabled": False,
+            },
+        )
+        self.cashier.refresh_from_db()
+        self.assertEqual(
+            self.cashier.sidebar_prefs.get("day_report_sec_expenses"), False
+        )
+        response = self.client.get("/shop-cashier/settings/")
+        enabled = {
+            toggle["field"]
+            for toggle in response.context["day_report_section_toggles"]
+            if toggle["enabled"]
+        }
+        self.assertNotIn("day_report_sec_expenses", enabled)
+
+    def test_day_report_section_rejects_unknown_field(self):
+        response = self.client.post(
+            "/shop-cashier/settings/",
+            {
+                "action": "toggle_pos_setting",
+                "field": "day_report_sec_bogus",
+                "enabled": "0",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.cashier.refresh_from_db()
+        self.assertIsNone(
+            self.cashier.sidebar_prefs.get("day_report_sec_bogus")
         )
 
     def test_non_cashier_cannot_open_page(self):

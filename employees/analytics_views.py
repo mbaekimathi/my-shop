@@ -394,6 +394,7 @@ def analytics_day_session(request, role_segment, session_id):
 
         from .workspace import (
             day_report_counted_statuses,
+            day_report_section_enabled,
             day_report_status_mode,
         )
 
@@ -405,6 +406,9 @@ def analytics_day_session(request, role_segment, session_id):
             printed_by=printed_by,
             company_name=get_company_display_name(),
             counted_statuses=day_report_counted_statuses(profile),
+            section_visible=lambda key: day_report_section_enabled(
+                profile, key
+            ),
             sales_scope_label=(
                 "Pending sales only"
                 if report_mode == "pending"

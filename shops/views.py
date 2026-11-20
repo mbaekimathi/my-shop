@@ -31,6 +31,7 @@ from employees.countries import COUNTRY_DIAL_CODES
 from employees.throttle import rate_limit
 from employees.workspace import (
     day_report_counted_statuses,
+    day_report_section_enabled,
     day_report_status_mode,
     get_dashboard_module,
     sidebar_for_my_shop,
@@ -3720,6 +3721,9 @@ def my_shop_day_report(request, shop_id):
             printed_by=printed_by,
             company_name=get_company_display_name(),
             counted_statuses=day_report_counted_statuses(profile),
+            section_visible=lambda key: day_report_section_enabled(
+                profile, key
+            ),
             sales_scope_label=(
                 "Pending sales only"
                 if report_mode == "pending"

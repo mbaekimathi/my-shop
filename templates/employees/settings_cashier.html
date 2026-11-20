@@ -112,6 +112,36 @@
       </ul>
     </section>
 
+    <section class="pos-settings-group">
+      <div class="pos-settings-group-head">
+        <h3>Day report sections</h3>
+        <p>Choose which tables appear in your day accounting report.</p>
+      </div>
+      <ul class="pos-settings-list">
+        {% for toggle in day_report_section_toggles %}
+        <li class="pos-settings-row">
+          <div class="pos-settings-copy">
+            <strong>{{ toggle.label }}</strong>
+          </div>
+          <label class="perm-switch{% if not toggle.enabled %} is-denied{% endif %}">
+            <input
+              type="checkbox"
+              class="perm-switch-input"
+              {% if toggle.enabled %}checked{% endif %}
+              data-pos-toggle
+              data-field="{{ toggle.field }}"
+              aria-label="{{ toggle.label }}"
+            >
+            <span class="perm-switch-ui" aria-hidden="true"></span>
+            <span class="perm-switch-state">
+              {% if toggle.enabled %}On{% else %}Off{% endif %}
+            </span>
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
     {% if can_edit_open_close %}
     <section class="pos-settings-group">
       <div class="pos-settings-group-head">

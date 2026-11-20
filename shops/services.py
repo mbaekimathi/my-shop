@@ -8691,12 +8691,15 @@ def build_shop_day_report_pdf(
     company_name: str = "",
     counted_statuses=None,
     sales_scope_label: str = "",
+    section_visible=None,
 ) -> bytes:
     """Branded A4 portrait PDF — the shop day's accounting preview/summary.
 
     `counted_statuses` narrows which receipt statuses count as sales in the
     money flow, items sold, and sales count (the employee's day-report
     status pick). `sales_scope_label` is printed under the title when set.
+    `section_visible` is an optional ``(section_key) -> bool`` predicate —
+    sections whose key it rejects are left out of the PDF entirely.
     """
     from io import BytesIO
 
@@ -8734,6 +8737,7 @@ def build_shop_day_report_pdf(
     channels = shop_day_balance_channels(shop=shop, pos=pos)
     printed_at = timezone.localtime()
     is_open = session.closed_at is None
+    _sec = section_visible or (lambda _key: True)
     opened_by = (
         session.opened_by.user.get_full_name()
         or session.opened_by.user.username
@@ -9166,7 +9170,8 @@ def build_shop_day_report_pdf(
     for index in sorted(strong_rows):
         money_style.append(("BACKGROUND", (0, index), (-1, index), accent_soft))
     money_table.setStyle(TableStyle(money_style))
-    story.append(money_table)
+    if _sec("day_report_sec_money_flow"):
+        story.append(money_table)
 
     # ---- Detail tables -------------------------------------------------------
     def _p(text, style=cell):
@@ -9235,8 +9240,11 @@ def build_shop_day_report_pdf(
         group_backgrounds=None,
         dense=False,
         empty_note="None recorded.",
+        section="",
     ):
         """Modern horizontal-rule detail table; cells may be str or Paragraph."""
+        if section and not _sec(section):
+            return
         story.append(Spacer(1, 11))
         if not rows:
             story.append(_section_heading(title))
@@ -9343,7 +9351,7 @@ def build_shop_day_report_pdf(
                 ),
             ]
         )
-    if not_till_rows:
+    if not_till_rows and _sec("day_report_sec_not_till"):
         _detail_table(
             "Credit & gift — not in the till",
             ["Document", "Docs", "Value", "Collected", "Still due"],
@@ -9404,6 +9412,7 @@ def build_shop_day_report_pdf(
         footer=["Total", _qty_label(sold_qty_total), _fmt(sold_amount_total)],
         dense=True,
         empty_note="No items sold this day.",
+        section="day_report_sec_items_sold",
     )
 
     # -- Sales by employee -----------------------------------------------------
@@ -9444,6 +9453,7 @@ def build_shop_day_report_pdf(
         ],
         dense=True,
         empty_note="No sales recorded this day.",
+        section="day_report_sec_sellers",
     )
 
     # -- Pending & cancelled sales --------------------------------------------
@@ -9495,6 +9505,7 @@ def build_shop_day_report_pdf(
         footer=["Total", "", "", "", _fmt(flagged_total)],
         dense=True,
         empty_note="No pending or cancelled sales this day.",
+        section="day_report_sec_flagged",
     )
 
     # -- Drawings -------------------------------------------------------------
@@ -9539,6 +9550,7 @@ def build_shop_day_report_pdf(
             + [_fmt(summary.get("drawings_paid"))]
         ),
         empty_note="No drawings recorded this day.",
+        section="day_report_sec_drawings",
     )
 
     # -- Expenses -------------------------------------------------------------
@@ -9573,6 +9585,7 @@ def build_shop_day_report_pdf(
         aligns=["l", "l", "l", "r", "l", "l", "r"],
         footer=["Total", "", "", "", "", "", _fmt(expenses_paid_total)],
         empty_note="No expenses recorded this day.",
+        section="day_report_sec_expenses",
     )
 
     # -- Stocked in / out (item + shelf ledgers share the row shapes) ---------
@@ -9593,7 +9606,7 @@ def build_shop_day_report_pdf(
             return _pr(_fmt(group["paid"]), strong=True)
         return _pr(group.get("payment_label") or "—")
 
-    def _stocked_in_detail(title, groups, empty_note):
+    def _stocked_in_detail(title, groups, empty_note, section=""):
         stock_rows = []
         stock_spans = []
         stock_bgs = []
@@ -9683,6 +9696,7 @@ def build_shop_day_report_pdf(
             spans=stock_spans,
             group_backgrounds=stock_bgs,
             empty_note=empty_note,
+            section=section,
         )
 
     def _stock_out_reason_cell(row):
@@ -9701,7 +9715,7 @@ def build_shop_day_report_pdf(
             )
         return Paragraph(html, cell_sm)
 
-    def _stocked_out_detail(title, out_rows, est_total, empty_note):
+    def _stocked_out_detail(title, out_rows, est_total, empty_note, section=""):
         value_total = (
             Decimal(est_total)
             if est_total is not None
@@ -9763,6 +9777,7 @@ def build_shop_day_report_pdf(
             ],
             dense=True,
             empty_note=empty_note,
+            section=section,
         )
 
     items_stock_on, shelf_stock_on = shop_stock_mode_flags(shop, pos=pos)
@@ -9771,13 +9786,17 @@ def build_shop_day_report_pdf(
     stock_out_rows = details.get("stock_out") or []
     if items_stock_on or (stock_groups or stock_out_rows):
         _stocked_in_detail(
-            "Stocked in", stock_groups, "No stock added this day."
+            "Stocked in",
+            stock_groups,
+            "No stock added this day.",
+            section="day_report_sec_item_stock",
         )
         _stocked_out_detail(
             "Stocked out",
             stock_out_rows,
             details.get("stock_out_est_total"),
             "No stock taken out this day.",
+            section="day_report_sec_item_stock",
         )
 
     shelf_groups = details.get("shelf_purchases") or []
@@ -9787,12 +9806,14 @@ def build_shop_day_report_pdf(
             "Shelf stocked in",
             shelf_groups,
             "No shelf stock added this day.",
+            section="day_report_sec_shelf_stock",
         )
         _stocked_out_detail(
             "Shelf stocked out",
             shelf_out_rows,
             None,
             "No shelf stock removed this day.",
+            section="day_report_sec_shelf_stock",
         )
 
     if is_open:

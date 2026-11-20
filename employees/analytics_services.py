@@ -2983,6 +2983,7 @@ def _table(
     *,
     searchable=False,
     table_class="",
+    section="",
 ):
     if shop_grid is None:
         shop_grid = any(
@@ -2998,6 +2999,7 @@ def _table(
         "shop_grid": bool(shop_grid),
         "searchable": bool(searchable),
         "table_class": (table_class or "").strip(),
+        "section": section,
     }
 
 
@@ -10427,6 +10429,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     from .workspace import (
         analytics_section_url,
         day_report_counted_statuses,
+        day_report_section_enabled,
         day_report_status_mode,
     )
 
@@ -10692,6 +10695,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 "Expected in till = opening + sales − returns − expenses − "
                 "stock bought − drawings. Variance = counted − expected."
             ),
+            section="day_report_sec_money_flow",
         ),
     ]
 
@@ -10750,6 +10754,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 not_till_rows,
                 empty="",
                 footnote=not_till_footnote,
+                section="day_report_sec_not_till",
             )
         )
 
@@ -10785,6 +10790,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             )
             if items_sold
             else "",
+            section="day_report_sec_items_sold",
         )
     )
 
@@ -10827,6 +10833,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             )
             if sellers
             else "",
+            section="day_report_sec_sellers",
         )
     )
 
@@ -10871,6 +10878,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             )
             if flagged
             else "",
+            section="day_report_sec_flagged",
         )
     )
 
@@ -10898,6 +10906,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 if drawing_rows
                 else ""
             ),
+            section="day_report_sec_drawings",
         )
     )
 
@@ -10943,6 +10952,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             ],
             expense_table_rows,
             empty="No expenses recorded this day.",
+            section="day_report_sec_expenses",
             footnote=(
                 f"Paid {_money_ksh(expenses_paid_total)}"
                 if expense_rows
@@ -10957,7 +10967,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         StockPaymentStatus.UNPAID: "bad",
     }
 
-    def _stocked_in_table(title, groups, empty):
+    def _stocked_in_table(title, groups, empty, section=""):
         rows = []
         qty_total = _zero()
         amount_total = _zero()
@@ -11062,9 +11072,10 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 if groups
                 else ""
             ),
+            section=section,
         )
 
-    def _stocked_out_table(title, out_rows, est_total, empty):
+    def _stocked_out_table(title, out_rows, est_total, empty, section=""):
         qty_total = _zero()
         refund_total = _zero()
         has_value = False
@@ -11143,6 +11154,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             rows,
             empty=empty,
             footnote=" · ".join(footnote_parts) if out_rows else "",
+            section=section,
         )
 
     items_stock_on, shelf_stock_on = shop_stock_mode_flags(shop, pos=pos)
@@ -11152,7 +11164,10 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     if items_stock_on or (stock_groups or stock_out):
         tables.append(
             _stocked_in_table(
-                "Stocked in", stock_groups, "No stock added this day."
+                "Stocked in",
+                stock_groups,
+                "No stock added this day.",
+                section="day_report_sec_item_stock",
             )
         )
         tables.append(
@@ -11161,6 +11176,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 stock_out,
                 details.get("stock_out_est_total"),
                 "No stock removed this day.",
+                section="day_report_sec_item_stock",
             )
         )
 
@@ -11172,6 +11188,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 "Shelf stocked in",
                 shelf_groups,
                 "No shelf stock added this day.",
+                section="day_report_sec_shelf_stock",
             )
         )
         tables.append(
@@ -11180,8 +11197,15 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 shelf_out,
                 None,
                 "No shelf stock removed this day.",
+                section="day_report_sec_shelf_stock",
             )
         )
+
+    tables = [
+        t
+        for t in tables
+        if day_report_section_enabled(profile, t.get("section"))
+    ]
 
     alerts = []
     if is_open:

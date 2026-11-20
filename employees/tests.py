@@ -1646,6 +1646,26 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertIn("Stocked in", titles)
         self.assertNotIn("Shelf stocked in", titles)
 
+    def test_day_report_section_prefs_hide_tables(self):
+        session = self._session()
+
+        titles = self._report_tables(session)
+        self.assertIn("Expenses incurred", titles)
+        self.assertIn("Items sold", titles)
+
+        # Per-employee section picks drop the matching tables — item stock
+        # covers both "Stocked in" and "Stocked out".
+        self.staff.sidebar_prefs = {
+            "day_report_sec_expenses": False,
+            "day_report_sec_item_stock": False,
+        }
+        self.staff.save(update_fields=["sidebar_prefs"])
+        titles = self._report_tables(session)
+        self.assertNotIn("Expenses incurred", titles)
+        self.assertNotIn("Stocked in", titles)
+        self.assertNotIn("Stocked out", titles)
+        self.assertIn("Items sold", titles)
+
 
 class DashboardSidebarLinkTests(TestCase):
     def test_role_dashboard_omits_dashboard_link(self):
