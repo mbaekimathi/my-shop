@@ -422,7 +422,20 @@
               <td data-label="Receipt">
                 {% if event.receipt_number %}
                 <span class="stock-report-receipt-ref">{{ event.receipt_number }}</span>
-                {% else %}
+                {% endif %}
+                {% if event.print_kind %}
+                <button
+                  type="button"
+                  class="ax-eye stock-report-serial-eye"
+                  data-movement-print
+                  data-print-kind="{{ event.print_kind }}"
+                  data-print-ids="{{ event.movement_id }}"
+                  aria-label="Print movement receipt"
+                  title="Print receipt"
+                >
+                  <i data-lucide="printer" aria-hidden="true"></i>
+                </button>
+                {% elif not event.receipt_number %}
                 <span class="stock-report-empty">—</span>
                 {% endif %}
               </td>
@@ -616,6 +629,7 @@
 {% block extra_js %}
 {{ block.super }}
 {% block movement_extra_js %}{% endblock %}
+{% include "employees/partials/movement_print_root.html" %}
 <script>
   (() => {
     const form = document.querySelector("[data-stock-report-filters]");

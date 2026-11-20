@@ -198,4 +198,5 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
+{% include "employees/partials/movement_print_root.html" %}
 {% endblock %}

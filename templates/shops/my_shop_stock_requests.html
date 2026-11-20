@@ -415,4 +415,6 @@
   src="{% static 'js/serial-scan.js' %}?v=8"
   data-html5-qrcode-url="{% static 'vendor/html5-qrcode.min.js' %}"
 ></script>
+<div id="movement-print-root" data-receipt-url="{% url 'employees:stock_movement_receipt' %}" hidden></div>
+<script defer src="{% static 'js/stock-movement-print.js' %}?v=1"></script>
 {% endblock %}

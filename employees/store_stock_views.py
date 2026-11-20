@@ -224,7 +224,10 @@ def _render_store_stock_page(request, *, mode: str):
                     f"({total_qty} units)."
                 ),
             )
-            return redirect("employees:store_stock_items")
+            movement_ids = ",".join(str(row.pk) for row in movements if row.pk)
+            return redirect(
+                f"{reverse('employees:store_stock_items')}?print=store:{movement_ids}"
+            )
 
     items = list_store_stock_items()
     return render(
@@ -332,7 +335,10 @@ def store_stock_trade(request):
                     f"({total_qty} units)."
                 ),
             )
-            return redirect("employees:store_stock_items")
+            movement_ids = ",".join(str(row.pk) for row in movements if row.pk)
+            return redirect(
+                f"{reverse('employees:store_stock_items')}?print=store:{movement_ids}"
+            )
 
     items = list_store_stock_items()
     return render(
@@ -500,12 +506,20 @@ def store_shelf_stock(request):
     wanted = str(request.POST.get("shop") or request.GET.get("shop") or "")
     shop = next((row for row in shops if str(row.pk) == wanted), None)
 
-    def _back(*, keep_mode=True):
+    def _back(*, keep_mode=True, print_ids=None, print_to=""):
         params = []
         if shop is not None:
             params.append(f"shop={shop.pk}")
         if keep_mode and mode != "stock":
             params.append(f"mode={mode}")
+        if print_ids:
+            params.append(
+                "print=shelf:" + ",".join(str(pk) for pk in print_ids)
+            )
+        if print_to:
+            from urllib.parse import quote
+
+            params.append(f"pto={quote(str(print_to))}")
         query = f"?{'&'.join(params)}" if params else ""
         return redirect(f"{reverse('employees:store_shelf_stock')}{query}")
 
@@ -550,6 +564,7 @@ def store_shelf_stock(request):
                 return _back(keep_mode=False)
             done = 0
             total = Decimal("0")
+            movement_ids = []
             for shelf_item_id, qty, buying_price in lines:
                 try:
                     movement = record_shelf_movement(
@@ -568,13 +583,14 @@ def store_shelf_stock(request):
                 else:
                     done += 1
                     total += movement.quantity
+                    movement_ids.append(movement.pk)
             if done:
                 messages.success(
                     request,
                     f"Recorded {done} shelf stock {mode} line"
                     f"{'' if done == 1 else 's'} ({total} units).",
                 )
-            return _back(keep_mode=False)
+            return _back(keep_mode=False, print_ids=movement_ids)
         if mode == "trade":
             stock_req = _stock_requirements()
             try:
@@ -609,6 +625,7 @@ def store_shelf_stock(request):
             )
             done = 0
             total = Decimal("0")
+            movement_ids = []
             for shelf_item_id, qty, value in lines:
                 try:
                     movement = record_shelf_movement(
@@ -629,27 +646,33 @@ def store_shelf_stock(request):
                 else:
                     done += 1
                     total += movement.quantity
+                    movement_ids.append(movement.pk)
             if done:
                 messages.success(
                     request,
                     f"Recorded {done} shelf trade line"
                     f"{'' if done == 1 else 's'} ({total} units).",
                 )
-            return _back(keep_mode=False)
+            return _back(keep_mode=False, print_ids=movement_ids)
         try:
-            messages.success(
-                request,
-                apply_shelf_action(
-                    shop=shop,
-                    actor=profile,
-                    data=request.POST,
-                    files=request.FILES,
-                ),
+            result = apply_shelf_action(
+                shop=shop,
+                actor=profile,
+                data=request.POST,
+                files=request.FILES,
             )
+            messages.success(request, result)
         except ValidationError as exc:
             for message in exc.messages:
                 messages.error(request, message)
-        return _back()
+            return _back()
+        movement_ids = [
+            row.pk for row in getattr(result, "movements", []) if row.pk
+        ]
+        return _back(
+            print_ids=movement_ids,
+            print_to=getattr(result, "print_to", "") or "",
+        )
 
     if mode == "movements" and shops:
         from items.movement_page import build_movement_ledger_page
@@ -1069,6 +1092,7 @@ def store_stock_item_count_toggle(request):
             "ok": True,
             "item_id": item.pk,
             "stock_count_enabled": item.stock_count_enabled,
+            "deduct_stock_on_sale": item.deduct_stock_on_sale,
         }
     )
 
@@ -1109,3 +1133,170 @@ def _store_stock_read_denied(request):
         {"ok": False, "error": "You do not have permission for this action."},
         status=403,
     )
+
+
+def _shop_session_matches(request, profile, shop_id) -> bool:
+    """Portal floor session / unlocked floor session / allocated shop match."""
+    from shops.session import (
+        get_shop_for_profile,
+        resolve_active_shop,
+        resolve_portal_shop,
+    )
+
+    portal_shop = resolve_portal_shop(request)
+    if portal_shop is not None and str(portal_shop.pk) == str(shop_id):
+        return True
+    if profile is None:
+        return False
+    active = resolve_active_shop(request, profile)
+    if active is not None and str(active.pk) == str(shop_id):
+        return True
+    return get_shop_for_profile(profile, shop_id) is not None
+
+
+def _movement_receipt_forbidden():
+    return JsonResponse(
+        {"ok": False, "error": "You do not have permission for this action."},
+        status=403,
+    )
+
+
+@require_GET
+def stock_movement_receipt(request):
+    """Print payload for a stock movement batch recorded moments ago.
+
+    ``?kind=shelf|store|movement&ids=<csv>`` — the pages redirect back with a
+    ``print=<kind>:<ids>`` marker and a small script fetches this endpoint,
+    then prints via the configured printer or the browser dialog.
+    """
+    from shops.services import (
+        build_shelf_movement_receipt,
+        build_stock_in_supplier_receipt,
+        build_stock_out_voucher,
+        build_stock_request_delivery_note,
+        build_store_movement_receipt,
+    )
+
+    kind = (request.GET.get("kind") or "").strip().lower()
+    raw_ids = (request.GET.get("ids") or "").strip()
+    ids = []
+    for part in raw_ids.replace(";", ",").split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.append(int(part))
+    ids = ids[:60]
+    if not ids:
+        return JsonResponse({"ok": False, "error": "Nothing to print."}, status=400)
+
+    profile = get_profile_for_request(request)
+
+    if kind == "shelf":
+        from items.models import ShelfStockMovement
+
+        movements = list(
+            ShelfStockMovement.objects.filter(pk__in=ids)
+            .select_related("shelf_item__shop", "created_by__user")
+            .order_by("pk")
+        )
+        if not movements:
+            return JsonResponse(
+                {"ok": False, "error": "Receipt not found."}, status=404
+            )
+        shop_ids = {row.shelf_item.shop_id for row in movements}
+        allowed = profile is not None and (
+            employee_may(profile, "my-shop", "shelf_stock")
+            or any(
+                employee_may(profile, "stock-management", key)
+                for key in ("view", "in", "out", "movements")
+            )
+        )
+        if not allowed and len(shop_ids) == 1:
+            allowed = _shop_session_matches(
+                request, profile, next(iter(shop_ids))
+            )
+        if not allowed:
+            return _movement_receipt_forbidden()
+        payload = build_shelf_movement_receipt(
+            movements,
+            authorised_by=profile,
+            route_from=(request.GET.get("pfrom") or "").strip(),
+            route_to=(request.GET.get("pto") or "").strip(),
+        )
+        return JsonResponse({"ok": True, **payload})
+
+    if kind == "store":
+        from items.models import StoreStockMovement
+
+        movements = list(
+            StoreStockMovement.objects.filter(pk__in=ids)
+            .select_related("item", "created_by__user", "received_by__user")
+            .order_by("pk")
+        )
+        if not movements:
+            return JsonResponse(
+                {"ok": False, "error": "Receipt not found."}, status=404
+            )
+        allowed = profile is not None and any(
+            employee_may(profile, "stock-management", key)
+            for key in ("view", "in", "out", "movements")
+        )
+        if not allowed:
+            return _movement_receipt_forbidden()
+        payload = build_store_movement_receipt(movements, authorised_by=profile)
+        return JsonResponse({"ok": True, **payload})
+
+    if kind == "movement":
+        from items.models import (
+            StockMovement,
+            StockMovementType,
+            StockRequestStatus,
+        )
+
+        movement = (
+            StockMovement.objects.filter(pk=ids[0])
+            .select_related("shop", "requested_from_shop", "created_by__user")
+            .first()
+        )
+        if movement is None:
+            return JsonResponse(
+                {"ok": False, "error": "Receipt not found."}, status=404
+            )
+        allowed = profile is not None and any(
+            employee_may(profile, "stock-management", key)
+            for key in ("view", "in", "out", "request")
+        )
+        if not allowed:
+            shop_ids = {
+                sid for sid in (movement.shop_id, movement.requested_from_shop_id) if sid
+            }
+            allowed = any(
+                _shop_session_matches(request, profile, sid) for sid in shop_ids
+            )
+        if not allowed:
+            return _movement_receipt_forbidden()
+        if movement.movement_type == StockMovementType.REQUEST:
+            variant = (
+                "received"
+                if movement.request_status == StockRequestStatus.FULFILLED
+                else "dispatch"
+            )
+            shop = movement.requested_from_shop or movement.shop
+            if variant == "dispatch":
+                shop = movement.shop or shop
+            payload = build_stock_request_delivery_note(
+                movement,
+                shop=shop,
+                authorised_by=profile,
+                variant=variant,
+            )
+        elif movement.movement_type == StockMovementType.OUT:
+            payload = build_stock_out_voucher(
+                movement, shop=movement.shop, authorised_by=profile
+            )
+        else:
+            payload = build_stock_in_supplier_receipt(
+                movement, shop=movement.shop, authorised_by=profile
+            )
+        return JsonResponse({"ok": True, **payload})
+
+    return JsonResponse({"ok": False, "error": "Unknown receipt kind."}, status=400)

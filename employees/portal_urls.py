@@ -358,6 +358,11 @@ urlpatterns = [
         store_stock_views.store_stock_employee_search,
         name="store_stock_employee_search",
     ),
+    path(
+        "stock-movement-receipt/",
+        store_stock_views.stock_movement_receipt,
+        name="stock_movement_receipt",
+    ),
     path("shop-cashier/", views.role_shop_cashier, name="role_shop_cashier"),
     path(
         "shop-cashier/settings/",

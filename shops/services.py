@@ -262,9 +262,12 @@ RECEIPT_FORMAT_DEFAULTS = {
 }
 DOC_NUMBER_PREFIX = {
     "stock_in": "I",
+    "stock_out": "O",
     "delivery": "D",
     "goods_received": "G",
     "expense": "E",
+    "shelf_movement": "H",
+    "store_movement": "R",
 }
 RECEIPT_FORMAT_RE = re.compile(r"^[A-Za-z0-9]{1,8}$")
 RECEIPT_QR_CONTENTS = ("website", "receipt_details")
@@ -5751,6 +5754,380 @@ def build_expense_supplier_receipt(
         "footer": "Expense claim · Payment voucher",
         "maintainer": receipt_maintainer_line(pos),
     }
+    paper = (
+        pos.receipt_paper_width
+        if pos.receipt_paper_width in RECEIPT_PAPER_WIDTHS
+        else "80"
+    )
+    meta = _supplier_receipt_print_meta(pos)
+    return {
+        "receipt_number": ticket["receipt_number"],
+        "receipt_text": _render_receipt_text(ticket, paper_width=paper),
+        "receipt_ticket": ticket,
+        **meta,
+    }
+
+
+_MOVEMENT_BATCH_META = {
+    "in": {
+        "title": "Stock in / goods received voucher",
+        "doc": "GRN No.",
+        "party_label": "Supplier",
+        "qty_only": False,
+        "footer": "Goods received · Stock in",
+    },
+    "out": {
+        "title": "Stock out / issue voucher",
+        "doc": "Voucher No.",
+        "party_label": "",
+        "qty_only": True,
+        "footer": "Stock out · Issue voucher",
+    },
+    "trade_out": {
+        "title": "Trade out voucher",
+        "doc": "Trade No.",
+        "party_label": "Traded to",
+        "qty_only": True,
+        "footer": "Trade out · Items released",
+    },
+    "trade_in": {
+        "title": "Trade in / goods received",
+        "doc": "Trade No.",
+        "party_label": "Received from",
+        "qty_only": False,
+        "footer": "Trade in · Items received",
+    },
+    "transfer_out": {
+        "title": "Stock transfer / dispatch note",
+        "doc": "Transfer No.",
+        "party_label": "",
+        "qty_only": True,
+        "footer": "Transfer sent · Dispatch note",
+    },
+    "transfer_in": {
+        "title": "Stock transfer / goods received",
+        "doc": "GRN No.",
+        "party_label": "",
+        "qty_only": True,
+        "footer": "Transfer received · Goods received",
+    },
+}
+
+
+def _movement_batch_kind(movements) -> str:
+    """Classify a same-post batch of shelf/store ledger movements."""
+    from items.models import StockOutReason
+
+    first = movements[0]
+    is_in = (getattr(first, "movement_type", "") or "").strip().lower() == "in"
+    reason = (getattr(first, "reason", "") or "").strip().lower()
+    if is_in:
+        if reason == StockOutReason.TRADE_IN:
+            return "trade_in"
+        if reason == StockOutReason.TRANSFER:
+            return "transfer_in"
+        return "in"
+    if reason == StockOutReason.TRADE_OUT:
+        return "trade_out"
+    if reason == StockOutReason.TRANSFER:
+        return "transfer_out"
+    return "out"
+
+
+def _stock_out_reason_label(reason: str) -> str:
+    from items.models import StockOutReason
+
+    return dict(StockOutReason.choices).get(
+        (reason or "").strip().lower(), ""
+    )
+
+
+def _movement_transfer_party(movement) -> str:
+    """Shop name embedded in the auto transfer note (Sent to / Received from)."""
+    note = (getattr(movement, "note", "") or "").strip()
+    for lead in ("Sent to", "Received from"):
+        if note.lower().startswith(lead.lower()):
+            return note[len(lead):].strip()
+    return ""
+
+
+def _movement_batch_receipt(
+    movements,
+    *,
+    shop: Shop | None,
+    prefix: str,
+    branch_label: str = "",
+    authorised_by=None,
+    route_from: str = "",
+    route_to: str = "",
+) -> dict:
+    """Print payload for a batch of shelf/store ledger movements posted together."""
+    from items.models import StockOutReason, StockPaymentStatus
+
+    movements = [m for m in movements if m is not None]
+    pos = get_effective_pos_settings(shop)
+    first = movements[0] if movements else None
+    kind = _movement_batch_kind(movements) if movements else "in"
+    meta = _MOVEMENT_BATCH_META[kind]
+    reason = (getattr(first, "reason", "") or "").strip().lower()
+    is_transfer = kind in ("transfer_out", "transfer_in")
+
+    other_party = _movement_transfer_party(first) if is_transfer and first else ""
+    if is_transfer:
+        if kind == "transfer_out":
+            route_from = route_from or (shop.name if shop else branch_label)
+            route_to = route_to or other_party
+        else:
+            route_to = route_to or (shop.name if shop else branch_label)
+            route_from = route_from or other_party
+
+    supplier_name = (getattr(first, "supplier_name", "") or "").strip()
+    supplier_phone = (getattr(first, "supplier_phone", "") or "").strip()
+    payment_status = (getattr(first, "payment_status", "") or "").strip()
+    payment_label = dict(StockPaymentStatus.choices).get(payment_status, "")
+
+    counterpart_label = ""
+    if first is not None and getattr(first, "received_by", None) is not None:
+        label = (
+            "Delivered by"
+            if kind in ("in", "trade_in", "transfer_in")
+            else "Received by"
+        )
+        counterpart_label = (
+            f"{label} {employee_display_name(first.received_by)}"
+        )
+
+    ticket_lines = []
+    total = Decimal("0")
+    total_units = Decimal("0")
+    total_paid = Decimal("0")
+    notes = []
+    for line in movements:
+        qty = _qty(line.quantity)
+        total_units += qty
+        priced = not meta["qty_only"] and line.buying_price is not None
+        unit = Decimal(line.buying_price or 0) if priced else Decimal("0")
+        line_total = (unit * qty).quantize(Decimal("0.01"))
+        total += line_total
+        name = str(
+            getattr(getattr(line, "shelf_item", None), "name", None)
+            or getattr(getattr(line, "item", None), "name", None)
+            or "Item"
+        )
+        unit_label = str(getattr(getattr(line, "shelf_item", None), "unit", "") or "").strip()
+        detail = f"{unit_label} · " if unit_label else ""
+        detail += f"Bal {_qty_number(line.balance_after)}"
+        ticket_lines.append(
+            {
+                "name": name,
+                "detail": detail,
+                "qty": _qty_number(qty),
+                "price": _receipt_money(unit),
+                "total": _receipt_money(line_total),
+                "serials": [],
+                "serials_extra": 0,
+            }
+        )
+        total_paid += Decimal(getattr(line, "amount_paid", 0) or 0)
+        note = (getattr(line, "note", "") or "").strip()
+        if note and not is_transfer and note not in notes:
+            notes.append(note)
+
+    status = ""
+    if kind == "out" and reason and reason != StockOutReason.CUSTOM:
+        status = _stock_out_reason_label(reason)
+    elif kind == "out" and reason == StockOutReason.CUSTOM:
+        status = "Custom"
+    elif payment_label:
+        status = payment_label
+
+    refund = (getattr(first, "refund", "") or "").strip().lower()
+    refund_amount = getattr(first, "refund_amount", None)
+    if kind == "out" and refund == "yes" and refund_amount:
+        notes.append(f"Refund issued: KSh {_receipt_money(refund_amount)}")
+
+    created = timezone.localtime(first.created_at) if first else timezone.localtime()
+    receipt_number = format_simple_doc_number(
+        prefix, getattr(first, "pk", 0) or 0
+    )
+    if len(movements) > 1 and getattr(movements[-1], "pk", None):
+        receipt_number = f"{receipt_number}-{movements[-1].pk}"
+
+    cashier = employee_display_name(
+        authorised_by or getattr(first, "created_by", None)
+    )
+
+    ticket = {
+        **_supplier_receipt_shop_header(shop),
+        "receipt_number": receipt_number,
+        "kind": meta["title"],
+        "doc_type": kind,
+        "document_title": meta["title"],
+        "doc_number_label": meta["doc"],
+        "authorised_label": "Recorded by",
+        "date": created.strftime("%d %b %Y · %H:%M"),
+        "party_label": meta["party_label"],
+        "client": supplier_name,
+        "party_phone": supplier_phone if supplier_phone != supplier_name else "",
+        "route_from": route_from,
+        "route_to": route_to,
+        "receiving_branch": branch_label or ((shop.name or "").strip() if shop else ""),
+        "cashier": cashier,
+        "status": status,
+        "lines": ticket_lines,
+        "cancelled": False,
+        "qty_only": meta["qty_only"],
+        "total_units": _qty_number(total_units),
+        "subtotal": _receipt_money(total),
+        "tax_percent": "0",
+        "tax_amount": _receipt_money(0),
+        "show_tax": False,
+        "total": _receipt_money(total),
+        "payment": payment_label,
+        "payment_details": {"label": "", "lines": []},
+        "footer": meta["footer"],
+        "maintainer": receipt_maintainer_line(pos),
+    }
+    if counterpart_label:
+        ticket["return_notice"] = " · ".join([counterpart_label, *notes])
+    elif notes:
+        ticket["return_notice"] = " · ".join(notes)
+    if not meta["qty_only"] and payment_status in (
+        StockPaymentStatus.PAID,
+        StockPaymentStatus.PARTIAL,
+    ) and total_paid > 0:
+        ticket["show_amount_paid"] = True
+        ticket["amount_paid"] = _receipt_money(total_paid)
+    if (
+        not meta["qty_only"]
+        and payment_status != StockPaymentStatus.PAID
+        and total > 0
+    ):
+        ticket["balance_due"] = _receipt_money(total - total_paid)
+
+    paper = (
+        pos.receipt_paper_width
+        if pos.receipt_paper_width in RECEIPT_PAPER_WIDTHS
+        else "80"
+    )
+    meta_out = _supplier_receipt_print_meta(pos)
+    return {
+        "receipt_number": ticket["receipt_number"],
+        "receipt_text": _render_receipt_text(ticket, paper_width=paper),
+        "receipt_ticket": ticket,
+        **meta_out,
+    }
+
+
+def build_shelf_movement_receipt(
+    movements, *, authorised_by=None, route_from: str = "", route_to: str = ""
+) -> dict:
+    """Print payload after shelf stock in / out / trade / transfer posts."""
+    movements = [m for m in movements if m is not None]
+    shop = getattr(getattr(movements[0], "shelf_item", None), "shop", None) if movements else None
+    return _movement_batch_receipt(
+        movements,
+        shop=shop,
+        prefix=DOC_NUMBER_PREFIX["shelf_movement"],
+        authorised_by=authorised_by,
+        route_from=route_from,
+        route_to=route_to,
+    )
+
+
+def build_store_movement_receipt(
+    movements, *, authorised_by=None
+) -> dict:
+    """Print payload after central-store stock in / out / trade posts."""
+    return _movement_batch_receipt(
+        movements,
+        shop=None,
+        prefix=DOC_NUMBER_PREFIX["store_movement"],
+        branch_label="Central store",
+        authorised_by=authorised_by,
+    )
+
+
+def build_stock_out_voucher(
+    movement, *, shop: Shop, authorised_by=None
+) -> dict:
+    """Issue voucher printed after a shop-floor stock out is submitted."""
+    pos = get_effective_pos_settings(shop)
+    lines = list(movement.lines.select_related("item").all())
+    first = lines[0] if lines else None
+
+    reason = (getattr(first, "reason", "") or "").strip().lower()
+    status = _stock_out_reason_label(reason) or "Stock out"
+    notes = []
+    for line in lines:
+        note = (line.note or "").strip()
+        if note and note not in notes:
+            notes.append(note)
+    refund = (getattr(first, "refund", "") or "").strip().lower()
+    refund_amount = getattr(first, "refund_amount", None)
+    if refund == "yes" and refund_amount:
+        notes.append(f"Refund issued: KSh {_receipt_money(refund_amount)}")
+
+    ticket_lines = []
+    total_units = Decimal("0")
+    for line in lines:
+        qty = _qty(line.quantity)
+        if qty <= 0:
+            continue
+        total_units += qty
+        serials = list(line.serial_numbers or [])
+        ticket_lines.append(
+            {
+                "name": str(
+                    getattr(line.item, "name", None) or line.item_name or "Item"
+                ),
+                "detail": "",
+                "qty": _qty_number(qty),
+                "price": "0",
+                "total": "0",
+                "serials": [str(s) for s in serials[:12]],
+                "serials_extra": max(0, len(serials) - 12),
+            }
+        )
+
+    cashier = employee_display_name(
+        authorised_by or getattr(movement, "created_by", None)
+    )
+    created = timezone.localtime(movement.created_at)
+    ticket = {
+        **_supplier_receipt_shop_header(shop),
+        "receipt_number": format_simple_doc_number(
+            DOC_NUMBER_PREFIX["stock_out"], movement.pk
+        ),
+        "kind": "Stock out",
+        "doc_type": "stock_out",
+        "document_title": "Stock out / issue voucher",
+        "doc_number_label": "Voucher No.",
+        "authorised_label": "Authorised by",
+        "date": created.strftime("%d %b %Y · %H:%M"),
+        "party_label": "",
+        "client": "",
+        "party_phone": "",
+        "receiving_branch": (shop.name or "").strip() if shop else "",
+        "cashier": cashier,
+        "status": status,
+        "lines": ticket_lines,
+        "cancelled": False,
+        "qty_only": True,
+        "total_units": _qty_number(total_units),
+        "subtotal": "0",
+        "tax_percent": "0",
+        "tax_amount": "0",
+        "show_tax": False,
+        "total": "0",
+        "payment": "",
+        "payment_details": {"label": "", "lines": []},
+        "footer": "Stock out · Issue voucher",
+        "maintainer": receipt_maintainer_line(pos),
+    }
+    if notes:
+        ticket["return_notice"] = " · ".join(notes)
+
     paper = (
         pos.receipt_paper_width
         if pos.receipt_paper_width in RECEIPT_PAPER_WIDTHS

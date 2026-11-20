@@ -304,6 +304,9 @@ def _shelf_movement_events(
                 "movement_id": mv.pk,
                 "receipt_number": "",
                 "receipt_status": "",
+                "print_kind": (
+                    "shelf" if mv.movement_type in ("in", "out") else ""
+                ),
                 "trade": trade,
                 "from_label": from_label,
                 "to_label": to_label,
@@ -500,6 +503,9 @@ def _store_movement_events(
                 "movement_id": mv.pk,
                 "receipt_number": receipt_number,
                 "receipt_status": "",
+                "print_kind": (
+                    "store" if event_type in ("in", "out") else ""
+                ),
                 "trade": trade,
                 "from_label": from_label,
                 "to_label": to_label,

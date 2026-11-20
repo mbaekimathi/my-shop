@@ -835,6 +835,27 @@ class StoreManagerShelfStockTests(TestCase):
         self.client.login(username="830041", password="store-pass")
         self.url = reverse("employees:store_shelf_stock")
 
+    def assertRedirectsWithPrint(self, response, expected):
+        """Like assertRedirects, but the target may carry a ?print= marker."""
+        from urllib.parse import parse_qsl, urlparse
+
+        self.assertEqual(response.status_code, 302)
+        location = response["Location"]
+        loc, exp = urlparse(location), urlparse(expected)
+        self.assertEqual(loc.path, exp.path)
+        loc_q = dict(parse_qsl(loc.query))
+        exp_q = dict(parse_qsl(exp.query))
+        self.assertLessEqual(
+            exp_q.items(),
+            loc_q.items(),
+            f"{location} missing expected query params {exp_q}",
+        )
+        self.assertTrue(
+            loc_q.get("print", "").startswith(("shelf:", "store:", "movement:")),
+            f"{location} has no movement print marker",
+        )
+        self.assertEqual(self.client.get(location).status_code, 200)
+
     def test_store_manager_registers_shelf_items_for_a_shop(self):
         response = self.client.get("/company-store-manager/")
         self.assertNotContains(response, self.url)
@@ -1344,7 +1365,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "note": "swap deal",
             },
         )
-        self.assertRedirects(resp, f"{self.url}?shop={self.shop.pk}")
+        self.assertRedirectsWithPrint(resp, f"{self.url}?shop={self.shop.pk}")
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("16"))
         trade_out = ShelfStockMovement.objects.get(
@@ -1500,7 +1521,9 @@ class StoreManagerShelfStockTests(TestCase):
                 "note": "Pop up",
             },
         )
-        self.assertRedirects(resp, reverse("employees:store_stock_items"))
+        self.assertRedirectsWithPrint(
+            resp, reverse("employees:store_stock_items")
+        )
         movement = item.store_stock_movements.get()
         self.assertEqual(movement.buying_price, Decimal("32.50"))
         self.assertEqual(movement.supplier_name, "BROOKSIDE")
@@ -1531,7 +1554,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "payment_status": "paid",
             },
         )
-        self.assertRedirects(resp, reverse("employees:store_stock_items"))
+        self.assertRedirectsWithPrint(resp, reverse("employees:store_stock_items"))
         no_counterpart = item.store_stock_movements.latest("id")
         self.assertEqual(no_counterpart.received_by, self.manager)
 
@@ -1547,7 +1570,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "refund": "no",
             },
         )
-        self.assertRedirects(resp, reverse("employees:store_stock_items"))
+        self.assertRedirectsWithPrint(resp, reverse("employees:store_stock_items"))
         no_emp_out = item.store_stock_movements.get(movement_type="out")
         self.assertEqual(no_emp_out.received_by, self.manager)
 
@@ -1564,7 +1587,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "refund_amount": "45.50",
             },
         )
-        self.assertRedirects(out, reverse("employees:store_stock_items"))
+        self.assertRedirectsWithPrint(out, reverse("employees:store_stock_items"))
         out_move = item.store_stock_movements.filter(
             movement_type="out"
         ).latest("id")
@@ -1618,7 +1641,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "note": "Pop up",
             },
         )
-        self.assertRedirects(resp, f"{self.url}?shop={self.shop.pk}")
+        self.assertRedirectsWithPrint(resp, f"{self.url}?shop={self.shop.pk}")
         shelf.refresh_from_db()
         self.assertEqual(shelf.quantity, Decimal("7"))
         in_move = shelf.movements.get(movement_type="in")
@@ -1667,7 +1690,9 @@ class StoreManagerShelfStockTests(TestCase):
                 "payment_status": "paid",
             },
         )
-        self.assertRedirects(ok, reverse("employees:store_stock_items"))
+        self.assertRedirectsWithPrint(
+            ok, reverse("employees:store_stock_items")
+        )
         movement = item.store_stock_movements.get()
         self.assertEqual(movement.buying_price, Decimal("18.00"))
 
@@ -1694,7 +1719,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "payment_status": "paid",
             },
         )
-        self.assertRedirects(ok_free, reverse("employees:store_stock_items"))
+        self.assertRedirectsWithPrint(ok_free, reverse("employees:store_stock_items"))
         self.assertEqual(item.store_stock_movements.count(), 2)
 
     def test_shelf_settings_are_independent_of_item_settings(self):
@@ -1736,7 +1761,7 @@ class StoreManagerShelfStockTests(TestCase):
             field="shelf_require_buying_price_on_in", enabled=False
         )
         ok = self.client.post(self.url, payload)
-        self.assertRedirects(ok, f"{self.url}?shop={self.shop.pk}")
+        self.assertRedirectsWithPrint(ok, f"{self.url}?shop={self.shop.pk}")
         self.assertEqual(
             ShelfStockMovement.objects.filter(movement_type="in").count(), 1
         )
@@ -1767,7 +1792,7 @@ class StoreManagerShelfStockTests(TestCase):
                 "payment_status": "unpaid",
             },
         )
-        self.assertRedirects(ok_supplier, f"{self.url}?shop={self.shop.pk}")
+        self.assertRedirectsWithPrint(ok_supplier, f"{self.url}?shop={self.shop.pk}")
         self.assertEqual(
             ShelfStockMovement.objects.filter(movement_type="in").count(), 2
         )

@@ -599,7 +599,7 @@ def stock_out_shelf_item_by_name(
 @transaction.atomic
 def transfer_shelf_item(
     *, from_shop, to_shop, shelf_item_id, qty, actor=None, note=""
-) -> tuple[ShelfItem, ShelfItem]:
+) -> tuple[ShelfItem, ShelfItem, ShelfStockMovement, ShelfStockMovement]:
     """Move shelf qty between shops: stock out at source, stock in at target.
 
     Auto-registers the item on the target shelf (qty 0 + REGISTER entry) when
@@ -618,7 +618,7 @@ def transfer_shelf_item(
     if item is None:
         raise ValidationError("Shelf item not found for this shop.")
     amount = parse_shelf_qty(qty)
-    record_shelf_movement(
+    out_movement = record_shelf_movement(
         shop=from_shop,
         shelf_item_id=item.pk,
         mode=ShelfStockMovementType.OUT,
@@ -642,7 +642,7 @@ def transfer_shelf_item(
     elif target.is_suspended:
         target.is_suspended = False
         target.save(update_fields=["is_suspended", "updated_at"])
-    record_shelf_movement(
+    in_movement = record_shelf_movement(
         shop=to_shop,
         shelf_item_id=target.pk,
         mode=ShelfStockMovementType.IN,
@@ -651,7 +651,7 @@ def transfer_shelf_item(
         note=note or f"Received from {from_shop.name}",
         reason=StockOutReason.TRANSFER,
     )
-    return item, target
+    return item, target, out_movement, in_movement
 
 
 @transaction.atomic
@@ -753,7 +753,20 @@ def _shelf_requirement(name: str) -> bool:
     )
 
 
-def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
+class ShelfActionResult(str):
+    """Success message str plus the movements the action recorded (for receipts)."""
+
+    def __new__(cls, message, movements=None, *, print_from="", print_to=""):
+        obj = super().__new__(cls, message)
+        obj.movements = [m for m in (movements or []) if m is not None]
+        obj.print_from = print_from
+        obj.print_to = print_to
+        return obj
+
+
+def apply_shelf_action(
+    *, shop, actor, data, files=None, to_shop=None
+) -> ShelfActionResult:
     """Run one shelf page action (register / in / out / transfer / archive); returns a success message."""
     action = (data.get("action") or "").strip()
     if action == "register":
@@ -767,7 +780,7 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
             low_stock_threshold=data.get("low_stock_threshold"),
             image=files.get("image") if files else None,
         )
-        return f"“{item.name}” added to the shelf list."
+        return ShelfActionResult(f"“{item.name}” added to the shelf list.")
     if action == "in_new":
         if (
             _shelf_requirement("require_buying_price_on_in")
@@ -787,11 +800,14 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
         )
         qty_text = f"{movement.quantity.normalize():f}"
         if registered:
-            return (
+            return ShelfActionResult(
                 f"“{item.name}” added to the shelf list — "
-                f"{qty_text} stocked in."
+                f"{qty_text} stocked in.",
+                [movement],
             )
-        return f"Added {qty_text} to “{item.name}”."
+        return ShelfActionResult(
+            f"Added {qty_text} to “{item.name}”.", [movement]
+        )
     if action == "out_new":
         item, movement = stock_out_shelf_item_by_name(
             shop=shop,
@@ -800,9 +816,10 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
             qty=data.get("qty"),
             note=data.get("note") or "",
         )
-        return (
+        return ShelfActionResult(
             f"Removed {movement.quantity.normalize():f} "
-            f"from “{item.name}”."
+            f"from “{item.name}”.",
+            [movement],
         )
     if action in (ShelfStockMovementType.IN, ShelfStockMovementType.OUT):
         if (
@@ -827,9 +844,10 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
             ),
         )
         is_in = action == ShelfStockMovementType.IN
-        return (
+        return ShelfActionResult(
             f"{'Added' if is_in else 'Removed'} {movement.quantity.normalize():f} "
-            f"{'to' if is_in else 'from'} “{movement.shelf_item.name}”."
+            f"{'to' if is_in else 'from'} “{movement.shelf_item.name}”.",
+            [movement],
         )
     if action == "transfer":
         if to_shop is None or to_shop.pk == shop.pk:
@@ -839,7 +857,7 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
             and not str(data.get("note") or "").strip()
         ):
             raise ValidationError("Enter a transfer note.")
-        item, _target = transfer_shelf_item(
+        item, _target, out_movement, _in_movement = transfer_shelf_item(
             from_shop=shop,
             to_shop=to_shop,
             shelf_item_id=data.get("shelf_item_id"),
@@ -847,10 +865,15 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
             actor=actor,
             note=data.get("note") or "",
         )
-        return f"Sent “{item.name}” to {to_shop.name}."
+        return ShelfActionResult(
+            f"Sent “{item.name}” to {to_shop.name}.",
+            [out_movement],
+            print_from=shop.name,
+            print_to=to_shop.name,
+        )
     if action == "archive":
         item = archive_shelf_item(shop=shop, shelf_item_id=data.get("shelf_item_id"))
-        return f"“{item.name}” removed from the shelf list."
+        return ShelfActionResult(f"“{item.name}” removed from the shelf list.")
     if action == "edit":
         item = update_shelf_item(
             shop=shop,
@@ -862,17 +885,19 @@ def apply_shelf_action(*, shop, actor, data, files=None, to_shop=None) -> str:
             image=files.get("image") if files else None,
             clear_image=(data.get("clear_image") or "").strip() in ("1", "on"),
         )
-        return f"“{item.name}” updated."
+        return ShelfActionResult(f"“{item.name}” updated.")
     if action == "suspend":
         item = set_shelf_item_suspended(
             shop=shop, shelf_item_id=data.get("shelf_item_id"), suspended=True
         )
-        return f"“{item.name}” suspended — find it under Suspended items."
+        return ShelfActionResult(
+            f"“{item.name}” suspended — find it under Suspended items."
+        )
     if action == "unsuspend":
         item = set_shelf_item_suspended(
             shop=shop, shelf_item_id=data.get("shelf_item_id"), suspended=False
         )
-        return f"“{item.name}” is back on the shelf list."
+        return ShelfActionResult(f"“{item.name}” is back on the shelf list.")
     raise ValidationError("Unknown shelf action.")
 
 
@@ -893,6 +918,7 @@ def apply_shelf_stock_lines(
     done = 0
     total = Decimal("0")
     errors: list[str] = []
+    movements = []
     price_required = (
         mode == ShelfStockMovementType.IN
         and _shelf_requirement("require_buying_price_on_in")
@@ -973,4 +999,10 @@ def apply_shelf_stock_lines(
         else:
             done += 1
             total += movement.quantity
-    return {"done": done, "total": total, "errors": errors}
+            movements.append(movement)
+    return {
+        "done": done,
+        "total": total,
+        "errors": errors,
+        "movements": movements,
+    }

@@ -1463,7 +1463,7 @@ def _stock_shelf_post(
 
     from .shelf_stock_services import apply_shelf_action
 
-    def _next(shelf_shop=None):
+    def _next(shelf_shop=None, print_ids=None, print_to=""):
         ids = list(selected_shop_ids)
         if shelf_shop is not None and shelf_shop.pk not in ids:
             ids = [shelf_shop.pk]
@@ -1476,6 +1476,14 @@ def _stock_shelf_post(
         # Shelf actions posted from the Shelf stock tab land back on that tab.
         if (request.GET.get("tab") or "").strip().lower() == "shelf":
             next_url += "&tab=shelf"
+        if print_ids:
+            next_url += (
+                "&print=shelf:" + ",".join(str(pk) for pk in print_ids)
+            )
+            if print_to:
+                from urllib.parse import quote
+
+                next_url += f"&pto={quote(str(print_to))}"
         return redirect(next_url)
 
     if not employee_may(profile, "my-shop", "shelf_stock"):
@@ -1631,7 +1639,10 @@ def _stock_shelf_post(
                 f"{'' if result['done'] == 1 else 's'} "
                 f"({result['total'].normalize():f} units).",
             )
-        return _next(shelf_shop)
+        movement_ids = [
+            row.pk for row in result.get("movements", []) if row.pk
+        ]
+        return _next(shelf_shop, print_ids=movement_ids)
 
     if shelf_shop is None:
         shelf_shop = _resolve_post_shop()
@@ -1673,7 +1684,7 @@ def _stock_shelf_post(
             messages.error(request, f"{to_shop.name} is not in Shelf mode.")
             return _next(shelf_shop)
     try:
-        message = apply_shelf_action(
+        result = apply_shelf_action(
             shop=shelf_shop, actor=profile, data=data, to_shop=to_shop
         )
     except ValidationError as exc:
@@ -1681,8 +1692,15 @@ def _stock_shelf_post(
         for error in errors:
             messages.error(request, error)
         return _next(shelf_shop)
-    messages.success(request, message)
-    return _next(shelf_shop)
+    messages.success(request, result)
+    movement_ids = [
+        row.pk for row in getattr(result, "movements", []) if row.pk
+    ]
+    return _next(
+        shelf_shop,
+        print_ids=movement_ids,
+        print_to=getattr(result, "print_to", "") or "",
+    )
 
 
 def _wants_json_response(request) -> bool:
@@ -9093,15 +9111,27 @@ def stock_management(request, profile, meta, module, page_sidebar):
                 )
             if wants_json:
                 # Client shows the popup then refreshes; avoid duplicate toast.
-                return JsonResponse(
-                    {
-                        "ok": True,
-                        "message": success_message,
-                        "next": respond_next,
-                        "decision": decision,
-                    }
-                )
+                payload = {
+                    "ok": True,
+                    "message": success_message,
+                    "next": respond_next,
+                    "decision": decision,
+                }
+                if decision == "accept":
+                    from shops.services import build_stock_request_goods_received
+
+                    payload.update(
+                        build_stock_request_goods_received(
+                            movement,
+                            shop=movement.requested_from_shop or movement.shop,
+                            authorised_by=getattr(movement, "responded_by", None)
+                            or profile,
+                        )
+                    )
+                return JsonResponse(payload)
             messages.success(request, success_message)
+            if decision == "accept":
+                respond_next += f"&print=movement:{movement.pk}"
             return redirect(respond_next)
 
         action_mode = (request.POST.get("mode") or mode).strip().lower()
@@ -9146,7 +9176,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
             requested_from_shop_id=requested_from_post,
         )
         try:
-            apply_stock_movement(
+            movement = apply_stock_movement(
                 profile,
                 action_mode,
                 request.POST,
@@ -9183,20 +9213,43 @@ def stock_management(request, profile, meta, module, page_sidebar):
         }
         success_message = labels[action_mode]
         if wants_json:
-            return JsonResponse(
-                {
-                    "ok": True,
-                    "message": success_message,
-                    "next": next_url,
-                }
-            )
+            payload = {
+                "ok": True,
+                "message": success_message,
+                "next": next_url,
+            }
+            if movement is not None and getattr(movement, "pk", None):
+                from items.models import StockMovementType
+                from shops.services import (
+                    build_stock_in_supplier_receipt,
+                    build_stock_out_voucher,
+                    build_stock_request_dispatch_note,
+                )
+
+                if action_mode == "request":
+                    payload.update(
+                        build_stock_request_dispatch_note(
+                            movement, shop=movement.shop, authorised_by=profile
+                        )
+                    )
+                elif action_mode == "out":
+                    payload.update(
+                        build_stock_out_voucher(
+                            movement, shop=movement.shop, authorised_by=profile
+                        )
+                    )
+                else:
+                    payload.update(
+                        build_stock_in_supplier_receipt(
+                            movement, shop=movement.shop, authorised_by=profile
+                        )
+                    )
+            return JsonResponse(payload)
         messages.success(request, success_message)
-        return _stock_redirect(
-            request.path,
-            action_mode,
-            shop_ids=redirect_shop_ids,
-            requested_from_shop_id=requested_from_post,
-        )
+        redirect_url = next_url
+        if movement is not None and getattr(movement, "pk", None):
+            redirect_url += f"&print=movement:{movement.pk}"
+        return redirect(redirect_url)
 
     if mode == "request":
         # Request/transfer mode uses shop_id as the sending shop (single).

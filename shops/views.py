@@ -2226,19 +2226,24 @@ def my_shop_shelf_stock(request, shop_id):
                 return denied
             actor = verify_active_employee_code(login_code)
         try:
-            messages.success(
-                request,
-                apply_shelf_action(
-                    shop=shop,
-                    actor=actor,
-                    data=request.POST,
-                    files=request.FILES,
-                ),
+            result = apply_shelf_action(
+                shop=shop,
+                actor=actor,
+                data=request.POST,
+                files=request.FILES,
             )
+            messages.success(request, result)
         except ValidationError as exc:
             for message in _validation_errors(exc):
                 messages.error(request, message)
-        return redirect("employees:my_shop_shelf_stock", shop_id=shop.pk)
+            return redirect("employees:my_shop_shelf_stock", shop_id=shop.pk)
+        movement_ids = [
+            row.pk for row in getattr(result, "movements", []) if row.pk
+        ]
+        next_url = reverse("employees:my_shop_shelf_stock", kwargs={"shop_id": shop.pk})
+        if movement_ids:
+            next_url += "?print=shelf:" + ",".join(str(pk) for pk in movement_ids)
+        return redirect(next_url)
 
     shelf_items = list_shelf_items(shop=shop)
     shops = _shops_for_floor(profile, shop)
@@ -2577,7 +2582,10 @@ def my_shop_buy_stock(request, shop_id):
                             **print_payload,
                         }
                     )
-                return redirect(next_url)
+                joiner = "&" if "?" in next_url else "?"
+                return redirect(
+                    f"{next_url}{joiner}print=movement:{movement.pk}"
+                )
 
     return _render_my_shop_tool_page(
         request,
@@ -2767,7 +2775,10 @@ def my_shop_stock_request_create(request, shop_id):
         )
         payload.update(print_payload)
         return JsonResponse(payload)
-    return redirect("employees:my_shop_stock_requests", shop_id=shop.pk)
+    return redirect(
+        f"{reverse('employees:my_shop_stock_requests', kwargs={'shop_id': shop.pk})}"
+        f"?print=movement:{movement.pk}"
+    )
 
 
 @shop_floor_required
@@ -5089,6 +5100,8 @@ def my_shop_stock_request_respond(request, shop_id, request_id):
             payload.update(print_payload)
         return JsonResponse(payload)
     messages.success(request, success_message)
+    if decision == "accept":
+        next_url += f"{'&' if '?' in next_url else '?'}print=movement:{movement.pk}"
     return redirect(next_url)
 
 

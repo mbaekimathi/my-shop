@@ -2970,6 +2970,20 @@
           return;
         }
         setApplyStatus(data.message || "Submitted successfully.");
+        if (data.receipt_text && window.RichcomPrinter?.printReceipt) {
+          try {
+            await window.RichcomPrinter.printReceipt({
+              text: data.receipt_text,
+              channel: data.print_via || "",
+              qr: data.receipt_qr || null,
+              fontStyle: data.receipt_font || null,
+              ticket: data.receipt_ticket || null,
+              paperWidth: data.receipt_paper_width || "",
+            });
+          } catch (_printErr) {
+            /* printing is best-effort; the movement already saved */
+          }
+        }
         import("./offline/catalog-cache.js")
           .then((mod) =>
             mod.notifyCatalogChanged?.({
@@ -6008,6 +6022,20 @@
         return;
       }
       setApplyStatus(data.message || "Submitted successfully.");
+      if (data.receipt_text && window.RichcomPrinter?.printReceipt) {
+        try {
+          await window.RichcomPrinter.printReceipt({
+            text: data.receipt_text,
+            channel: data.print_via || "",
+            qr: data.receipt_qr || null,
+            fontStyle: data.receipt_font || null,
+            ticket: data.receipt_ticket || null,
+            paperWidth: data.receipt_paper_width || "",
+          });
+        } catch (_printErr) {
+          /* printing is best-effort; the movement already saved */
+        }
+      }
       import("./offline/catalog-cache.js")
         .then((mod) =>
           mod.notifyCatalogChanged?.({
