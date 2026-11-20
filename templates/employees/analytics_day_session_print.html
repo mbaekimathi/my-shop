@@ -562,6 +562,26 @@
         {% endif %}
         {% endfor %}
       </div>
+      {% elif table.section == "day_report_sec_expenses" and paper != "a4" %}
+      <div class="sheet-cards">
+        {% for row in table.rows %}
+        {% if row.group_header %}
+        <p class="sheet-minicard-sub">{{ row.label }}</p>
+        {% else %}
+        {% with cells=row.cells|default:row %}
+        <div class="sheet-minicard">
+          <div class="sheet-minicard-top">
+            <strong>{{ cells.0 }} · {{ cells.1 }}</strong>
+            <strong class="sheet-minicard-amt">{{ cells.6 }}</strong>
+          </div>
+          <div class="sheet-minicard-sub">
+            {{ cells.2 }} · Qty {{ cells.3 }}{% if cells.4.label %} · {{ cells.4.label }}{% if cells.4.sub %} ({{ cells.4.sub }}){% endif %}{% else %} · {{ cells.4 }}{% endif %}{% if cells.5.label %} · <span class="chip">{{ cells.5.label }}</span>{% endif %}
+          </div>
+        </div>
+        {% endwith %}
+        {% endif %}
+        {% endfor %}
+      </div>
       {% else %}
       {% with col_count=table.columns|length %}
       <table class="sheet-grid{% if paper == "80" and col_count > 5 %} stack{% elif paper == "58" and col_count > 4 %} stack{% endif %}">
