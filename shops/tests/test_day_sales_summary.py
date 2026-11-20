@@ -553,6 +553,69 @@ class DayReportCountedStatusesTests(TestCase):
         summary = day_session_balance_summary(self.session)
         self.assertEqual(summary["suppliers_paid"], Decimal("300.00"))
 
+    def test_stock_from_till_flags_exclude_supplier_payments(self):
+        """Day-report stock toggles double as the not-from-till switch.
+
+        Off = the stock payment didn't leave the till, so it must not
+        count in Stock bought or Expected in till.
+        """
+        from items.models import (
+            ShelfItem,
+            ShelfStockMovement,
+            ShelfStockMovementType,
+            StockEntrySource,
+            StockMovement,
+            StockMovementType,
+            StockPaymentStatus,
+        )
+        from shops.services import day_session_balance_summary
+
+        StockMovement.objects.create(
+            movement_type=StockMovementType.IN,
+            entry_source=StockEntrySource.BUY_ITEMS,
+            shop=self.shop,
+            created_by=self.profile,
+            payment_status=StockPaymentStatus.PAID,
+            amount_paid=Decimal("200.00"),
+        )
+        shelf_item = ShelfItem.objects.create(
+            shop=self.shop,
+            name="Till Flour",
+            unit="kg",
+            created_by=self.profile,
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=Decimal("2"),
+            amount_paid=Decimal("300.00"),
+        )
+
+        # Baseline expected cash: 1000 opening + 100 cash sale.
+        base = day_session_balance_summary(
+            self.session,
+            item_stock_from_till=False,
+            shelf_stock_from_till=False,
+        )
+        self.assertEqual(base["suppliers_paid"], Decimal("0"))
+        self.assertEqual(base["expected_cash"], Decimal("1100"))
+
+        summary = day_session_balance_summary(self.session)
+        self.assertEqual(summary["suppliers_paid"], Decimal("500.00"))
+        self.assertEqual(summary["expected_cash"], Decimal("600"))
+
+        item_only = day_session_balance_summary(
+            self.session, shelf_stock_from_till=False
+        )
+        self.assertEqual(item_only["suppliers_paid"], Decimal("200.00"))
+        self.assertEqual(item_only["expected_cash"], Decimal("900"))
+
+        shelf_only = day_session_balance_summary(
+            self.session, item_stock_from_till=False
+        )
+        self.assertEqual(shelf_only["suppliers_paid"], Decimal("300.00"))
+        self.assertEqual(shelf_only["expected_cash"], Decimal("800"))
+
 
 class CashierDaySummaryContextTests(TestCase):
     def setUp(self):

@@ -383,6 +383,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `analytics_day_session`) build from the viewing profile's prefs — a
   disabled section is dropped even when it has rows (unlike the stock-mode
   gate, which keeps a pair alive for since-disabled modes with data).
+  The two stock toggles also double as the **paid-from-till switch**:
+  `day_report_sec_item_stock` / `day_report_sec_shelf_stock` feed
+  `day_session_balance_summary(item_stock_from_till=…,
+  shelf_stock_from_till=…)` — a section switched off means those paid
+  stock-ins did NOT leave the till, so they're dropped from
+  `suppliers_paid` ("Stock bought") and Expected in till on the report
+  page and PDF alike (other callers default to from-till).
 - The "Open & close" group edits the shared company rows
   (`enable_open_close`, `CompanyWorkingHoursSettings.enabled`, per-shop
   `ShopWorkingHoursSettings` times — same as Settings → POS) and is gated by

@@ -10557,7 +10557,14 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     report_mode = day_report_status_mode(profile)
     counted_statuses = day_report_counted_statuses(profile)
     summary = day_session_balance_summary(
-        session, counted_statuses=counted_statuses
+        session,
+        counted_statuses=counted_statuses,
+        item_stock_from_till=day_report_section_enabled(
+            profile, "day_report_sec_item_stock"
+        ),
+        shelf_stock_from_till=day_report_section_enabled(
+            profile, "day_report_sec_shelf_stock"
+        ),
     )
     details = day_session_report_details(
         session, counted_statuses=counted_statuses

@@ -8153,11 +8153,21 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
     return rows
 
 
-def day_session_balance_summary(session, counted_statuses=None) -> dict:
+def day_session_balance_summary(
+    session,
+    counted_statuses=None,
+    *,
+    item_stock_from_till=True,
+    shelf_stock_from_till=True,
+) -> dict:
     """Live expected balances for one session (open or closed).
 
     `counted_statuses` narrows which receipt statuses count as sales (and
     which receipts' return refunds subtract); None counts every sale receipt.
+    `item_stock_from_till` / `shelf_stock_from_till` control whether paid
+    stock-ins are treated as money that left the till — when off, those
+    supplier payments are excluded from `suppliers_paid` and Expected in
+    till (the day-report "Stocked in & out" toggles double as this switch).
     """
     from items.models import (
         ShelfStockMovement,
@@ -8210,27 +8220,30 @@ def day_session_balance_summary(session, counted_statuses=None) -> dict:
             "category",
         )
     )
-    supplier_payments = list(
-        StockMovement.objects.filter(
-            shop_id=session.shop_id,
-            movement_type=StockMovementType.IN,
-            created_at__gte=window_start,
-            created_at__lt=closed,
-            amount_paid__gt=0,
-        ).values("created_at", "amount_paid")
-    )
-    supplier_payments += list(
-        ShelfStockMovement.objects.filter(
-            shelf_item__shop_id=session.shop_id,
-            movement_type__in=(
-                ShelfStockMovementType.IN,
-                ShelfStockMovementType.REGISTER,
-            ),
-            created_at__gte=window_start,
-            created_at__lt=closed,
-            amount_paid__gt=0,
-        ).values("created_at", "amount_paid")
-    )
+    supplier_payments = []
+    if item_stock_from_till:
+        supplier_payments += list(
+            StockMovement.objects.filter(
+                shop_id=session.shop_id,
+                movement_type=StockMovementType.IN,
+                created_at__gte=window_start,
+                created_at__lt=closed,
+                amount_paid__gt=0,
+            ).values("created_at", "amount_paid")
+        )
+    if shelf_stock_from_till:
+        supplier_payments += list(
+            ShelfStockMovement.objects.filter(
+                shelf_item__shop_id=session.shop_id,
+                movement_type__in=(
+                    ShelfStockMovementType.IN,
+                    ShelfStockMovementType.REGISTER,
+                ),
+                created_at__gte=window_start,
+                created_at__lt=closed,
+                amount_paid__gt=0,
+            ).values("created_at", "amount_paid")
+        )
     return _session_activity_totals(
         session,
         sales=sales,
@@ -8766,8 +8779,12 @@ def build_shop_day_report_pdf(
     register_manrope_pdf_fonts()
 
     brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    _sec = section_visible or (lambda _key: True)
     summary = day_session_balance_summary(
-        session, counted_statuses=counted_statuses
+        session,
+        counted_statuses=counted_statuses,
+        item_stock_from_till=_sec("day_report_sec_item_stock"),
+        shelf_stock_from_till=_sec("day_report_sec_shelf_stock"),
     )
     details = day_session_report_details(
         session, counted_statuses=counted_statuses
@@ -8776,7 +8793,6 @@ def build_shop_day_report_pdf(
     channels = shop_day_balance_channels(shop=shop, pos=pos)
     printed_at = timezone.localtime()
     is_open = session.closed_at is None
-    _sec = section_visible or (lambda _key: True)
     opened_by = (
         session.opened_by.user.get_full_name()
         or session.opened_by.user.username
