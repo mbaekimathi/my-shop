@@ -3785,6 +3785,7 @@ def my_shop_day_report(request, shop_id):
                 "printed_at": timezone.localtime(),
                 "company_name": get_company_display_name(),
                 "auto_print": (request.GET.get("auto") or "").strip() == "1",
+                "ksh_prefix": "" if paper == "a4" else "KSh ",
             },
         )
 

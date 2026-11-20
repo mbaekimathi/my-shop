@@ -532,7 +532,7 @@
       {% for metric in page.metrics %}
       <div class="kpi">
         <span class="kpi-label">{{ metric.label }}{% if metric.hint %}<span class="kpi-hint">{{ metric.hint }}</span>{% endif %}</span>
-        <strong class="kpi-value">{{ metric.value }}</strong>
+        <strong class="kpi-value">{{ metric.value|cut:ksh_prefix }}</strong>
       </div>
       {% endfor %}
     </div>
@@ -546,13 +546,13 @@
       <div class="sheet-cards">
         {% for row in table.rows %}
         {% if row.group_header %}
-        <p class="sheet-minicard-sub">{{ row.label }}</p>
+        <p class="sheet-minicard-sub">{{ row.label|cut:ksh_prefix }}</p>
         {% else %}
         {% with cells=row.cells|default:row %}
         <div class="sheet-minicard">
           <div class="sheet-minicard-top">
             <strong>{{ cells.0 }}{% if cells.1.label %} · {{ cells.1.label }}{% endif %}</strong>
-            <strong class="sheet-minicard-amt">{{ cells.4 }}</strong>
+            <strong class="sheet-minicard-amt">{{ cells.4|cut:ksh_prefix }}</strong>
           </div>
           <div class="sheet-minicard-sub">
             {% if cells.1.sub %}{{ cells.1.sub }} · {% endif %}{{ cells.2 }}{% if cells.3.label %} · <span class="chip">{{ cells.3.label }}</span>{% endif %}
@@ -566,13 +566,13 @@
       <div class="sheet-cards">
         {% for row in table.rows %}
         {% if row.group_header %}
-        <p class="sheet-minicard-sub">{{ row.label }}</p>
+        <p class="sheet-minicard-sub">{{ row.label|cut:ksh_prefix }}</p>
         {% else %}
         {% with cells=row.cells|default:row %}
         <div class="sheet-minicard">
           <div class="sheet-minicard-top">
             <strong>{{ cells.0 }} · {{ cells.1 }}</strong>
-            <strong class="sheet-minicard-amt">{{ cells.6 }}</strong>
+            <strong class="sheet-minicard-amt">{{ cells.6|cut:ksh_prefix }}</strong>
           </div>
           <div class="sheet-minicard-sub">
             {{ cells.2 }} · Qty {{ cells.3 }}{% if cells.4.label %} · {{ cells.4.label }}{% if cells.4.sub %} ({{ cells.4.sub }}){% endif %}{% else %} · {{ cells.4 }}{% endif %}{% if cells.5.label %} · <span class="chip">{{ cells.5.label }}</span>{% endif %}
@@ -598,7 +598,7 @@
           {% for row in table.rows %}
           {% if row.group_header %}
           <tr class="row-group">
-            <td colspan="{{ col_count }}">{{ row.label }}</td>
+            <td colspan="{{ col_count }}">{{ row.label|cut:ksh_prefix }}</td>
           </tr>
           {% else %}
           {% with cells=row.cells|default:row %}
@@ -610,7 +610,7 @@
               data-label="{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}"
               {% if cell.kind == "money" or cell.kind == "pct" or col.money %}class="num"{% endif %}
             >
-              <span class="cell-v">{% if cell.href %}{{ cell.label }}{% elif cell.kind == "money" or cell.kind == "pct" %}{{ cell.label }}{% elif cell.kind == "qty_amount" %}{{ cell.qty }} · {{ cell.amount }}{% elif cell.kind == "status" %}<span class="chip">{{ cell.label }}</span>{% elif cell.kind == "empty" %}&mdash;{% elif cell.label and cell.sub %}<strong>{{ cell.label }}</strong><br><small>{{ cell.sub }}</small>{% elif cell.label %}{{ cell.label }}{% else %}{{ cell }}{% endif %}</span>
+              <span class="cell-v">{% if cell.href %}{{ cell.label|cut:ksh_prefix }}{% elif cell.kind == "money" or cell.kind == "pct" %}{{ cell.label|cut:ksh_prefix }}{% elif cell.kind == "qty_amount" %}{{ cell.qty }} · {{ cell.amount|cut:ksh_prefix }}{% elif cell.kind == "status" %}<span class="chip">{{ cell.label|cut:ksh_prefix }}</span>{% elif cell.kind == "empty" %}&mdash;{% elif cell.label and cell.sub %}<strong>{{ cell.label|cut:ksh_prefix }}</strong><br><small>{{ cell.sub|cut:ksh_prefix }}</small>{% elif cell.label %}{{ cell.label|cut:ksh_prefix }}{% else %}{{ cell|cut:ksh_prefix }}{% endif %}</span>
             </td>
             {% endif %}
             {% endfor %}
@@ -626,7 +626,7 @@
       {% else %}
       <p class="sheet-empty">{{ table.empty }}</p>
       {% endif %}
-      {% if table.footnote %}<p class="sheet-foot">{{ table.footnote }}</p>{% endif %}
+      {% if table.footnote %}<p class="sheet-foot">{{ table.footnote|cut:ksh_prefix }}</p>{% endif %}
     </section>
     {% endfor %}
 
