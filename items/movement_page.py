@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from urllib.parse import urlencode
 
 from django.http import JsonResponse
+from django.shortcuts import render
 
 from .models import (
     ShelfItem,
@@ -56,7 +57,8 @@ from .views import (
     _qty_num,
     _report_page_urls,
     _report_range_bounds,
-    _stock_report_download,
+    _stock_report_document,
+    _stock_report_pdf_response,
     _suspended_item_ids,
     _summarize_movement_events,
     _trade_receipt_number_from_text,
@@ -610,6 +612,161 @@ def _company_pdf_meta():
     }
 
 
+def _movement_report_output_flags(request):
+    """(paper, wants_estimate, wants_download) report outputs for this page."""
+    paper = (request.GET.get("paper") or "").strip().lower()
+    if paper == "50":
+        paper = "58"
+    if paper not in ("a4", "80", "58"):
+        paper = ""
+    wants_estimate = (request.GET.get("estimate") or "").strip() == "1"
+    wants_download = (request.GET.get("download") or "").strip() == "1"
+    return paper, wants_estimate, wants_download
+
+
+def _movement_print_tables(document):
+    """Print-sheet tables (headers + pre-labelled cells) for the document."""
+
+    def _table(
+        title,
+        subtitle,
+        headers,
+        rows,
+        *,
+        numeric_from=None,
+        numeric_cols=(),
+        merge_when=False,
+    ):
+        headers = list(headers or [])
+        prepared = []
+        for row in rows or []:
+            cells = list(row)
+            if merge_when and len(cells) == len(headers) + 1:
+                # Detail rows carry the date and time as two cells under one
+                # "When" header — same merge the PDF applies.
+                cells = [f"{cells[0]} {cells[1]}".strip()] + cells[2:]
+            wrapped = []
+            for idx, value in enumerate(cells):
+                num = (
+                    numeric_from is not None and idx >= numeric_from
+                ) or idx in numeric_cols
+                wrapped.append(
+                    {
+                        "label": headers[idx] if idx < len(headers) else "",
+                        "value": value,
+                        "num": num,
+                    }
+                )
+            prepared.append(
+                {
+                    "cells": wrapped,
+                    "is_total": str(cells[0] if cells else "").strip().lower()
+                    == "total",
+                }
+            )
+        return {
+            "title": title,
+            "subtitle": subtitle,
+            "headers": headers,
+            "rows": prepared,
+            "col_count": len(headers),
+        }
+
+    is_audit = document.get("report_kind") == "audit"
+    is_movements = document.get("page_mode") == "movements"
+    tables = []
+    if is_audit:
+        tables.append(
+            _table(
+                "Summary by item",
+                "System qty vs count. Fill Actual qty · Missing · Excess · "
+                "Note during the audit.",
+                document.get("summary_headers"),
+                document.get("summary_rows"),
+                numeric_from=1,
+            )
+        )
+    elif is_movements and document.get("item_summary_headers") is not None:
+        item_headers = document.get("item_summary_headers") or []
+        tables.append(
+            _table(
+                "Summary by item",
+                "Aggregated movement totals for the selected filters.",
+                item_headers,
+                document.get("item_summary_rows"),
+                numeric_from=3 if "Shop" in item_headers else 2,
+            )
+        )
+    elif not is_movements:
+        tables.append(
+            _table(
+                document.get("report_table_title") or "Item stock summary",
+                document.get("report_table_subtitle")
+                or "Opening, movement, and closing positions for the period.",
+                document.get("report_headers"),
+                document.get("report_rows"),
+                numeric_from=document.get("report_numeric_from", 2),
+            )
+        )
+    else:
+        qty_label = (document.get("qty_label") or "qty").lower()
+        tables.append(
+            _table(
+                "Summary by item",
+                f"Quantities and estimated buying value ({qty_label} × "
+                "buy price).",
+                document.get("summary_headers"),
+                document.get("summary_rows"),
+                numeric_from=2,
+            )
+        )
+        tables.append(
+            _table(
+                "Activity details",
+                "Chronological rows for every filtered movement in this "
+                "period.",
+                document.get("detail_headers"),
+                document.get("detail_rows"),
+                numeric_cols={3},
+                merge_when=True,
+            )
+        )
+    return tables
+
+
+def _movement_estimate_payload(
+    document,
+    movement_events,
+    *,
+    count_unit="movement",
+    kind_label=None,
+):
+    """JSON body for the print modal's A4 page-count check."""
+    tables = _movement_print_tables(document)
+    row_total = sum(len(table["rows"]) for table in tables)
+    # Rough A4 estimate: header/KPIs ≈ a third page, each section
+    # title + note ≈ 3 rows, ~34 body rows per page.
+    a4_page_estimate = max(1, (row_total + len(tables) * 3 + 40) // 34)
+    if kind_label is None:
+        if document.get("report_kind") == "audit":
+            kind_label = "Audit trail"
+        else:
+            kind_label = (
+                f"{document.get('view_label') or 'Report'} · "
+                f"{document.get('event_filter_label') or 'All movements'}"
+            )
+    count = len(movement_events or [])
+    return {
+        "ok": True,
+        "paper": "a4",
+        "a4_page_estimate": a4_page_estimate,
+        "receipt_count": count,
+        "count_label": count_unit if count == 1 else f"{count_unit}s",
+        "kind_label": kind_label,
+        "period_label": document.get("period_label") or "",
+    }
+
+
 def build_movement_ledger_page(
     request,
     *,
@@ -740,6 +897,9 @@ def build_movement_ledger_page(
         event_filters, type_order=type_order
     )
 
+    paper, wants_estimate, wants_download = _movement_report_output_flags(request)
+    wants_report_output = bool(paper) or wants_estimate or wants_download
+
     # ---- Events -------------------------------------------------------------
     movement_events = _source_events(
         source,
@@ -837,8 +997,7 @@ def build_movement_ledger_page(
             pass
         movement_event_groups = _group_timeline_events_by_receipt(display_events)
 
-        is_download = (request.GET.get("download") or "").strip() == "1"
-        if movement_event_groups and not is_download:
+        if movement_event_groups and not wants_report_output:
             try:
                 timeline_page = max(1, int(request.GET.get("page") or 1))
             except (TypeError, ValueError):
@@ -983,7 +1142,7 @@ def build_movement_ledger_page(
         f"{filter_context.get('report_period_label') or ''}"
     )
 
-    if (request.GET.get("download") or "").strip() == "1":
+    if wants_report_output:
         source_meta = {
             "type_order": type_order,
             "filename_prefix": cfg["filename_prefix"],
@@ -994,24 +1153,74 @@ def build_movement_ledger_page(
                 _shelf_system_qty if source == "shelf" else _store_system_qty
             ),
         }
+        document = _stock_report_document(
+            page_mode="movements",
+            filter_context=filter_context,
+            is_item_movement_summary=is_item_movement_summary,
+            movement_events=movement_events,
+            movement_item_rows=movement_item_rows,
+            movement_item_group_by_shop=group_by_shop,
+            item_report_rows=[],
+            item_report_group_by_shop=False,
+            event_filter=event_filters,
+            view_by=view_by,
+            report_kind=_parse_report_kind(request.GET.get("report_kind")),
+            day_end=day_end,
+            shop_label=shop_label,
+            shop_ids=scope_shop_ids,
+            source_meta=source_meta,
+            **_company_pdf_meta(),
+        )
+        if wants_estimate:
+            return (
+                JsonResponse(
+                    _movement_estimate_payload(document, movement_events)
+                ),
+                {},
+            )
+        if wants_download:
+            from .services import build_stock_report_pdf
+
+            pdf_bytes = build_stock_report_pdf(**document["pdf_params"])
+            return (
+                _stock_report_pdf_response(
+                    filename=document["filename"], pdf_bytes=pdf_bytes
+                ),
+                {},
+            )
+        is_audit = document.get("report_kind") == "audit"
+        sheet_title = f"{page_title} · audit trail" if is_audit else page_title
+        if is_audit:
+            sheet_subtitle = (
+                f"{document['event_filter_label']} · "
+                f"{document['shop_label'] or 'All shops'} · Summary by item"
+            )
+        else:
+            sheet_subtitle = (
+                f"Actual report · {document['event_filter_label']} · "
+                f"{document['view_label']} · "
+                f"{document['shop_label'] or 'All shops'}"
+            )
+        estimate = _movement_estimate_payload(document, movement_events)
         return (
-            _stock_report_download(
-                page_mode="movements",
-                filter_context=filter_context,
-                is_item_movement_summary=is_item_movement_summary,
-                movement_events=movement_events,
-                movement_item_rows=movement_item_rows,
-                movement_item_group_by_shop=group_by_shop,
-                item_report_rows=[],
-                item_report_group_by_shop=False,
-                event_filter=event_filters,
-                view_by=view_by,
-                report_kind=_parse_report_kind(request.GET.get("report_kind")),
-                day_end=day_end,
-                shop_label=shop_label,
-                shop_ids=scope_shop_ids,
-                source_meta=source_meta,
-                **_company_pdf_meta(),
+            render(
+                request,
+                "items/movement_report_print.html",
+                {
+                    "document": document,
+                    "tables": _movement_print_tables(document),
+                    "paper": paper,
+                    "title": sheet_title,
+                    "subtitle": sheet_subtitle,
+                    "movement_count": len(movement_events),
+                    "a4_page_estimate": estimate["a4_page_estimate"],
+                    "printed_at": document["generated_at"],
+                    "company_name": document["pdf_params"]["company_name"],
+                    "company_phone": document["pdf_params"]["company_phone"],
+                    "company_email": document["pdf_params"]["company_email"],
+                    "company_location": document["pdf_params"]["company_location"],
+                    "auto_print": (request.GET.get("auto") or "").strip() == "1",
+                },
             ),
             {},
         )
@@ -1047,6 +1256,13 @@ def build_movement_ledger_page(
         "event_filter_label": event_filter_label,
         "report_kind": _parse_report_kind(request.GET.get("report_kind")),
         "movement_pdf_audit": True,
+        "receipts_print_modal": True,
+        "receipts_print_url": request.path,
+        "receipts_print_title": f"Print {page_title}",
+        "receipts_print_lead": (
+            "Uses the filters on this page — pick a paper size, "
+            "then print or download the A4 PDF."
+        ),
         "is_item_movement_summary": is_item_movement_summary,
         "is_item_movement_detail": is_item_movement_detail,
         "detail_item": detail_item,

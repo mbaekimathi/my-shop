@@ -3443,6 +3443,90 @@ class ItSupportItemStockPagesTests(TestCase):
         labels = self._labels(page)
         self.assertIn("Shelf stock movement", labels)
 
+    def test_shelf_tab_movements_print_and_estimate(self):
+        from items.models import ShelfStockMovement, ShelfStockMovementType
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        shelf_item = self._shelf_item()
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=Decimal("8"),
+            balance_after=Decimal("8"),
+            created_by=self.profile,
+        )
+        params = {
+            "mode": "movements",
+            "range": "day",
+            "date": timezone.localdate().isoformat(),
+            "shop_id": self.shop.pk,
+            "tab": "shelf",
+        }
+
+        # The page exposes the print popup and a Print trigger.
+        page = self.client.get(self.url, params)
+        self.assertContains(page, 'data-modal="print-receipts"')
+        self.assertContains(page, 'data-modal-open="print-receipts"')
+        self.assertContains(page, 'data-receipts-print-url="/it-support/stock-management/"')
+
+        # ?paper=a4/80/58 render the print sheet instead of the workspace page.
+        for paper, body_class in (
+            ("a4", "paper-a4"),
+            ("80", "paper-80"),
+            ("58", "paper-58"),
+        ):
+            sheet = self.client.get(self.url, {**params, "paper": paper})
+            self.assertEqual(sheet.status_code, 200)
+            self.assertContains(sheet, body_class)
+            self.assertContains(sheet, "IT SHELF WIDGET")
+            self.assertContains(sheet, "Summary by item")
+            self.assertContains(sheet, "Activity details")
+
+        # ?estimate=1 answers the modal's A4 page-count JSON.
+        estimate = self.client.get(self.url, {**params, "estimate": "1"})
+        self.assertEqual(estimate.status_code, 200)
+        payload = estimate.json()
+        self.assertTrue(payload["ok"])
+        self.assertGreaterEqual(payload["a4_page_estimate"], 1)
+        self.assertEqual(payload["receipt_count"], 1)
+        self.assertEqual(payload["count_label"], "movement")
+
+        # ?download=1 still streams the PDF.
+        pdf = self.client.get(self.url, {**params, "download": "1"})
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+
+    def test_shelf_tab_movements_audit_print_sheet(self):
+        from items.models import ShelfStockMovement, ShelfStockMovementType
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        shelf_item = self._shelf_item()
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=Decimal("8"),
+            balance_after=Decimal("8"),
+            created_by=self.profile,
+        )
+        sheet = self.client.get(
+            self.url,
+            {
+                "mode": "movements",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+                "shop_id": self.shop.pk,
+                "tab": "shelf",
+                "report_kind": "audit",
+                "paper": "a4",
+            },
+        )
+        self.assertEqual(sheet.status_code, 200)
+        self.assertContains(sheet, "audit trail")
+        self.assertContains(sheet, "Actual qty")
+        self.assertNotContains(sheet, "Activity details")
+
     def test_shelf_tab_report_shows_all_scope_shops(self):
         from items.models import ShelfItem
         from shops.services import set_company_pos_setting
@@ -3499,6 +3583,75 @@ class ItSupportItemStockPagesTests(TestCase):
         )
         self.assertContains(page, "IT SHELF WIDGET")
         self.assertNotContains(page, "IT SHELF GADGET")
+
+    def test_shelf_tab_report_print_and_estimate(self):
+        from items.models import ShelfStockMovement, ShelfStockMovementType
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        shelf_item = self._shelf_item()
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.REGISTER,
+            quantity=Decimal("8"),
+            balance_after=Decimal("8"),
+            created_by=self.profile,
+        )
+        params = {
+            "mode": "report",
+            "range": "day",
+            "date": timezone.localdate().isoformat(),
+            "shop_id": self.shop.pk,
+            "tab": "shelf",
+        }
+
+        # The page exposes the print popup and a Print trigger.
+        page = self.client.get(self.url, params)
+        self.assertContains(page, 'data-modal="print-receipts"')
+        self.assertContains(page, 'data-modal-open="print-receipts"')
+        self.assertContains(
+            page, 'data-receipts-print-url="/it-support/stock-management/"'
+        )
+
+        # ?paper=a4/80/58 render the print sheet instead of the workspace.
+        for paper, body_class in (
+            ("a4", "paper-a4"),
+            ("80", "paper-80"),
+            ("58", "paper-58"),
+        ):
+            sheet = self.client.get(self.url, {**params, "paper": paper})
+            self.assertEqual(sheet.status_code, 200)
+            self.assertContains(sheet, body_class)
+            self.assertContains(sheet, "Shelf stock report")
+            self.assertContains(sheet, "IT SHELF WIDGET")
+            self.assertContains(sheet, "Shelf items")
+
+        # No shop picked: the multi-shop sheet gains a Shop column.
+        multi = self.client.get(
+            self.url,
+            {
+                key: value
+                for key, value in params.items()
+                if key != "shop_id"
+            }
+            | {"paper": "a4"},
+        )
+        self.assertEqual(multi.status_code, 200)
+        self.assertContains(multi, "IT STOCK SHOP")
+
+        # ?estimate=1 answers the modal's A4 page-count JSON.
+        estimate = self.client.get(self.url, {**params, "estimate": "1"})
+        self.assertEqual(estimate.status_code, 200)
+        payload = estimate.json()
+        self.assertTrue(payload["ok"])
+        self.assertGreaterEqual(payload["a4_page_estimate"], 1)
+        self.assertEqual(payload["receipt_count"], 1)
+        self.assertEqual(payload["count_label"], "item")
+
+        # ?download=1 streams the A4 PDF.
+        pdf = self.client.get(self.url, {**params, "download": "1"})
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
 
     def test_settings_sidebar_splits_item_and_shelf_links(self):
         from shops.services import set_company_pos_setting

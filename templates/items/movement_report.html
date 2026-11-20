@@ -199,6 +199,16 @@
           <i data-lucide="download" aria-hidden="true"></i>
           Download PDF
         </button>
+        {% if receipts_print_modal %}
+        <button
+          type="button"
+          class="stock-report-apply stock-report-apply--ghost"
+          data-modal-open="print-receipts"
+        >
+          <i data-lucide="printer" aria-hidden="true"></i>
+          Print
+        </button>
+        {% endif %}
       </div>
     </form>
   </header>
@@ -623,11 +633,15 @@
 
 {% block workspace_overlays %}
 {{ block.super }}
+{% include "employees/partials/receipts_print_modal.html" with receipts_print_filters="[data-stock-report-filters]" %}
 {% block movement_overlays %}{% endblock %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
+{% if receipts_print_modal %}
+<script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
+{% endif %}
 {% block movement_extra_js %}{% endblock %}
 {% include "employees/partials/movement_print_root.html" %}
 <script>

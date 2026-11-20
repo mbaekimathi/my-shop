@@ -5337,6 +5337,7 @@ def build_stock_report_pdf(
     item_summary_headers: list | None = None,
     report_rows: list | None = None,
     report_headers: list | None = None,
+    report_numeric_from: int = 2,
 ) -> bytes:
     """
     Compact branded A4 PDF for stock movements / stock report downloads.
@@ -5906,7 +5907,7 @@ def build_stock_report_pdf(
         ]
     else:
         kpi_data = [
-            ("ITEMS", str(len(report_rows or []))),
+            ("ITEMS", str(_count_rows(report_rows))),
             ("VIEW", "Stock report"),
             ("PERIOD", period_label or "—"),
             ("SHOP", shop_label or "All shops"),
@@ -6225,7 +6226,7 @@ def build_stock_report_pdf(
                 report_headers or [],
                 report_rows or [],
                 col_widths=widths,
-                numeric_from=2,
+                numeric_from=report_numeric_from,
             )
         )
         doc.build(story, canvasmaker=_NumberedCanvas)

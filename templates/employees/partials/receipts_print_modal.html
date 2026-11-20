@@ -1,0 +1,87 @@
+{% comment %}
+Shared "Print / download" modal (analytics-receipts-print.js).
+Expects flat context vars:
+  receipts_print_modal            — truthy to render
+  receipts_print_url              — endpoint for ?paper= / ?download=1 / ?estimate=1
+  receipts_print_title, receipts_print_lead — dialog copy
+  receipts_print_filters          — optional selector for the live filter form
+  receipts_print_default_paper    — optional "80"|"58" to preselect thermal
+{% endcomment %}
+{% if receipts_print_modal %}
+<div
+  class="workspace-modal stock-print-modal"
+  data-modal="print-receipts"
+  data-receipts-print-url="{{ receipts_print_url }}"
+  {% if receipts_print_filters %}data-receipts-print-filters="{{ receipts_print_filters }}"{% endif %}
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close data-receipts-print-close></div>
+  <div
+    class="workspace-modal-dialog stock-print-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="print-receipts-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <h2 id="print-receipts-title">{{ receipts_print_title|default:"Print receipts" }}</h2>
+        <p class="stock-print-lead">{{ receipts_print_lead|default:"Uses the filters on this page, then print or download." }}</p>
+        <p class="stock-print-pages" data-receipts-print-pages hidden></p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-modal-close
+        data-receipts-print-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form class="stock-print-form" data-receipts-print-form>
+      <fieldset class="stock-print-paper">
+        <legend class="stock-print-shops-label">Paper</legend>
+        <div class="stock-print-paper-list">
+          <label class="stock-print-paper-option">
+            <input type="radio" name="print_paper" value="a4"{% if receipts_print_default_paper != "80" and receipts_print_default_paper != "58" %} checked{% endif %}>
+            <span>
+              <strong>A4</strong>
+              <small>Office printer</small>
+            </span>
+          </label>
+          <label class="stock-print-paper-option">
+            <input type="radio" name="print_paper" value="80"{% if receipts_print_default_paper == "80" %} checked{% endif %}>
+            <span>
+              <strong>80 mm</strong>
+              <small>Thermal roll</small>
+            </span>
+          </label>
+          <label class="stock-print-paper-option">
+            <input type="radio" name="print_paper" value="58"{% if receipts_print_default_paper == "58" %} checked{% endif %}>
+            <span>
+              <strong>58 mm</strong>
+              <small>Narrow thermal</small>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
+      <p class="stock-print-status" data-receipts-print-status hidden></p>
+
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-receipts-print-close>Cancel</button>
+        <button type="button" class="btn btn--ghost" data-receipts-print-download-a4>
+          <i data-lucide="download" aria-hidden="true"></i>
+          <span>Download A4 PDF</span>
+        </button>
+        <button type="submit" class="btn btn--primary">
+          <i data-lucide="printer" aria-hidden="true"></i>
+          <span>Print</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}

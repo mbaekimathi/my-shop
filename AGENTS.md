@@ -63,6 +63,20 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   legs fall back to the auto "Sent to"/"Received from" note); IN movements
   may carry `trade_in`/`transfer` reasons, OUT movements any
   `StockOutReason`.
+- The **stock-management shelf report** (`?mode=report&tab=shelf`,
+  `_stock_shelf_report` → `items/stock_shelf_report.html`) is a different,
+  lighter report built by `_build_shelf_report` — per shelf item it shows
+  On shelf / Registered / In / Out for the period across the in-scope
+  shelf shops. It reuses the shared print popup
+  (`employees/partials/receipts_print_modal.html` +
+  `analytics-receipts-print.js`): `?paper=a4|80|58` renders
+  `items/movement_report_print.html` from `_shelf_report_document`
+  (`items/views.py`), `?estimate=1` returns the A4 page-count JSON, and
+  `?download=1` streams `build_stock_report_pdf` with
+  `page_mode="report"` (new `report_numeric_from` kwarg controls where
+  right-aligned numeric cells start; `report_table_title`/
+  `report_table_subtitle`/`report_numeric_from` document keys let
+  `_movement_print_tables` title non-movements tables).
 - The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
   sellable items only; shelf-only mode returns an empty catalog.
 - Per-item sale deduction: `Item.deduct_stock_on_sale` — when off,
@@ -203,7 +217,15 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   per-`created_by` rollup (receipts/qty/amount, same counted statuses and
   returned-qty netting as items sold, sorted amount desc; unnamed seller =
   "—") rendered on the page, the `?paper=` print sheet (page.tables loop)
-  and the PDF. `?download=1` streams the same
+  and the PDF. The Stocked in table lists Item/Qty/Amount/Total per line
+  plus a Status chip from `StockMovementLine.payment_status`
+  (Paid/Partial/Unpaid — the group header still carries the movement's
+  `amount_paid` total); Stocked out lists Item/Qty/Reason/Amount/Total.
+  Both end in a `total_row` dict (cells + `total_row: True` →
+  `ax-row--total` on screen, `row-total` on the print sheet, the
+  `_detail_table` footer on the PDF) summing qty + line totals; the
+  stock-out footnote adds "· Refunded" when lines carry
+  `refund_amount`. `?download=1` streams the same
   `build_shop_day_report_pdf`. Session links carry a `?back=` URL so "Back
   to cashiers" restores the filters. Tests:
   `AnalyticsDaySessionReportTests`.

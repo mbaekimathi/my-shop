@@ -10952,6 +10952,14 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
 
     stock_groups = details.get("stock_purchases") or []
     stock_in_rows = []
+    stock_in_qty_total = _zero()
+    stock_in_amount_total = _zero()
+    stock_in_has_total = False
+    stock_status_tones = {
+        StockPaymentStatus.PAID: "good",
+        StockPaymentStatus.PARTIAL: "warn",
+        StockPaymentStatus.UNPAID: "bad",
+    }
     for group in stock_groups:
         source = (group.get("source_label") or "").strip() or "Stock in"
         header = f"{_time(group['at'])} · {source}"
@@ -10971,6 +10979,11 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             }
         ]
         for line in lines:
+            if line.get("qty") is not None:
+                stock_in_qty_total += Decimal(line["qty"])
+            if line.get("total") is not None:
+                stock_in_amount_total += Decimal(line["total"])
+                stock_in_has_total = True
             stock_in_rows.append(
                 [
                     line["item"],
@@ -10989,6 +11002,13 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                         if line.get("total") is not None
                         else "—"
                     ),
+                    {
+                        "kind": "status",
+                        "label": line.get("payment_label") or "—",
+                        "tone": stock_status_tones.get(
+                            line.get("payment_status"), "neutral"
+                        ),
+                    },
                     _supplier_cell(
                         line["supplier_name"], line["supplier_phone"]
                     ),
@@ -10997,14 +11017,41 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     stock_paid_total = sum(
         (Decimal(group.get("paid") or 0) for group in stock_groups), _zero()
     )
+    if stock_groups:
+        stock_in_rows.append(
+            {
+                "total_row": True,
+                "cells": [
+                    "Total",
+                    _qty_label(stock_in_qty_total),
+                    "",
+                    (
+                        _money_ksh(stock_in_amount_total)
+                        if stock_in_has_total
+                        else "—"
+                    ),
+                    (
+                        {
+                            "kind": "status",
+                            "label": f"Paid {_money_ksh(stock_paid_total)}",
+                            "tone": "good",
+                        }
+                        if stock_paid_total > 0
+                        else "—"
+                    ),
+                    "",
+                ],
+            }
+        )
     tables.append(
         _table(
             "Stocked in",
             [
                 "Item",
                 {"label": "Qty", "money": True},
-                {"label": "Unit cost", "money": True},
                 {"label": "Amount", "money": True},
+                {"label": "Total", "money": True},
+                "Status",
                 "Supplier",
             ],
             stock_in_rows,
@@ -11023,6 +11070,17 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         stock_out_total = sum(
             (Decimal(row.get("est_value") or 0) for row in stock_out), _zero()
         )
+    stock_out_qty_total = sum(
+        (Decimal(row.get("qty") or 0) for row in stock_out), _zero()
+    )
+    stock_out_refund_total = sum(
+        (
+            Decimal(row.get("refund_amount") or 0)
+            for row in stock_out
+            if row.get("refund_amount") is not None
+        ),
+        _zero(),
+    )
     stock_out_rows = []
     for row in stock_out:
         extras = []
@@ -11043,6 +11101,29 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 _money_ksh(row["est_value"]),
             ]
         )
+    if stock_out:
+        stock_out_rows.append(
+            {
+                "total_row": True,
+                "cells": [
+                    "Total",
+                    "",
+                    _qty_label(stock_out_qty_total),
+                    "",
+                    "",
+                    _money_ksh(stock_out_total),
+                ],
+            }
+        )
+    stock_out_footnote = ""
+    if stock_out:
+        stock_out_footnote = (
+            f"Estimated value {_money_ksh(stock_out_total)}"
+        )
+        if stock_out_refund_total > 0:
+            stock_out_footnote += (
+                f" · Refunded {_money_ksh(stock_out_refund_total)}"
+            )
     tables.append(
         _table(
             "Stocked out",
@@ -11051,16 +11132,12 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 "Item",
                 {"label": "Qty", "money": True},
                 "Reason",
-                {"label": "Unit cost", "money": True},
-                {"label": "Est. value", "money": True},
+                {"label": "Amount", "money": True},
+                {"label": "Total", "money": True},
             ],
             stock_out_rows,
             empty="No stock removed this day.",
-            footnote=(
-                f"Estimated value {_money_ksh(stock_out_total)}"
-                if stock_out
-                else ""
-            ),
+            footnote=stock_out_footnote,
         )
     )
 

@@ -1,4 +1,5 @@
 {% extends "employees/workspace_base.html" %}
+{% load static %}
 
 {% block title %}{% if is_movements_page %}Shelf Stock Movement{% else %}Shelf Stock Report{% endif %} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
@@ -80,6 +81,16 @@
 
       <div class="stock-report-filter-actions">
         <button type="submit" class="stock-report-apply">Apply</button>
+        {% if receipts_print_modal %}
+        <button
+          type="button"
+          class="stock-report-apply stock-report-apply--ghost"
+          data-modal-open="print-receipts"
+        >
+          <i data-lucide="printer" aria-hidden="true"></i>
+          Print
+        </button>
+        {% endif %}
       </div>
     </form>
   </header>
@@ -95,8 +106,16 @@
 </section>
 {% endblock %}
 
+{% block workspace_overlays %}
+{{ block.super }}
+{% include "employees/partials/receipts_print_modal.html" with receipts_print_filters="[data-stock-report-filters]" %}
+{% endblock %}
+
 {% block extra_js %}
 {{ block.super }}
+{% if receipts_print_modal %}
+<script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
+{% endif %}
 <script>
   (() => {
     const form = document.querySelector("[data-stock-report-filters]");

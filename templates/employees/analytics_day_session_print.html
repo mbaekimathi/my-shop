@@ -189,6 +189,10 @@
       font-weight: 800;
       border-top: 1.5px solid var(--line);
     }
+    table.sheet-grid tr.row-total td {
+      font-weight: 800;
+      border-top: 1.5px solid var(--line);
+    }
     table.sheet-grid .num { text-align: right; white-space: nowrap; }
     table.sheet-grid small {
       font-size: 0.68rem;
@@ -289,6 +293,7 @@
     }
     table.sheet-grid.stack tr.row-group td::before,
     table.sheet-grid.stack tr.row-group td::after { content: none; }
+    table.sheet-grid.stack tr.row-total td { font-weight: 800; }
 
     /* Thermal trims to the essentials — the kicker, meta chips, KPI
        strip (its figures repeat in Money flow), table footnotes and
@@ -521,7 +526,7 @@
           </tr>
           {% else %}
           {% with cells=row.cells|default:row %}
-          <tr>
+          <tr{% if row.total_row %} class="row-total"{% endif %}>
             {% for cell in cells %}
             {% for col in table.columns %}
             {% if forloop.parentloop.counter0 == forloop.counter0 %}

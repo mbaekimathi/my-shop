@@ -640,7 +640,7 @@
               data-receipt-id="{{ row.receipt_id }}"
               data-shop-id="{{ row.shop_id }}"
               tabindex="0"
-              {% elif table.shop_grid and forloop.last %}
+              {% elif row.total_row or table.shop_grid and forloop.last %}
               class="ax-row--total"
               {% endif %}
               {% if table.searchable %}
@@ -758,83 +758,7 @@
 
 {% block workspace_overlays %}
 {{ block.super }}
-{% if page.receipts_print_modal %}
-<div
-  class="workspace-modal stock-print-modal"
-  data-modal="print-receipts"
-  data-receipts-print-url="{{ page.receipts_print_url }}"
-  hidden
-  aria-hidden="true"
->
-  <div class="workspace-modal-backdrop" data-modal-close data-receipts-print-close></div>
-  <div
-    class="workspace-modal-dialog stock-print-dialog"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="print-receipts-title"
-  >
-    <div class="workspace-modal-head">
-      <div>
-        <h2 id="print-receipts-title">{{ page.receipts_print_title|default:"Print receipts" }}</h2>
-        <p class="stock-print-lead">{{ page.receipts_print_lead|default:"Uses the filters on this page, then print or download." }}</p>
-        <p class="stock-print-pages" data-receipts-print-pages hidden></p>
-      </div>
-      <button
-        type="button"
-        class="workspace-icon-btn"
-        data-modal-close
-        data-receipts-print-close
-        aria-label="Close"
-      >
-        <i data-lucide="x" aria-hidden="true"></i>
-      </button>
-    </div>
-
-    <form class="stock-print-form" data-receipts-print-form>
-      <fieldset class="stock-print-paper">
-        <legend class="stock-print-shops-label">Paper</legend>
-        <div class="stock-print-paper-list">
-          <label class="stock-print-paper-option">
-            <input type="radio" name="print_paper" value="a4"{% if page.receipts_print_default_paper != "80" and page.receipts_print_default_paper != "58" %} checked{% endif %}>
-            <span>
-              <strong>A4</strong>
-              <small>Office printer</small>
-            </span>
-          </label>
-          <label class="stock-print-paper-option">
-            <input type="radio" name="print_paper" value="80"{% if page.receipts_print_default_paper == "80" %} checked{% endif %}>
-            <span>
-              <strong>80 mm</strong>
-              <small>Thermal roll</small>
-            </span>
-          </label>
-          <label class="stock-print-paper-option">
-            <input type="radio" name="print_paper" value="58"{% if page.receipts_print_default_paper == "58" %} checked{% endif %}>
-            <span>
-              <strong>58 mm</strong>
-              <small>Narrow thermal</small>
-            </span>
-          </label>
-        </div>
-      </fieldset>
-
-      <p class="stock-print-status" data-receipts-print-status hidden></p>
-
-      <div class="workspace-modal-actions">
-        <button type="button" class="btn btn--ghost" data-receipts-print-close>Cancel</button>
-        <button type="button" class="btn btn--ghost" data-receipts-print-download-a4>
-          <i data-lucide="download" aria-hidden="true"></i>
-          <span>Download A4 PDF</span>
-        </button>
-        <button type="submit" class="btn btn--primary">
-          <i data-lucide="printer" aria-hidden="true"></i>
-          <span>Print</span>
-        </button>
-      </div>
-    </form>
-  </div>
-</div>
-{% endif %}
+{% include "employees/partials/receipts_print_modal.html" with receipts_print_modal=page.receipts_print_modal receipts_print_url=page.receipts_print_url receipts_print_title=page.receipts_print_title receipts_print_lead=page.receipts_print_lead receipts_print_default_paper=page.receipts_print_default_paper %}
 {% if page.receipt_modal %}
 <div class="workspace-modal shop-receipt-modal" data-receipt-modal hidden>
   <div class="workspace-modal-backdrop" data-receipt-modal-close></div>
@@ -924,7 +848,7 @@
 {% block extra_js %}
 {{ block.super }}
 {% if page.receipts_print_modal %}
-<script defer src="{% static 'js/analytics-receipts-print.js' %}?v=1"></script>
+<script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
 {% endif %}
 {% if page.receipt_items_modal %}
 <script defer src="{% static 'js/analytics-receipt-items.js' %}?v=1"></script>

@@ -5620,7 +5620,7 @@ def _build_audit_summary_rows(
     return headers, rows
 
 
-def _stock_report_download(
+def _stock_report_document(
     *,
     page_mode,
     filter_context,
@@ -5643,6 +5643,11 @@ def _stock_report_download(
     shop_ids=None,
     source_meta=None,
 ):
+    """Shared report tables for the stock report/movements PDF and print sheet.
+
+    Returns the built headers/rows plus the ``build_stock_report_pdf`` kwargs
+    (``pdf_params``) and the download ``filename``.
+    """
     from decimal import Decimal
 
     from django.utils import timezone as dj_timezone
@@ -5707,34 +5712,7 @@ def _stock_report_download(
             system_qty_resolver=system_qty_resolver,
             buying_price_resolver=buying_price_resolver,
         )
-        pdf_bytes = build_stock_report_pdf(
-            company_name=company_name,
-            page_mode=page_mode,
-            period_label=period_label,
-            event_filter=event_filter_slug,
-            event_filter_label=event_label,
-            view_by=view_by,
-            view_label=view_label,
-            shop_label=shop_label,
-            report_kind="audit",
-            generated_at=generated_at,
-            logo_path=logo_path,
-            company_phone=company_phone,
-            company_email=company_email,
-            company_location=company_location,
-            summary_rows=summary_rows,
-            summary_headers=summary_headers,
-            summary_qty_label=qty_label,
-            detail_rows=None,
-            detail_headers=None,
-            item_summary_rows=None,
-            item_summary_headers=None,
-            report_rows=None,
-            report_headers=None,
-        )
-        return _stock_report_pdf_response(filename=filename, pdf_bytes=pdf_bytes)
-
-    if page_mode == "movements" and is_item_movement_summary:
+    elif page_mode == "movements" and is_item_movement_summary:
         item_summary_headers = ["Item", "Category"]
         if movement_item_group_by_shop:
             item_summary_headers.append("Shop")
@@ -6019,32 +5997,61 @@ def _stock_report_download(
             )
             report_rows.append(line)
 
-    pdf_bytes = build_stock_report_pdf(
-        company_name=company_name,
-        page_mode=page_mode,
-        period_label=period_label,
-        event_filter=event_filter_slug,
-        event_filter_label=event_label,
-        view_by=view_by,
-        view_label=view_label,
-        shop_label=shop_label,
-        report_kind=report_kind,
-        generated_at=generated_at,
-        logo_path=logo_path,
-        company_phone=company_phone,
-        company_email=company_email,
-        company_location=company_location,
-        summary_rows=summary_rows,
-        summary_headers=summary_headers,
-        summary_qty_label=qty_label,
-        detail_rows=detail_rows,
-        detail_headers=detail_headers,
-        item_summary_rows=item_summary_rows,
-        item_summary_headers=item_summary_headers,
-        report_rows=report_rows,
-        report_headers=report_headers,
+    return {
+        "filename": filename,
+        "page_mode": page_mode,
+        "report_kind": report_kind,
+        "view_by": view_by,
+        "view_label": view_label,
+        "shop_label": shop_label,
+        "period_label": period_label,
+        "event_filter_label": event_label,
+        "event_filter_slug": event_filter_slug,
+        "qty_label": qty_label,
+        "generated_at": generated_at,
+        "summary_headers": summary_headers,
+        "summary_rows": summary_rows,
+        "detail_headers": detail_headers,
+        "detail_rows": detail_rows,
+        "item_summary_headers": item_summary_headers,
+        "item_summary_rows": item_summary_rows,
+        "report_headers": report_headers,
+        "report_rows": report_rows,
+        "pdf_params": {
+            "company_name": company_name,
+            "page_mode": page_mode,
+            "period_label": period_label,
+            "event_filter": event_filter_slug,
+            "event_filter_label": event_label,
+            "view_by": view_by,
+            "view_label": view_label,
+            "shop_label": shop_label,
+            "report_kind": report_kind,
+            "generated_at": generated_at,
+            "logo_path": logo_path,
+            "company_phone": company_phone,
+            "company_email": company_email,
+            "company_location": company_location,
+            "summary_rows": summary_rows,
+            "summary_headers": summary_headers,
+            "summary_qty_label": qty_label,
+            "detail_rows": detail_rows,
+            "detail_headers": detail_headers,
+            "item_summary_rows": item_summary_rows,
+            "item_summary_headers": item_summary_headers,
+            "report_rows": report_rows,
+            "report_headers": report_headers,
+        },
+    }
+
+
+def _stock_report_download(**kwargs):
+    """PDF download response built from the shared stock-report document."""
+    document = _stock_report_document(**kwargs)
+    pdf_bytes = build_stock_report_pdf(**document["pdf_params"])
+    return _stock_report_pdf_response(
+        filename=document["filename"], pdf_bytes=pdf_bytes
     )
-    return _stock_report_pdf_response(filename=filename, pdf_bytes=pdf_bytes)
 
 
 def _build_shelf_report(shops, *, day_start, day_end, type_filter=""):
@@ -6132,6 +6139,130 @@ def _build_shelf_report(shops, *, day_start, day_end, type_filter=""):
     }
 
 
+def _shelf_report_document(*, shelf_report, shelf_shop, filter_context):
+    """Shelf-report tables + ``build_stock_report_pdf`` kwargs.
+
+    Mirrors the on-screen shelf report (Shelf item / Shop / On shelf /
+    Registered / In / Out) so the same rows feed the A4 PDF download and
+    the a4/80mm/58mm print sheet.
+    """
+    from django.utils import timezone as dj_timezone
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    logo_path = ""
+    if getattr(company, "logo", None):
+        try:
+            logo_path = company.logo.path
+        except Exception:
+            logo_path = ""
+
+    multi_shop = bool(shelf_report.get("multi_shop"))
+    headers = ["Shelf item"]
+    if multi_shop:
+        headers.append("Shop")
+    headers.extend(["On shelf", "Registered", "In", "Out"])
+    numeric_from = 2 if multi_shop else 1
+
+    rows = []
+    total_register = Decimal("0")
+    total_in = Decimal("0")
+    total_out = Decimal("0")
+    for row in shelf_report.get("rows") or []:
+        item = row["item"]
+        label = (item.name or "").strip()
+        unit = (getattr(item, "unit", "") or "").strip()
+        if unit:
+            label = f"{label} · {unit}"
+        if getattr(item, "is_archived", False):
+            label = f"{label} (archived)"
+        register_qty = row.get("register_qty") or Decimal("0")
+        in_qty = row.get("in_qty") or Decimal("0")
+        out_qty = row.get("out_qty") or Decimal("0")
+        total_register += register_qty
+        total_in += in_qty
+        total_out += out_qty
+        line = [label]
+        if multi_shop:
+            line.append(getattr(item.shop, "name", "") or "")
+        line.extend(
+            [
+                _qty_num(item.quantity),
+                _qty_num(register_qty),
+                _qty_num(in_qty),
+                _qty_num(out_qty),
+            ]
+        )
+        rows.append(line)
+    if rows:
+        total_line = ["Total"]
+        if multi_shop:
+            total_line.append("")
+        total_line.extend(
+            [
+                _qty_num(shelf_report.get("units_on_hand") or 0),
+                _qty_num(total_register),
+                _qty_num(total_in),
+                _qty_num(total_out),
+            ]
+        )
+        rows.append(total_line)
+
+    period_label = (
+        (filter_context.get("report_period_label") or "").strip() or "—"
+    )
+    generated_at = dj_timezone.localtime(dj_timezone.now())
+    shop_label = shelf_shop.name if shelf_shop is not None else "All shops"
+    filename = _stock_report_download_filename(
+        "report",
+        filter_context,
+        event_filter="all",
+        report_kind="actual",
+        filename_prefix="shelf-stock-report",
+    )
+    return {
+        "filename": filename,
+        "page_mode": "report",
+        "report_kind": "actual",
+        "period_label": period_label,
+        "shop_label": shop_label,
+        "event_filter_label": "Shelf stock",
+        "view_label": "By item",
+        "generated_at": generated_at,
+        "item_count": shelf_report.get("item_count") or 0,
+        "report_table_title": "Shelf items",
+        "report_table_subtitle": (
+            "On-shelf qty and the period's register / in / out changes."
+        ),
+        "report_numeric_from": numeric_from,
+        "report_headers": headers,
+        "report_rows": rows,
+        "pdf_params": {
+            "company_name": company_name,
+            "page_mode": "report",
+            "period_label": period_label,
+            "event_filter_label": "Shelf stock",
+            "view_label": "By item",
+            "shop_label": shop_label,
+            "report_kind": "actual",
+            "generated_at": generated_at,
+            "logo_path": logo_path,
+            "company_phone": (
+                getattr(company, "phone_number", None) or ""
+            ).strip(),
+            "company_email": (getattr(company, "email", None) or "").strip(),
+            "company_location": (
+                getattr(company, "location", None) or ""
+            ).strip(),
+            "report_headers": headers,
+            "report_rows": rows,
+            "report_numeric_from": numeric_from,
+        },
+    }
+
+
 def _stock_shelf_report(
     request,
     profile,
@@ -6211,6 +6342,75 @@ def _stock_shelf_report(
         shops_by_id[pk] for pk in selected_shop_ids if pk in shops_by_id
     ] or list(filter_shops)
     shelf_shop = report_shops[0] if len(report_shops) == 1 else None
+    shelf_report = _build_shelf_report(
+        report_shops,
+        day_start=day_start,
+        day_end=day_end,
+        type_filter=(request.GET.get("shelf_type") or "").strip().lower(),
+    )
+
+    from .movement_page import (
+        _movement_estimate_payload,
+        _movement_print_tables,
+        _movement_report_output_flags,
+    )
+
+    paper, wants_estimate, wants_download = _movement_report_output_flags(
+        request
+    )
+    if paper or wants_estimate or wants_download:
+        document = _shelf_report_document(
+            shelf_report=shelf_report,
+            shelf_shop=shelf_shop,
+            filter_context=filter_context,
+        )
+        report_rows = shelf_report.get("rows") or []
+        if wants_estimate:
+            return JsonResponse(
+                _movement_estimate_payload(
+                    document,
+                    report_rows,
+                    count_unit="item",
+                    kind_label="Shelf stock report",
+                )
+            )
+        if wants_download:
+            pdf_bytes = build_stock_report_pdf(**document["pdf_params"])
+            return _stock_report_pdf_response(
+                filename=document["filename"], pdf_bytes=pdf_bytes
+            )
+        estimate = _movement_estimate_payload(
+            document,
+            report_rows,
+            count_unit="item",
+            kind_label="Shelf stock report",
+        )
+        return render(
+            request,
+            "items/movement_report_print.html",
+            {
+                "document": document,
+                "tables": _movement_print_tables(document),
+                "paper": paper,
+                "kicker": "Stock management · Shelf report",
+                "count_unit": "item",
+                "title": "Shelf stock report",
+                "subtitle": (
+                    f"{document['shop_label']} · {document['period_label']}"
+                ),
+                "movement_count": document["item_count"],
+                "a4_page_estimate": estimate["a4_page_estimate"],
+                "printed_at": document["generated_at"],
+                "company_name": document["pdf_params"]["company_name"],
+                "company_phone": document["pdf_params"]["company_phone"],
+                "company_email": document["pdf_params"]["company_email"],
+                "company_location": document["pdf_params"][
+                    "company_location"
+                ],
+                "auto_print": (request.GET.get("auto") or "").strip() == "1",
+            },
+        )
+
     return render(
         request,
         "items/stock_shelf_report.html",
@@ -6228,20 +6428,20 @@ def _stock_shelf_report(
             "selected_shop_ids": set(selected_shop_ids),
             "shelf_shop": shelf_shop,
             "shelf_report_shop": shelf_shop,
-            "shelf_report": _build_shelf_report(
-                report_shops,
-                day_start=day_start,
-                day_end=day_end,
-                type_filter=(
-                    request.GET.get("shelf_type") or ""
-                ).strip().lower(),
-            ),
+            "shelf_report": shelf_report,
             "report_range_label": {
                 "day": "Single day",
                 "period": "Period",
                 "month": "Month",
                 "year": "Year",
             }[range_type],
+            "receipts_print_modal": True,
+            "receipts_print_url": request.path,
+            "receipts_print_title": "Print shelf stock report",
+            "receipts_print_lead": (
+                "Uses the filters on this page — pick a paper size, "
+                "then print or download the A4 PDF."
+            ),
             **filter_context,
         },
     )

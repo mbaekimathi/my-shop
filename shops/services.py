@@ -8272,6 +8272,12 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                         if unit is not None
                         else None
                     ),
+                    "payment_status": (line.payment_status or "").strip(),
+                    "payment_label": (
+                        line.get_payment_status_display()
+                        if line.payment_status
+                        else ""
+                    ),
                     "supplier_name": (line.supplier_name or "").strip(),
                     "supplier_phone": _supplier_phone(
                         line.supplier_phone_country_code,
@@ -9457,6 +9463,9 @@ def build_shop_day_report_pdf(
             return _pr(_fmt(group["paid"]), strong=True)
         return _pr(group.get("payment_label") or "—")
 
+    stock_in_qty_total = Decimal("0")
+    stock_in_value_total = Decimal("0")
+    stock_in_has_total = False
     for index, group in enumerate(stock_groups):
         lines = group.get("lines") or []
         if not lines:
@@ -9472,6 +9481,11 @@ def build_shop_day_report_pdf(
             ]
         start = len(stock_rows) + 1  # +1 for the header row
         for i, stock_line in enumerate(lines):
+            if stock_line.get("qty") is not None:
+                stock_in_qty_total += Decimal(stock_line["qty"])
+            if stock_line.get("total") is not None:
+                stock_in_value_total += Decimal(stock_line["total"])
+                stock_in_has_total = True
             stock_rows.append(
                 [
                     _p(_time(group["at"])) if i == 0 else "",
@@ -9508,7 +9522,7 @@ def build_shop_day_report_pdf(
     )
     _detail_table(
         "Stocked in",
-        ["Time", "Item", "Qty", "Unit cost", "Amount", "Supplier", "Paid"],
+        ["Time", "Item", "Qty", "Amount", "Total", "Supplier", "Paid"],
         stock_rows,
         [
             doc.width * 0.07,
@@ -9520,7 +9534,15 @@ def build_shop_day_report_pdf(
             doc.width * 0.15,
         ],
         aligns=["l", "l", "r", "r", "r", "l", "r"],
-        footer=["Total", "", "", "", "", "", _fmt(stock_paid_total)],
+        footer=[
+            "Total",
+            "",
+            _qty_label(stock_in_qty_total) if stock_groups else "",
+            "",
+            _fmt(stock_in_value_total) if stock_in_has_total else "",
+            "",
+            _fmt(stock_paid_total),
+        ],
         spans=stock_spans,
         group_backgrounds=stock_bgs,
         empty_note="No stock added this day.",
@@ -9552,7 +9574,7 @@ def build_shop_day_report_pdf(
 
     _detail_table(
         "Stocked out",
-        ["Time", "Item", "Qty", "Reason", "Unit cost", "Est. value"],
+        ["Time", "Item", "Qty", "Reason", "Amount", "Total"],
         [
             [
                 _p(_time(r["at"]), cell_sm),
@@ -9576,7 +9598,14 @@ def build_shop_day_report_pdf(
         footer=[
             "Estimated value lost",
             "",
-            "",
+            _qty_label(
+                sum(
+                    (Decimal(r["qty"] or 0) for r in stock_out_rows),
+                    Decimal("0"),
+                )
+            )
+            if stock_out_rows
+            else "",
             "",
             "",
             _fmt(stock_out_total),

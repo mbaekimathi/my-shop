@@ -1410,6 +1410,8 @@ class AnalyticsDaySessionReportTests(TestCase):
         )
 
     def _close(self, session, *, cash=1250, mpesa=200):
+        from datetime import timedelta
+
         from django.utils import timezone
 
         session.closing_cash = cash
@@ -1417,7 +1419,10 @@ class AnalyticsDaySessionReportTests(TestCase):
         session.closing_card = 0
         session.closing_credit = 0
         session.closed_by = self.staff
-        session.closed_at = timezone.now()
+        # Nudge past the wall-clock resolution — on Windows `timezone.now()`
+        # can return the same tick as rows created just before close, and the
+        # report window excludes `created_at == closed_at` (created_at__lt).
+        session.closed_at = timezone.now() + timedelta(seconds=1)
         session.save()
         return session
 

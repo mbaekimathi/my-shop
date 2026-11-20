@@ -13,7 +13,9 @@
   const statusEl = modal.querySelector("[data-receipts-print-status]");
   const pagesEl = modal.querySelector("[data-receipts-print-pages]");
   const downloadBtn = modal.querySelector("[data-receipts-print-download-a4]");
-  const filtersForm = document.querySelector("[data-analytics-filters]");
+  const filtersForm = document.querySelector(
+    modal.getAttribute("data-receipts-print-filters") || "[data-analytics-filters]"
+  );
 
   let estimateTimer = 0;
   let estimateSeq = 0;
@@ -98,7 +100,8 @@
       const pages = Number(data.a4_page_estimate) || 1;
       const receipts = Number(data.receipt_count) || 0;
       const pageLabel = pages === 1 ? "page" : "pages";
-      const receiptLabel = receipts === 1 ? "receipt" : "receipts";
+      const receiptLabel =
+        data.count_label || (receipts === 1 ? "receipt" : "receipts");
       const kind = data.kind_label || "All types";
       setPagesHint(
         `A4 estimate: about ${pages} ${pageLabel} (${receipts} ${receiptLabel} · ${kind}).`
