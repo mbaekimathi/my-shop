@@ -542,7 +542,7 @@
     <section class="sheet-section">
       <h2>{{ table.title }}</h2>
       {% if table.rows %}
-      {% if table.section == "day_report_sec_flagged" and paper != "a4" %}
+      {% if table.mini and paper != "a4" %}
       <div class="sheet-cards">
         {% for row in table.rows %}
         {% if row.group_header %}

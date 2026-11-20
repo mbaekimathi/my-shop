@@ -8605,6 +8605,49 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                     "total": receipt.total,
                 }
             )
+    credit_gift_receipts = []
+    for receipt in (
+        ShopReceipt.objects.filter(
+            kind__in=(ShopReceiptKind.CREDIT, ShopReceiptKind.GIFT), **window
+        )
+        .select_related("created_by__user")
+        .prefetch_related("lines")
+        .order_by("created_at")
+    ):
+        seller = ""
+        if receipt.created_by_id:
+            user = receipt.created_by.user
+            seller = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+            )
+        lines = list(receipt.lines.all())
+        labels = [
+            f"{(line.item_name or '').strip() or 'Item'}"
+            f" ×{_qty_label(line.quantity)}"
+            for line in lines[:2]
+        ]
+        extra = len(lines) - len(labels)
+        items_label = ", ".join(labels)
+        if extra > 0:
+            items_label += f" +{extra} more"
+        credit_gift_receipts.append(
+            {
+                "at": receipt.created_at,
+                "number": receipt.receipt_number,
+                "items_label": items_label or "—",
+                "seller": seller or "—",
+                "kind": receipt.kind,
+                "kind_label": receipt.get_kind_display(),
+                "status": receipt.status,
+                "status_label": receipt_status_labels.get(
+                    receipt.status, receipt.status
+                ),
+                "total": receipt.total,
+                "paid": receipt.amount_paid,
+            }
+        )
+
     items_sold = sorted(
         (
             {"item": name, "qty": agg["qty"], "amount": agg["amount"]}
@@ -8646,6 +8689,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         "items_sold": items_sold,
         "sellers": sellers,
         "flagged_receipts": flagged_receipts,
+        "credit_gift_receipts": credit_gift_receipts,
         "credit_sales": _kind_totals(ShopReceiptKind.CREDIT),
         "gifts": _kind_totals(ShopReceiptKind.GIFT),
         "expenses": expense_rows,
@@ -9381,6 +9425,26 @@ def build_shop_day_report_pdf(
     def _time(at):
         return timezone.localtime(at).strftime("%H:%M")
 
+    receipt_status_colors = {
+        ShopReceiptStatus.ACTIVE: "#b45309",
+        ShopReceiptStatus.CANCELLED: "#b91c1c",
+    }
+
+    def _receipt_status_cell(row):
+        color = receipt_status_colors.get(row["status"], "#5b6b7c")
+        return Paragraph(
+            f"<font color='{color}'><b>{_esc(row['status_label'])}</b></font>",
+            cell_sm,
+        )
+
+    def _receipt_cell(row):
+        return Paragraph(
+            f"<b>{_esc(row['number'])}</b>"
+            f"<br/><font size='6.8' color='#5b6b7c'>"
+            f"{_esc(row['items_label'])}</font>",
+            cell_sm,
+        )
+
     # -- Credit & gift (not in the till) --------------------------------------
     not_till = day_report_not_till_lines(
         summary=summary, details=details, pos=pos
@@ -9406,42 +9470,81 @@ def build_shop_day_report_pdf(
                 ),
             ]
         )
-    if not_till_rows and _sec("day_report_sec_not_till"):
-        _detail_table(
-            "Credit & gift — not in the till",
-            ["Document", "Docs", "Value", "Collected", "Still due"],
-            not_till_rows,
-            [
-                doc.width * 0.4,
-                doc.width * 0.11,
-                doc.width * 0.17,
-                doc.width * 0.16,
-                doc.width * 0.16,
-            ],
-            aligns=["l", "r", "r", "r", "r"],
-            dense=True,
-        )
-        slips_text = ""
-        slips = not_till.get("slips")
-        if slips:
-            slips_text = (
-                f" Credit slips counted: opened {_fmt(slips.get('opened'))}"
+    credit_gift_rows = details.get("credit_gift_receipts") or []
+    if _sec("day_report_sec_not_till") and (
+        not_till_rows or credit_gift_rows
+    ):
+        if not_till_rows:
+            _detail_table(
+                "Credit & gift — not in the till",
+                ["Document", "Docs", "Value", "Collected", "Still due"],
+                not_till_rows,
+                [
+                    doc.width * 0.4,
+                    doc.width * 0.11,
+                    doc.width * 0.17,
+                    doc.width * 0.16,
+                    doc.width * 0.16,
+                ],
+                aligns=["l", "r", "r", "r", "r"],
+                dense=True,
             )
-            if not is_open:
-                slips_text += f" · counted {_fmt(slips.get('counted'))}"
-                if slips.get("variance") is not None:
-                    slips_text += f" · diff {_fmt(slips['variance'])}"
-            slips_text += "."
-        story.append(
-            Paragraph(
-                _esc(
-                    "Credit is collected later and gifts are free issues — "
-                    "neither adds to Expected in till."
-                    + slips_text
-                ),
-                note_style,
+            slips_text = ""
+            slips = not_till.get("slips")
+            if slips:
+                slips_text = (
+                    f" Credit slips counted: opened {_fmt(slips.get('opened'))}"
+                )
+                if not is_open:
+                    slips_text += f" · counted {_fmt(slips.get('counted'))}"
+                    if slips.get("variance") is not None:
+                        slips_text += f" · diff {_fmt(slips['variance'])}"
+                slips_text += "."
+            story.append(
+                Paragraph(
+                    _esc(
+                        "Credit is collected later and gifts are free issues — "
+                        "neither adds to Expected in till."
+                        + slips_text
+                    ),
+                    note_style,
+                )
             )
-        )
+        if credit_gift_rows:
+            credit_gift_total = sum(
+                (r["total"] or Decimal("0")) for r in credit_gift_rows
+            )
+            _detail_table(
+                "Credit & gift receipts",
+                ["Time", "Receipt", "Sold by", "Status", "Amount"],
+                [
+                    [
+                        _p(_time(r["at"]), cell_sm),
+                        _receipt_cell(r),
+                        _p(r["seller"], cell_sm),
+                        _receipt_status_cell(
+                            {
+                                **r,
+                                "status_label": (
+                                    f"{r['kind_label']} · {r['status_label']}"
+                                ),
+                            }
+                        ),
+                        _p(_fmt(r["total"]), cell_sm_right),
+                    ]
+                    for r in credit_gift_rows
+                ],
+                [
+                    doc.width * 0.07,
+                    doc.width * 0.40,
+                    doc.width * 0.24,
+                    doc.width * 0.11,
+                    doc.width * 0.18,
+                ],
+                aligns=["l", "l", "l", "l", "r"],
+                footer=["Total", "", "", "", _fmt(credit_gift_total)],
+                dense=True,
+            )
 
     # -- Items sold -----------------------------------------------------------
     sold_rows = details.get("items_sold") or []
@@ -9512,26 +9615,6 @@ def build_shop_day_report_pdf(
     )
 
     # -- Pending & cancelled sales --------------------------------------------
-    receipt_status_colors = {
-        ShopReceiptStatus.ACTIVE: "#b45309",
-        ShopReceiptStatus.CANCELLED: "#b91c1c",
-    }
-
-    def _receipt_status_cell(row):
-        color = receipt_status_colors.get(row["status"], "#5b6b7c")
-        return Paragraph(
-            f"<font color='{color}'><b>{_esc(row['status_label'])}</b></font>",
-            cell_sm,
-        )
-
-    def _receipt_cell(row):
-        return Paragraph(
-            f"<b>{_esc(row['number'])}</b>"
-            f"<br/><font size='6.8' color='#5b6b7c'>"
-            f"{_esc(row['items_label'])}</font>",
-            cell_sm,
-        )
-
     flagged_rows = details.get("flagged_receipts") or []
     flagged_total = sum(
         (r["total"] or Decimal("0")) for r in flagged_rows
@@ -13063,8 +13146,11 @@ def confirm_shop_receipt(
         raise ValidationError("Receipt not found for this shop.") from exc
 
     is_credit = receipt.kind == ShopReceiptKind.CREDIT
-    if not is_credit and receipt.kind != ShopReceiptKind.SALE:
-        raise ValidationError("Only sales and credits can be confirmed.")
+    is_gift = receipt.kind == ShopReceiptKind.GIFT
+    if not (is_credit or is_gift) and receipt.kind != ShopReceiptKind.SALE:
+        raise ValidationError(
+            "Only sales, credits, and gifts can be confirmed."
+        )
 
     if receipt.status == ShopReceiptStatus.CANCELLED:
         # Release lock; reopen re-locks the same row.
@@ -13082,6 +13168,7 @@ def confirm_shop_receipt(
             .get(pk=receipt_pk, shop=shop)
         )
         is_credit = receipt.kind == ShopReceiptKind.CREDIT
+        is_gift = receipt.kind == ShopReceiptKind.GIFT
     elif receipt.status == ShopReceiptStatus.CONFIRMED and not is_credit:
         detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
         return {
@@ -13125,7 +13212,13 @@ def confirm_shop_receipt(
             channel != "cash"
             for channel in payment_method_channels(confirm_method)
         )
-    if require_details and ref_applies and not ref and not existing_ref:
+    if (
+        require_details
+        and ref_applies
+        and not ref
+        and not existing_ref
+        and not is_gift
+    ):
         raise ValidationError(
             "Enter the reference number before confirming this receipt."
         )
@@ -13137,7 +13230,7 @@ def confirm_shop_receipt(
         paid_at = _parse_delivery_payment_at(paid_at)
     elif timezone.is_naive(paid_at):
         paid_at = timezone.make_aware(paid_at, timezone.get_current_timezone())
-    if require_details and paid_at is None:
+    if require_details and paid_at is None and not is_gift:
         raise ValidationError(
             "Enter the payment date and time before confirming this receipt."
         )
@@ -13252,7 +13345,7 @@ def confirm_shop_receipt(
         else ShopReceiptStatus.CONFIRMED
     )
     update_fields = ["status"]
-    if not is_credit:
+    if not is_credit and not is_gift:
         # The confirmer may correct how the sale was paid (incl. card combos).
         method_key = (payment_method or "").strip().lower()
         if method_key:
@@ -13300,12 +13393,13 @@ def confirm_shop_receipt(
         ):
             if field not in update_fields:
                 update_fields.append(field)
-    # Only overwrite when the user provided a reference.
-    if ref:
+    # Only overwrite when the user provided a reference — a gift is a free
+    # issue, so it never takes a payment reference or a paid moment.
+    if ref and not is_gift:
         receipt.mpesa_receipt_number = ref
         update_fields.append("mpesa_receipt_number")
     # Keep payment moment on confirmed_payment_at; leave created_at as print time.
-    if paid_at is not None:
+    if paid_at is not None and not is_gift:
         receipt.confirmed_payment_at = paid_at
         update_fields.append("confirmed_payment_at")
     receipt.save(update_fields=update_fields)
@@ -13618,6 +13712,13 @@ def change_shop_receipt_kind(
             "This credit already has payments — confirm it to a sale or "
             "return it instead of changing its type."
         )
+    if (
+        source_kind == ShopReceiptKind.GIFT
+        and target_kind == ShopReceiptKind.SALE
+    ):
+        # A gift is a free issue — confirming it keeps it a gift; only a
+        # credit converts into a sale once it is paid.
+        raise ValidationError("A gift cannot be converted to a sale.")
 
     pos = get_effective_pos_settings(shop)
     now = timezone.now()
@@ -13982,8 +14083,13 @@ def set_confirm_receipt_status(
                 "(full balance clears; a smaller amount is a partial confirmation)."
             )
         # Fall through to confirm_shop_receipt below after releasing this lock path.
-    elif receipt.kind != ShopReceiptKind.SALE:
-        raise ValidationError("Only sales and credits can change status here.")
+    elif receipt.kind not in (
+        ShopReceiptKind.SALE,
+        ShopReceiptKind.GIFT,
+    ):
+        raise ValidationError(
+            "Only sales, credits, and gifts can change status here."
+        )
 
     current = receipt.status
     if current == ShopReceiptStatus.PARTIAL_RETURN and target not in {

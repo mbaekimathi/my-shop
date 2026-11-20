@@ -304,7 +304,7 @@ class ConfirmSalesReceiptTests(TestCase):
             confirm_shop_receipt(shop=self.shop, receipt_id=credit.pk, actor=self.staff)
         with self.assertRaisesMessage(
             ValidationError,
-            "Only sales and credits can be confirmed.",
+            "Only sales, credits, and gifts can be confirmed.",
         ):
             confirm_shop_receipt(shop=self.shop, receipt_id=quote.pk, actor=self.staff)
 

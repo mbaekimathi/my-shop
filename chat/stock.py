@@ -1914,10 +1914,11 @@ def _confirm_one_receipt(
     mpesa_amount=None,
     card_amount=None,
 ) -> dict:
-    """Mirror shops.services.confirm_shop_receipt (sale + credit)."""
+    """Mirror shops.services.confirm_shop_receipt (sale + credit + gift)."""
     is_credit = receipt.kind == "credit"
-    if not is_credit and receipt.kind != "sale":
-        raise StockError("Only sales and credits can be confirmed.")
+    is_gift = receipt.kind == "gift"
+    if not (is_credit or is_gift) and receipt.kind != "sale":
+        raise StockError("Only sales, credits, and gifts can be confirmed.")
     if receipt.status == STATUS_CANCELLED:
         _reopen_cancelled_receipt(shop, receipt, pos=pos)
     elif receipt.status == STATUS_CONFIRMED and not is_credit:
@@ -1953,12 +1954,18 @@ def _confirm_one_receipt(
             channel != "cash"
             for channel in _PAYMENT_CHANNELS.get(confirm_method, ())
         )
-    if require_details and ref_applies and not ref and not existing_ref:
+    if (
+        require_details
+        and ref_applies
+        and not ref
+        and not existing_ref
+        and not is_gift
+    ):
         raise StockError(
             "Enter the reference number before confirming this receipt."
         )
     paid_at = _parse_payment_at(payment_at)
-    if require_details and paid_at is None:
+    if require_details and paid_at is None and not is_gift:
         raise StockError(
             "Enter the payment date and time before confirming this receipt."
         )
@@ -2042,7 +2049,7 @@ def _confirm_one_receipt(
         STATUS_PARTIAL_RETURN if keep_partial_return else STATUS_CONFIRMED
     )
     update_fields = ["status"]
-    if not is_credit:
+    if not is_credit and not is_gift:
         # The confirmer may correct how the sale was paid (incl. card combos).
         method_key = (payment_method or "").strip().lower()
         if method_key:
@@ -2100,10 +2107,10 @@ def _confirm_one_receipt(
         ):
             if field not in update_fields:
                 update_fields.append(field)
-    if ref:
+    if ref and not is_gift:
         receipt.mpesa_receipt_number = ref
         update_fields.append("mpesa_receipt_number")
-    if paid_at is not None:
+    if paid_at is not None and not is_gift:
         receipt.confirmed_payment_at = paid_at
         update_fields.append("confirmed_payment_at")
     receipt.save(update_fields=update_fields)

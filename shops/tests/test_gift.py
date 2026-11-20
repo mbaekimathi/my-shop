@@ -164,3 +164,73 @@ class GiftCheckoutTests(TestCase):
         )
         stock = ShopStock.objects.get(shop=self.shop, item=self.item)
         self.assertEqual(stock.quantity, 10)
+
+    def test_gift_confirm_keeps_gift_kind(self):
+        # A gift is a free issue — confirming it never turns it into a sale.
+        from shops.services import confirm_shop_receipt
+
+        receipt = self._checkout_gift()["receipt"]
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=receipt.pk,
+            actor=self.profile,
+            payment_method="cash",
+        )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.GIFT)
+        self.assertEqual(receipt.status, ShopReceiptStatus.CONFIRMED)
+        self.assertEqual(receipt.payment_method, ShopPaymentMethod.NONE)
+        self.assertIsNone(receipt.confirmed_payment_at)
+        self.assertEqual(result["ok"], True)
+
+    def test_pending_gift_confirm_keeps_gift_kind(self):
+        # A pending gift (legacy/edge data) confirms back as a gift — never
+        # converts into a sale.
+        from shops.services import confirm_shop_receipt
+
+        receipt = self._checkout_gift()["receipt"]
+        receipt.status = ShopReceiptStatus.ACTIVE
+        receipt.save(update_fields=["status"])
+        confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=receipt.pk,
+            actor=self.profile,
+            payment_method="mpesa",
+        )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.GIFT)
+        self.assertEqual(receipt.status, ShopReceiptStatus.CONFIRMED)
+        self.assertEqual(receipt.payment_method, ShopPaymentMethod.NONE)
+        self.assertIsNone(receipt.confirmed_payment_at)
+
+    def test_gift_set_status_confirm_keeps_kind(self):
+        from shops.services import set_confirm_receipt_status
+
+        receipt = self._checkout_gift()["receipt"]
+        set_confirm_receipt_status(
+            shop=self.shop,
+            receipt_id=receipt.pk,
+            actor=self.profile,
+            status="confirmed",
+        )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.GIFT)
+        self.assertEqual(receipt.status, ShopReceiptStatus.CONFIRMED)
+
+    def test_gift_retype_to_sale_rejected(self):
+        from shops.services import change_shop_receipt_kind
+
+        receipt = self._checkout_gift()["receipt"]
+        # force the retype path's pending precondition for the guard test
+        receipt.status = ShopReceiptStatus.ACTIVE
+        receipt.save(update_fields=["status"])
+        with self.assertRaises(ValidationError):
+            change_shop_receipt_kind(
+                shop=self.shop,
+                receipt_id=receipt.pk,
+                actor=self.profile,
+                target="sale",
+                payment_method="cash",
+            )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.GIFT)

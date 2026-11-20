@@ -10848,42 +10848,80 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 ),
             ]
         )
-    if not_till_rows:
-        not_till_footnote = (
-            "Credit is collected later and gifts are free issues — "
-            "neither adds to Expected in till."
+    credit_gift_rows = []
+    credit_gift_tone = {
+        ShopReceiptStatus.ACTIVE: "warn",
+        ShopReceiptStatus.CANCELLED: "bad",
+    }
+    for row in details.get("credit_gift_receipts") or []:
+        credit_gift_rows.append(
+            [
+                _time(row["at"]),
+                {"label": row["number"], "sub": row["items_label"]},
+                row["seller"],
+                {
+                    "kind": "status",
+                    "label": (
+                        f"{row['kind_label']} · {row['status_label']}"
+                    ),
+                    "tone": credit_gift_tone.get(row["status"], "good"),
+                },
+                _money_ksh(row["total"]),
+            ]
         )
-        slips = not_till.get("slips")
-        if slips:
-            not_till_footnote += (
-                f" Credit slips counted: opened "
-                f"{_money_ksh(slips.get('opened'))}"
+    if not_till_rows or credit_gift_rows:
+        if not_till_rows:
+            not_till_footnote = (
+                "Credit is collected later and gifts are free issues — "
+                "neither adds to Expected in till."
             )
-            if not is_open:
+            slips = not_till.get("slips")
+            if slips:
                 not_till_footnote += (
-                    f" · counted {_money_ksh(slips.get('counted'))}"
+                    f" Credit slips counted: opened "
+                    f"{_money_ksh(slips.get('opened'))}"
                 )
-                if slips.get("variance") is not None:
+                if not is_open:
                     not_till_footnote += (
-                        f" · diff {_money_ksh(slips['variance'])}"
+                        f" · counted {_money_ksh(slips.get('counted'))}"
                     )
-            not_till_footnote += "."
-        tables.append(
-            _table(
-                "Credit & gift — not in the till",
+                    if slips.get("variance") is not None:
+                        not_till_footnote += (
+                            f" · diff {_money_ksh(slips['variance'])}"
+                        )
+                not_till_footnote += "."
+            tables.append(
+                _table(
+                    "Credit & gift — not in the till",
+                    [
+                        "Document",
+                        {"label": "Docs", "money": True},
+                        {"label": "Value", "money": True},
+                        {"label": "Collected", "money": True},
+                        {"label": "Still due", "money": True},
+                    ],
+                    not_till_rows,
+                    empty="",
+                    footnote=not_till_footnote,
+                    section="day_report_sec_not_till",
+                )
+            )
+        if credit_gift_rows:
+            credit_gift_table = _table(
+                "Credit & gift receipts",
                 [
-                    "Document",
-                    {"label": "Docs", "money": True},
-                    {"label": "Value", "money": True},
-                    {"label": "Collected", "money": True},
-                    {"label": "Still due", "money": True},
+                    "Time",
+                    "Receipt",
+                    "Sold by",
+                    "Status",
+                    {"label": "Amount", "money": True},
                 ],
-                not_till_rows,
-                empty="",
-                footnote=not_till_footnote,
+                credit_gift_rows,
+                empty="No credit or gift receipts this day.",
                 section="day_report_sec_not_till",
             )
-        )
+            credit_gift_table["mini"] = True
+            tables.append(credit_gift_table)
 
     items_sold = details.get("items_sold") or []
     items_qty_total = sum(
@@ -10987,27 +11025,27 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 _money_ksh(row["total"]),
             ]
         )
-    tables.append(
-        _table(
-            "Pending & cancelled sales",
-            [
-                "Time",
-                "Receipt",
-                "Sold by",
-                "Status",
-                {"label": "Amount", "money": True},
-            ],
-            flagged_rows,
-            empty="No pending or cancelled sales this day.",
-            footnote=(
-                f"{len(flagged)} receipt{'s' if len(flagged) != 1 else ''} · "
-                f"{_money_ksh(flagged_total)}"
-            )
-            if flagged
-            else "",
-            section="day_report_sec_flagged",
+    flagged_table = _table(
+        "Pending & cancelled sales",
+        [
+            "Time",
+            "Receipt",
+            "Sold by",
+            "Status",
+            {"label": "Amount", "money": True},
+        ],
+        flagged_rows,
+        empty="No pending or cancelled sales this day.",
+        footnote=(
+            f"{len(flagged)} receipt{'s' if len(flagged) != 1 else ''} · "
+            f"{_money_ksh(flagged_total)}"
         )
+        if flagged
+        else "",
+        section="day_report_sec_flagged",
     )
+    flagged_table["mini"] = True
+    tables.append(flagged_table)
 
     drawing_rows = details.get("drawings") or []
     drawing_columns = [{"label": "Time · detail"}]
