@@ -244,8 +244,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   in/out" tables via the shared `_stocked_in_table`/`_stocked_out_table`
   closures (page) and `_stocked_in_detail`/`_stocked_out_detail` (PDF).
   Item tables show while `enable_stock_tracking` is on, shelf tables
-  while `enable_shelf_mode` is on — either pair stays if rows exist for
-  a since-disabled mode. Paid shelf stock-ins (`amount_paid`) also count
+  while `enable_shelf_mode` is on — `shop_stock_mode_flags`
+  (`shops/services.py`) ANDs the company/effective flag with the shop's
+  own `ShopPosSettings` flag while the shop runs custom POS settings
+  (`override_pos`), so a shop that disables a stock type hides its pair
+  (shops on company defaults follow the company mode). Either pair stays
+  if rows exist for a since-disabled mode. Paid shelf stock-ins (`amount_paid`) also count
   in `suppliers_paid` → the money-flow "Stock bought" row and Expected
   in till, matching item stock-ins. Both tables end in a `total_row`
   dict (cells + `total_row: True` →
@@ -858,6 +862,29 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Tests: `shops/tests/test_permission_enforcement.py`
   (`ReceiptReturnCancelPermissionTests`, `TradeCheckoutPermissionTests`,
   `FloorReceiptReturnPermissionTests`).
+
+## Confirm-receipts: change receipt type
+- The confirm modal can convert a **pending** sale/credit to another kind
+  (sale / credit / gift / quotation) — gated by the
+  `analytics/change-receipt-type` permission on the **viewing** profile.
+  The "Receipt type" select renders only when
+  `receipt.can_change_kind` (set in `analytics_receipt_detail`); the
+  confirm endpoint re-checks the same toggle whenever the posted
+  `receipt_kind` differs from the stored kind.
+- `change_shop_receipt_kind` (`shops/services.py`) does the conversion:
+  only `ACTIVE` receipts, never trade kinds. → credit leaves the receipt
+  pending (optional `credit_due_date`, credit audit when a client is
+  linked); → gift confirms as a free issue; → quotation **restocks** all
+  remaining lines (quotations never deduct stock); → sale confirms with
+  payment — credit sources settle the full due via
+  `record_credit_collection` (single-channel method only), quotation
+  sources deduct stock first. A credit with `amount_paid > 0` may only
+  convert to sale.
+- `analytics-confirm-receipts.js` carries `can_change_kind` forward across
+  `renderDetail` payloads (confirm/set-status responses don't resend it),
+  hides payment fields for non-sale targets, and restricts "Paid by" to
+  single-channel methods when a credit converts to a sale.
+- Tests: `shops/tests/test_receipt_kind_change.py`.
 
 ## Shop switching (role workspaces + portal)
 - The "Switch shop" user-menu item + `shop_switch_modal.html` /

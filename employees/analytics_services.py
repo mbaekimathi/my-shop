@@ -10421,6 +10421,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         day_session_report_details,
         get_effective_pos_settings,
         shop_day_balance_channels,
+        shop_stock_mode_flags,
     )
 
     from .workspace import (
@@ -11144,11 +11145,11 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             footnote=" · ".join(footnote_parts) if out_rows else "",
         )
 
+    items_stock_on, shelf_stock_on = shop_stock_mode_flags(shop, pos=pos)
+
     stock_groups = details.get("stock_purchases") or []
     stock_out = details.get("stock_out") or []
-    if bool(getattr(pos, "enable_stock_tracking", True)) or (
-        stock_groups or stock_out
-    ):
+    if items_stock_on or (stock_groups or stock_out):
         tables.append(
             _stocked_in_table(
                 "Stocked in", stock_groups, "No stock added this day."
@@ -11165,9 +11166,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
 
     shelf_groups = details.get("shelf_purchases") or []
     shelf_out = details.get("shelf_out") or []
-    if bool(getattr(pos, "enable_shelf_mode", False)) or (
-        shelf_groups or shelf_out
-    ):
+    if shelf_stock_on or (shelf_groups or shelf_out):
         tables.append(
             _stocked_in_table(
                 "Shelf stocked in",

@@ -32,14 +32,15 @@
     </header>
 
     {% if day_sessions %}
-    <div class="item-table-wrap shop-day-table-wrap">
-      <table class="shop-day-table">
+    <div class="item-table-wrap shop-day-table-wrap shop-day-history-wrap">
+      <table class="shop-day-table shop-day-history-table">
         <thead>
           <tr>
             <th>Day</th>
             <th>Opening</th>
+            <th class="num">Sales</th>
             <th>Closing</th>
-            <th>Diff</th>
+            <th class="num">Diff</th>
             <th class="shop-day-table-report">Report</th>
           </tr>
         </thead>
@@ -47,87 +48,96 @@
           {% for row in day_sessions %}
           <tr{% if row.is_open %} class="is-open"{% endif %}>
             <td data-label="Day">
-              {% if row.is_open %}
-              <span class="shop-day-pill is-open">Open</span>
-              {% else %}
-              <span class="shop-day-pill is-closed">Closed</span>
-              {% endif %}
-              <strong>{{ row.opened_at|date:"d M · H:i" }}</strong>
-              {% if row.closed_at %}
-              <span class="shop-day-table-sub">to {{ row.closed_at|date:"H:i" }}</span>
-              {% endif %}
+              <div class="shop-day-cell-stack">
+                <span class="shop-day-pill {% if row.is_open %}is-open{% else %}is-closed{% endif %}">
+                  {% if row.is_open %}Open{% else %}Closed{% endif %}
+                </span>
+                <strong>{{ row.opened_at|date:"d M Y" }}</strong>
+                <span class="shop-day-table-sub">
+                  {{ row.opened_at|date:"H:i" }}{% if row.closed_at %} → {{ row.closed_at|date:"H:i" }}{% endif %}{% if row.opened_by %}
+                  · {{ row.opened_by.user.get_full_name|default:row.opened_by.user.username }}{% endif %}
+                </span>
+              </div>
             </td>
             <td class="shop-day-table-balances" data-label="Opening">
-              <strong class="shop-day-table-total">{{ row.opening_total|floatformat:0 }}</strong>
-              <span>
-                {% if balance_channels.cash %}C {{ row.opening_cash|floatformat:0 }}{% endif %}
-                {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
-                {% if balance_channels.mpesa %}M {{ row.opening_mpesa|floatformat:0 }}{% endif %}
-                {% if balance_channels.card %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}K {{ row.opening_card|floatformat:0 }}{% endif %}
-              </span>
+              <div class="shop-day-cell-stack">
+                <strong class="shop-day-table-total">{{ row.opening_total|floatformat:0 }}</strong>
+                <span class="shop-day-chans">
+                  {% if balance_channels.cash %}<span class="shop-day-chan is-cash"><b>C</b>{{ row.opening_cash|floatformat:0 }}</span>{% endif %}
+                  {% if balance_channels.mpesa %}<span class="shop-day-chan is-mpesa"><b>M</b>{{ row.opening_mpesa|floatformat:0 }}</span>{% endif %}
+                  {% if balance_channels.card %}<span class="shop-day-chan is-card"><b>K</b>{{ row.opening_card|floatformat:0 }}</span>{% endif %}
+                </span>
+              </div>
+            </td>
+            <td class="num" data-label="Sales">
+              <strong class="shop-day-table-total">{{ row.sales_total|floatformat:0 }}</strong>
             </td>
             <td class="shop-day-table-balances" data-label="Closing">
-              {% if row.closed_at %}
-              <strong class="shop-day-table-total">{{ row.closing_total|floatformat:0 }}</strong>
-              <span>
-                {% if balance_channels.cash %}C {{ row.closing_cash|floatformat:0 }}{% endif %}
-                {% if balance_channels.cash and balance_channels.mpesa %} · {% endif %}
-                {% if balance_channels.mpesa %}M {{ row.closing_mpesa|floatformat:0 }}{% endif %}
-                {% if balance_channels.card %}{% if balance_channels.cash or balance_channels.mpesa %} · {% endif %}K {{ row.closing_card|floatformat:0 }}{% endif %}
-              </span>
-              {% else %}
-              <span class="shop-day-table-sub">Expected {{ row.expected_total|floatformat:0 }}</span>
-              {% endif %}
+              <div class="shop-day-cell-stack">
+                {% if row.closed_at %}
+                <strong class="shop-day-table-total">{{ row.closing_total|floatformat:0 }}</strong>
+                <span class="shop-day-chans">
+                  {% if balance_channels.cash %}<span class="shop-day-chan is-cash"><b>C</b>{{ row.closing_cash|floatformat:0 }}</span>{% endif %}
+                  {% if balance_channels.mpesa %}<span class="shop-day-chan is-mpesa"><b>M</b>{{ row.closing_mpesa|floatformat:0 }}</span>{% endif %}
+                  {% if balance_channels.card %}<span class="shop-day-chan is-card"><b>K</b>{{ row.closing_card|floatformat:0 }}</span>{% endif %}
+                </span>
+                {% else %}
+                <span class="shop-day-table-sub">Expected</span>
+                <strong class="shop-day-table-total">{{ row.expected_total|floatformat:0 }}</strong>
+                {% endif %}
+              </div>
             </td>
-            <td data-label="Diff">
+            <td class="num" data-label="Diff">
               {% if row.closed_at and row.total_variance is not None %}
-              <strong class="shop-day-variance{% if row.total_variance > 0 %} is-over{% elif row.total_variance < 0 %} is-under{% endif %}">
+              <span class="shop-day-variance{% if row.total_variance > 0 %} is-over{% elif row.total_variance < 0 %} is-under{% else %} is-even{% endif %}">
                 {% if row.total_variance > 0 %}+{% endif %}{{ row.total_variance|floatformat:0 }}
-              </strong>
+              </span>
               {% else %}
               <span class="shop-day-table-sub">—</span>
               {% endif %}
             </td>
             <td class="shop-day-table-report" data-label="Report">
-              <a
-                class="btn btn--ghost btn--sm"
-                href="{{ day_report_url }}?session={{ row.session.pk }}"
-                target="_blank"
-                rel="noopener"
-              >
-                <i data-lucide="file-text" aria-hidden="true"></i>
-                Report
-              </a>
-              <a
-                class="btn btn--ghost btn--sm"
-                href="{{ day_report_url }}?session={{ row.session.pk }}&download=1"
-                target="_blank"
-                rel="noopener"
-                title="Download the A4 PDF"
-              >
-                <i data-lucide="download" aria-hidden="true"></i>
-                PDF
-              </a>
-              <a
-                class="btn btn--ghost btn--sm"
-                href="{{ day_report_url }}?session={{ row.session.pk }}&paper=80"
-                target="_blank"
-                rel="noopener"
-                title="Print on 80 mm thermal"
-              >
-                <i data-lucide="printer" aria-hidden="true"></i>
-                80 mm
-              </a>
-              <a
-                class="btn btn--ghost btn--sm"
-                href="{{ day_report_url }}?session={{ row.session.pk }}&paper=58"
-                target="_blank"
-                rel="noopener"
-                title="Print on 58 mm thermal"
-              >
-                <i data-lucide="printer" aria-hidden="true"></i>
-                58 mm
-              </a>
+              <div class="shop-day-report-actions">
+                <a
+                  class="btn btn--ghost btn--sm"
+                  href="{{ day_report_url }}?session={{ row.session.pk }}"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  <i data-lucide="file-text" aria-hidden="true"></i>
+                  Report
+                </a>
+                <a
+                  class="shop-day-mini-btn"
+                  href="{{ day_report_url }}?session={{ row.session.pk }}&download=1"
+                  target="_blank"
+                  rel="noopener"
+                  title="Download the A4 PDF"
+                  aria-label="Download the A4 PDF"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                </a>
+                <a
+                  class="shop-day-mini-btn"
+                  href="{{ day_report_url }}?session={{ row.session.pk }}&paper=80"
+                  target="_blank"
+                  rel="noopener"
+                  title="Print on 80 mm thermal"
+                  aria-label="Print on 80 mm thermal"
+                >
+                  <i data-lucide="printer" aria-hidden="true"></i><em>80</em>
+                </a>
+                <a
+                  class="shop-day-mini-btn"
+                  href="{{ day_report_url }}?session={{ row.session.pk }}&paper=58"
+                  target="_blank"
+                  rel="noopener"
+                  title="Print on 58 mm thermal"
+                  aria-label="Print on 58 mm thermal"
+                >
+                  <i data-lucide="printer" aria-hidden="true"></i><em>58</em>
+                </a>
+              </div>
             </td>
           </tr>
           {% endfor %}
@@ -135,7 +145,15 @@
       </table>
     </div>
     {% else %}
-    <p class="shop-day-history-empty">No days recorded yet.</p>
+    <div class="shop-day-status">
+      <div class="shop-day-status-icon" aria-hidden="true">
+        <i data-lucide="history"></i>
+      </div>
+      <div>
+        <strong>No days recorded yet</strong>
+        <p>Days you open and close will appear here with their opening, sales, and closing figures.</p>
+      </div>
+    </div>
     {% endif %}
   </div>
 </section>

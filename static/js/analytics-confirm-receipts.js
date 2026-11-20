@@ -634,6 +634,14 @@
     )
       .trim()
       .toLowerCase();
+    const targetKind = (
+      modalBody?.querySelector("[data-confirm-receipt-kind]")?.value || ""
+    )
+      .trim()
+      .toLowerCase();
+    const creditDue = (
+      modalBody?.querySelector("[data-confirm-credit-due]")?.value || ""
+    ).trim();
     const cashAmount = (
       modalBody?.querySelector("[data-confirm-cash-amount]")?.value || ""
     ).trim();
@@ -654,6 +662,11 @@
       credit,
       due,
       method,
+      targetKind,
+      creditDue,
+      kindChanged:
+        Boolean(targetKind) &&
+        targetKind !== String(receipt.kind || "").toLowerCase(),
       cashAmount,
       mpesaAmount,
       cardAmount,
@@ -672,17 +685,24 @@
       credit,
       due,
       method,
+      targetKind,
+      kindChanged,
       cashAmount,
       mpesaAmount,
       cardAmount,
       refApplies,
     } = confirmFieldValues();
+    const saleConvert = kindChanged && targetKind === "sale";
     const detailsOk =
+      (kindChanged && !saleConvert) ||
       !requireDetails ||
       (Boolean(paymentAt) &&
         (!refApplies || Boolean(ref) || Boolean(existingRef)));
     const amountOk =
-      !credit || due <= 0 || (Boolean(amount) && Number(amount) > 0);
+      kindChanged ||
+      !credit ||
+      due <= 0 ||
+      (Boolean(amount) && Number(amount) > 0);
     const splitValues = {
       cash: cashAmount,
       mpesa: mpesaAmount,
@@ -690,6 +710,7 @@
     };
     const splitChannels = confirmMethodChannels(method);
     const splitOk =
+      (kindChanged && !saleConvert) ||
       credit ||
       splitChannels.length < 2 ||
       splitChannels.every(
@@ -760,7 +781,7 @@
     if (refInput && !refInput.value) {
       refInput.value = String(receipt.mpesa_receipt_number || "").trim();
     }
-    syncConfirmRefField();
+    syncConfirmKindFields();
     const amountInput = modalBody?.querySelector("[data-confirm-credit-amount]");
     if (amountInput) {
       const due = creditDueValue(receipt);
@@ -859,8 +880,30 @@
     CONFIRM_METHOD_CHANNELS[String(method || "").toLowerCase()] || [];
   const confirmMethodNeedsRef = (method) =>
     confirmMethodChannels(method).some((channel) => channel !== "cash");
+  const confirmTargetKind = () => {
+    const current = String(
+      currentDetail?.receipt?.kind || ""
+    ).toLowerCase();
+    const select = modalBody?.querySelector("[data-confirm-receipt-kind]");
+    if (!select) return current;
+    return String(select.value || "").toLowerCase() || current;
+  };
+  const confirmKindChanged = () => {
+    const current = String(
+      currentDetail?.receipt?.kind || ""
+    ).toLowerCase();
+    const target = confirmTargetKind();
+    return Boolean(target) && target !== current;
+  };
   const confirmRefApplies = () => {
     const receipt = currentDetail?.receipt || {};
+    if (confirmKindChanged()) {
+      // A kind change only collects payment details when converting to a sale.
+      if (confirmTargetKind() !== "sale") return false;
+      const select = modalBody?.querySelector("[data-confirm-payment-method]");
+      if (!select) return true;
+      return confirmMethodNeedsRef(select.value);
+    }
     if (isCreditReceipt(receipt)) return true;
     const select = modalBody?.querySelector("[data-confirm-payment-method]");
     if (!select) return true;
@@ -905,6 +948,33 @@
     }
   };
 
+  const syncConfirmKindFields = () => {
+    const receipt = currentDetail?.receipt || {};
+    const isCreditSrc = isCreditReceipt(receipt);
+    const target = confirmTargetKind();
+    const changed = confirmKindChanged();
+    const saleTarget = changed && target === "sale";
+    const paidbyWrap = modalBody?.querySelector("[data-confirm-paidby-wrap]");
+    const splitWrap = modalBody?.querySelector("[data-confirm-split-wrap]");
+    const creditAmtWrap = modalBody?.querySelector(
+      "[data-confirm-credit-amount-wrap]"
+    );
+    const dueWrap = modalBody?.querySelector("[data-confirm-credit-due-wrap]");
+    const paidAtWrap = modalBody?.querySelector(
+      "[data-confirm-payment-at-wrap]"
+    );
+    if (paidbyWrap) paidbyWrap.hidden = changed ? !saleTarget : isCreditSrc;
+    if (creditAmtWrap) creditAmtWrap.hidden = changed || !isCreditSrc;
+    if (dueWrap) dueWrap.hidden = !(changed && target === "credit");
+    if (paidAtWrap) paidAtWrap.hidden = changed && !saleTarget;
+    if (changed && !saleTarget) {
+      if (splitWrap) splitWrap.hidden = true;
+    } else {
+      syncConfirmPaymentSplit();
+    }
+    syncConfirmRefField();
+  };
+
   const autoBalanceSplit = (edited) => {
     const select = modalBody?.querySelector("[data-confirm-payment-method]");
     const wrap = modalBody?.querySelector("[data-confirm-split-wrap]");
@@ -932,6 +1002,14 @@
 
   const renderDetail = (payload) => {
     const receipt = payload.receipt || {};
+    // The confirm/set-status responses rebuild the detail payload without the
+    // viewer's capability flags — carry it forward so the type select survives.
+    if (
+      receipt.can_change_kind === undefined &&
+      currentDetail?.receipt?.can_change_kind !== undefined
+    ) {
+      receipt.can_change_kind = currentDetail.receipt.can_change_kind;
+    }
     currentDetail = payload;
     if (modalTitle) {
       modalTitle.textContent = receipt.receipt_number || "Receipt";
@@ -1012,9 +1090,56 @@
       .trim()
       .toLowerCase();
     const saleMethod = methodLabels[currentMethod] ? currentMethod : "";
+    const sourceKind = String(receipt.kind || "").toLowerCase();
+    const canChangeKind =
+      Boolean(receipt.can_change_kind) &&
+      (sourceKind === "sale" || sourceKind === "credit");
+    const KIND_LABELS = {
+      sale: "Sale",
+      credit: "Credit",
+      gift: "Gift",
+      quotation: "Quotation",
+    };
+    const kindField = canChangeKind
+      ? `<div class="shop-receipt-mpesa-ref">
+      <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-receipt-kind">
+        Receipt type
+      </label>
+      <select
+        id="ax-confirm-receipt-kind"
+        class="shop-receipt-mpesa-ref-input"
+        name="receipt_kind"
+        data-confirm-receipt-kind
+      >
+        ${Object.entries(KIND_LABELS)
+          .map(
+            ([value, label]) =>
+              `<option value="${value}"${
+                value === sourceKind ? " selected" : ""
+              }>${label}</option>`
+          )
+          .join("")}
+      </select>
+    </div>`
+      : "";
+    const creditDueField = canChangeKind
+      ? `<div class="shop-receipt-mpesa-ref" data-confirm-credit-due-wrap hidden>
+      <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-credit-due">
+        Payment due date
+        <span class="shop-receipt-muted">(optional)</span>
+      </label>
+      <input
+        id="ax-confirm-credit-due"
+        class="shop-receipt-mpesa-ref-input"
+        type="date"
+        name="credit_due_date"
+        data-confirm-credit-due
+      >
+    </div>`
+      : "";
     let paidByField = "";
     let paymentSplitField = "";
-    if (!isCredit && saleMethod) {
+    if ((!isCredit && saleMethod) || canChangeKind) {
       const enabledMethods = (
         Array.isArray(receipt.payment_methods) && receipt.payment_methods.length
           ? receipt.payment_methods
@@ -1022,10 +1147,15 @@
       )
         .map((m) => String(m || "").toLowerCase())
         .filter((m) => methodLabels[m]);
-      if (!enabledMethods.includes(saleMethod)) {
-        enabledMethods.push(saleMethod);
+      // A credit converts to a sale by collecting the balance in one payment —
+      // only single-channel methods apply. Other sources keep the full list.
+      const optionMethods = isCredit
+        ? enabledMethods.filter((m) => confirmMethodChannels(m).length === 1)
+        : enabledMethods;
+      if (saleMethod && !optionMethods.includes(saleMethod)) {
+        optionMethods.push(saleMethod);
       }
-      const paidByOptions = enabledMethods
+      const paidByOptions = optionMethods
         .map(
           (m) =>
             `<option value="${m}"${m === saleMethod ? " selected" : ""}>${escapeHtml(
@@ -1033,7 +1163,9 @@
             )}</option>`
         )
         .join("");
-      paidByField = `<div class="shop-receipt-mpesa-ref">
+      paidByField = `<div class="shop-receipt-mpesa-ref" data-confirm-paidby-wrap${
+        isCredit ? " hidden" : ""
+      }>
       <label class="shop-receipt-mpesa-ref-label" for="ax-confirm-payment-method">
         Paid by
       </label>
@@ -1046,6 +1178,8 @@
         ${paidByOptions}
       </select>
     </div>`;
+    }
+    if (!isCredit && saleMethod) {
       const saleChannels = confirmMethodChannels(saleMethod);
       const splitFieldFor = (channel) => {
         const on = saleChannels.includes(channel);
@@ -1101,8 +1235,10 @@
   </p>
   <div class="shop-receipt-card shop-receipt-card--confirm">
     <div class="shop-receipt-confirm-fields">
+      ${kindField}
       ${paidByField}
       ${paymentSplitField}
+      ${creditDueField}
       ${creditAmountField}
       <div class="shop-receipt-confirm-datetime" data-confirm-payment-at-wrap>
         <div class="shop-receipt-mpesa-ref">
@@ -1649,6 +1785,11 @@ ${confirmPanelHtml}`;
 
   modalBody?.addEventListener("change", (event) => {
     const target = event.target;
+    if (target?.matches?.("[data-confirm-receipt-kind]")) {
+      syncConfirmKindFields();
+      syncSubmitConfirm();
+      return;
+    }
     if (target?.matches?.("[data-confirm-payment-method]")) {
       syncConfirmPaymentSplit();
       syncConfirmRefField();
@@ -1732,12 +1873,17 @@ ${confirmPanelHtml}`;
       credit,
       due,
       method,
+      targetKind,
+      creditDue,
+      kindChanged,
       cashAmount,
       mpesaAmount,
       cardAmount,
       refApplies,
     } = confirmFieldValues();
-    if (requireDetails) {
+    const receipt = currentDetail?.receipt || {};
+    const saleConvert = kindChanged && targetKind === "sale";
+    if (requireDetails && (!kindChanged || saleConvert)) {
       if (refApplies && !ref && !existingRef) {
         setConfirmStatus(
           "Enter the reference number before confirming this receipt.",
@@ -1764,7 +1910,7 @@ ${confirmPanelHtml}`;
         return;
       }
     }
-    if (credit && due > 0) {
+    if (credit && !kindChanged && due > 0) {
       const n = Number(amount);
       if (!amount || !Number.isFinite(n) || n <= 0) {
         setConfirmStatus("Enter the amount to confirm for this credit.", {
@@ -1785,7 +1931,7 @@ ${confirmPanelHtml}`;
       }
     }
     const methodChannels = confirmMethodChannels(method);
-    if (!credit && methodChannels.length > 1) {
+    if (!credit && (!kindChanged || saleConvert) && methodChannels.length > 1) {
       const parts = {
         cash: Number(cashAmount),
         mpesa: Number(mpesaAmount),
@@ -1832,7 +1978,25 @@ ${confirmPanelHtml}`;
       syncSubmitConfirm();
       return;
     }
-    if (credit) {
+    if (kindChanged) {
+      const KIND_ACTIONS = {
+        sale: "convert it to a confirmed sale with the payment entered",
+        credit: "convert it to an open credit awaiting payment",
+        gift: "convert it to a confirmed gift (free issue)",
+        quotation:
+          "convert it to a quotation — the items return to stock",
+      };
+      const action =
+        KIND_ACTIONS[targetKind] || `change its type to ${targetKind}`;
+      if (
+        !window.confirm(
+          `Change ${receipt.receipt_number || "this receipt"}: ${action}.\n\nContinue?`
+        )
+      ) {
+        syncSubmitConfirm();
+        return;
+      }
+    } else if (credit) {
       const n = Number(amount);
       const full = !(due > 0) || (Number.isFinite(n) && n >= due - 0.0001);
       const notice = full
@@ -1851,7 +2015,20 @@ ${confirmPanelHtml}`;
         mpesa_receipt_number: refApplies ? ref : "",
         payment_at: paymentAt,
       };
-      if (credit) {
+      if (kindChanged) {
+        body.receipt_kind = targetKind;
+        if (targetKind === "credit" && creditDue) {
+          body.credit_due_date = creditDue;
+        }
+        if (saleConvert && method) {
+          body.payment_method = method;
+          if (methodChannels.includes("cash")) body.cash_amount = cashAmount;
+          if (methodChannels.includes("mpesa")) {
+            body.mpesa_amount = mpesaAmount;
+          }
+          if (methodChannels.includes("card")) body.card_amount = cardAmount;
+        }
+      } else if (credit) {
         body.amount = amount;
         body.payment_method = ref || existingRef ? "mpesa" : "cash";
       } else if (method) {

@@ -1592,6 +1592,60 @@ class AnalyticsDaySessionReportTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def _report_tables(self, session):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        request.user = self.user
+        page = build_day_session_report_page(
+            profile=self.staff, request=request, session=session
+        )["page"]
+        return [t["title"] for t in page["tables"]]
+
+    def test_day_report_hides_stock_modes_disabled_on_the_shop(self):
+        from shops.models import ShopPosSettings
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="enable_shelf_mode", enabled=True)
+        self.addCleanup(
+            set_company_pos_setting, field="enable_shelf_mode", enabled=False
+        )
+        session = self._session()
+
+        # No shop row → the company mode alone decides.
+        titles = self._report_tables(session)
+        self.assertIn("Stocked in", titles)
+        self.assertIn("Shelf stocked in", titles)
+
+        # Custom shop settings that keep item stock off but shelf on show
+        # only the shelf tables.
+        ShopPosSettings.objects.create(
+            shop=self.shop,
+            override_pos=True,
+            enable_stock_tracking=False,
+            enable_shelf_mode=True,
+        )
+        titles = self._report_tables(session)
+        self.assertNotIn("Stocked in", titles)
+        self.assertNotIn("Stocked out", titles)
+        self.assertIn("Shelf stocked in", titles)
+        self.assertIn("Shelf stocked out", titles)
+
+        # Company-level off wins even when the shop row enables the mode.
+        ShopPosSettings.objects.filter(shop=self.shop).update(
+            enable_stock_tracking=True
+        )
+        set_company_pos_setting(field="enable_shelf_mode", enabled=False)
+        titles = self._report_tables(session)
+        self.assertIn("Stocked in", titles)
+        self.assertNotIn("Shelf stocked in", titles)
+
 
 class DashboardSidebarLinkTests(TestCase):
     def test_role_dashboard_omits_dashboard_link(self):

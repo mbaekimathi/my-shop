@@ -517,6 +517,24 @@ def stock_mode_of(pos) -> str:
     return ""
 
 
+def shop_stock_mode_flags(shop, *, pos=None) -> tuple[bool, bool]:
+    """(item stock on, shelf stock on) for a shop's stock transaction lists.
+
+    A stock type counts as enabled only while it is on in the company
+    settings AND on the shop's own settings row — the shop flags count only
+    while the shop runs custom POS settings (``override_pos``); shops on
+    company defaults follow the company mode.
+    """
+    pos = pos if pos is not None else get_effective_pos_settings(shop)
+    items_on = bool(getattr(pos, "enable_stock_tracking", True))
+    shelf_on = bool(getattr(pos, "enable_shelf_mode", False))
+    shop_row = ShopPosSettings.objects.filter(shop_id=shop.pk).first()
+    if shop_row is not None and shop_row.override_pos:
+        items_on = items_on and bool(shop_row.enable_stock_tracking)
+        shelf_on = shelf_on and bool(shop_row.enable_shelf_mode)
+    return items_on, shelf_on
+
+
 def pos_toggle_enabled(pos, field: str) -> bool:
     if field in STOCK_MODE_FIELDS:
         return stock_mode_of(pos) == field
@@ -9747,11 +9765,11 @@ def build_shop_day_report_pdf(
             empty_note=empty_note,
         )
 
+    items_stock_on, shelf_stock_on = shop_stock_mode_flags(shop, pos=pos)
+
     stock_groups = details.get("stock_purchases") or []
     stock_out_rows = details.get("stock_out") or []
-    if getattr(pos, "enable_stock_tracking", True) or (
-        stock_groups or stock_out_rows
-    ):
+    if items_stock_on or (stock_groups or stock_out_rows):
         _stocked_in_detail(
             "Stocked in", stock_groups, "No stock added this day."
         )
@@ -9764,9 +9782,7 @@ def build_shop_day_report_pdf(
 
     shelf_groups = details.get("shelf_purchases") or []
     shelf_out_rows = details.get("shelf_out") or []
-    if getattr(pos, "enable_shelf_mode", False) or (
-        shelf_groups or shelf_out_rows
-    ):
+    if shelf_stock_on or (shelf_groups or shelf_out_rows):
         _stocked_in_detail(
             "Shelf stocked in",
             shelf_groups,
@@ -13233,6 +13249,539 @@ def confirm_shop_receipt(
         "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
         "cleared_credit": cleared_credit,
         "partial_credit": partial_credit,
+    }
+
+
+# Receipt kinds that can be swapped on the confirm-receipts modal. Trades are
+# excluded — they carry settlement/stock machinery that can't be relabelled.
+KIND_CHANGE_TYPES = {
+    ShopReceiptKind.SALE,
+    ShopReceiptKind.CREDIT,
+    ShopReceiptKind.GIFT,
+    ShopReceiptKind.QUOTATION,
+}
+
+
+def _receipt_kind_change_deduct_stock(*, shop: Shop, receipt, actor, now) -> None:
+    """Deduct stock when a quotation (no stock move) becomes a stocked kind."""
+    from items.models import (
+        Item,
+        ItemSerial,
+        ShopStock,
+        StockOutReason,
+        StoreStockMovementType,
+    )
+    from items.store_stock_services import record_store_receipt_movement
+
+    pos_settings = get_effective_pos_settings(shop)
+    if not getattr(pos_settings, "enable_stock_tracking", True):
+        return
+    lines = list(receipt.lines.all().select_related("item"))
+    item_ids = [line.item_id for line in lines if line.item_id]
+    if not item_ids:
+        return
+    items_by_id = Item.objects.select_for_update().filter(pk__in=item_ids).in_bulk()
+    stock_by_item = {
+        row.item_id: row
+        for row in ShopStock.objects.select_for_update().filter(
+            shop=shop, item_id__in=item_ids
+        )
+    }
+    missing_stock_ids = [
+        item_id for item_id in item_ids if item_id not in stock_by_item
+    ]
+    if missing_stock_ids:
+        ShopStock.objects.bulk_create(
+            [
+                ShopStock(shop=shop, item_id=item_id, quantity=0)
+                for item_id in missing_stock_ids
+            ],
+            ignore_conflicts=True,
+        )
+        for row in ShopStock.objects.select_for_update().filter(
+            shop=shop, item_id__in=missing_stock_ids
+        ):
+            stock_by_item[row.item_id] = row
+
+    serial_rows = list(
+        ItemSerial.objects.select_for_update().filter(
+            item_id__in=item_ids,
+            serial_number__in=[
+                serial
+                for line in lines
+                for serial in (line.remaining_serial_numbers or [])
+            ],
+        )
+    )
+    serials_by_item = {}
+    for serial in serial_rows:
+        serials_by_item.setdefault((serial.item_id, serial.serial_number), serial)
+
+    stocks_to_update = []
+    items_to_update = []
+    serials_to_update = []
+    for line in lines:
+        item = items_by_id.get(line.item_id) if line.item_id else None
+        if item is None or not getattr(item, "deduct_stock_on_sale", True):
+            continue
+        qty = line.remaining_quantity
+        if qty <= 0:
+            continue
+        stock = stock_by_item.get(item.pk)
+        if stock is not None:
+            stock.quantity -= qty
+            stock.updated_at = now
+            stocks_to_update.append(stock)
+        item.stock = max(0, _qty(item.stock) - qty)
+        item.updated_at = now
+        items_to_update.append(item)
+        record_store_receipt_movement(
+            actor=actor,
+            item=item,
+            quantity=qty,
+            movement_type=StoreStockMovementType.OUT,
+            reason=(
+                StockOutReason.GIFT
+                if receipt.kind == ShopReceiptKind.GIFT
+                else ""
+            ),
+            note=(
+                f"{receipt.receipt_number} · "
+                f"{receipt.get_kind_display()} · {shop.name}"
+            ),
+        )
+        for serial_no in line.remaining_serial_numbers or []:
+            obj = serials_by_item.get((item.pk, str(serial_no).strip()))
+            if obj is None:
+                continue
+            obj.is_available = False
+            obj.updated_at = now
+            serials_to_update.append(obj)
+    if stocks_to_update:
+        ShopStock.objects.bulk_update(stocks_to_update, ["quantity", "updated_at"])
+    if items_to_update:
+        Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
+    if serials_to_update:
+        ItemSerial.objects.bulk_update(
+            serials_to_update, ["is_available", "updated_at"]
+        )
+
+
+def _receipt_kind_change_restock(*, shop: Shop, receipt, actor, now) -> None:
+    """Return every remaining line to stock when a receipt becomes a quotation."""
+    from items.models import (
+        Item,
+        ItemSerial,
+        ShopStock,
+        StoreStockMovementType,
+    )
+    from items.services import apply_stock_in_average_cost
+    from items.store_stock_services import record_store_receipt_movement
+
+    pos_settings = get_effective_pos_settings(shop)
+    if not getattr(pos_settings, "enable_stock_tracking", True):
+        return
+    lines = list(receipt.lines.all().select_related("item"))
+    item_ids = [line.item_id for line in lines if line.item_id]
+    if not item_ids:
+        return
+    items_by_id = Item.objects.select_for_update().filter(pk__in=item_ids).in_bulk()
+    stock_by_item = {
+        row.item_id: row
+        for row in ShopStock.objects.select_for_update().filter(
+            shop=shop, item_id__in=item_ids
+        )
+    }
+    missing_stock_ids = [
+        item_id for item_id in item_ids if item_id not in stock_by_item
+    ]
+    if missing_stock_ids:
+        ShopStock.objects.bulk_create(
+            [
+                ShopStock(shop=shop, item_id=item_id, quantity=0)
+                for item_id in missing_stock_ids
+            ],
+            ignore_conflicts=True,
+        )
+        for row in ShopStock.objects.select_for_update().filter(
+            shop=shop, item_id__in=missing_stock_ids
+        ):
+            stock_by_item[row.item_id] = row
+
+    serial_rows = list(
+        ItemSerial.objects.select_for_update().filter(
+            item_id__in=item_ids,
+            serial_number__in=[
+                serial
+                for line in lines
+                for serial in (line.remaining_serial_numbers or [])
+            ],
+        )
+    )
+    serials_by_item = {}
+    for serial in serial_rows:
+        serials_by_item.setdefault((serial.item_id, serial.serial_number), serial)
+
+    stocks_to_update = []
+    items_to_update = []
+    serials_to_update = []
+    for line in lines:
+        item = items_by_id.get(line.item_id) if line.item_id else None
+        if item is None or not getattr(item, "deduct_stock_on_sale", True):
+            continue
+        qty = line.remaining_quantity
+        if qty <= 0:
+            continue
+        stock = stock_by_item.get(item.pk)
+        if stock is not None:
+            apply_stock_in_average_cost(
+                stock,
+                qty=qty,
+                unit_cost=Decimal(line.unit_cost or 0),
+            )
+            stock.quantity += qty
+            stock.updated_at = now
+            stocks_to_update.append(stock)
+        item.stock = _qty(item.stock) + qty
+        item.updated_at = now
+        items_to_update.append(item)
+        record_store_receipt_movement(
+            actor=actor,
+            item=item,
+            quantity=qty,
+            movement_type=StoreStockMovementType.IN,
+            note=(
+                f"{receipt.receipt_number} · Converted to quotation · "
+                f"{shop.name}"
+            ),
+        )
+        for serial_no in line.remaining_serial_numbers or []:
+            obj = serials_by_item.get((item.pk, str(serial_no).strip()))
+            if obj is None:
+                continue
+            obj.is_available = True
+            obj.shop = shop
+            obj.updated_at = now
+            serials_to_update.append(obj)
+    if stocks_to_update:
+        ShopStock.objects.bulk_update(stocks_to_update, ["quantity", "updated_at"])
+    if items_to_update:
+        Item.objects.bulk_update(items_to_update, ["stock", "updated_at"])
+    if serials_to_update:
+        ItemSerial.objects.bulk_update(
+            serials_to_update, ["is_available", "shop", "updated_at"]
+        )
+
+
+@transaction.atomic
+def change_shop_receipt_kind(
+    *,
+    shop: Shop,
+    receipt_id: int,
+    actor,
+    target: str,
+    credit_due_date=None,
+    payment_method: str = "",
+    cash_amount=None,
+    mpesa_amount=None,
+    card_amount=None,
+    mpesa_receipt_number: str = "",
+    payment_at=None,
+) -> dict:
+    """Convert a pending sale/credit receipt to another receipt kind."""
+    from .models import ShopReceipt
+
+    if actor is None:
+        raise ValidationError("Sign in to change receipt types.")
+
+    target_kind = (target or "").strip().lower()
+    if target_kind not in KIND_CHANGE_TYPES:
+        raise ValidationError(
+            "Choose sale, credit, gift, or quotation as the new receipt type."
+        )
+
+    try:
+        receipt = (
+            ShopReceipt.objects.select_for_update()
+            .select_related("created_by__user", "client", "shop")
+            .prefetch_related("lines")
+            .get(pk=receipt_id, shop=shop)
+        )
+    except ShopReceipt.DoesNotExist as exc:
+        raise ValidationError("Receipt not found for this shop.") from exc
+
+    if receipt.status != ShopReceiptStatus.ACTIVE:
+        raise ValidationError(
+            "Only pending receipts can change type — confirmed, cancelled, or "
+            "partially returned receipts must be reverted first."
+        )
+    if receipt.kind not in KIND_CHANGE_TYPES:
+        raise ValidationError("This receipt type cannot be changed here.")
+    source_kind = receipt.kind
+    if target_kind == source_kind:
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": (
+                f"Receipt {receipt.receipt_number} is already "
+                f"{receipt.get_kind_display()}."
+            ),
+            "status": receipt.status,
+            "status_label": receipt.get_status_display(),
+        }
+
+    if (
+        source_kind == ShopReceiptKind.CREDIT
+        and target_kind != ShopReceiptKind.SALE
+        and Decimal(receipt.amount_paid or 0) > 0
+    ):
+        raise ValidationError(
+            "This credit already has payments — confirm it to a sale or "
+            "return it instead of changing its type."
+        )
+
+    pos = get_effective_pos_settings(shop)
+    now = timezone.now()
+    ref = (mpesa_receipt_number or "").strip()[:40]
+
+    paid_at = payment_at
+    if paid_at in (None, ""):
+        paid_at = None
+    elif not hasattr(paid_at, "tzinfo"):
+        paid_at = _parse_delivery_payment_at(paid_at)
+    elif timezone.is_naive(paid_at):
+        paid_at = timezone.make_aware(paid_at, timezone.get_current_timezone())
+
+    if target_kind == ShopReceiptKind.SALE:
+        # Converting into a sale confirms it — payment details are required.
+        require_details = bool(
+            getattr(pos, "require_mpesa_reference_on_confirm", False)
+        )
+        method = (payment_method or "").strip().lower()
+        if source_kind == ShopReceiptKind.CREDIT:
+            if method not in {"cash", "mpesa", "card"}:
+                raise ValidationError("Choose cash, M-Pesa, or card.")
+            if not pos_channel_enabled(pos, method):
+                raise ValidationError(
+                    f"{CHANNEL_LABELS.get(method, method)} payments are "
+                    "disabled for this company."
+                )
+            ref_applies = method != "cash"
+            if require_details and ref_applies and not ref and not (
+                receipt.mpesa_receipt_number or ""
+            ).strip():
+                raise ValidationError(
+                    "Enter the reference number before converting this credit."
+                )
+            if require_details and paid_at is None:
+                raise ValidationError(
+                    "Enter the payment date and time before converting "
+                    "this credit."
+                )
+            from shops.credit_settlement import record_credit_collection
+
+            due = credit_confirm_state(receipt)["due"]
+            if due > 0:
+                record_credit_collection(
+                    receipt,
+                    amount=due,
+                    payment_method=method,
+                    mpesa_receipt_number=ref,
+                )
+                receipt = (
+                    ShopReceipt.objects.select_for_update()
+                    .select_related("created_by__user", "client", "shop")
+                    .get(pk=receipt.pk, shop=shop)
+                )
+                if receipt.client_id:
+                    try:
+                        from shops.credit_audit import log_credit_payment
+
+                        log_credit_payment(
+                            client_id=receipt.client_id,
+                            receipt=receipt,
+                            amount=due,
+                            payment_method=method,
+                            actor=actor,
+                            mpesa_receipt_number=ref,
+                        )
+                    except Exception:
+                        import logging
+
+                        logging.getLogger(__name__).exception(
+                            "Credit payment audit failed for receipt %s",
+                            receipt.pk,
+                        )
+            else:
+                from shops.credit_settlement import (
+                    convert_settled_credit_to_sale,
+                )
+
+                converted = convert_settled_credit_to_sale(receipt)
+            update_fields = ["status"]
+            if receipt.kind != ShopReceiptKind.SALE:
+                receipt.kind = ShopReceiptKind.SALE
+                update_fields.append("kind")
+            if due <= 0 and converted:
+                for field in (
+                    "payment_method",
+                    "cash_amount",
+                    "mpesa_amount",
+                    "card_amount",
+                    "credit_due_date",
+                    "settled_from_credit",
+                ):
+                    if field not in update_fields:
+                        update_fields.append(field)
+        else:
+            if method not in SALE_PAYMENT_METHODS:
+                raise ValidationError("Choose an enabled payment method.")
+            if not pos.payment_method_enabled(method):
+                raise ValidationError(
+                    "That payment method is not enabled for this shop."
+                )
+            channels = payment_method_channels(method)
+            ref_applies = any(channel != "cash" for channel in channels)
+            if require_details and ref_applies and not ref and not (
+                receipt.mpesa_receipt_number or ""
+            ).strip():
+                raise ValidationError(
+                    "Enter the reference number before converting "
+                    "this receipt."
+                )
+            if require_details and paid_at is None:
+                raise ValidationError(
+                    "Enter the payment date and time before converting "
+                    "this receipt."
+                )
+            total = Decimal(receipt.total or 0).quantize(Decimal("0.01"))
+            receipt.cash_amount = Decimal("0.00")
+            receipt.mpesa_amount = Decimal("0.00")
+            receipt.card_amount = Decimal("0.00")
+            if len(channels) == 1:
+                setattr(receipt, f"{channels[0]}_amount", total)
+            else:
+                split = _parse_confirm_payment_split(
+                    channels,
+                    {
+                        "cash": cash_amount,
+                        "mpesa": mpesa_amount,
+                        "card": card_amount,
+                    },
+                    total=total,
+                )
+                for channel in channels:
+                    setattr(receipt, f"{channel}_amount", split[channel])
+            receipt.kind = ShopReceiptKind.SALE
+            receipt.payment_method = method
+            update_fields = [
+                "status",
+                "kind",
+                "payment_method",
+                "cash_amount",
+                "mpesa_amount",
+                "card_amount",
+            ]
+        if source_kind == ShopReceiptKind.QUOTATION:
+            _receipt_kind_change_deduct_stock(
+                shop=shop, receipt=receipt, actor=actor, now=now
+            )
+        receipt.status = ShopReceiptStatus.CONFIRMED
+        if ref:
+            receipt.mpesa_receipt_number = ref
+            if "mpesa_receipt_number" not in update_fields:
+                update_fields.append("mpesa_receipt_number")
+        if paid_at is not None:
+            receipt.confirmed_payment_at = paid_at
+            if "confirmed_payment_at" not in update_fields:
+                update_fields.append("confirmed_payment_at")
+        receipt.save(update_fields=update_fields)
+        detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+        return {
+            **detail,
+            "ok": True,
+            "message": (
+                f"Receipt {receipt.receipt_number} converted to a sale "
+                "and confirmed."
+            ),
+            "status": receipt.status,
+            "status_label": receipt.get_status_display(),
+            "mpesa_receipt_number": receipt.mpesa_receipt_number or "",
+        }
+
+    update_fields = [
+        "kind",
+        "payment_method",
+        "cash_amount",
+        "mpesa_amount",
+        "card_amount",
+        "mpesa_receipt_number",
+        "amount_paid",
+    ]
+    receipt.kind = target_kind
+    receipt.payment_method = ShopPaymentMethod.NONE
+    receipt.cash_amount = Decimal("0.00")
+    receipt.mpesa_amount = Decimal("0.00")
+    receipt.card_amount = Decimal("0.00")
+    receipt.mpesa_receipt_number = ""
+    receipt.amount_paid = Decimal("0.00")
+
+    if source_kind == ShopReceiptKind.QUOTATION:
+        # Quotation stock was never deducted — deduct it for the new kind.
+        _receipt_kind_change_deduct_stock(
+            shop=shop, receipt=receipt, actor=actor, now=now
+        )
+    elif target_kind == ShopReceiptKind.QUOTATION:
+        # Quotations don't move stock — return the receipt's lines to stock.
+        _receipt_kind_change_restock(
+            shop=shop, receipt=receipt, actor=actor, now=now
+        )
+
+    if target_kind == ShopReceiptKind.CREDIT:
+        due_date = None
+        raw_due = str(credit_due_date or "").strip()
+        if raw_due:
+            try:
+                from datetime import date
+
+                due_date = date.fromisoformat(raw_due)
+            except ValueError:
+                raise ValidationError("Enter a valid payment due date.")
+            if due_date < timezone.localdate():
+                raise ValidationError("Payment due date cannot be in the past.")
+        receipt.credit_due_date = due_date
+        update_fields.append("credit_due_date")
+        message = f"Receipt {receipt.receipt_number} converted to a credit."
+    elif target_kind == ShopReceiptKind.GIFT:
+        # Gifts issue free of charge and are confirmed on creation.
+        receipt.credit_due_date = None
+        receipt.status = ShopReceiptStatus.CONFIRMED
+        update_fields += ["credit_due_date", "status"]
+        message = (
+            f"Receipt {receipt.receipt_number} converted to a gift "
+            "and confirmed."
+        )
+    else:
+        receipt.credit_due_date = None
+        receipt.confirmed_payment_at = None
+        update_fields += ["credit_due_date", "confirmed_payment_at"]
+        message = f"Receipt {receipt.receipt_number} converted to a quotation."
+
+    receipt.save(update_fields=update_fields)
+
+    if target_kind == ShopReceiptKind.CREDIT and receipt.client_id:
+        from shops.credit_audit import log_credit_receipt_issued
+
+        log_credit_receipt_issued(receipt=receipt)
+
+    detail = get_shop_receipt_detail(shop=shop, receipt_id=receipt.pk)
+    return {
+        **detail,
+        "ok": True,
+        "message": message,
+        "status": receipt.status,
+        "status_label": receipt.get_status_display(),
     }
 
 

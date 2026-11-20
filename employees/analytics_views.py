@@ -2374,6 +2374,10 @@ def analytics_receipt_detail(request, role_segment, shop_id, receipt_id):
 
     from .module_permissions import employee_may
 
+    if isinstance(payload.get("receipt"), dict):
+        payload["receipt"]["can_change_kind"] = employee_may(
+            profile, "analytics", "change-receipt-type"
+        )
     if not employee_may(profile, "analytics", "return-receipts"):
         payload["can_return"] = False
         payload["can_cancel"] = False
@@ -2435,6 +2439,58 @@ def analytics_receipt_confirm(request, role_segment, shop_id, receipt_id):
     )
     if denied is not None:
         return denied
+
+    receipt_kind = (payload.get("receipt_kind") or "").strip().lower()
+    if receipt_kind:
+        from shops.models import ShopReceipt
+
+        current_kind = (
+            ShopReceipt.objects.filter(pk=receipt_id, shop=shop)
+            .values_list("kind", flat=True)
+            .first()
+        )
+        if receipt_kind != (current_kind or ""):
+            # Changing the receipt type is a separate elevated toggle.
+            denied = require_module_permission(
+                request,
+                profile,
+                "analytics",
+                "change-receipt-type",
+                as_json=True,
+            )
+            if denied is not None:
+                return denied
+            try:
+                from shops.services import change_shop_receipt_kind
+
+                result = change_shop_receipt_kind(
+                    shop=shop,
+                    receipt_id=receipt_id,
+                    actor=authorising,
+                    target=receipt_kind,
+                    credit_due_date=payload.get("credit_due_date") or "",
+                    payment_method=(
+                        payload.get("payment_method") or ""
+                    ).strip(),
+                    cash_amount=payload.get("cash_amount") or None,
+                    mpesa_amount=payload.get("mpesa_amount") or None,
+                    card_amount=payload.get("card_amount") or None,
+                    mpesa_receipt_number=(
+                        payload.get("mpesa_receipt_number") or ""
+                    ).strip(),
+                    payment_at=(payload.get("payment_at") or "").strip()
+                    or None,
+                )
+            except ValidationError as exc:
+                message = (
+                    "; ".join(exc.messages)
+                    if hasattr(exc, "messages")
+                    else str(exc)
+                )
+                return JsonResponse(
+                    {"ok": False, "error": message}, status=400
+                )
+            return JsonResponse(result)
 
     try:
         result = confirm_shop_receipt(

@@ -52,6 +52,7 @@ PERMISSION_MODULES = (
             {"slug": "expenses", "label": "Expenses"},
             {"slug": "receipts", "label": "Receipts"},
             {"slug": "confirm-receipts", "label": "Confirm receipts"},
+            {"slug": "change-receipt-type", "label": "Change receipt type"},
             {"slug": "return-receipts", "label": "Return receipt"},
             {"slug": "account_pay", "label": "Pay accounts"},
         ),
