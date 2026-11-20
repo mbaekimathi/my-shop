@@ -20,6 +20,7 @@ from shops.models import (
     ShopPaymentMethod,
     ShopReceipt,
     ShopReceiptKind,
+    ShopReceiptLine,
     ShopReceiptStatus,
 )
 from shops.services import (
@@ -337,6 +338,78 @@ class DayReportCountedStatusesTests(TestCase):
         )
         self.assertEqual(details["sales_count"], 1)
         self.assertEqual(details["items_sold"][0]["qty"], Decimal("1"))
+
+    def test_sellers_breakdown_aggregates_per_employee(self):
+        from shops.services import day_session_report_details
+
+        other_user = User.objects.create_user(
+            username="200404",
+            password="pass",
+            email="second-seller@test.local",
+            first_name="Second",
+            last_name="Seller",
+            is_active=True,
+        )
+        other = EmployeeProfile.objects.create(
+            user=other_user,
+            employee_id="200404",
+            phone_country_code="+254",
+            phone_number="700000404",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.CONFIRMED,
+            receipt_number="SL-OTHER",
+            client_name="Walk-in",
+            subtotal=50,
+            tax_percent=0,
+            tax_amount=0,
+            total=50,
+            amount_paid=50,
+            cash_amount=50,
+            payment_method="cash",
+            created_by=other,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item_name="Report Item",
+            quantity=1,
+            unit_price=50,
+            line_total=50,
+        )
+
+        details = day_session_report_details(self.session)
+        sellers = details["sellers"]
+        self.assertEqual(len(sellers), 2)
+        # Highest amount first — the setUp cashier sold 300 across 2 receipts.
+        self.assertEqual(sellers[0]["seller"], "Report Cashier")
+        self.assertEqual(sellers[0]["receipts"], 2)
+        self.assertEqual(sellers[0]["qty"], Decimal("3"))
+        self.assertEqual(sellers[0]["amount"], Decimal("300.00"))
+        self.assertEqual(sellers[1]["seller"], "Second Seller")
+        self.assertEqual(sellers[1]["receipts"], 1)
+        self.assertEqual(sellers[1]["qty"], Decimal("1"))
+        self.assertEqual(sellers[1]["amount"], Decimal("50.00"))
+
+    def test_sellers_breakdown_honours_counted_statuses(self):
+        from shops.services import day_session_report_details
+
+        details = day_session_report_details(
+            self.session,
+            counted_statuses={
+                ShopReceiptStatus.CONFIRMED,
+                ShopReceiptStatus.PARTIAL_RETURN,
+            },
+        )
+        sellers = details["sellers"]
+        self.assertEqual(len(sellers), 1)
+        self.assertEqual(sellers[0]["seller"], "Report Cashier")
+        self.assertEqual(sellers[0]["receipts"], 1)
+        self.assertEqual(sellers[0]["qty"], Decimal("2"))
+        self.assertEqual(sellers[0]["amount"], Decimal("200.00"))
 
     def test_default_keeps_all_counted_statuses(self):
         from shops.services import (

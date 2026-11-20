@@ -3128,6 +3128,133 @@ def _trading_by_shop_for_period(
     return by_shop
 
 
+def _employee_performance_for_period(
+    *, shop_ids, start, end, receipt_status=None
+) -> dict:
+    """Per-seller trading rollup for receipts created in [start, end).
+
+    Doc counts come from the sale/credit receipts; value/cost come from
+    receipt lines with the same remaining-qty netting (and last-buy cost
+    fallback) as the per-shop rollup in `_trading_by_shop_for_period`.
+    Keyed by employee — labels resolve to "name · employee_id" like the
+    Employees section.
+    """
+    kinds = [ShopReceiptKind.SALE, ShopReceiptKind.CREDIT]
+    receipts = _receipts_qs(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=kinds,
+        receipt_status=receipt_status,
+    )
+    line_qs = _trading_line_qs(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        kinds=kinds,
+        receipt_status=receipt_status,
+    )
+
+    by_emp: dict = {}
+    labels: dict = {}
+
+    def _key(created_by_id):
+        return created_by_id if created_by_id is not None else "anon"
+
+    def _entry(key):
+        row = by_emp.get(key)
+        if row is None:
+            row = {
+                "label": labels.get(key) or "Staff",
+                "sale_docs": 0,
+                "credit_docs": 0,
+                "sale_value": _zero(),
+                "credit_value": _zero(),
+                "cogs": _zero(),
+            }
+            by_emp[key] = row
+        return row
+
+    for row in receipts.values(
+        "created_by_id",
+        "created_by__employee_id",
+        "created_by__user__first_name",
+        "created_by__user__last_name",
+        "created_by__user__username",
+        "kind",
+    ).annotate(docs=Count("id")):
+        first = (row["created_by__user__first_name"] or "").strip()
+        last = (row["created_by__user__last_name"] or "").strip()
+        name = (
+            f"{first} {last}".strip()
+            or row["created_by__user__username"]
+            or "Staff"
+        )
+        emp_id = (row["created_by__employee_id"] or "").strip()
+        key = _key(row["created_by_id"])
+        labels[key] = f"{name} · {emp_id}" if emp_id else name
+        entry = _entry(key)
+        entry["label"] = labels[key]
+        docs = int(row["docs"] or 0)
+        if row["kind"] == ShopReceiptKind.SALE:
+            entry["sale_docs"] += docs
+        elif row["kind"] == ShopReceiptKind.CREDIT:
+            entry["credit_docs"] += docs
+
+    remaining_value = ExpressionWrapper(
+        F("unit_price") * (F("quantity") - F("returned_quantity")),
+        output_field=DecimalField(max_digits=14, decimal_places=2),
+    )
+    remaining_cogs = ExpressionWrapper(
+        F("unit_cost") * (F("quantity") - F("returned_quantity")),
+        output_field=DecimalField(max_digits=14, decimal_places=2),
+    )
+    for row in line_qs.values(
+        "receipt__created_by_id", "receipt__kind"
+    ).annotate(
+        value=Coalesce(Sum(remaining_value), _zero()),
+        cogs=Coalesce(Sum(remaining_cogs), _zero()),
+    ):
+        entry = _entry(_key(row["receipt__created_by_id"]))
+        value = Decimal(row["value"] or 0).quantize(Decimal("0.01"))
+        cogs = Decimal(row["cogs"] or 0).quantize(Decimal("0.01"))
+        entry["cogs"] += cogs
+        if row["receipt__kind"] == ShopReceiptKind.SALE:
+            entry["sale_value"] += value
+        elif row["receipt__kind"] == ShopReceiptKind.CREDIT:
+            entry["credit_value"] += value
+
+    missing_cost_lines = list(
+        line_qs.filter(unit_cost=0)
+        .exclude(item_id__isnull=True)
+        .values(
+            "receipt__created_by_id",
+            "item_id",
+            "quantity",
+            "returned_quantity",
+        )
+    )
+    if missing_cost_lines:
+        from items.services import last_buying_prices_for_items
+
+        item_ids = {row["item_id"] for row in missing_cost_lines if row["item_id"]}
+        fallback_prices = last_buying_prices_for_items(item_ids)
+        for row in missing_cost_lines:
+            unit = Decimal(fallback_prices.get(row["item_id"]) or 0)
+            if unit <= 0:
+                continue
+            remaining = max(
+                Decimal("0"),
+                Decimal(row["quantity"] or 0)
+                - Decimal(row["returned_quantity"] or 0),
+            )
+            if remaining <= 0:
+                continue
+            entry = _entry(_key(row["receipt__created_by_id"]))
+            entry["cogs"] += (unit * remaining).quantize(Decimal("0.01"))
+    return by_emp
+
+
 def _cogs_by_shop_for_period(
     *, shop_ids, start, end, kinds=None, receipt_status=None
 ) -> dict[int, tuple[int, Decimal]]:
@@ -9109,6 +9236,137 @@ def _build_overview(filters):
             )
         )
 
+    employee_perf = _employee_performance_for_period(
+        shop_ids=shop_ids,
+        start=start,
+        end=end,
+        receipt_status=filters.get("receipt_status"),
+    )
+    emp_columns = ["Employee"]
+    for label, is_total, band, band_start in (
+        ("Sales", False, "flow", True),
+        ("Credits", False, "flow", False),
+        ("Total revenue", True, "total", True),
+    ):
+        emp_columns.append(
+            {
+                "label": label,
+                "pair": True,
+                "pair_qty": "Docs",
+                "pair_amt": "Amt",
+                "total": is_total,
+                "band": band,
+                "band_start": band_start,
+            }
+        )
+    emp_columns.extend(
+        [
+            {
+                "label": "Stock sold",
+                "title": "Buying cost of items sold",
+                "band": "result",
+                "band_start": True,
+            },
+            {
+                "label": "Gross margin",
+                "title": "Total revenue − stock value sold",
+                "band": "result",
+            },
+            {
+                "label": "Margin",
+                "title": "Gross margin as a share of total revenue",
+                "band": "result",
+            },
+        ]
+    )
+
+    def _emp_cells(name, data):
+        return [
+            name,
+            _qty_amount_cell(
+                data["sale_docs"],
+                data["sale_amt"],
+                title=f"{data['sale_docs']} · {_money_ksh(data['sale_amt'])}",
+            ),
+            _qty_amount_cell(
+                data["credit_docs"],
+                data["credit_amt"],
+                title=f"{data['credit_docs']} · {_money_ksh(data['credit_amt'])}",
+            ),
+            _qty_amount_cell(
+                data["docs"],
+                data["revenue"],
+                title=f"{data['docs']} · {_money_ksh(data['revenue'])}",
+            ),
+            _money_cell(
+                data["stock"],
+                title=f"Stock value sold {_money_ksh(data['stock'])}",
+            ),
+            _money_cell(
+                data["gross"],
+                tone="good" if data["gross"] >= 0 else "bad",
+                title=f"Gross margin {_money_ksh(data['gross'])} · {data['margin']}% of revenue",
+            ),
+            _pct_cell(
+                data["margin"],
+                tone="good" if data["gross"] >= 0 else "bad",
+                title=f"Gross margin {data['margin']}%",
+            ),
+        ]
+
+    def _emp_data(entry):
+        sale_amt = Decimal(entry["sale_value"] or 0)
+        credit_amt = (
+            Decimal(entry["credit_value"] or 0) if flags["credit"] else _zero()
+        )
+        sale_docs = int(entry["sale_docs"] or 0)
+        credit_docs = (
+            int(entry["credit_docs"] or 0) if flags["credit"] else 0
+        )
+        revenue = sale_amt + credit_amt
+        stock = Decimal(entry["cogs"] or 0)
+        gross = revenue - stock
+        return {
+            "sale_docs": sale_docs,
+            "sale_amt": sale_amt,
+            "credit_docs": credit_docs,
+            "credit_amt": credit_amt,
+            "docs": sale_docs + credit_docs,
+            "revenue": revenue,
+            "stock": stock,
+            "gross": gross,
+            "margin": _pct(gross, revenue),
+        }
+
+    emp_sorted = sorted(
+        employee_perf.values(),
+        key=lambda row: (
+            -(
+                Decimal(row["sale_value"] or 0)
+                + Decimal(row["credit_value"] or 0)
+            ),
+            row["label"].lower(),
+        ),
+    )
+    emp_rows = [
+        _emp_cells(entry["label"], _emp_data(entry)) for entry in emp_sorted
+    ]
+    if emp_rows:
+        emp_rows.append(
+            _emp_cells(
+                "All employees",
+                _emp_data(
+                    {
+                        "sale_value": total_sales,
+                        "credit_value": total_credits,
+                        "cogs": total_stock,
+                        "sale_docs": total_sale_docs,
+                        "credit_docs": total_credit_docs,
+                    }
+                ),
+            )
+        )
+
     alerts = []
     if total_shrinkage > 0:
         alerts.append(
@@ -9170,6 +9428,19 @@ def _build_overview(filters):
                     "Stock sold is the buying cost of those items. "
                     "Expenses exclude owner drawings. "
                     "Profit = total revenue − stock − expenses."
+                ),
+            ),
+            _table(
+                "Employee performance",
+                emp_columns,
+                emp_rows,
+                empty="No employee sales for the selected period.",
+                shop_grid=True,
+                footnote=(
+                    "Same period and netting as the shop rollup — sales and "
+                    "credits are ex-tax item value, stock sold is the buying "
+                    "cost of those items. Expenses are not attributed to "
+                    "employees."
                 ),
             ),
         ],
@@ -10512,6 +10783,48 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 f"{_money_ksh(items_amount_total)}"
             )
             if items_sold
+            else "",
+        )
+    )
+
+    sellers = details.get("sellers") or []
+    seller_receipt_total = sum(
+        (int(row.get("receipts") or 0) for row in sellers), 0
+    )
+    seller_qty_total = sum(
+        (Decimal(row.get("qty") or 0) for row in sellers), _zero()
+    )
+    seller_amount_total = sum(
+        (Decimal(row.get("amount") or 0) for row in sellers), _zero()
+    )
+    tables.append(
+        _table(
+            "Sales by employee",
+            [
+                "Employee",
+                {"label": "Sales", "money": True},
+                {"label": "Qty", "money": True},
+                {"label": "Amount", "money": True},
+            ],
+            [
+                [
+                    row["seller"],
+                    str(row["receipts"]),
+                    _qty_label(row["qty"]),
+                    _money_ksh(row["amount"]),
+                ]
+                for row in sellers
+            ],
+            empty="No sales recorded this day.",
+            footnote=(
+                f"{len(sellers)} employee"
+                f"{'s' if len(sellers) != 1 else ''} · "
+                f"{seller_receipt_total} sale"
+                f"{'s' if seller_receipt_total != 1 else ''} · "
+                f"{_qty_label(seller_qty_total)} units · "
+                f"{_money_ksh(seller_amount_total)}"
+            )
+            if sellers
             else "",
         )
     )

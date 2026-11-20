@@ -8349,6 +8349,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
     }
     receipt_status_labels = dict(ShopReceiptStatus.choices)
     item_totals = {}
+    seller_totals = {}
     flagged_receipts = []
     receipts = (
         ShopReceipt.objects.filter(kind=ShopReceiptKind.SALE, **window)
@@ -8365,6 +8366,16 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 or user.username
             )
         if receipt.status in counted:
+            seller_agg = seller_totals.setdefault(
+                receipt.created_by_id or 0,
+                {
+                    "seller": seller or "—",
+                    "receipts": 0,
+                    "qty": Decimal("0"),
+                    "amount": Decimal("0"),
+                },
+            )
+            seller_agg["receipts"] += 1
             for line in receipt.lines.all():
                 qty = _qty(line.quantity) - _qty(line.returned_quantity)
                 if qty <= 0:
@@ -8378,6 +8389,8 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 )
                 agg["qty"] += qty
                 agg["amount"] += amount
+                seller_agg["qty"] += qty
+                seller_agg["amount"] += amount
         if receipt.status in flagged_statuses:
             lines = list(receipt.lines.all())
             labels = [
@@ -8409,6 +8422,10 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         ),
         key=lambda row: (-row["amount"], row["item"]),
     )
+    sellers = sorted(
+        seller_totals.values(),
+        key=lambda row: (-row["amount"], row["seller"]),
+    )
     sales_count = sum(
         1 for receipt in receipts if receipt.status in counted
     )
@@ -8437,6 +8454,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
     return {
         "sales_count": sales_count,
         "items_sold": items_sold,
+        "sellers": sellers,
         "flagged_receipts": flagged_receipts,
         "credit_sales": _kind_totals(ShopReceiptKind.CREDIT),
         "gifts": _kind_totals(ShopReceiptKind.GIFT),
@@ -9246,6 +9264,46 @@ def build_shop_day_report_pdf(
         footer=["Total", _qty_label(sold_qty_total), _fmt(sold_amount_total)],
         dense=True,
         empty_note="No items sold this day.",
+    )
+
+    # -- Sales by employee -----------------------------------------------------
+    seller_rows = details.get("sellers") or []
+    seller_receipt_total = sum(
+        (r["receipts"] or 0) for r in seller_rows
+    )
+    seller_qty_total = sum(
+        (r["qty"] or Decimal("0")) for r in seller_rows
+    )
+    seller_amount_total = sum(
+        (r["amount"] or Decimal("0")) for r in seller_rows
+    )
+    _detail_table(
+        "Sales by employee",
+        ["Employee", "Sales", "Qty", "Amount"],
+        [
+            [
+                _p(r["seller"], cell_sm),
+                _p(str(r["receipts"]), cell_sm_right),
+                _p(_qty_label(r["qty"]), cell_sm_right),
+                _p(_fmt(r["amount"]), cell_sm_right),
+            ]
+            for r in seller_rows
+        ],
+        [
+            doc.width * 0.52,
+            doc.width * 0.13,
+            doc.width * 0.14,
+            doc.width * 0.21,
+        ],
+        aligns=["l", "r", "r", "r"],
+        footer=[
+            "Total",
+            str(seller_receipt_total),
+            _qty_label(seller_qty_total),
+            _fmt(seller_amount_total),
+        ],
+        dense=True,
+        empty_note="No sales recorded this day.",
     )
 
     # -- Pending & cancelled sales --------------------------------------------

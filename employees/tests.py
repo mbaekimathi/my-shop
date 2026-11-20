@@ -1506,6 +1506,7 @@ class AnalyticsDaySessionReportTests(TestCase):
                 "Money flow",
                 "Credit & gift — not in the till",
                 "Items sold",
+                "Sales by employee",
                 "Pending & cancelled sales",
                 "Drawings done",
                 "Expenses incurred",
@@ -1518,6 +1519,10 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertIn("Variance", flow_labels)
         items = page["tables"][2]
         self.assertEqual(items["rows"][0][0], "Charger")
+        sellers = page["tables"][3]
+        self.assertEqual(sellers["rows"][0][0], "870066")
+        self.assertEqual(sellers["rows"][0][1], "1")
+        self.assertEqual(sellers["rows"][0][3], "KSh 250.00")
         metric_labels = [m["label"] for m in page["metrics"]]
         self.assertIn("Counted closing", metric_labels)
         self.assertIn("Close variance", metric_labels)
@@ -4458,6 +4463,95 @@ class CompanyAccountantRoleTests(TestCase):
             response = self.client.get(url)
             self.assertEqual(response.status_code, 302, url)
             self.assertIn("/company-accountant/", response.url, url)
+
+    def test_overview_lists_employee_performance(self):
+        from decimal import Decimal
+
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from employees.analytics_services import build_analytics_page
+
+        cashier_user = User.objects.create_user(
+            username="850052",
+            password="x",
+            first_name="Cash",
+            last_name="Ier",
+            is_active=True,
+        )
+        cashier = EmployeeProfile.objects.create(
+            user=cashier_user,
+            employee_id="850052",
+            phone_country_code="+254",
+            phone_number="700000952",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        receipt = ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number="SL-EMP1",
+            client_name="Walk-in",
+            subtotal=200,
+            tax_percent=0,
+            tax_amount=0,
+            total=200,
+            amount_paid=200,
+            cash_amount=200,
+            payment_method="cash",
+            created_by=cashier,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item_name="Perf Item",
+            quantity=2,
+            unit_price=100,
+            unit_cost=40,
+            line_total=200,
+        )
+        request = RequestFactory().get(
+            "/company-accountant/analytics/",
+            {"range": "day", "date": timezone.localdate().isoformat()},
+        )
+        request.user = self.user
+        page = build_analytics_page(
+            profile=self.accountant,
+            request=request,
+            section_slug="overview",
+        )["page"]
+        table = next(
+            t for t in page["tables"] if t["title"] == "Employee performance"
+        )
+        labels = [
+            (col.get("label") if isinstance(col, dict) else col)
+            for col in table["columns"]
+        ]
+        self.assertEqual(
+            labels,
+            [
+                "Employee",
+                "Sales",
+                "Credits",
+                "Total revenue",
+                "Stock sold",
+                "Gross margin",
+                "Margin",
+            ],
+        )
+        self.assertEqual(len(table["rows"]), 2)
+        row = table["rows"][0]
+        self.assertEqual(row[0], "Cash Ier · 850052")
+        self.assertEqual(row[1]["qty"], "1")
+        self.assertEqual(row[1]["amount"], "200")
+        self.assertEqual(row[3]["amount"], "200")
+        self.assertEqual(row[4]["label"], "80")
+        self.assertEqual(row[5]["label"], "120")
+        self.assertEqual(row[6]["label"], "60.0%")
+        total_row = table["rows"][1]
+        self.assertEqual(total_row[0], "All employees")
+        self.assertEqual(total_row[1]["qty"], "1")
+        self.assertEqual(total_row[3]["amount"], "200")
 
     def test_explicit_permission_row_overrides_default(self):
         from employees.models import EmployeeModulePermission

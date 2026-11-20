@@ -182,7 +182,8 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `id`/`opened_by_id`/`closed_by_id` on every `session_rows` entry.
 - The session report page is built by `build_day_session_report_page` — the
   same sections as the day accounting PDF (money flow, items sold,
-  pending/cancelled sales, drawings, expenses, stocked in/out via
+  sales by employee, pending/cancelled sales, drawings, expenses,
+  stocked in/out via
   `day_session_balance_summary` / `day_session_report_details` with the
   employee's day-report counted-status pick; `_apply_pos_visibility` strips
   M-Pesa/Card-labelled columns when the POS flags are off — keep channel
@@ -197,7 +198,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   collected+left-to-collect, gift value with "—" collected columns, footnote
   shows the counted credit-slips trail opened/counted/diff). Credit and
   gift value never enters Expected in till or Variance — credit is a
-  receivable and gifts are free issues. `?download=1` streams the same
+  receivable and gifts are free issues. The "Sales by employee" table
+  follows Items sold — `day_session_report_details` returns `sellers`, a
+  per-`created_by` rollup (receipts/qty/amount, same counted statuses and
+  returned-qty netting as items sold, sorted amount desc; unnamed seller =
+  "—") rendered on the page, the `?paper=` print sheet (page.tables loop)
+  and the PDF. `?download=1` streams the same
   `build_shop_day_report_pdf`. Session links carry a `?back=` URL so "Back
   to cashiers" restores the filters. Tests:
   `AnalyticsDaySessionReportTests`.
@@ -686,6 +692,15 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Dashboard sidebar (`sidebar_for_role_dashboard` →
   `_dashboard_analytics_section_links`) shows: Stock Management, Analytics,
   Cashiers, Suppliers. Tests: `employees/tests.py::CompanyAccountantRoleTests`.
+- The analytics **overview** (`/…/analytics/`, `_build_overview`) carries an
+  "Employee performance" table after "Individual shops" — needed because the
+  Employees section (`analytics/employees`) is not on the accountant's
+  allow-list. `_employee_performance_for_period` roll-ups sales+credit docs
+  and line-level value/COGS per `receipt__created_by` (same netting and
+  last-buy cost fallback as `_trading_by_shop_for_period`), labelled
+  "name · employee_id"; columns mirror the shop rollup minus
+  expenses/profit (Sales/Credits/Total revenue pairs, Stock sold, Gross
+  margin, Margin) + an "All employees" total row.
 
 ## Multi-role employees
 - `EmployeeProfile.role` stays the **primary** role; `extra_roles` is a CSV
