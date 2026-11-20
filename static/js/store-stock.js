@@ -264,6 +264,152 @@
 
   bindEmployeeSearch();
 
+  // Supplier suggestions: typing in the supplier name/phone field searches the
+  // registered-supplier API and picking a row fills both fields.
+  function bindSupplierSearch() {
+    const supplierSearchUrl =
+      (form && form.getAttribute("data-supplier-search-url")) ||
+      root.getAttribute("data-supplier-search-url") ||
+      "";
+    const inputs = [...root.querySelectorAll("[data-supplier-search]")];
+    if (!supplierSearchUrl || !inputs.length) return;
+    const nameInput = root.querySelector('input[name="supplier_name"]');
+    const phoneInput = root.querySelector('input[name="supplier_phone"]');
+    let seq = 0;
+
+    const suggestOf = (input) =>
+      input
+        .closest("[data-supplier-search-root]")
+        ?.querySelector("[data-supplier-suggest]");
+
+    function hideSuggest(input) {
+      const nodes = input
+        ? [suggestOf(input)].filter(Boolean)
+        : [...root.querySelectorAll("[data-supplier-suggest]")];
+      nodes.forEach((el) => {
+        el.hidden = true;
+        el.innerHTML = "";
+      });
+    }
+
+    function applySupplier(supplier) {
+      if (nameInput) {
+        nameInput.value = String(supplier.name || "").toUpperCase();
+      }
+      if (phoneInput) {
+        phoneInput.value = `${supplier.dial || ""}${supplier.phone || ""}`;
+      }
+      hideSuggest();
+    }
+
+    function renderSuggest(input, results) {
+      const suggest = suggestOf(input);
+      if (!suggest) return;
+      suggest.innerHTML = "";
+      const by = input.getAttribute("data-supplier-search") || "name";
+      if (!results.length) {
+        const empty = document.createElement("button");
+        empty.type = "button";
+        empty.className = "stock-supplier-suggest-option is-empty";
+        empty.disabled = true;
+        empty.innerHTML =
+          `<strong>No registered supplier</strong>` +
+          `<small>Keep typing or enter a new supplier</small>`;
+        suggest.appendChild(empty);
+        suggest.hidden = false;
+        return;
+      }
+      results.forEach((supplier) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "stock-supplier-suggest-option";
+        btn.innerHTML = `<strong></strong><small></small>`;
+        const phoneLabel = `${supplier.dial || ""}${supplier.phone || ""}`;
+        if (by === "name") {
+          btn.querySelector("strong").textContent = supplier.name || "";
+          btn.querySelector("small").textContent = phoneLabel;
+        } else {
+          btn.querySelector("strong").textContent = phoneLabel;
+          btn.querySelector("small").textContent = supplier.name || "";
+        }
+        btn.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          applySupplier(supplier);
+        });
+        suggest.appendChild(btn);
+      });
+      suggest.hidden = false;
+    }
+
+    async function runSearch(input) {
+      const by = input.getAttribute("data-supplier-search") || "name";
+      const query = (input.value || "").trim();
+      const minLen = by === "phone" ? 3 : 2;
+      if (query.length < minLen) {
+        hideSuggest(input);
+        return;
+      }
+      const mySeq = ++seq;
+      const params = new URLSearchParams({ q: query, by });
+      try {
+        const response = await fetch(`${supplierSearchUrl}?${params}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (mySeq !== seq) return;
+        if (!data || data.ok === false) return;
+        const results = Array.isArray(data.results) ? data.results : [];
+        renderSuggest(input, results);
+        // Phone → confident match fills name straight away.
+        if (by !== "phone" || !results.length) return;
+        const digits = (value) => String(value || "").replace(/\D+/g, "");
+        const qDigits = digits(query);
+        if (qDigits.length < 7) return;
+        const match =
+          results.find((row) => digits(row.phone) === qDigits) ||
+          (results.length === 1 && digits(results[0].phone).includes(qDigits)
+            ? results[0]
+            : null);
+        if (match) applySupplier(match);
+      } catch (_err) {
+        /* ignore network errors during typing */
+      }
+    }
+
+    const onType = debounce((input) => runSearch(input), 180);
+    inputs.forEach((input) => {
+      input.addEventListener("input", () => onType(input));
+      input.addEventListener("focus", () => {
+        if ((input.value || "").trim()) onType(input);
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          hideSuggest(input);
+          return;
+        }
+        if (event.key !== "Enter") return;
+        const suggest = suggestOf(input);
+        if (!suggest || suggest.hidden) return;
+        const first = suggest.querySelector(
+          ".stock-supplier-suggest-option:not([disabled])"
+        );
+        if (first) {
+          event.preventDefault();
+          first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        }
+      });
+    });
+    document.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest("[data-supplier-search-root]")) return;
+      hideSuggest();
+    });
+  }
+
+  bindSupplierSearch();
+
   // One submit guard per form — the trade form holds two roots (give/receive)
   // and passes when either side has a quantity.
   if (form && !form.__storeStockSubmitBound) {

@@ -135,6 +135,45 @@ def parse_supplier_payment_details(
     }
 
 
+def register_supplier_from_stock_in(*, supplier_name: str, supplier_phone: str):
+    """Add the free-text store/shelf supplier to the shared Supplier registry
+    so it can be suggested on later stock-ins. Splits the free-text phone into
+    dial + national digits; silently skips when there is nothing usable."""
+    from items.services import (
+        _normalize_national_phone,
+        _normalize_phone_digits,
+        upsert_supplier,
+        VALID_DIAL_CODES,
+    )
+
+    name = (supplier_name or "").strip().upper()
+    raw = (supplier_phone or "").strip()
+    digits = _normalize_phone_digits(raw)
+    if not name or len(digits) < 6:
+        return None
+    dial = ""
+    national = ""
+    if raw.startswith("+") or digits.startswith("00"):
+        digits = digits[2:] if digits.startswith("00") else digits
+        for code in sorted(
+            VALID_DIAL_CODES,
+            key=lambda value: -len(_normalize_phone_digits(value)),
+        ):
+            code_digits = _normalize_phone_digits(code)
+            if digits.startswith(code_digits):
+                dial = code
+                national = _normalize_national_phone(
+                    digits[len(code_digits) :], code
+                )
+                break
+    else:
+        dial = "+254"
+        national = _normalize_national_phone(digits, dial)
+    if not dial or not national:
+        return None
+    return upsert_supplier(name=name, dial=dial, phone=national)
+
+
 def parse_stock_out_details(
     post_data, *, stock_req, field_prefix: str = ""
 ) -> dict:
@@ -291,6 +330,11 @@ def record_store_stock_lines(
                     supplier_phone=supplier_phone,
                 )
             )
+    if mode == StoreStockMovementType.IN:
+        register_supplier_from_stock_in(
+            supplier_name=supplier_name,
+            supplier_phone=supplier_phone,
+        )
     return movements
 
 

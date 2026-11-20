@@ -36,6 +36,7 @@
       data-mode="{{ flow }}"
       {% if flow == "in" and stock_req.require_buying_price_on_in %}data-require-price="always"{% endif %}
       data-employee-search-url="{{ employee_search_url }}"
+      data-supplier-search-url="{% url 'employees:supplier_search' %}"
       data-store-stock-form
     >
       {% csrf_token %}
@@ -141,25 +142,34 @@
             {% if flow == "in" %}
             <label class="stock-float-field">
               <span>Supplier phone{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
-              <input
-                type="tel"
-                name="supplier_phone"
-                maxlength="40"
-                placeholder="e.g. 0722 000 000"
-                {% if stock_req.require_supplier_on_in %}required{% endif %}
-              >
+              <div class="stock-supplier-name-wrap" data-supplier-search-root>
+                <input
+                  type="tel"
+                  name="supplier_phone"
+                  maxlength="40"
+                  placeholder="e.g. 0722 000 000"
+                  autocomplete="off"
+                  data-supplier-search="phone"
+                  {% if stock_req.require_supplier_on_in %}required{% endif %}
+                >
+                <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+              </div>
             </label>
             <label class="stock-float-field">
               <span>Supplier name{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
-              <input
-                type="text"
-                name="supplier_name"
-                maxlength="160"
-                placeholder="e.g. Brookside Distributors"
-                autocomplete="organization"
-                data-uppercase
-                {% if stock_req.require_supplier_on_in %}required{% endif %}
-              >
+              <div class="stock-supplier-name-wrap" data-supplier-search-root>
+                <input
+                  type="text"
+                  name="supplier_name"
+                  maxlength="160"
+                  placeholder="e.g. Brookside Distributors"
+                  autocomplete="off"
+                  data-supplier-search="name"
+                  data-uppercase
+                  {% if stock_req.require_supplier_on_in %}required{% endif %}
+                >
+                <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
+              </div>
             </label>
             <label class="stock-float-field">
               <span>Payment{% if not stock_req.require_payment_status_on_in %} <em>optional</em>{% endif %}</span>

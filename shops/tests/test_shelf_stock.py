@@ -905,6 +905,14 @@ class StoreManagerShelfStockTests(TestCase):
         self.assertIn('data-shelf-edit-form', body)
         self.assertIn('name="low_stock_threshold"', body)
 
+    def test_shelf_stock_in_suggests_registered_suppliers(self):
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, "data-supplier-search-url")
+        self.assertContains(page, 'data-supplier-search="name"')
+        self.assertContains(page, 'data-supplier-search="phone"')
+        self.assertContains(page, "data-supplier-suggest")
+
     def test_register_shelf_item_accepts_optional_image(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
 

@@ -14,7 +14,10 @@ from items.models import (
     StockOutReason,
     StockPaymentStatus,
 )
-from items.store_stock_services import _parse_buying_price
+from items.store_stock_services import (
+    _parse_buying_price,
+    register_supplier_from_stock_in,
+)
 
 _MAX_QTY = Decimal("999999999.999")
 
@@ -481,6 +484,12 @@ def record_shelf_movement(
     ):
         paid_amount = (Decimal(buying_price) * amount).quantize(
             Decimal("0.01")
+        )
+    if mode == ShelfStockMovementType.IN and not reason_clean:
+        # Plain stock-in: remember the supplier so later forms can suggest it.
+        register_supplier_from_stock_in(
+            supplier_name=supplier_name,
+            supplier_phone=supplier_phone,
         )
     return ShelfStockMovement.objects.create(
         shelf_item=item,

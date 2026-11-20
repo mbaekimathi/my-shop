@@ -3869,6 +3869,98 @@ class StoreManagerRoleTests(TestCase):
         self.assertContains(filtered, "STORE BOLT")
         self.assertContains(filtered, "Stock in")
 
+    def test_store_stock_in_registers_supplier_for_suggest(self):
+        from decimal import Decimal
+
+        from items.models import (
+            Item,
+            ShelfItem,
+            ShelfStockMovementType,
+            Supplier,
+        )
+        from items.shelf_stock_services import record_shelf_movement
+        from items.store_stock_services import record_store_stock_lines
+
+        item = Item.objects.create(
+            category="PARTS",
+            name="SUPPLIER BOLT",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("12.00"),
+            stock=Decimal("5.000"),
+        )
+        record_store_stock_lines(
+            mode="in",
+            actor=self.manager,
+            lines=[(item.pk, Decimal("2"), Decimal("12.00"))],
+            received_by_id=self.manager.pk,
+            supplier_name="Brookside Distributors",
+            supplier_phone="+254 722 000 000",
+            payment_status="paid",
+        )
+        supplier = Supplier.objects.get(phone_number="722000000")
+        self.assertEqual(supplier.name, "BROOKSIDE DISTRIBUTORS")
+        self.assertEqual(supplier.phone_country_code, "+254")
+
+        # Plain local format lands on the default +254 dial.
+        record_store_stock_lines(
+            mode="in",
+            actor=self.manager,
+            lines=[(item.pk, Decimal("1"), None)],
+            received_by_id=self.manager.pk,
+            supplier_name="Local Farm",
+            supplier_phone="0733 111 222",
+        )
+        local = Supplier.objects.get(name="LOCAL FARM")
+        self.assertEqual(local.phone_country_code, "+254")
+        self.assertEqual(local.phone_number, "733111222")
+
+        # Shelf stock-in registers too; stock-outs do not.
+        shelf = ShelfItem.objects.create(
+            shop=self.shop_a,
+            name="SALT 1KG",
+            unit="PACKETS",
+            quantity=Decimal("0"),
+            created_by=self.manager,
+        )
+        record_shelf_movement(
+            shop=self.shop_a,
+            shelf_item_id=shelf.pk,
+            mode=ShelfStockMovementType.IN,
+            qty="4",
+            actor=self.manager,
+            supplier_name="Shelf Supplier",
+            supplier_phone="0711 222 333",
+        )
+        self.assertTrue(Supplier.objects.filter(name="SHELF SUPPLIER").exists())
+        record_shelf_movement(
+            shop=self.shop_a,
+            shelf_item_id=shelf.pk,
+            mode=ShelfStockMovementType.OUT,
+            qty="1",
+            actor=self.manager,
+            supplier_name="Not A Supplier",
+            supplier_phone="0799 000 000",
+        )
+        self.assertFalse(Supplier.objects.filter(name="NOT A SUPPLIER").exists())
+
+        # The stock-in page carries the suggest markup + search URL.
+        self.client.login(username="830031", password=self.password)
+        page = self.client.get("/company-store-manager/store-stock-in/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "data-supplier-search-url")
+        self.assertContains(page, 'data-supplier-search="name"')
+        self.assertContains(page, 'data-supplier-search="phone"')
+        self.assertContains(page, "data-supplier-suggest")
+
+        # The stock-in popup on the item-stock page carries it too.
+        items_page = self.client.get("/company-store-manager/item-stock/")
+        self.assertEqual(items_page.status_code, 200)
+        self.assertContains(items_page, 'data-modal="store-stock-in"')
+        self.assertContains(items_page, "data-supplier-search-url")
+        self.assertContains(items_page, 'data-supplier-search="name"')
+        self.assertContains(items_page, 'data-supplier-search="phone"')
+        self.assertContains(items_page, "data-supplier-suggest")
+
     def test_store_stock_trade_give_and_receive(self):
         from decimal import Decimal
 

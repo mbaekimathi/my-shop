@@ -10950,102 +10950,102 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         )
     )
 
-    stock_groups = details.get("stock_purchases") or []
-    stock_in_rows = []
-    stock_in_qty_total = _zero()
-    stock_in_amount_total = _zero()
-    stock_in_has_total = False
     stock_status_tones = {
         StockPaymentStatus.PAID: "good",
         StockPaymentStatus.PARTIAL: "warn",
         StockPaymentStatus.UNPAID: "bad",
     }
-    for group in stock_groups:
-        source = (group.get("source_label") or "").strip() or "Stock in"
-        header = f"{_time(group['at'])} · {source}"
-        if group.get("paid"):
-            header += f" · Paid {_money_ksh(group['paid'])}"
-        elif group.get("payment_label"):
-            header += f" · {group['payment_label']}"
-        stock_in_rows.append({"group_header": True, "label": header})
-        lines = group.get("lines") or [
-            {
-                "item": "Stock purchase",
-                "qty": None,
-                "unit_cost": None,
-                "total": None,
-                "supplier_name": "",
-                "supplier_phone": "",
-            }
-        ]
-        for line in lines:
-            if line.get("qty") is not None:
-                stock_in_qty_total += Decimal(line["qty"])
-            if line.get("total") is not None:
-                stock_in_amount_total += Decimal(line["total"])
-                stock_in_has_total = True
-            stock_in_rows.append(
-                [
-                    line["item"],
-                    (
-                        _qty_label(line["qty"])
-                        if line.get("qty") is not None
-                        else "—"
-                    ),
-                    (
-                        _money_ksh(line["unit_cost"])
-                        if line.get("unit_cost") is not None
-                        else "—"
-                    ),
-                    (
-                        _money_ksh(line["total"])
-                        if line.get("total") is not None
-                        else "—"
-                    ),
-                    {
-                        "kind": "status",
-                        "label": line.get("payment_label") or "—",
-                        "tone": stock_status_tones.get(
-                            line.get("payment_status"), "neutral"
+
+    def _stocked_in_table(title, groups, empty):
+        rows = []
+        qty_total = _zero()
+        amount_total = _zero()
+        has_total = False
+        for group in groups:
+            source = (group.get("source_label") or "").strip() or "Stock in"
+            header = f"{_time(group['at'])} · {source}"
+            if group.get("paid"):
+                header += f" · Paid {_money_ksh(group['paid'])}"
+            elif group.get("payment_label"):
+                header += f" · {group['payment_label']}"
+            rows.append({"group_header": True, "label": header})
+            lines = group.get("lines") or [
+                {
+                    "item": "Stock purchase",
+                    "qty": None,
+                    "unit_cost": None,
+                    "total": None,
+                    "supplier_name": "",
+                    "supplier_phone": "",
+                }
+            ]
+            for line in lines:
+                if line.get("qty") is not None:
+                    qty_total += Decimal(line["qty"])
+                if line.get("total") is not None:
+                    amount_total += Decimal(line["total"])
+                    has_total = True
+                rows.append(
+                    [
+                        line["item"],
+                        (
+                            _qty_label(line["qty"])
+                            if line.get("qty") is not None
+                            else "—"
                         ),
-                    },
-                    _supplier_cell(
-                        line["supplier_name"], line["supplier_phone"]
-                    ),
-                ]
-            )
-    stock_paid_total = sum(
-        (Decimal(group.get("paid") or 0) for group in stock_groups), _zero()
-    )
-    if stock_groups:
-        stock_in_rows.append(
-            {
-                "total_row": True,
-                "cells": [
-                    "Total",
-                    _qty_label(stock_in_qty_total),
-                    "",
-                    (
-                        _money_ksh(stock_in_amount_total)
-                        if stock_in_has_total
-                        else "—"
-                    ),
-                    (
+                        (
+                            _money_ksh(line["unit_cost"])
+                            if line.get("unit_cost") is not None
+                            else "—"
+                        ),
+                        (
+                            _money_ksh(line["total"])
+                            if line.get("total") is not None
+                            else "—"
+                        ),
                         {
                             "kind": "status",
-                            "label": f"Paid {_money_ksh(stock_paid_total)}",
-                            "tone": "good",
-                        }
-                        if stock_paid_total > 0
-                        else "—"
-                    ),
-                    "",
-                ],
-            }
+                            "label": line.get("payment_label") or "—",
+                            "tone": stock_status_tones.get(
+                                line.get("payment_status"), "neutral"
+                            ),
+                        },
+                        _supplier_cell(
+                            line["supplier_name"], line["supplier_phone"]
+                        ),
+                    ]
+                )
+        paid_total = sum(
+            (Decimal(group.get("paid") or 0) for group in groups), _zero()
         )
-    tables.append(
-        _table(
-            "Stocked in",
+        if groups:
+            rows.append(
+                {
+                    "total_row": True,
+                    "cells": [
+                        "Total",
+                        _qty_label(qty_total),
+                        "",
+                        (
+                            _money_ksh(amount_total)
+                            if has_total
+                            else "—"
+                        ),
+                        (
+                            {
+                                "kind": "status",
+                                "label": f"Paid {_money_ksh(paid_total)}",
+                                "tone": "good",
+                            }
+                            if paid_total > 0
+                            else "—"
+                        ),
+                        "",
+                    ],
+                }
+            )
+        return _table(
+            title,
             [
                 "Item",
                 {"label": "Qty", "money": True},
@@ -11054,79 +11054,83 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 "Status",
                 "Supplier",
             ],
-            stock_in_rows,
-            empty="No stock added this day.",
+            rows,
+            empty=empty,
             footnote=(
-                f"Paid to suppliers {_money_ksh(stock_paid_total)}"
-                if stock_groups
+                f"Paid to suppliers {_money_ksh(paid_total)}"
+                if groups
                 else ""
             ),
         )
-    )
 
-    stock_out = details.get("stock_out") or []
-    stock_out_total = details.get("stock_out_est_total")
-    if stock_out_total is None:
-        stock_out_total = sum(
-            (Decimal(row.get("est_value") or 0) for row in stock_out), _zero()
-        )
-    stock_out_qty_total = sum(
-        (Decimal(row.get("qty") or 0) for row in stock_out), _zero()
-    )
-    stock_out_refund_total = sum(
-        (
-            Decimal(row.get("refund_amount") or 0)
-            for row in stock_out
-            if row.get("refund_amount") is not None
-        ),
-        _zero(),
-    )
-    stock_out_rows = []
-    for row in stock_out:
-        extras = []
-        if row.get("note"):
-            extras.append(row["note"])
-        if row.get("refund_amount"):
-            extras.append(f"Refund {_money_ksh(row['refund_amount'])}")
-        stock_out_rows.append(
-            [
-                _time(row["at"]),
-                row["item"],
-                _qty_label(row["qty"]),
-                {
-                    "label": row.get("reason_label") or "—",
-                    "sub": " · ".join(extras),
-                },
-                _money_ksh(row["unit_cost"]),
-                _money_ksh(row["est_value"]),
-            ]
-        )
-    if stock_out:
-        stock_out_rows.append(
-            {
-                "total_row": True,
-                "cells": [
-                    "Total",
-                    "",
-                    _qty_label(stock_out_qty_total),
-                    "",
-                    "",
-                    _money_ksh(stock_out_total),
-                ],
-            }
-        )
-    stock_out_footnote = ""
-    if stock_out:
-        stock_out_footnote = (
-            f"Estimated value {_money_ksh(stock_out_total)}"
-        )
-        if stock_out_refund_total > 0:
-            stock_out_footnote += (
-                f" · Refunded {_money_ksh(stock_out_refund_total)}"
+    def _stocked_out_table(title, out_rows, est_total, empty):
+        qty_total = _zero()
+        refund_total = _zero()
+        has_value = False
+        value_total = _zero()
+        rows = []
+        for row in out_rows:
+            extras = []
+            if row.get("note"):
+                extras.append(row["note"])
+            if row.get("refund_amount"):
+                refund_total += Decimal(row["refund_amount"])
+                extras.append(
+                    f"Refund {_money_ksh(row['refund_amount'])}"
+                )
+            qty_total += Decimal(row.get("qty") or 0)
+            if row.get("est_value") is not None:
+                value_total += Decimal(row["est_value"])
+                has_value = True
+            rows.append(
+                [
+                    _time(row["at"]),
+                    row["item"],
+                    _qty_label(row["qty"]),
+                    {
+                        "label": row.get("reason_label") or "—",
+                        "sub": " · ".join(extras),
+                    },
+                    (
+                        _money_ksh(row["unit_cost"])
+                        if row.get("unit_cost") is not None
+                        else "—"
+                    ),
+                    (
+                        _money_ksh(row["est_value"])
+                        if row.get("est_value") is not None
+                        else "—"
+                    ),
+                ]
             )
-    tables.append(
-        _table(
-            "Stocked out",
+        if est_total is not None:
+            value_total = Decimal(est_total)
+            has_value = has_value or value_total != 0
+        if out_rows:
+            rows.append(
+                {
+                    "total_row": True,
+                    "cells": [
+                        "Total",
+                        "",
+                        _qty_label(qty_total),
+                        "",
+                        "",
+                        _money_ksh(value_total) if has_value else "—",
+                    ],
+                }
+            )
+        footnote_parts = []
+        if has_value:
+            footnote_parts.append(
+                f"Estimated value {_money_ksh(value_total)}"
+            )
+        if refund_total > 0:
+            footnote_parts.append(
+                f"Refunded {_money_ksh(refund_total)}"
+            )
+        return _table(
+            title,
             [
                 "Time",
                 "Item",
@@ -11135,11 +11139,50 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 {"label": "Amount", "money": True},
                 {"label": "Total", "money": True},
             ],
-            stock_out_rows,
-            empty="No stock removed this day.",
-            footnote=stock_out_footnote,
+            rows,
+            empty=empty,
+            footnote=" · ".join(footnote_parts) if out_rows else "",
         )
-    )
+
+    stock_groups = details.get("stock_purchases") or []
+    stock_out = details.get("stock_out") or []
+    if bool(getattr(pos, "enable_stock_tracking", True)) or (
+        stock_groups or stock_out
+    ):
+        tables.append(
+            _stocked_in_table(
+                "Stocked in", stock_groups, "No stock added this day."
+            )
+        )
+        tables.append(
+            _stocked_out_table(
+                "Stocked out",
+                stock_out,
+                details.get("stock_out_est_total"),
+                "No stock removed this day.",
+            )
+        )
+
+    shelf_groups = details.get("shelf_purchases") or []
+    shelf_out = details.get("shelf_out") or []
+    if bool(getattr(pos, "enable_shelf_mode", False)) or (
+        shelf_groups or shelf_out
+    ):
+        tables.append(
+            _stocked_in_table(
+                "Shelf stocked in",
+                shelf_groups,
+                "No shelf stock added this day.",
+            )
+        )
+        tables.append(
+            _stocked_out_table(
+                "Shelf stocked out",
+                shelf_out,
+                None,
+                "No shelf stock removed this day.",
+            )
+        )
 
     alerts = []
     if is_open:

@@ -8008,7 +8008,12 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
     if not sessions:
         return []
 
-    from items.models import StockMovement, StockMovementType
+    from items.models import (
+        ShelfStockMovement,
+        ShelfStockMovementType,
+        StockMovement,
+        StockMovementType,
+    )
 
     stamp_session_activity_starts(sessions)
     min_opened = min(session_activity_start(session) for session in sessions)
@@ -8055,6 +8060,18 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             amount_paid__gt=0,
         ).values("created_at", "amount_paid")
     )
+    supplier_payments += list(
+        ShelfStockMovement.objects.filter(
+            shelf_item__shop=shop,
+            movement_type__in=(
+                ShelfStockMovementType.IN,
+                ShelfStockMovementType.REGISTER,
+            ),
+            created_at__gte=min_opened,
+            created_at__lt=max_closed,
+            amount_paid__gt=0,
+        ).values("created_at", "amount_paid")
+    )
 
     rows = []
     for session in sessions:
@@ -8085,7 +8102,12 @@ def day_session_balance_summary(session, counted_statuses=None) -> dict:
     `counted_statuses` narrows which receipt statuses count as sales (and
     which receipts' return refunds subtract); None counts every sale receipt.
     """
-    from items.models import StockMovement, StockMovementType
+    from items.models import (
+        ShelfStockMovement,
+        ShelfStockMovementType,
+        StockMovement,
+        StockMovementType,
+    )
 
     from .models import Expense, ShopReceipt
 
@@ -8140,6 +8162,18 @@ def day_session_balance_summary(session, counted_statuses=None) -> dict:
             amount_paid__gt=0,
         ).values("created_at", "amount_paid")
     )
+    supplier_payments += list(
+        ShelfStockMovement.objects.filter(
+            shelf_item__shop_id=session.shop_id,
+            movement_type__in=(
+                ShelfStockMovementType.IN,
+                ShelfStockMovementType.REGISTER,
+            ),
+            created_at__gte=window_start,
+            created_at__lt=closed,
+            amount_paid__gt=0,
+        ).values("created_at", "amount_paid")
+    )
     return _session_activity_totals(
         session,
         sales=sales,
@@ -8156,6 +8190,8 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
     and the sales count; the flagged (pending/cancelled) list is unaffected.
     """
     from items.models import (
+        ShelfStockMovement,
+        ShelfStockMovementType,
         StockMovement,
         StockMovementType,
         StockOutReason,
@@ -8340,6 +8376,84 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 }
             )
 
+    shelf_groups = []
+    shelf_out_rows = []
+    for movement in (
+        ShelfStockMovement.objects.filter(
+            shelf_item__shop_id=session.shop_id,
+            created_at__gte=window["created_at__gte"],
+            created_at__lt=window["created_at__lt"],
+        )
+        .select_related("shelf_item")
+        .order_by("created_at")
+    ):
+        item_name = (
+            (movement.shelf_item.name or "").strip()
+            if movement.shelf_item_id
+            else ""
+        ) or "Shelf item"
+        qty = _qty(movement.quantity)
+        if movement.movement_type == ShelfStockMovementType.OUT:
+            shelf_out_rows.append(
+                {
+                    "at": movement.created_at,
+                    "item": item_name,
+                    "qty": qty,
+                    "unit_cost": None,
+                    "est_value": None,
+                    "reason": movement.reason or "",
+                    "reason_label": stock_out_reason_labels.get(
+                        movement.reason, ""
+                    ),
+                    "note": (movement.note or "").strip(),
+                    "refund_amount": movement.refund_amount,
+                }
+            )
+            continue
+        unit = movement.buying_price
+        shelf_groups.append(
+            {
+                "at": movement.created_at,
+                "paid": movement.amount_paid,
+                "payment_label": (
+                    movement.get_payment_status_display()
+                    if movement.payment_status
+                    else ""
+                ),
+                "source_label": (
+                    movement.get_movement_type_display()
+                    if movement.movement_type
+                    else "Shelf stock"
+                ),
+                "lines": [
+                    {
+                        "item": item_name,
+                        "qty": qty,
+                        "unit_cost": unit,
+                        "total": (
+                            (unit * qty).quantize(Decimal("0.01"))
+                            if unit is not None
+                            else None
+                        ),
+                        "payment_status": (
+                            movement.payment_status or ""
+                        ).strip(),
+                        "payment_label": (
+                            movement.get_payment_status_display()
+                            if movement.payment_status
+                            else ""
+                        ),
+                        "supplier_name": (
+                            movement.supplier_name or ""
+                        ).strip(),
+                        "supplier_phone": (
+                            movement.supplier_phone or ""
+                        ).strip(),
+                    }
+                ],
+            }
+        )
+
     counted = (
         set(counted_statuses)
         if counted_statuses is not None
@@ -8469,6 +8583,8 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         "stock_purchases": stock_rows,
         "stock_out": stock_out_rows,
         "stock_out_est_total": stock_out_est_total,
+        "shelf_purchases": shelf_groups,
+        "shelf_out": shelf_out_rows,
     }
 
 
@@ -9441,11 +9557,7 @@ def build_shop_day_report_pdf(
         empty_note="No expenses recorded this day.",
     )
 
-    # -- Stocked in -----------------------------------------------------------
-    stock_groups = details.get("stock_purchases") or []
-    stock_rows = []
-    stock_spans = []
-    stock_bgs = []
+    # -- Stocked in / out (item + shelf ledgers share the row shapes) ---------
     stock_in_sources = {"Buy items", "Stock management"}
 
     def _stock_in_item_cell(stock_line, group):
@@ -9463,98 +9575,97 @@ def build_shop_day_report_pdf(
             return _pr(_fmt(group["paid"]), strong=True)
         return _pr(group.get("payment_label") or "—")
 
-    stock_in_qty_total = Decimal("0")
-    stock_in_value_total = Decimal("0")
-    stock_in_has_total = False
-    for index, group in enumerate(stock_groups):
-        lines = group.get("lines") or []
-        if not lines:
-            lines = [
-                {
-                    "item": "Stock purchase",
-                    "qty": None,
-                    "unit_cost": None,
-                    "total": None,
-                    "supplier_name": "",
-                    "supplier_phone": "",
-                }
-            ]
-        start = len(stock_rows) + 1  # +1 for the header row
-        for i, stock_line in enumerate(lines):
-            if stock_line.get("qty") is not None:
-                stock_in_qty_total += Decimal(stock_line["qty"])
-            if stock_line.get("total") is not None:
-                stock_in_value_total += Decimal(stock_line["total"])
-                stock_in_has_total = True
-            stock_rows.append(
-                [
-                    _p(_time(group["at"])) if i == 0 else "",
-                    _stock_in_item_cell(stock_line, group),
-                    _pr(
-                        _qty_label(stock_line["qty"])
-                        if stock_line["qty"] is not None
-                        else "—"
-                    ),
-                    _pr(
-                        _fmt(stock_line["unit_cost"])
-                        if stock_line["unit_cost"] is not None
-                        else "—"
-                    ),
-                    _pr(
-                        _fmt(stock_line["total"])
-                        if stock_line["total"] is not None
-                        else "—"
-                    ),
-                    _supplier_cell(
-                        stock_line["supplier_name"],
-                        stock_line["supplier_phone"],
-                    ),
-                    _stock_in_paid_cell(group) if i == 0 else "",
+    def _stocked_in_detail(title, groups, empty_note):
+        stock_rows = []
+        stock_spans = []
+        stock_bgs = []
+        qty_total = Decimal("0")
+        value_total = Decimal("0")
+        has_total = False
+        for index, group in enumerate(groups):
+            lines = group.get("lines") or []
+            if not lines:
+                lines = [
+                    {
+                        "item": "Stock purchase",
+                        "qty": None,
+                        "unit_cost": None,
+                        "total": None,
+                        "supplier_name": "",
+                        "supplier_phone": "",
+                    }
                 ]
-            )
-        end = len(stock_rows)
-        if end > start:
-            stock_spans += [((0, start), (0, end)), ((6, start), (6, end))]
-        if index % 2 == 1:
-            stock_bgs.append((start, end))
-    stock_paid_total = sum(
-        (g.get("paid") or Decimal("0")) for g in stock_groups
-    )
-    _detail_table(
-        "Stocked in",
-        ["Time", "Item", "Qty", "Amount", "Total", "Supplier", "Paid"],
-        stock_rows,
-        [
-            doc.width * 0.07,
-            doc.width * 0.24,
-            doc.width * 0.07,
-            doc.width * 0.10,
-            doc.width * 0.11,
-            doc.width * 0.26,
-            doc.width * 0.15,
-        ],
-        aligns=["l", "l", "r", "r", "r", "l", "r"],
-        footer=[
-            "Total",
-            "",
-            _qty_label(stock_in_qty_total) if stock_groups else "",
-            "",
-            _fmt(stock_in_value_total) if stock_in_has_total else "",
-            "",
-            _fmt(stock_paid_total),
-        ],
-        spans=stock_spans,
-        group_backgrounds=stock_bgs,
-        empty_note="No stock added this day.",
-    )
-
-    # -- Stocked out ----------------------------------------------------------
-    stock_out_rows = details.get("stock_out") or []
-    stock_out_total = (
-        details.get("stock_out_est_total")
-        if details.get("stock_out_est_total") is not None
-        else sum((r["est_value"] or Decimal("0")) for r in stock_out_rows)
-    )
+            start = len(stock_rows) + 1  # +1 for the header row
+            for i, stock_line in enumerate(lines):
+                if stock_line.get("qty") is not None:
+                    qty_total += Decimal(stock_line["qty"])
+                if stock_line.get("total") is not None:
+                    value_total += Decimal(stock_line["total"])
+                    has_total = True
+                stock_rows.append(
+                    [
+                        _p(_time(group["at"])) if i == 0 else "",
+                        _stock_in_item_cell(stock_line, group),
+                        _pr(
+                            _qty_label(stock_line["qty"])
+                            if stock_line["qty"] is not None
+                            else "—"
+                        ),
+                        _pr(
+                            _fmt(stock_line["unit_cost"])
+                            if stock_line["unit_cost"] is not None
+                            else "—"
+                        ),
+                        _pr(
+                            _fmt(stock_line["total"])
+                            if stock_line["total"] is not None
+                            else "—"
+                        ),
+                        _supplier_cell(
+                            stock_line["supplier_name"],
+                            stock_line["supplier_phone"],
+                        ),
+                        _stock_in_paid_cell(group) if i == 0 else "",
+                    ]
+                )
+            end = len(stock_rows)
+            if end > start:
+                stock_spans += [
+                    ((0, start), (0, end)),
+                    ((6, start), (6, end)),
+                ]
+            if index % 2 == 1:
+                stock_bgs.append((start, end))
+        paid_total = sum(
+            (g.get("paid") or Decimal("0")) for g in groups
+        )
+        _detail_table(
+            title,
+            ["Time", "Item", "Qty", "Amount", "Total", "Supplier", "Paid"],
+            stock_rows,
+            [
+                doc.width * 0.07,
+                doc.width * 0.24,
+                doc.width * 0.07,
+                doc.width * 0.10,
+                doc.width * 0.11,
+                doc.width * 0.26,
+                doc.width * 0.15,
+            ],
+            aligns=["l", "l", "r", "r", "r", "l", "r"],
+            footer=[
+                "Total",
+                "",
+                _qty_label(qty_total) if groups else "",
+                "",
+                _fmt(value_total) if has_total else "",
+                "",
+                _fmt(paid_total),
+            ],
+            spans=stock_spans,
+            group_backgrounds=stock_bgs,
+            empty_note=empty_note,
+        )
 
     def _stock_out_reason_cell(row):
         label = row["reason_label"] or "—"
@@ -9572,47 +9683,101 @@ def build_shop_day_report_pdf(
             )
         return Paragraph(html, cell_sm)
 
-    _detail_table(
-        "Stocked out",
-        ["Time", "Item", "Qty", "Reason", "Amount", "Total"],
-        [
-            [
-                _p(_time(r["at"]), cell_sm),
-                _p(r["item"], cell_sm),
-                _p(_qty_label(r["qty"]), cell_sm_right),
-                _stock_out_reason_cell(r),
-                _p(_fmt(r["unit_cost"]), cell_sm_right),
-                _p(_fmt(r["est_value"]), cell_sm_right),
-            ]
-            for r in stock_out_rows
-        ],
-        [
-            doc.width * 0.07,
-            doc.width * 0.31,
-            doc.width * 0.08,
-            doc.width * 0.24,
-            doc.width * 0.12,
-            doc.width * 0.18,
-        ],
-        aligns=["l", "l", "r", "l", "r", "r"],
-        footer=[
-            "Estimated value lost",
-            "",
-            _qty_label(
-                sum(
-                    (Decimal(r["qty"] or 0) for r in stock_out_rows),
-                    Decimal("0"),
-                )
+    def _stocked_out_detail(title, out_rows, est_total, empty_note):
+        value_total = (
+            Decimal(est_total)
+            if est_total is not None
+            else sum(
+                (Decimal(r["est_value"]) for r in out_rows if r.get("est_value") is not None),
+                Decimal("0"),
             )
-            if stock_out_rows
-            else "",
-            "",
-            "",
-            _fmt(stock_out_total),
-        ],
-        dense=True,
-        empty_note="No stock taken out this day.",
-    )
+        )
+        has_value = est_total is not None or any(
+            r.get("est_value") is not None for r in out_rows
+        )
+        _detail_table(
+            title,
+            ["Time", "Item", "Qty", "Reason", "Amount", "Total"],
+            [
+                [
+                    _p(_time(r["at"]), cell_sm),
+                    _p(r["item"], cell_sm),
+                    _p(_qty_label(r["qty"]), cell_sm_right),
+                    _stock_out_reason_cell(r),
+                    _p(
+                        _fmt(r["unit_cost"])
+                        if r.get("unit_cost") is not None
+                        else "—",
+                        cell_sm_right,
+                    ),
+                    _p(
+                        _fmt(r["est_value"])
+                        if r.get("est_value") is not None
+                        else "—",
+                        cell_sm_right,
+                    ),
+                ]
+                for r in out_rows
+            ],
+            [
+                doc.width * 0.07,
+                doc.width * 0.31,
+                doc.width * 0.08,
+                doc.width * 0.24,
+                doc.width * 0.12,
+                doc.width * 0.18,
+            ],
+            aligns=["l", "l", "r", "l", "r", "r"],
+            footer=[
+                "Estimated value lost" if has_value else "Total",
+                "",
+                _qty_label(
+                    sum(
+                        (Decimal(r["qty"] or 0) for r in out_rows),
+                        Decimal("0"),
+                    )
+                )
+                if out_rows
+                else "",
+                "",
+                "",
+                _fmt(value_total) if has_value else "",
+            ],
+            dense=True,
+            empty_note=empty_note,
+        )
+
+    stock_groups = details.get("stock_purchases") or []
+    stock_out_rows = details.get("stock_out") or []
+    if getattr(pos, "enable_stock_tracking", True) or (
+        stock_groups or stock_out_rows
+    ):
+        _stocked_in_detail(
+            "Stocked in", stock_groups, "No stock added this day."
+        )
+        _stocked_out_detail(
+            "Stocked out",
+            stock_out_rows,
+            details.get("stock_out_est_total"),
+            "No stock taken out this day.",
+        )
+
+    shelf_groups = details.get("shelf_purchases") or []
+    shelf_out_rows = details.get("shelf_out") or []
+    if getattr(pos, "enable_shelf_mode", False) or (
+        shelf_groups or shelf_out_rows
+    ):
+        _stocked_in_detail(
+            "Shelf stocked in",
+            shelf_groups,
+            "No shelf stock added this day.",
+        )
+        _stocked_out_detail(
+            "Shelf stocked out",
+            shelf_out_rows,
+            None,
+            "No shelf stock removed this day.",
+        )
 
     if is_open:
         story.append(Spacer(1, 4))

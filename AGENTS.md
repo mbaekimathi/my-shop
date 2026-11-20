@@ -163,6 +163,22 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Tests that write `CompanyStockSettings` directly must call
   `_invalidate_stock_settings_cache()` afterwards — the cached row survives
   into later tests otherwise.
+- Stock-in supplier fields suggest from the shared `Supplier` registry: the
+  shop-floor buy-stock forms (split dial + phone) and the central-store
+  item/shelf in/out modals + page forms (single free-text
+  `supplier_phone`) all carry `data-supplier-search="name|phone"` inside a
+  `data-supplier-search-root` wrap with a `[data-supplier-suggest]` box; the
+  form's `data-supplier-search-url` points at `employees:supplier_search`.
+  `store-stock.js` binds the central-store forms (debounced fetch, pick
+  fills name + `dial+phone`, phone digits ≥7 auto-fills on a confident
+  match); `stock-bulk.js` does the shop-floor forms. Store/shelf stock-ins
+  also *register* the supplier — `register_supplier_from_stock_in`
+  (`items/store_stock_services.py`, called from `record_store_stock_lines`
+  and plain `record_shelf_movement` IN) splits the free-text phone into
+  dial + national digits ("+"/"00" prefix → match `VALID_DIAL_CODES`, else
+  default `+254`) and `upsert_supplier`s it. Trade persons are not
+  registered; the `chat` store mirror intentionally never touches
+  suppliers.
 
 ## Item pricing
 - Prices are stored per shop on `ShopItemPrice` (`price` + `is_sold` flag);
@@ -221,7 +237,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   plus a Status chip from `StockMovementLine.payment_status`
   (Paid/Partial/Unpaid — the group header still carries the movement's
   `amount_paid` total); Stocked out lists Item/Qty/Reason/Amount/Total.
-  Both end in a `total_row` dict (cells + `total_row: True` →
+  `day_session_report_details` also returns `shelf_purchases` /
+  `shelf_out` — the same group/line shapes built from
+  `ShelfStockMovement` (REGISTER counts as stocked in; shelf outs carry
+  no cost basis so Amount/Total show "—") — rendered as "Shelf stocked
+  in/out" tables via the shared `_stocked_in_table`/`_stocked_out_table`
+  closures (page) and `_stocked_in_detail`/`_stocked_out_detail` (PDF).
+  Item tables show while `enable_stock_tracking` is on, shelf tables
+  while `enable_shelf_mode` is on — either pair stays if rows exist for
+  a since-disabled mode. Paid shelf stock-ins (`amount_paid`) also count
+  in `suppliers_paid` → the money-flow "Stock bought" row and Expected
+  in till, matching item stock-ins. Both tables end in a `total_row`
+  dict (cells + `total_row: True` →
   `ax-row--total` on screen, `row-total` on the print sheet, the
   `_detail_table` footer on the PDF) summing qty + line totals; the
   stock-out footnote adds "· Refunded" when lines carry

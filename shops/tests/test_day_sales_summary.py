@@ -491,6 +491,68 @@ class DayReportCountedStatusesTests(TestCase):
             details["stock_out_est_total"], Decimal("80.00")
         )
 
+    def test_shelf_stocked_in_and_out_lists_with_paid(self):
+        from items.models import (
+            ShelfItem,
+            ShelfStockMovement,
+            ShelfStockMovementType,
+            StockOutReason,
+            StockPaymentStatus,
+        )
+        from shops.services import (
+            day_session_balance_summary,
+            day_session_report_details,
+        )
+
+        shelf_item = ShelfItem.objects.create(
+            shop=self.shop,
+            name="Report Flour",
+            unit="kg",
+            created_by=self.profile,
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=Decimal("5"),
+            buying_price=Decimal("60.00"),
+            payment_status=StockPaymentStatus.PAID,
+            amount_paid=Decimal("300.00"),
+            supplier_name="GRAINS CO",
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.OUT,
+            quantity=Decimal("1"),
+            reason=StockOutReason.WASTE,
+            refund="yes",
+            refund_amount=Decimal("30.00"),
+            note="Spoiled",
+        )
+
+        details = day_session_report_details(self.session)
+        groups = details["shelf_purchases"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["paid"], Decimal("300.00"))
+        self.assertEqual(groups[0]["source_label"], "Shelf stock in")
+        line = groups[0]["lines"][0]
+        self.assertEqual(line["item"], "Report Flour")
+        self.assertEqual(line["qty"], Decimal("5"))
+        self.assertEqual(line["total"], Decimal("300.00"))
+        self.assertEqual(line["payment_status"], "paid")
+        self.assertEqual(line["supplier_name"], "GRAINS CO")
+
+        out = details["shelf_out"]
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["item"], "Report Flour")
+        self.assertEqual(out[0]["qty"], Decimal("1"))
+        self.assertIsNone(out[0]["est_value"])
+        self.assertEqual(out[0]["reason_label"], "Waste")
+        self.assertEqual(out[0]["refund_amount"], Decimal("30.00"))
+
+        # Paid shelf stock-ins count as money out of the till too.
+        summary = day_session_balance_summary(self.session)
+        self.assertEqual(summary["suppliers_paid"], Decimal("300.00"))
+
 
 class CashierDaySummaryContextTests(TestCase):
     def setUp(self):

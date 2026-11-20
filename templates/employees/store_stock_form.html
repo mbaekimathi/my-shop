@@ -35,7 +35,12 @@
     </dl>
   </header>
 
-  <form class="store-stock-form" method="post" data-store-stock-form>
+  <form
+    class="store-stock-form"
+    method="post"
+    data-supplier-search-url="{% url 'employees:supplier_search' %}"
+    data-store-stock-form
+  >
     {% csrf_token %}
 
     <section class="store-stock-panel" aria-labelledby="store-stock-meta-title">
@@ -72,29 +77,35 @@
         {% if mode == "in" %}
         <label class="store-stock-field">
           <span>Supplier name{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
-          <div class="store-stock-input-wrap">
+          <div class="store-stock-input-wrap stock-supplier-name-wrap" data-supplier-search-root>
             <i data-lucide="truck" aria-hidden="true"></i>
             <input
               type="text"
               name="supplier_name"
               maxlength="160"
               placeholder="e.g. Brookside Distributors"
+              autocomplete="off"
+              data-supplier-search="name"
               data-uppercase
               {% if stock_req.require_supplier_on_in %}required{% endif %}
             >
+            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
           </div>
         </label>
         <label class="store-stock-field">
           <span>Supplier phone{% if not stock_req.require_supplier_on_in %} <em>optional</em>{% endif %}</span>
-          <div class="store-stock-input-wrap">
+          <div class="store-stock-input-wrap stock-supplier-name-wrap" data-supplier-search-root>
             <i data-lucide="phone" aria-hidden="true"></i>
             <input
               type="tel"
               name="supplier_phone"
               maxlength="40"
               placeholder="e.g. 0722 000 000"
+              autocomplete="off"
+              data-supplier-search="phone"
               {% if stock_req.require_supplier_on_in %}required{% endif %}
             >
+            <div class="stock-supplier-suggest" data-supplier-suggest hidden></div>
           </div>
         </label>
         <label class="store-stock-field">
@@ -221,5 +232,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/store-stock.js' %}?v=7"></script>
+<script defer src="{% static 'js/store-stock.js' %}?v=8"></script>
 {% endblock %}
