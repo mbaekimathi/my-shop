@@ -695,8 +695,8 @@
     }
     if (card.sales) {
       var c = card.sales;
-      // Items sold ships in the same card — the link only appears on older
-      // payloads that don't carry it.
+      // Items stay behind a link — clicking it fetches the items list as
+      // a follow-up reply. Older payloads may still embed items_sold.
       var itemsLink = !it && c.start && c.end
         ? '<a class="wa-link" href="#" data-bitems="' +
           escapeHtml(c.start + ":" + c.end + ":" + (c.receipt_status || "")) +

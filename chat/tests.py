@@ -672,6 +672,28 @@ class BotTests(ChatTestCase):
         self.assertIn("confirmed receipts", reply)
         self.assertIn("No items sold", reply)
 
+    def test_sales_answers_sales_first_items_via_link(self):
+        """A sales query — even one mentioning items — shows sales first;
+        items stay behind the reply's fetch link instead of embedding."""
+        from .bot import card_meta
+
+        for text in ("sales today", "sales + items today"):
+            reply = reply_for(self.shop_a, text)
+            self.assertIn("KSh 1,500.00", reply)
+            self.assertIn("%%items|", reply)
+            card = card_meta(self.shop_a, text)
+            self.assertIn("sales", card)
+            self.assertNotIn("items_sold", card)
+
+        # Clicking the link sends "items <start> to <end>" — the items
+        # list then comes back as its own reply/card.
+        today = timezone.localtime().date()
+        end = today + timedelta(days=1)
+        items_reply = reply_for(self.shop_a, f"items {today} to {end}")
+        self.assertIn("Sugar 1kg", items_reply)
+        items_card = card_meta(self.shop_a, f"items {today} to {end}")
+        self.assertIn("items_sold", items_card)
+
     def test_stock_intent(self):
         reply = reply_for(self.shop_a, "stock sugar")
         self.assertIn("Sugar 1kg", reply)

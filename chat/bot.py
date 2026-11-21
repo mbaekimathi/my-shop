@@ -959,12 +959,17 @@ def items_sold_rows(shop: Shop, text: str):
 
 
 ITEMS_INTENT_RE = re.compile(r"\bitems?\b", re.I)
+# Naming a sales report (sale/sales/revenue/income) wins over the items
+# word — the sales reply answers first and items ride behind its
+# "View items sold" link instead of taking over the reply.
+SALES_WORD_RE = re.compile(r"\b(sales?|revenue|income)\b", re.I)
 
 
 def items_intent_matches(shop, text: str) -> bool:
     low = (text or "").lower()
     return bool(
         ITEMS_INTENT_RE.search(low)
+        and not SALES_WORD_RE.search(low)
         and (
             re.search(r"\bsold\b|\blist\b|\bsales\b", low)
             or re.search(
@@ -1028,21 +1033,9 @@ def card_meta(shop: Shop, text: str):
                 "receipt_status": status,
             }
         }
-        # Sales and items ride in one reply — the client renders the items
-        # table under the sales stats instead of a second "items" message.
-        ilabel, irows = items_sold_rows(shop, t)
-        if irows:
-            card["items_sold"] = {
-                "label": ilabel,
-                "items": [
-                    {
-                        "name": r["item_name"],
-                        "qty": qty_fmt(r["q"]),
-                        "total": money(r["t"]),
-                    }
-                    for r in irows
-                ],
-            }
+        # Items stay behind the card's "View items sold" link — the
+        # client builds it from start/end/receipt_status and fetches the
+        # items list as a follow-up reply on click.
         return card
 
     if re.search(r"\b(expense|expenses|spent|spending|costs?)\b", low):
@@ -2220,10 +2213,8 @@ def card_for_all(text: str, section_visible=None):
                 "receipt_status": status,
             }
         }
-        # Sales and items ride in one reply — see `card_meta`.
-        items_card = _all_items_sold_card(scope, start, end, status)
-        if items_card["items"]:
-            card["items_sold"] = items_card
+        # Items stay behind the card's "View items sold" link — see
+        # `card_meta`.
         return card
     return None
 
