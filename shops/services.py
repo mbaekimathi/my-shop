@@ -8321,6 +8321,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 row["category"], row["category"] or "Expense"
             ),
             "qty": Decimal("1"),
+            "amount": Decimal(row["amount"] or 0),
             "paid": paid,
             "status": row["payment_status"] or "",
             "status_label": status_labels.get(row["payment_status"], ""),

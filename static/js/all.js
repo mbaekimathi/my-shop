@@ -324,12 +324,16 @@
         );
       }
       var rbody = (rp.rows || []).map(function (r, i) {
+        var attrs = r.href
+          ? ' class="wa-linkrow" data-href="' + esc(r.href) +
+            '" tabindex="0" role="link" aria-label="Open full report — ' +
+            esc(r.session + ", " + r.shop) + '"'
+          : "";
         var sess = r.href
-          ? '<a class="wa-link" href="' + esc(r.href) +
-            '" target="_blank" rel="noopener">' + esc(r.session) + "</a>"
+          ? '<span class="wa-link">' + esc(r.session) + "</span>"
           : esc(r.session);
         return (
-          '<tr><td class="n">' + (i + 1) + "</td><td>" + sess +
+          "<tr" + attrs + '><td class="n">' + (i + 1) + "</td><td>" + sess +
           "</td><td>" + esc(r.shop) + "</td><td>" + esc(r.cashier) +
           "</td><td>" + esc(r.status) +
           '</td><td class="n" data-l="In">' +
@@ -341,7 +345,7 @@
       var rmore = rp.sessions_total > rcount
         ? " · +" + (rp.sessions_total - rcount) + " more" : "";
       var rhint = (rp.rows || []).some(function (r) { return r.href; })
-        ? " · tap a session to open its full report" : "";
+        ? " · tap a row to open its full report" : "";
       return (
         '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
         '<i data-lucide="clipboard-list"></i><span>Report — all shops · ' +
@@ -482,6 +486,11 @@
   });
 
   stage.addEventListener("click", function (e) {
+    var linkrow = e.target.closest("tr.wa-linkrow");
+    if (linkrow && linkrow.dataset.href) {
+      window.open(linkrow.dataset.href, "_blank", "noopener");
+      return;
+    }
     var cust = e.target.closest("[data-custphone]");
     if (cust) {
       var ph = cust.parentNode.querySelector(".wa-phone");
@@ -503,6 +512,16 @@
       "items " + rng[0] + " to " + rng[1] +
       (rng[2] ? " " + rng[2] : "")
     );
+  });
+
+  // Session rows are role="link" — Enter/Space activates them.
+  stage.addEventListener("keydown", function (e) {
+    var linkrow = e.target.closest && e.target.closest("tr.wa-linkrow");
+    if (!linkrow || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    if (linkrow.dataset.href) {
+      window.open(linkrow.dataset.href, "_blank", "noopener");
+    }
   });
 
   // ------------------------------------------------------------------
@@ -564,12 +583,13 @@
     monthInput.value = now.getFullYear() + "-" +
       (now.getMonth() + 1 < 10 ? "0" : "") + (now.getMonth() + 1);
     yearSel.value = String(now.getFullYear());
-    setPeriodMode("day");
+    // Reports are usually read month-to-date; everything else stays on day.
+    setPeriodMode(topic.toLowerCase() === "report" ? "month" : "day");
     if (receiptScope) receiptScope.hidden = !topicNeedsReceiptStatus(topic);
     if (stockScope) stockScope.hidden = !topicNeedsStockKind(topic);
     setReceiptStatus(receiptStatus);
     period.hidden = false;
-    dateDay.focus();
+    (periodMode === "month" ? monthInput : dateDay).focus();
     if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
   }
 

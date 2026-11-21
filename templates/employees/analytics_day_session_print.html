@@ -435,18 +435,121 @@
     body.paper-58 .sheet-foot,
     body.paper-58 .sheet-footer { font-size: 0.54rem; }
 
-    /* ===== Small screens — fluid A4 sheet, wide tables scroll ===== */
-    @media (max-width: 640px) {
-      body.paper-a4 { padding: 4px; font-size: 9pt; }
-      body.paper-a4 .sheet { max-width: 100%; padding: 4mm 3mm; }
-      .sheet-head { flex-direction: column; align-items: flex-start; }
-      .sheet-meta { text-align: left; }
-      .meta-chips { justify-content: flex-start; }
-      .sheet-section { overflow-x: auto; }
-      .sheet-section table.sheet-grid { min-width: 26rem; }
-      .sheet-kpis { grid-template-columns: repeat(2, 1fr); }
-      .kpi { border-left: 0; border-top: 1px solid var(--line-soft); }
-      .kpi:nth-child(-n + 2) { border-top: 0; }
+    /* ===== Screen view — flat ledger list, auto-fits every width ===== */
+    /* On screens the report reads as a compact list, not boxed tables:
+       no fixed A4 page, no cards, nothing that can overlap or need
+       horizontal scrolling. @media print below still produces the real
+       A4 document with full grid tables. */
+    @media screen {
+      body.paper-a4 { padding: 10px 12px 18px; background: #fff; }
+      body.paper-a4 .sheet {
+        max-width: 60rem;
+        margin: 0 auto;
+        padding: 0;
+        border: 0;
+        box-shadow: none;
+      }
+      body.paper-a4 .sheet-head { flex-wrap: wrap; }
+      /* Cashier + session times live in the head rows now */
+      body.paper-a4 .sheet-hint { display: none; }
+
+      /* KPI strip → label : value ledger lines */
+      body.paper-a4 .sheet-kpis {
+        display: block;
+        border: 0;
+        border-top: 1px solid var(--line);
+        margin: 0 0 0.6rem;
+      }
+      body.paper-a4 .kpi {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.5rem;
+        padding: 0.22rem 0;
+        border: 0;
+        border-bottom: 1px dashed #999;
+      }
+      body.paper-a4 .kpi-label {
+        font-size: 0.8rem;
+        letter-spacing: 0;
+        text-transform: none;
+        color: #000;
+        font-weight: 800;
+      }
+      body.paper-a4 .kpi-value { font-size: 0.85rem; white-space: nowrap; }
+      body.paper-a4 .kpi-hint { display: inline; }
+      body.paper-a4 .kpi-hint::before { content: " · "; }
+
+      /* Tables → stacked ledger list (same shape as thermal .stack) */
+      body.paper-a4 table.sheet-grid,
+      body.paper-a4 table.sheet-grid tbody,
+      body.paper-a4 table.sheet-grid tr,
+      body.paper-a4 table.sheet-grid td {
+        display: block;
+        width: 100%;
+      }
+      body.paper-a4 table.sheet-grid thead { display: none; }
+      body.paper-a4 table.sheet-grid {
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      body.paper-a4 table.sheet-grid tbody tr {
+        border-top: 1px dashed #666;
+        padding: 0.4mm 0;
+        background: #fff !important;
+      }
+      body.paper-a4 table.sheet-grid tbody tr:first-child { border-top: 0; }
+      body.paper-a4 table.sheet-grid tbody tr:nth-child(even) td {
+        background: transparent;
+      }
+      body.paper-a4 table.sheet-grid td {
+        display: inline;
+        width: auto;
+        border: 0;
+        padding: 0;
+        text-align: left;
+        background: transparent !important;
+      }
+      body.paper-a4 table.sheet-grid td[data-label]::before {
+        content: attr(data-label) ": ";
+        font-weight: 800;
+      }
+      body.paper-a4 table.sheet-grid td:not(:first-child):not(:last-child)::after {
+        content: " · ";
+      }
+      body.paper-a4 table.sheet-grid td:first-child {
+        display: block;
+        font-weight: 800;
+      }
+      body.paper-a4 table.sheet-grid td:first-child::before { content: none; }
+      body.paper-a4 table.sheet-grid td .num,
+      body.paper-a4 table.sheet-grid td.num {
+        text-align: left;
+        white-space: normal;
+      }
+      body.paper-a4 table.sheet-grid td .cell-v { overflow-wrap: anywhere; }
+      body.paper-a4 table.sheet-grid td .cell-v br { display: none; }
+      body.paper-a4 table.sheet-grid td .cell-v small { display: inline; }
+      body.paper-a4 table.sheet-grid td .cell-v small::before { content: " · "; }
+      body.paper-a4 table.sheet-grid tr.row-group td {
+        display: block;
+        border: 0;
+        background: var(--accent-soft) !important;
+        font-weight: 800;
+        text-align: left;
+        padding: 0.3mm 1mm;
+      }
+      body.paper-a4 table.sheet-grid tr.row-group td::before,
+      body.paper-a4 table.sheet-grid tr.row-group td::after { content: none; }
+      body.paper-a4 table.sheet-grid tr.row-total td { font-weight: 800; }
+    }
+
+    /* Phones — tighter page padding, header stacks */
+    @media screen and (max-width: 640px) {
+      body.paper-a4 { padding: 4px 8px 10px; font-size: 9.5pt; }
+      body.paper-a4 .sheet-head { flex-direction: column; align-items: flex-start; }
+      body.paper-a4 .sheet-meta { text-align: left; }
+      body.paper-a4 .meta-chips { justify-content: flex-start; }
     }
 
     @media print {

@@ -2705,6 +2705,16 @@ html[data-theme="dark"] .wa-card__head--out { color: #7be3c8; }
 .wa-card__tablewrap { overflow-x: auto; }
 .wa-table { min-width: 15rem; }
 
+/* Report card — the whole session row links to the full report */
+.wa-table--report tbody tr.wa-linkrow { cursor: pointer; }
+.wa-table--report tbody tr.wa-linkrow:hover {
+  background: color-mix(in srgb, #53bdeb 12%, transparent);
+}
+.wa-table--report tbody tr.wa-linkrow:focus-visible {
+  outline: 2px solid #53bdeb;
+  outline-offset: -2px;
+}
+
 /* Report-card sessions table — seven columns can't fit a chat bubble on
    phones/tablets, so each session reflows into a compact stacked row:
      20 Nov                                          CLOSED

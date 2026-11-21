@@ -1558,8 +1558,13 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertEqual(sellers["rows"][0][1], "1")
         self.assertEqual(sellers["rows"][0][3], "KSh 250.00")
         metric_labels = [m["label"] for m in page["metrics"]]
-        self.assertIn("Counted closing", metric_labels)
-        self.assertIn("Close variance", metric_labels)
+        self.assertIn("Cashier", metric_labels)
+        self.assertIn("Session start", metric_labels)
+        self.assertIn("Sales generated", metric_labels)
+        end = next(
+            m for m in page["metrics"] if m["label"] == "Session end"
+        )
+        self.assertNotEqual(end["value"], "Still open")
 
     def test_day_session_open_shows_live_preview(self):
         from django.test import RequestFactory
@@ -1577,8 +1582,12 @@ class AnalyticsDaySessionReportTests(TestCase):
             profile=self.staff, request=request, session=session
         )["page"]
         metric_labels = [m["label"] for m in page["metrics"]]
-        self.assertIn("Expected closing", metric_labels)
-        self.assertNotIn("Counted closing", metric_labels)
+        self.assertIn("Cashier", metric_labels)
+        self.assertIn("Sales generated", metric_labels)
+        end = next(
+            m for m in page["metrics"] if m["label"] == "Session end"
+        )
+        self.assertEqual(end["value"], "Still open")
         self.assertTrue(page["alerts"])
 
     def test_day_session_view_renders_and_streams_pdf(self):
