@@ -316,7 +316,9 @@
         ["M-Pesa", rp.mpesa],
         ["Card", rp.card],
         ["Paid out", rp.paid_out]
-      ];
+      ].filter(function (r) {
+        return r[1] !== undefined && r[1] !== null;
+      });
       if (rp.credit && rp.credit !== "KSh 0.00") {
         rstats.push(
           ["Credit issued", rp.credit],

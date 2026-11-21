@@ -214,15 +214,29 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   company-wide options that govern cashier sessions
   (`_build_balances_settings` + `BALANCES_CASHIER_SETTING_GROUPS`: Open &
   close incl. `require_clock_in` + schedule mode/per-shop times, Shop
-  switching, Session timeout incl. both idle limits). Gated by
-  `settings/company-pos` — the header "Cashier settings" button renders
-  only with it (`filters["can_edit_company_pos"]`), and the GET mode itself
-  is perm-checked in `_render_analytics`. The panel is
+  switching, Session timeout incl. both idle limits) **plus company
+  defaults for the per-cashier picks** on `/shop-cashier/settings/` —
+  Dashboard sidebar, Sell popup, Day report (one-of status pick), and Day
+  report sections. The defaults are stored on
+  `CompanyPosSettings.cashier_default_prefs` (JSON) and edited via
+  `set_cashier_default_pref` / `set_cashier_default_day_report_status`
+  (employees/workspace.py, `CASHIER_DEFAULT_PREF_KEYS`); the pref readers
+  (`cashier_sidebar_pref_enabled` / `cashier_sell_pref_enabled` /
+  `day_report_status_mode` / `day_report_section_enabled`) resolve
+  employee pick → company default → built-in default, so a cashier's own
+  `sidebar_prefs` entry still wins where they've set one. Posted fields
+  are the same as the cashier page (`sidebar_<key>`, `sell_<key>`,
+  `day_report_sec_<key>`, `day_report_status_<mode>` — the last rides
+  `data-stock-mode-toggle` via the group's `stock_mode` flag).
+  Gated by `settings/company-pos` — the header "Cashier settings" button
+  renders only with it (`filters["can_edit_company_pos"]`), and the GET
+  mode itself is perm-checked in `_render_analytics`. The panel is
   `employees/partials/analytics_cashier_settings.html`
   (`data-pos-settings` + `pos-settings.js`), which POSTs to the balances
   URL — `analytics_section` allows POST for `balances` only and
-  `_balances_settings_post` handles `toggle_pos_setting` (restricted to
-  `BALANCES_CASHIER_SETTING_FIELDS`), `set_open_close_mode`,
+  `_balances_settings_post` handles `toggle_pos_setting` (pref fields →
+  company defaults; `BALANCES_CASHIER_SETTING_FIELDS` →
+  `set_company_pos_setting`), `set_open_close_mode`,
   `set_open_close_times`, `set_employee_session_timeout` and
   `set_shop_session_timeout`, re-checking `analytics/balances` +
   `settings/company-pos`. POSTs on other sections → 405. Tests:
@@ -257,10 +271,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   per-`created_by` rollup (receipts/qty/amount, same counted statuses and
   returned-qty netting as items sold, sorted amount desc; unnamed seller =
   "—") rendered on the page, the `?paper=` print sheet (page.tables loop)
-  and the PDF. The Stocked in table lists Item/Qty/Amount/Total per line
-  plus a Status chip from `StockMovementLine.payment_status`
-  (Paid/Partial/Unpaid — the group header still carries the movement's
-  `amount_paid` total); Stocked out lists Item/Qty/Reason/Amount/Total.
+  and the PDF. The Stocked in table is a flat list — Time +
+  Item/Qty/Amount/Total per line plus a Status chip from
+  `StockMovementLine.payment_status` (Paid/Partial/Unpaid); the item cell
+  sub-label carries the entry source on every line and the movement's
+  `amount_paid` on the batch's first line (the PDF repeats the time per
+  row and stamps the batch `amount_paid` once on the first line's Paid
+  column). Stocked out lists Time/Item/Qty/Reason/Amount/Total.
   `day_session_report_details` also returns `shelf_purchases` /
   `shelf_out` — the same group/line shapes built from
   `ShelfStockMovement` (REGISTER counts as stocked in; shelf outs carry
@@ -370,7 +387,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `set_cashier_sidebar_pref` (employees/workspace.py). POSTs reuse
   `action=toggle_pos_setting` with `field=sidebar_<key>` so `pos-settings.js`
   works unmodified; `_cashier_dashboard_links` drops hidden links (link-only,
-  same convention as the floor toggles).
+  same convention as the floor toggles). Every per-employee pick
+  (sidebar, Sell popup, day report status/sections) resolves employee
+  pref → **company default** → built-in: the company defaults live on
+  `CompanyPosSettings.cashier_default_prefs` and are edited from the
+  analytics Cashier settings panel (see `?mode=settings` above), so the
+  toggles here always show the effective value and a cashier's own pick
+  overrides the default once set.
 - The "Sell popup" group is also **per-employee** (`SELL_POPUP_TOGGLES`,
   `sidebar_prefs["sell_*"]`, POSTed as `field=sell_<key>`) — it configures
   the dashboard Sell modal's document types, payment channels, and price
@@ -406,9 +429,17 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   report tags each table via `_table(section=…)` and filters
   `page["tables"]`, while `build_shop_day_report_pdf` takes a
   `section_visible` predicate the callers (`my_shop_day_report`,
-  `analytics_day_session`) build from the viewing profile's prefs — a
-  disabled section is dropped even when it has rows (unlike the stock-mode
-  gate, which keeps a pair alive for since-disabled modes with data).
+  `analytics_day_session`, chat `all_session_report`) build from the
+  viewing profile's prefs — a disabled section is dropped even when it has
+  rows (unlike the stock-mode gate, which keeps a pair alive for
+  since-disabled modes with data). The all-shops assistant's generated
+  "report" honours them too: `api_all_chat` passes the same predicate into
+  `reply_for_all` / `card_for_all` → `_all_shops_report` — Sales/channels
+  + refunds follow `day_report_sec_money_flow`, expenses/stock/drawings
+  their own keys, credit `day_report_sec_not_till`, the items-sold
+  trailer `day_report_sec_items_sold`, and Paid out / each session's
+  `out` sum only the enabled parts (sessions rows always list). Tests:
+  `chat/tests.py::AllShopsReportSectionTests`.
   The two stock toggles also double as the **paid-from-till switch**:
   `day_report_sec_item_stock` / `day_report_sec_shelf_stock` feed
   `day_session_balance_summary(item_stock_from_till=…,
@@ -508,7 +539,11 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   belongs to another employee (`opened_by_id != profile.pk`), a cashier is
   locked out entirely — `CashierSessionBlockMiddleware` (last in MIDDLEWARE)
   renders `employees/cashier_session_blocked.html` for every GET under
-  `/shop-cashier/*` (403 JSON for XHR/non-GET) naming who must close it, and
+  `/shop-cashier/*` (403 JSON for XHR/non-GET) naming who must close it —
+  **except `/shop-cashier/settings/`**, which stays reachable (it only stores
+  the cashier's own prefs, so the blocked page's ACCOUNT section links it —
+  `render_cashier_session_blocked` gates the footer link on
+  `employee_may_any(profile, "settings")`) — and
   `_cashier_foreign_day_denied` (shops/views.py) blocks the `my-shop/*`
   endpoints at the `_require_allocated_shop_access` /
   `_require_active_shop_session` / `_require_shop_read_access` guards — the

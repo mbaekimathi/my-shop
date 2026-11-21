@@ -3120,6 +3120,129 @@ class AllShopsSessionReportTests(ChatTestCase):
         self.assertTrue(resp.content.startswith(b"%PDF"))
 
 
+class AllShopsReportSectionTests(ChatTestCase):
+    """The generated all-shops report honours the viewer's per-employee
+    Day report sections picks — a switched-off section neither displays
+    nor counts in the paid-out total."""
+
+    EMPLOYEE_DDL = PendingConfirmTests.EMPLOYEE_DDL
+
+    def setUp(self):
+        super().setUp()
+        self.prepare_employee_fixtures()
+        self.create_receipt(
+            shop_id=self.shop_a.pk, receipt_number="SEC-1", kind="sale",
+            payment_method="cash", client_name="Walk-in",
+            total=Decimal("300"), amount_paid=Decimal("300"),
+            cash_amount=Decimal("300"), mpesa_amount=Decimal("0"),
+            status="confirmed",
+        )
+        Expense.objects.create(
+            shop_id=self.shop_a.pk, category="transport", name="Fuel",
+            amount=Decimal("500"), amount_paid=Decimal("500"),
+            payment_status="paid", created_by_id=self.staff_pk,
+        )
+
+    @staticmethod
+    def _sec(**off):
+        def inner(key):
+            return not off.get(key, False)
+        return inner
+
+    def test_expenses_off_hides_and_uncounts_them(self):
+        from .bot import card_for_all, reply_for_all
+
+        sec = self._sec(day_report_sec_expenses=True)
+        reply = reply_for_all("report", section_visible=sec)
+        self.assertNotIn("expenses", reply)
+        # The KSh 500 expense is out of Paid out — only enabled parts count.
+        self.assertIn("Paid out: KSh 0.00", reply)
+        self.assertIn("Sales:", reply)
+
+        card = card_for_all("report", section_visible=sec)["report"]
+        self.assertNotIn("expenses", card)
+        self.assertEqual(card["paid_out"], "KSh 0.00")
+        self.assertIn("sales", card)
+
+    def test_money_flow_off_drops_sales_and_paid_out(self):
+        from .bot import reply_for_all
+
+        reply = reply_for_all(
+            "report", section_visible=self._sec(day_report_sec_money_flow=True)
+        )
+        self.assertNotIn("Sales:", reply)
+        self.assertNotIn("M-Pesa", reply)
+        # Expenses still show — their own section is on.
+        self.assertIn("Paid out: KSh 500.00", reply)
+        self.assertIn("expenses KSh 500.00", reply)
+
+    def test_all_out_sections_off_hides_paid_out(self):
+        from .bot import card_for_all, reply_for_all
+
+        sec = self._sec(
+            day_report_sec_expenses=True,
+            day_report_sec_item_stock=True,
+            day_report_sec_drawings=True,
+            day_report_sec_money_flow=True,
+        )
+        reply = reply_for_all("report", section_visible=sec)
+        self.assertNotIn("Paid out", reply)
+        card = card_for_all("report", section_visible=sec)["report"]
+        self.assertNotIn("paid_out", card)
+        self.assertNotIn("sales", card)
+
+    def test_credit_off_hides_credit_line(self):
+        from .bot import reply_for_all
+
+        self.create_receipt(
+            shop_id=self.shop_a.pk, receipt_number="SEC-2", kind="credit",
+            payment_method="credit", client_name="Jane",
+            total=Decimal("200"), amount_paid=Decimal("0"),
+            cash_amount=Decimal("0"), mpesa_amount=Decimal("0"),
+            status="confirmed",
+        )
+        reply = reply_for_all("report")
+        self.assertIn("Credit issued", reply)
+        reply = reply_for_all(
+            "report", section_visible=self._sec(day_report_sec_not_till=True)
+        )
+        self.assertNotIn("Credit issued", reply)
+
+    def test_api_report_uses_employee_section_prefs(self):
+        """The /api/all/chat/ endpoint reads the signed-in employee's
+        sidebar_prefs — sections disabled in cashier settings drop out of
+        the generated report."""
+        from employees.models import EmployeeProfile
+        from employees.workspace import set_cashier_day_report_section_pref
+
+        profile = EmployeeProfile.objects.get(pk=self.staff_pk)
+        set_cashier_day_report_section_pref(
+            profile, "day_report_sec_expenses", False
+        )
+        set_cashier_day_report_section_pref(
+            profile, "day_report_sec_not_till", False
+        )
+        session = self.client.session
+        session["chatbot_employee_id"] = self.staff_pk
+        session.save()
+        resp = self.client.post(
+            reverse("chat:api_all_chat"),
+            data=json.dumps({"text": "report"}),
+            content_type="application/json",
+        )
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        # Expenses neither display nor count in the paid-out total.
+        self.assertNotIn("expenses", data["reply"])
+        self.assertIn("Paid out: KSh 0.00", data["reply"])
+        self.assertIn("Sales:", data["reply"])
+        card = data["card"]["report"]
+        self.assertNotIn("expenses", card)
+        self.assertNotIn("credit", card)
+        self.assertEqual(card["paid_out"], "KSh 0.00")
+        self.assertIn("sales", card)
+
+
 class AllShopsShelfMovementTests(ChatTestCase):
     """The all-shops assistant routes "stock movement" to the item or shelf
     ledger — a ``shelf`` keyword picks shelf, a bare query defaults to the

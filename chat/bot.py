@@ -1010,7 +1010,7 @@ def _refund_events(shop_ids, start_dt, end_dt) -> list:
 REPORT_ROW_CAP = 40
 
 
-def _all_shops_report(start, end, status) -> dict:
+def _all_shops_report(start, end, status, section_visible=None) -> dict:
     """Simplified cashiers report — one row per shop day session.
 
     Sessions overlapping the window carry their times, cashier and status;
@@ -1018,8 +1018,28 @@ def _all_shops_report(start, end, status) -> dict:
     (activity starts at the previous close — the till hand-over rule).
     Period totals span every active shop regardless of sessions so the
     report reconciles with the Sales/Expenses cards.
+
+    ``section_visible`` is an optional ``(section_key) -> bool`` predicate —
+    the viewer's day-report section picks (``day_report_section_enabled``).
+    A switched-off paid-out part (expenses/item stock/drawings; refunds
+    follow money flow) is dropped from ``paid_out`` and each row's ``out``,
+    so hidden sections neither display nor count in the totals.
     """
     from bisect import bisect_right
+
+    _sec = section_visible or (lambda _key: True)
+    out_enabled = {
+        "expenses": _sec("day_report_sec_expenses"),
+        "stock": _sec("day_report_sec_item_stock"),
+        "drawings": _sec("day_report_sec_drawings"),
+        "refunds": _sec("day_report_sec_money_flow"),
+    }
+
+    def _out_total(cell):
+        return sum(
+            (cell[kind] for kind, on in out_enabled.items() if on),
+            Decimal("0"),
+        )
 
     start_dt, end_dt = _window(start, end)
     shops = dict(
@@ -1086,28 +1106,32 @@ def _all_shops_report(start, end, status) -> dict:
         created_at__lt=end_dt,
     ).aggregate(t=Sum("total"), paid=Sum("amount_paid"))
 
-    buckets = [
-        {"sales": Decimal("0"), "receipts": 0, "out": Decimal("0")}
-        for _ in windows
-    ]
+    def _new_cell():
+        return {
+            "sales": Decimal("0"),
+            "receipts": 0,
+            "expenses": Decimal("0"),
+            "stock": Decimal("0"),
+            "drawings": Decimal("0"),
+            "refunds": Decimal("0"),
+        }
+
+    buckets = [_new_cell() for _ in windows]
     outside = {}  # shop_id -> same shape, for activity with no session
 
-    def _add(shop_id, when, amount, sale):
+    def _add(shop_id, when, amount, kind):
         cell = None
         for i, (s, wstart, wend) in enumerate(windows):
             if s.shop_id == shop_id and wstart <= when < wend:
                 cell = buckets[i]
                 break
         if cell is None:
-            cell = outside.setdefault(
-                shop_id,
-                {"sales": Decimal("0"), "receipts": 0, "out": Decimal("0")},
-            )
-        if sale:
+            cell = outside.setdefault(shop_id, _new_cell())
+        if kind == "sales":
             cell["sales"] += amount
             cell["receipts"] += 1
         else:
-            cell["out"] += amount
+            cell[kind] += amount
 
     tot = {
         key: Decimal("0")
@@ -1122,22 +1146,23 @@ def _all_shops_report(start, end, status) -> dict:
         tot["cash"] += _dec(r["cash_amount"])
         tot["mpesa"] += _dec(r["mpesa_amount"])
         tot["card"] += _dec(r["card_amount"])
-        _add(r["shop_id"], r["created_at"], amount, True)
+        _add(r["shop_id"], r["created_at"], amount, "sales")
     for r in expense_rows:
         paid = r["amount_paid"] if r["amount_paid"] is not None else r["amount"]
         paid = _dec(paid)
         is_drawings = str(r["category"] or "").strip().lower() == (
             "owner_drawings"
         )
-        tot["drawings" if is_drawings else "expenses"] += paid
-        _add(r["shop_id"], r["created_at"], paid, False)
+        kind = "drawings" if is_drawings else "expenses"
+        tot[kind] += paid
+        _add(r["shop_id"], r["created_at"], paid, kind)
     for r in stock_rows:
         paid = _dec(r["amount_paid"])
         tot["stock"] += paid
-        _add(r["shop_id"], r["created_at"], paid, False)
+        _add(r["shop_id"], r["created_at"], paid, "stock")
     for sid, when, amount in refund_rows:
         tot["refunds"] += amount
-        _add(sid, when, amount, False)
+        _add(sid, when, amount, "refunds")
 
     names = _employee_names(
         [s.opened_by_id for s, _, _ in windows]
@@ -1172,7 +1197,7 @@ def _all_shops_report(start, end, status) -> dict:
                 "cashier": names.get(s.opened_by_id) or "—",
                 "sales": bucket["sales"],
                 "receipts": bucket["receipts"],
-                "out": bucket["out"],
+                "out": _out_total(bucket),
             }
         )
     for sid, bucket in outside.items():
@@ -1188,7 +1213,7 @@ def _all_shops_report(start, end, status) -> dict:
                 "cashier": "—",
                 "sales": bucket["sales"],
                 "receipts": bucket["receipts"],
-                "out": bucket["out"],
+                "out": _out_total(bucket),
             }
         )
 
@@ -1203,9 +1228,7 @@ def _all_shops_report(start, end, status) -> dict:
         "stock": tot["stock"],
         "drawings": tot["drawings"],
         "refunds": tot["refunds"],
-        "paid_out": (
-            tot["expenses"] + tot["stock"] + tot["drawings"] + tot["refunds"]
-        ),
+        "paid_out": _out_total(tot),
         "credit": credit_total,
         "credit_due": max(Decimal("0"), credit_total - _dec(credit["paid"])),
         "rows": rows[:REPORT_ROW_CAP],
@@ -1356,10 +1379,17 @@ def _movement_disabled_reply(ledger: str, modes: dict):
     return None
 
 
-def reply_for_all(text: str) -> str:
-    """Assistant answers aggregated across every active shop."""
+def reply_for_all(text: str, section_visible=None) -> str:
+    """Assistant answers aggregated across every active shop.
+
+    ``section_visible`` is an optional ``(section_key) -> bool`` predicate —
+    the viewer's day-report section picks (``day_report_section_enabled``).
+    Only the generated "report" honours it; other replies keep their fixed
+    shape.
+    """
     t = (text or "").strip()
     low = t.lower()
+    _sec = section_visible or (lambda _key: True)
     start, end, label = _date_range(t)
     status = resolve_receipt_status(t)
     scope = _sales_label(label, status)
@@ -1454,21 +1484,30 @@ def reply_for_all(text: str) -> str:
         return "\n".join(lines)
 
     if re.search(r"\b(summary|report|overview|snapshot|performance)\b", low):
-        rep = _all_shops_report(start, end, status)
-        out_bits = (
-            f"expenses {money(rep['expenses'])} · "
-            f"stock {money(rep['stock'])} · drawings {money(rep['drawings'])}"
-        )
-        if rep["refunds"]:
-            out_bits += f" · refunds {money(rep['refunds'])}"
-        lines = [
-            f"*Report — ALL SHOPS ({scope})*",
-            f"Sales: *{money(rep['sales'])}* across {rep['receipts']} receipts",
-            f"Cash {money(rep['cash'])}  |  M-Pesa {money(rep['mpesa'])}"
-            f"  |  Card {money(rep['card'])}",
-            f"Paid out: {money(rep['paid_out'])} — {out_bits}",
-        ]
-        if rep["credit"]:
+        rep = _all_shops_report(start, end, status, section_visible=_sec)
+        money_flow_on = _sec("day_report_sec_money_flow")
+        out_parts = []
+        if _sec("day_report_sec_expenses"):
+            out_parts.append(f"expenses {money(rep['expenses'])}")
+        if _sec("day_report_sec_item_stock"):
+            out_parts.append(f"stock {money(rep['stock'])}")
+        if _sec("day_report_sec_drawings"):
+            out_parts.append(f"drawings {money(rep['drawings'])}")
+        if money_flow_on and rep["refunds"]:
+            out_parts.append(f"refunds {money(rep['refunds'])}")
+        lines = [f"*Report — ALL SHOPS ({scope})*"]
+        if money_flow_on:
+            lines += [
+                f"Sales: *{money(rep['sales'])}* across "
+                f"{rep['receipts']} receipts",
+                f"Cash {money(rep['cash'])}  |  M-Pesa {money(rep['mpesa'])}"
+                f"  |  Card {money(rep['card'])}",
+            ]
+        if out_parts:
+            lines.append(
+                f"Paid out: {money(rep['paid_out'])} — {' · '.join(out_parts)}"
+            )
+        if _sec("day_report_sec_not_till") and rep["credit"]:
             credit_line = f"Credit issued: {money(rep['credit'])}"
             if rep["credit_due"]:
                 credit_line += f" ({money(rep['credit_due'])} still due)"
@@ -1476,15 +1515,23 @@ def reply_for_all(text: str) -> str:
         if rep["rows"]:
             lines += ["", "*Sessions*"]
             for r in rep["rows"]:
+                row_bits = []
+                if money_flow_on:
+                    row_bits.append(f"in {money(r['sales'])}")
+                if out_parts:
+                    row_bits.append(f"out {money(r['out'])}")
+                tail = f" — {', '.join(row_bits)}" if row_bits else ""
                 lines.append(
                     f"- {r['shop']} · {r['session']} · {r['cashier']} · "
-                    f"{r['status']} — in {money(r['sales'])}, "
-                    f"out {money(r['out'])}"
+                    f"{r['status']}{tail}"
                 )
             hidden = rep["sessions_total"] - len(rep["rows"])
             if hidden > 0:
                 lines.append(f"...plus {hidden} more sessions.")
-        lines.append(f"%%items|{start.isoformat()}|{end.isoformat()}|{status}%%")
+        if _sec("day_report_sec_items_sold"):
+            lines.append(
+                f"%%items|{start.isoformat()}|{end.isoformat()}|{status}%%"
+            )
         return "\n".join(lines)
 
     if items_intent_matches(None, t):
@@ -1553,16 +1600,20 @@ def reply_for_all(text: str) -> str:
     )
 
 
-def card_for_all(text: str):
+def card_for_all(text: str, section_visible=None):
     """Structured card payload for the all-shops assistant.
 
     Produces the same card shapes the shop assistant uses (see `card_meta`)
     so `/all/` replies render as the same wa-card widgets — plus a shop
     column where the company-wide list benefits from it. Mirrors the
     intent order of `reply_for_all` exactly.
+
+    ``section_visible`` gates the "report" card on the viewer's day-report
+    section picks — a switched-off section's keys are omitted entirely.
     """
     t = (text or "").strip()
     low = t.lower()
+    _sec = section_visible or (lambda _key: True)
     start, end, label = _date_range(t)
     status = resolve_receipt_status(t)
     scope = _sales_label(label, status)
@@ -1696,24 +1747,41 @@ def card_for_all(text: str):
     if re.search(r"\b(summary|report|overview|snapshot|performance)\b", low):
         from django.urls import reverse
 
-        rep = _all_shops_report(start, end, status)
-        return {
-            "report": {
-                "label": scope,
-                "sales": money(rep["sales"]),
-                "receipts": rep["receipts"],
-                "cash": money(rep["cash"]),
-                "mpesa": money(rep["mpesa"]),
-                "card": money(rep["card"]),
-                "paid_out": money(rep["paid_out"]),
-                "expenses": money(rep["expenses"]),
-                "stock": money(rep["stock"]),
-                "drawings": money(rep["drawings"]),
-                "refunds": money(rep["refunds"]),
-                "credit": money(rep["credit"]),
-                "credit_due": money(rep["credit_due"]),
-                "sessions_total": rep["sessions_total"],
-                "rows": [
+        rep = _all_shops_report(start, end, status, section_visible=_sec)
+        report = {
+            "label": scope,
+            "sessions_total": rep["sessions_total"],
+        }
+        money_flow_on = _sec("day_report_sec_money_flow")
+        if money_flow_on:
+            report.update(
+                {
+                    "sales": money(rep["sales"]),
+                    "receipts": rep["receipts"],
+                    "cash": money(rep["cash"]),
+                    "mpesa": money(rep["mpesa"]),
+                    "card": money(rep["card"]),
+                    "refunds": money(rep["refunds"]),
+                }
+            )
+        out_on = (
+            money_flow_on
+            or _sec("day_report_sec_expenses")
+            or _sec("day_report_sec_item_stock")
+            or _sec("day_report_sec_drawings")
+        )
+        if out_on:
+            report["paid_out"] = money(rep["paid_out"])
+            if _sec("day_report_sec_expenses"):
+                report["expenses"] = money(rep["expenses"])
+            if _sec("day_report_sec_item_stock"):
+                report["stock"] = money(rep["stock"])
+            if _sec("day_report_sec_drawings"):
+                report["drawings"] = money(rep["drawings"])
+        if _sec("day_report_sec_not_till"):
+            report["credit"] = money(rep["credit"])
+            report["credit_due"] = money(rep["credit_due"])
+        report["rows"] = [
                     {
                         "shop": r["shop"],
                         "session": r["day"],
@@ -1731,9 +1799,8 @@ def card_for_all(text: str):
                         ),
                     }
                     for r in rep["rows"]
-                ],
-            }
-        }
+        ]
+        return {"report": report}
 
     if items_intent_matches(None, t):
         return {

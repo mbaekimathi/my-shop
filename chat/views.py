@@ -843,7 +843,8 @@ def all_shops_view(request):
 @require_POST
 def api_all_chat(request):
     """POST {text} → {reply} — the all-shops assistant."""
-    if current_employee(request) is None:
+    employee = current_employee(request)
+    if employee is None:
         return JsonResponse(
             {"ok": False, "error": "authentication required"}, status=401
         )
@@ -851,11 +852,21 @@ def api_all_chat(request):
     text = (data.get("text") or "").strip()
     if not text:
         return JsonResponse({"ok": False, "error": "Empty message."})
+
+    from employees.models import EmployeeProfile
+    from employees.workspace import day_report_section_enabled
+
+    profile = EmployeeProfile.objects.filter(pk=employee["id"]).first()
+    section_visible = lambda key: day_report_section_enabled(profile, key)
     return JsonResponse(
         {
             "ok": True,
-            "reply": bot_engine.reply_for_all(text),
-            "card": bot_engine.card_for_all(text),
+            "reply": bot_engine.reply_for_all(
+                text, section_visible=section_visible
+            ),
+            "card": bot_engine.card_for_all(
+                text, section_visible=section_visible
+            ),
         }
     )
 
