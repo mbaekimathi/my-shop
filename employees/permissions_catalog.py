@@ -134,6 +134,7 @@ PERMISSION_MODULES = (
             {"slug": "stock_requests", "label": "View stock transfers"},
             {"slug": "respond_stock_request", "label": "Confirm / decline transfers"},
             {"slug": "register_expense", "label": "Register expense"},
+            {"slug": "prepayments", "label": "Customer prepayments"},
             {"slug": "receipts", "label": "View receipts"},
             {"slug": "return_receipt", "label": "Return / cancel receipt"},
             {"slug": "open_close", "label": "Open / close shop"},

@@ -153,9 +153,10 @@ def _render_analytics(
         return denied
 
     section = get_analytics_section(section_slug)
-    if section["slug"] == "balances" and (
+    settings_mode = section["slug"] == "balances" and (
         request.GET.get("mode") or ""
-    ).strip().lower() == "settings":
+    ).strip().lower() == "settings"
+    if settings_mode:
         denied = require_module_permission(
             request, profile, "settings", "company-pos"
         )
@@ -300,7 +301,10 @@ def _render_analytics(
                 )
                 if section["slug"] == "overview"
                 else sidebar_for_analytics_section(
-                    profile.role, active_view=section["slug"], profile=profile
+                    profile.role,
+                    active_view=section["slug"],
+                    profile=profile,
+                    settings_active=settings_mode,
                 )
             ),
             **context,
@@ -723,6 +727,83 @@ def analytics_day_session(request, role_segment, session_id):
                 profile.role, active_view="balances", profile=profile
             ),
             **context,
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_employee(request, role_segment, employee_id):
+    """One employee's portal analytics (/…/analytics/employees/<id>/) — items sold."""
+    from django.http import Http404
+
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        return redirect(
+            "employees:analytics_employee",
+            role_segment=expected,
+            employee_id=employee_id,
+        )
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        raise Http404("Module not found.")
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(request, profile, "analytics", "employees")
+    if denied is not None:
+        return denied
+
+    from .analytics_services import _filters_context
+    from .models import EmployeeProfile
+    from .services import build_employee_analytics
+
+    target = (
+        EmployeeProfile.objects.filter(pk=employee_id)
+        .select_related("user")
+        .first()
+    )
+    if target is None:
+        raise Http404("Employee not found.")
+
+    filters = _filters_context(profile, request)
+    stats = build_employee_analytics(
+        target, date_filter=filters, shop_ids=filters["active_shop_ids"]
+    )
+    target_name = target.user.get_full_name() or target.user.username
+    if target.employee_id:
+        target_name = f"{target_name} · {target.employee_id}"
+
+    return render(
+        request,
+        "employees/employee_analytics.html",
+        {
+            "profile": profile,
+            "employee_subject": {
+                "name": target.user.get_full_name() or target.user.username,
+                "employee_id": target.employee_id,
+                "label": target_name,
+            },
+            "meta": {
+                "title": f"{target_name} · Employees · Analytics",
+                "headline": target_name,
+                "summary": "Sales performance, items sold, trends, and receipt statuses.",
+                "icon": "users",
+            },
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "stats": stats,
+            "include_all_time": False,
+            **filters,
+            "page_sidebar": sidebar_for_analytics_section(
+                profile.role, active_view="employees", profile=profile
+            ),
         },
     )
 

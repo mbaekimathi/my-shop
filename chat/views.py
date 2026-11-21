@@ -1508,7 +1508,7 @@ def api_receipt_items(request, receipt_id):
         {
             "ok": True,
             "receipt": {
-                "number": receipt.receipt_number,
+                "number": stock_ops._receipt_tally_code(receipt),
                 "customer": receipt.client_name or "Walk-in customer",
                 "total": bot_engine.money(receipt.total),
                 "paid": bot_engine.money(receipt.amount_paid),

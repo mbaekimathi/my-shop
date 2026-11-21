@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+from django.utils import timezone
+
 from shops.models import (
     ShopPaymentMethod,
     ShopReceiptKind,
@@ -39,7 +41,7 @@ def _sync_sale_payment_fields(receipt) -> None:
     receipt.cash_amount = paid
 
 
-def convert_settled_credit_to_sale(receipt) -> bool:
+def convert_settled_credit_to_sale(receipt, *, paid_at=None) -> bool:
     """Turn a fully paid credit receipt into a sale. Does not save."""
     if getattr(receipt, "kind", None) != ShopReceiptKind.CREDIT:
         return False
@@ -53,6 +55,9 @@ def convert_settled_credit_to_sale(receipt) -> bool:
     receipt.kind = ShopReceiptKind.SALE
     receipt.credit_due_date = None
     receipt.settled_from_credit = True
+    receipt.converted_from_kind = ShopReceiptKind.CREDIT
+    # The day the credit cleared is the day the sale is recognised.
+    receipt.confirmed_payment_at = paid_at or timezone.now()
     _sync_sale_payment_fields(receipt)
     return True
 
@@ -63,12 +68,18 @@ def record_credit_collection(
     amount,
     payment_method: str,
     mpesa_receipt_number: str = "",
+    paid_at=None,
 ) -> bool:
     """Apply a collection to a credit receipt and convert it when fully paid."""
     apply = _money(amount)
     method = (payment_method or "cash").strip().lower()
+    payment_time = paid_at or timezone.now()
     receipt.amount_paid = _money(Decimal(receipt.amount_paid or 0) + apply)
     update_fields = ["amount_paid"]
+    # Track the latest payment moment — for a settled credit this is the day
+    # it converts to a sale, which is the day its revenue belongs to.
+    receipt.confirmed_payment_at = payment_time
+    update_fields.append("confirmed_payment_at")
     if method == "mpesa":
         receipt.mpesa_amount = _money(Decimal(receipt.mpesa_amount or 0) + apply)
         update_fields.append("mpesa_amount")
@@ -85,7 +96,7 @@ def record_credit_collection(
         receipt.cash_amount = _money(Decimal(receipt.cash_amount or 0) + apply)
         update_fields.append("cash_amount")
 
-    converted = convert_settled_credit_to_sale(receipt)
+    converted = convert_settled_credit_to_sale(receipt, paid_at=payment_time)
     if converted:
         for field in (
             "kind",
@@ -95,6 +106,7 @@ def record_credit_collection(
             "mpesa_amount",
             "card_amount",
             "settled_from_credit",
+            "converted_from_kind",
         ):
             if field not in update_fields:
                 update_fields.append(field)

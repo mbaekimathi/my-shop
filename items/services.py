@@ -1261,7 +1261,7 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
 
     from shops.credit_settlement import convert_settled_credit_to_sale
 
-    if convert_settled_credit_to_sale(receipt):
+    if convert_settled_credit_to_sale(receipt, paid_at=now):
         receipt.save(
             update_fields=[
                 "kind",
@@ -1271,6 +1271,8 @@ def _release_serial_from_open_sale(serial: ItemSerial, *, profile) -> tuple[bool
                 "card_amount",
                 "credit_due_date",
                 "settled_from_credit",
+                "converted_from_kind",
+                "confirmed_payment_at",
             ]
         )
     return True, receipt.receipt_number or ""

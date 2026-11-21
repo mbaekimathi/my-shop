@@ -238,7 +238,7 @@
         const paidAt = paymentTimeLabel(row);
         return `<tr class="shop-receipts-row" data-receipt-id="${row.id}" data-receipt-source="${source}" tabindex="0">
   <td data-label="Receipt">
-    <strong>${escapeHtml(row.receipt_number)}</strong>
+    <strong>${escapeHtml(row.tally_code || row.receipt_number)}</strong>
   </td>
   <td data-label="Type"><span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
     row.kind
@@ -700,7 +700,7 @@
       paper: payload.receipt_paper_width || "80",
     };
     if (modalTitle) {
-      modalTitle.textContent = receipt.receipt_number || "Receipt";
+      modalTitle.textContent = receipt.tally_code || receipt.receipt_number || "Receipt";
     }
     if (modalActions) modalActions.hidden = false;
     confirmMode = false;
@@ -944,7 +944,7 @@
           receipt.shop_name || "MY-SHOP"
         )} · ${escapeHtml(receipt.kind_label || "Receipt")}</p>
         <h3 class="shop-receipt-sheet-no">${escapeHtml(
-          receipt.receipt_number || "—"
+          receipt.tally_code || receipt.receipt_number || "—"
         )}</h3>
         <div class="shop-receipt-summary-badges">
           <span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(

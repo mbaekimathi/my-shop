@@ -1060,3 +1060,514 @@ html[data-theme="dark"] .wa-chip--warn {
     transform: none;
   }
 }
+
+/* ============================================================
+   Clock in/out page — hero, live dial, hour stats, trend chart
+   ============================================================ */
+.clock-page {
+  display: grid;
+  gap: 1.25rem;
+}
+
+/* — Hero ------------------------------------------------------------ */
+.clock-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1.75rem;
+  padding: clamp(1.4rem, 3vw, 2.4rem);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(110% 160% at 100% 0%, rgba(var(--teal-rgb), 0.14), transparent 55%),
+    radial-gradient(90% 130% at 0% 100%, rgba(var(--accent-rgb), 0.12), transparent 55%),
+    var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.clock-hero.is-live {
+  border-color: rgba(var(--teal-rgb), 0.45);
+  box-shadow: var(--shadow-md), 0 0 44px rgba(var(--teal-rgb), 0.14);
+}
+
+.clock-hero__aurora {
+  position: absolute;
+  inset: -40%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(var(--teal-rgb), 0.07) 80deg,
+    transparent 160deg,
+    rgba(var(--accent-rgb), 0.06) 240deg,
+    transparent 320deg
+  );
+  animation: clock-aurora 18s linear infinite;
+  pointer-events: none;
+}
+
+.clock-hero__main {
+  position: relative;
+  display: grid;
+  gap: 0.55rem;
+  min-width: min(100%, 320px);
+}
+
+.clock-hero__title {
+  margin: 0;
+  font-size: clamp(1.55rem, 2.6vw, 2.1rem);
+  letter-spacing: -0.02em;
+}
+
+.clock-hero__status {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.clock-pulse {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--teal);
+  flex: none;
+}
+
+.clock-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--teal-rgb), 0.6);
+  animation: clock-ping 1.8s var(--ease) infinite;
+}
+
+.clock-pulse--idle {
+  background: var(--border-strong);
+}
+
+.clock-pulse--idle::after {
+  display: none;
+}
+
+.clock-hero__timer {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+}
+
+.clock-hero__elapsed {
+  font-size: clamp(2.5rem, 6vw, 3.9rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.clock-hero__elapsed--idle {
+  color: var(--text-muted);
+}
+
+.clock-hero__elapsed-sub {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.clock-hero__form {
+  margin-top: 0.6rem;
+}
+
+.clock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 0.85rem 1.9rem;
+  font-size: var(--text-base);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  color: #fff;
+  transition: transform 0.18s var(--ease), box-shadow 0.18s ease, filter 0.18s ease;
+}
+
+.clock-btn i,
+.clock-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.clock-btn--in {
+  background: linear-gradient(135deg, var(--teal), #0b6b62);
+  box-shadow: 0 10px 24px rgba(var(--teal-rgb), 0.35);
+}
+
+.clock-btn--out {
+  background: linear-gradient(135deg, var(--accent-deep), #b06f1c);
+  box-shadow: var(--accent-glow);
+  color: var(--accent-ink);
+}
+
+.clock-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.05);
+}
+
+.clock-btn:active {
+  transform: translateY(0);
+}
+
+.clock-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* — Live dial --------------------------------------------------------- */
+.clock-hero__dial {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 0.45rem;
+}
+
+.clock-dial {
+  --p: 0;
+  position: relative;
+  width: 164px;
+  height: 164px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(
+    from -90deg,
+    var(--teal) calc(var(--p) * 1turn),
+    rgba(var(--teal-rgb), 0.13) 0
+  );
+  box-shadow: inset 0 0 0 1px rgba(var(--teal-rgb), 0.12);
+}
+
+.clock-hero.is-live .clock-dial {
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--teal-rgb), 0.2),
+    0 0 34px rgba(var(--teal-rgb), 0.3);
+}
+
+.clock-hero.is-live .clock-dial::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from -90deg,
+    rgba(255, 255, 255, 0.35) 0deg,
+    transparent 70deg
+  );
+  mix-blend-mode: overlay;
+  animation: clock-dial-sweep 3.2s linear infinite;
+  pointer-events: none;
+}
+
+.clock-dial__core {
+  position: relative;
+  z-index: 1;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: inset 0 2px 10px rgba(15, 42, 46, 0.08);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.2rem;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.clock-dial__core i,
+.clock-dial__core svg {
+  width: 26px;
+  height: 26px;
+  color: var(--teal);
+}
+
+.clock-dial__hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* — Stat cards --------------------------------------------------------- */
+.clock-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 0.75rem;
+}
+
+.clock-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.18s var(--ease), box-shadow 0.18s ease;
+}
+
+.clock-stat:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.clock-stat i,
+.clock-stat svg {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  border-radius: 10px;
+  color: var(--teal);
+  background: rgba(var(--teal-rgb), 0.12);
+  box-sizing: border-box;
+}
+
+.clock-stat strong {
+  display: block;
+  font-size: 1.12rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.clock-stat span {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* — Trend chart -------------------------------------------------------- */
+.clock-trend__chart {
+  padding: 0.25rem 0.5rem 0.75rem;
+}
+
+.clock-bars {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.clock-bars__track {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.clock-bars__avg {
+  stroke: var(--warning);
+  stroke-width: 1.4;
+  stroke-dasharray: 5 5;
+  opacity: 0.75;
+}
+
+.clock-bars__bar {
+  fill: rgba(var(--teal-rgb), 0.78);
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: clock-bar-in 0.55s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 34ms);
+}
+
+.clock-bars__bar:hover {
+  fill: var(--teal);
+}
+
+.clock-bars__bar.is-today {
+  fill: var(--accent);
+}
+
+.clock-bars__bar.is-empty {
+  fill: var(--panel-muted);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.clock-bars__label {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.clock-trend__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+  padding: 0.4rem 0.25rem 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.clock-trend__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.clock-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.clock-dot--teal {
+  background: rgba(var(--teal-rgb), 0.78);
+}
+
+.clock-dot--accent {
+  background: var(--accent);
+}
+
+.clock-dot--dash {
+  width: 16px;
+  height: 0;
+  border-radius: 0;
+  border-top: 2px dashed var(--warning);
+}
+
+/* — Records table ------------------------------------------------------ */
+.clock-records tr.is-open {
+  background: rgba(var(--teal-rgb), 0.06);
+}
+
+.clock-rel {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.08rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background: rgba(var(--teal-rgb), 0.12);
+  color: var(--teal);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  vertical-align: 1px;
+}
+
+.clock-dur {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.clock-dur__track {
+  width: 56px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--panel-muted);
+  overflow: hidden;
+  flex: none;
+}
+
+.clock-dur__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(var(--teal-rgb), 0.55), var(--teal));
+}
+
+/* — Animations ---------------------------------------------------------- */
+@keyframes clock-aurora {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes clock-ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  70%,
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+@keyframes clock-dial-sweep {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes clock-bar-in {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@media (max-width: 720px) {
+  .clock-hero {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .clock-hero__main {
+    justify-items: center;
+  }
+
+  .clock-hero__status {
+    justify-content: center;
+  }
+
+  .clock-hero__timer {
+    justify-items: center;
+  }
+
+  .clock-hero__dial {
+    order: -1;
+  }
+
+  .clock-dial {
+    width: 128px;
+    height: 128px;
+  }
+
+  .clock-dial__core {
+    width: 98px;
+    height: 98px;
+  }
+
+  .clock-dur__track {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clock-hero__aurora,
+  .clock-hero.is-live .clock-dial::after,
+  .clock-pulse::after,
+  .clock-bars__bar {
+    animation: none;
+  }
+}

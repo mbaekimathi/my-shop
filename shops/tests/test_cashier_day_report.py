@@ -277,22 +277,25 @@ class CashierDayReportScopeTests(TestCase):
         response = client.get(self._report_url(session=session))
         self.assertEqual(response.status_code, 200)
         tables = response.context["page"]["tables"]
-        not_till = next(
-            t for t in tables if "not in the till" in t["title"]
+        credit_table = next(
+            t for t in tables if t["title"] == "Credit — not in the till"
         )
-        credit_row, gift_row = not_till["rows"]
+        credit_row = credit_table["rows"][0]
         self.assertEqual(credit_row[0], "Credit sales")
         self.assertEqual(credit_row[1], "1")
         self.assertIn("5,000", credit_row[2])
         self.assertIn("1,200", credit_row[3])
         self.assertIn("3,800", credit_row[4])
+        self.assertIn("Expected in till", credit_table["footnote"])
+        self.assertIn("Credit slips counted", credit_table["footnote"])
+        gift_table = next(
+            t for t in tables if t["title"] == "Gifts — not in the till"
+        )
+        gift_row = gift_table["rows"][0]
         self.assertEqual(gift_row[0], "Gift items")
         self.assertEqual(gift_row[1], "1")
         self.assertIn("800", gift_row[2])
-        self.assertEqual(gift_row[3], "—")
-        self.assertEqual(gift_row[4], "—")
-        self.assertIn("Expected in till", not_till["footnote"])
-        self.assertIn("Credit slips counted", not_till["footnote"])
+        self.assertIn("Expected in till", gift_table["footnote"])
 
     def test_money_flow_shows_shop_activated_mpesa(self):
         """A shop-level M-Pesa override survives the company flag strip."""

@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 
-from .access import profile_view_only, role_home_url_name, role_url_segment
+from .access import profile_support_pass, role_home_url_name, role_url_segment
 from .models import EmployeeRole
 
 ROLE_PAGE_META = {
@@ -539,7 +539,7 @@ def _footer_site_links(
     settings_link=None,
 ):
     """System settings (or custom settings_link), MY-SHOP (or Employee Login), then page-specific footer links."""
-    from .module_permissions import employee_may_any
+    from .module_permissions import employee_may, employee_may_any
 
     links = []
     if settings_link is not None:
@@ -551,6 +551,22 @@ def _footer_site_links(
                     "Cashier settings",
                     "sliders-horizontal",
                     href=cashier_settings_url(),
+                    active=settings_active,
+                )
+            )
+    elif profile is not None and profile.role == EmployeeRole.COMPANY_ACCOUNTANT:
+        # The accountant's settings surface is the Cashiers report's
+        # ?mode=settings panel — company defaults for cashier settings —
+        # since settings/home (the system settings hub) stays denied.
+        if employee_may(profile, "settings", "company-pos"):
+            links.append(
+                _link(
+                    "Accounts settings",
+                    "sliders-horizontal",
+                    href=(
+                        f"{analytics_section_url(profile.role, 'balances')}"
+                        "?mode=settings"
+                    ),
                     active=settings_active,
                 )
             )
@@ -1119,6 +1135,61 @@ def register_expense_action(profile):
     )
 
 
+def prepayment_list_url(profile):
+    """Role-scoped customer-prepayments list page."""
+    role = getattr(profile, "role", None) or EmployeeRole.SHOP_CASHIER
+    return reverse(
+        "employees:role_prepayments",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+
+
+def prepayment_action(profile):
+    """Prepayment sidebar action — popup when the modal exists, else the list."""
+    return _action(
+        "Register prepayment",
+        "piggy-bank",
+        action="prepayment",
+        href=prepayment_list_url(profile),
+    )
+
+
+def prepayment_modal_context(request, profile):
+    """
+    Context for the register-prepayment popup on role pages.
+
+    Unlike sell / buy-stock, the popup also works for multi-shop staff
+    (e.g. the company accountant) — the form carries a shop picker and posts
+    to the role prepayments endpoint with a ``shop_id``.
+    """
+    from items.services import actionable_shops_for_profile
+    from shops.services import prepayment_payment_options
+
+    from .module_permissions import employee_may
+
+    if profile is None or not employee_may(profile, "my-shop", "prepayments"):
+        return {}
+    shops = actionable_shops_for_profile(profile)
+    if not shops:
+        return {}
+    options = []
+    seen = set()
+    for shop in shops:
+        for method, label in prepayment_payment_options(shop=shop):
+            if method in seen:
+                continue
+            seen.add(method)
+            options.append((method, label))
+    return {
+        "prepayment_modal": True,
+        "prepayment_form_url": prepayment_list_url(profile),
+        "prepayment_next": request.get_full_path(),
+        "prepayment_modal_shops": shops,
+        "prepayment_modal_shop": shops[0] if len(shops) == 1 else None,
+        "prepayment_payment_options": options,
+    }
+
+
 def _buy_stock_sidebar_flag(profile):
     """Company/shop POS 'Buy stock items' sidebar toggle (link-only)."""
     from items.services import actionable_shops_for_profile
@@ -1156,11 +1227,7 @@ def buy_stock_modal_context(request, profile):
     from .countries import COUNTRY_DIAL_CODES
     from .module_permissions import employee_may
 
-    if (
-        profile is None
-        or profile_view_only(profile)
-        or not employee_may(profile, "my-shop", "buy_stock")
-    ):
+    if profile is None or not employee_may(profile, "my-shop", "buy_stock"):
         return {}
     shops = actionable_shops_for_profile(profile)
     if len(shops) != 1:
@@ -1262,7 +1329,7 @@ def cashier_day_summaries_context(request, profile):
 
     can_open_close = employee_may(profile, "my-shop", "open_close")
     can_record_drawing = employee_may(profile, "my-shop", "register_expense")
-    view_only = profile_view_only(profile)
+    support_pass = profile_support_pass(profile)
     back_url = request.get_full_path()
 
     rows = []
@@ -1272,14 +1339,14 @@ def cashier_day_summaries_context(request, profile):
         is_open = session is not None
         stale_open = bool(state.get("stale_open"))
         # Figures belong to the session THIS cashier opened — a day opened by
-        # a colleague shows status only, no till data. A view-only pass
-        # (IT support acting as cashier) counts as the opener so the till is
-        # visible; actions stay hidden and writes stay denied.
+        # a colleague shows status only, no till data. A support pass
+        # (IT support / super admin acting as cashier) counts as the opener
+        # so the till is visible and the day stays actionable.
         own_session = is_open and (
-            session.opened_by_id == profile.pk or view_only
+            session.opened_by_id == profile.pk or support_pass
         )
-        # Keep the real opener's name on view-only rows too — the support
-        # pass needs to see which employee actually owns the session.
+        # Keep the real opener's name on support-pass rows too — the pass
+        # needs to see which employee actually owns the session.
         other_opener = ""
         if (
             is_open
@@ -1327,14 +1394,11 @@ def cashier_day_summaries_context(request, profile):
                     ),
                     urlencode({"back": back_url}),
                 ),
-                "can_open_close": can_open_close and not view_only,
+                "can_open_close": can_open_close,
                 "can_draw": (
-                    can_record_drawing
-                    and own_session
-                    and not stale_open
-                    and not view_only
+                    can_record_drawing and own_session and not stale_open
                 ),
-                "view_only": view_only,
+                "support_pass": support_pass,
             }
         )
     return {
@@ -1366,7 +1430,7 @@ def cashier_session_blocks(profile):
         profile is None
         or getattr(profile, "role", None) != EmployeeRole.SHOP_CASHIER
         or not profile.is_active_employee
-        or profile_view_only(profile)
+        or profile_support_pass(profile)
     ):
         return []
     blocks = []
@@ -1651,7 +1715,10 @@ def day_report_counted_statuses(profile) -> frozenset:
 # posted toggle field is the pref key itself (day_report_sec_<section>).
 DAY_REPORT_SECTION_TOGGLES = (
     ("day_report_sec_money_flow", "Money flow"),
-    ("day_report_sec_not_till", "Credit & gift — not in the till"),
+    ("day_report_sec_prepayments", "Customer prepayments"),
+    ("day_report_sec_credit_payments", "Credit payments collected"),
+    ("day_report_sec_not_till", "Credits — not in the till"),
+    ("day_report_sec_gift", "Gifts — not in the till"),
     ("day_report_sec_items_sold", "Items sold"),
     ("day_report_sec_sellers", "Sales by employee"),
     ("day_report_sec_flagged", "Pending & cancelled sales"),
@@ -1825,11 +1892,7 @@ def sell_modal_context(request, profile):
 
     from .module_permissions import employee_may
 
-    if (
-        profile is None
-        or profile_view_only(profile)
-        or not employee_may(profile, "my-shop", "workspace")
-    ):
+    if profile is None or not employee_may(profile, "my-shop", "workspace"):
         return {}
     shops = actionable_shops_for_profile(profile)
     if len(shops) != 1:
@@ -1881,15 +1944,13 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
     from shops.services import company_pos_analytics_section_visible
 
     links = []
-    # A view-only pass (IT support acting as cashier) keeps read links —
-    # reports, receipts, analytics — but drops every mutating action.
-    view_only = profile_view_only(profile)
-    if not view_only and (
-        profile is None
-        or (
-            cashier_sidebar_pref_enabled(profile, "sell")
-            and _sell_link_allowed(profile)
-        )
+    # A support pass (IT support / super admin acting as cashier) keeps
+    # every link — including mutating ones — and counts a colleague's open
+    # day as "theirs" so Drawings stays reachable on a live session.
+    support_pass = profile_support_pass(profile)
+    if profile is None or (
+        cashier_sidebar_pref_enabled(profile, "sell")
+        and _sell_link_allowed(profile)
     ):
         links.append(sell_action(profile, role))
     if profile is not None and employee_may(profile, "my-shop", "open_close"):
@@ -1901,8 +1962,8 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
             day_shop = day_shops[0]
             day_session = get_open_shop_day(day_shop)
             day_is_open = day_session is not None
-            own_day_open = (
-                day_is_open and day_session.opened_by_id == profile.pk
+            own_day_open = day_is_open and (
+                day_session.opened_by_id == profile.pk or support_pass
             )
             toggle_href = "{}?{}".format(
                 reverse(
@@ -1911,9 +1972,7 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 ),
                 urlencode({"back": reverse(role_home_url_name(role))}),
             )
-            if not view_only and cashier_sidebar_pref_enabled(
-                profile, "open_close"
-            ):
+            if cashier_sidebar_pref_enabled(profile, "open_close"):
                 links.append(
                     _link(
                         "Close shop" if day_is_open else "Open shop",
@@ -1923,8 +1982,7 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                     )
                 )
             if (
-                not view_only
-                and own_day_open
+                own_day_open
                 and cashier_sidebar_pref_enabled(profile, "drawings")
                 and employee_may(profile, "my-shop", "register_expense")
             ):
@@ -1971,9 +2029,7 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                     )
                 )
         elif len(day_shops) > 1:
-            if not view_only and cashier_sidebar_pref_enabled(
-                profile, "open_close"
-            ):
+            if cashier_sidebar_pref_enabled(profile, "open_close"):
                 links.append(
                     _link(
                         "Open / Close shop",
@@ -1987,12 +2043,11 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 )
             any_own_shop_open = any(
                 (session := get_open_shop_day(shop)) is not None
-                and session.opened_by_id == profile.pk
+                and (session.opened_by_id == profile.pk or support_pass)
                 for shop in day_shops
             )
             if (
-                not view_only
-                and any_own_shop_open
+                any_own_shop_open
                 and cashier_sidebar_pref_enabled(profile, "drawings")
                 and employee_may(profile, "my-shop", "register_expense")
             ):
@@ -2038,6 +2093,16 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                         sidebar_only=True,
                     )
                 )
+    if profile is None or employee_may(profile, "my-shop", "prepayments"):
+        links.append(prepayment_action(profile))
+        links.append(
+            _link(
+                "Prepayments",
+                "piggy-bank",
+                href=prepayment_list_url(profile),
+                active=active_slug == "prepayments",
+            )
+        )
     if profile is None or (
         cashier_sidebar_pref_enabled(profile, "expenses")
         and employee_may_any(profile, "analytics")
@@ -2078,13 +2143,10 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 active=active_slug == "analytics",
             )
         )
-    if not view_only and (
-        profile is None
-        or (
-            cashier_sidebar_pref_enabled(profile, "buy_stock")
-            and employee_may(profile, "my-shop", "buy_stock")
-            and _buy_stock_sidebar_flag(profile)
-        )
+    if profile is None or (
+        cashier_sidebar_pref_enabled(profile, "buy_stock")
+        and employee_may(profile, "my-shop", "buy_stock")
+        and _buy_stock_sidebar_flag(profile)
     ):
         links.append(buy_stock_action(profile))
     if profile is None or (
@@ -2191,6 +2253,21 @@ def sidebar_for_role_dashboard(
                 active=active_slug == "my-analytics",
             )
         )
+    if role == EmployeeRole.COMPANY_ACCOUNTANT:
+        from .module_permissions import employee_may
+
+        if profile is None or employee_may(
+            profile, "my-shop", "prepayments"
+        ):
+            primary.append(prepayment_action(profile))
+            primary.append(
+                _link(
+                    "Prepayments",
+                    "piggy-bank",
+                    href=prepayment_list_url(profile),
+                    active=active_slug == "prepayments",
+                )
+            )
     primary.append(
         _link(
             "Clock in / out",
@@ -3612,7 +3689,7 @@ def analytics_confirm_receipts_url(role):
 
 def analytics_receipts_url(role):
     """Receipts nav landing — confirm-receipts (defaults to today's sales)."""
-    return f"{analytics_confirm_receipts_url(role)}?kind=sale"
+    return f"{analytics_confirm_receipts_url(role)}?kind=sales_credits"
 
 
 def analytics_return_receipts_url(role):
@@ -3727,9 +3804,8 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
                     )
                 )
         if section["slug"] == "expenses" and active_view == "expenses":
-            if not profile_view_only(profile) and (
-                profile is None
-                or employee_may(profile, "my-shop", "register_expense")
+            if profile is None or employee_may(
+                profile, "my-shop", "register_expense"
             ):
                 section_links.append(register_expense_action(profile))
     primary = [_link("Dashboard", "layout-dashboard", href=dashboard_url)]
@@ -3758,7 +3834,9 @@ def sidebar_for_analytics(role, *, active_view="overview", profile=None):
     )
 
 
-def sidebar_for_analytics_section(role, *, active_view, profile=None):
+def sidebar_for_analytics_section(
+    role, *, active_view, profile=None, settings_active=False
+):
     """Focused sidebar for one analytics section page — Overview + this page."""
     from .analytics_services import ANALYTICS_SECTION_BY_SLUG
     from .module_permissions import employee_may
@@ -3880,9 +3958,7 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
                             active=active_view == "return-receipts",
                         )
                     )
-            if section_slug == "expenses" and not profile_view_only(
-                profile
-            ) and (
+            if section_slug == "expenses" and (
                 profile is None
                 or employee_may(profile, "my-shop", "register_expense")
             ):
@@ -3895,6 +3971,7 @@ def sidebar_for_analytics_section(role, *, active_view, profile=None):
             "primary": primary,
             "footer": _footer_site_links(
                 profile=profile,
+                settings_active=settings_active,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],

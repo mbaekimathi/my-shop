@@ -239,7 +239,10 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `set_company_pos_setting`), `set_open_close_mode`,
   `set_open_close_times`, `set_employee_session_timeout` and
   `set_shop_session_timeout`, re-checking `analytics/balances` +
-  `settings/company-pos`. POSTs on other sections → 405. Tests:
+  `settings/company-pos`. POSTs on other sections → 405. For the company
+  accountant this panel doubles as **"Accounts settings"** — their sidebar
+  footer settings link (`_footer_site_links` COMPANY_ACCOUNTANT branch)
+  points here since `settings/home` stays denied for that role. Tests:
   `employees/tests_cashier_settings.py::BalancesCashierSettingsTests`.
 - The session report page is built by `build_day_session_report_page` —
   rendered as a **flat ledger, no cards**: `.ax--day-report` CSS at the end
@@ -260,11 +263,17 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   with non-zero figures so rows still reconcile), and the page passes the
   effective settings to `_pos_feature_flags` + force-keeps displayed
   channels — a shop override that enables M-Pesa/Card survives the company
-  flag strip. A "Credit & gift — not in the till" table follows the
-  money flow when `enable_credit`/`enable_gift` are on
-  (`day_report_not_till_lines` → Docs/Value/Collected/Still due; credit
-  collected+left-to-collect, gift value with "—" collected columns, footnote
-  shows the counted credit-slips trail opened/counted/diff). Credit and
+  flag strip. The not-in-till figures render as **separate** tables —
+  "Credit — not in the till" (Docs/Value/Collected/Still due + the counted
+  credit-slips trail opened/counted/diff in the footnote,
+  `day_report_sec_not_till`) and "Gifts — not in the till" (Docs/Value,
+  `day_report_sec_gift`) — each followed by its own "Credit receipts" /
+  "Gift receipts" line list when receipts exist
+  (`day_report_not_till_lines` lines carry `key` = credit/gift so callers
+  can split them). The "Credit payments collected" table + money-flow memo
+  row hide under `day_report_sec_credit_payments` (all three keys are in
+  `DAY_REPORT_SECTION_TOGGLES`, so they also appear in the cashier
+  settings + company-defaults day-report-sections panels). Credit and
   gift value never enters Expected in till or Variance — credit is a
   receivable and gifts are free issues. The "Sales by employee" table
   follows Items sold — `day_session_report_details` returns `sellers`, a
@@ -323,6 +332,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   Report / PDF (`&download=1`) / 80 mm / 58 mm. Narrow thermal is keyed
   `58` everywhere now (`analytics_receipts_print` maps legacy `50` →
   `58`; the receipts sheet uses `body.paper-58`, `@page 58mm auto`).
+
+## Employees report (Analytics → Employees, slug `employees`)
+- `_build_employees` lists cashier sales by shop; each Staff cell links to
+  `<role>/analytics/employees/<profile_pk>/` (`analytics_employee`,
+  `analytics_employee_url` in `employees/analytics_services.py`) carrying the
+  current query string so the drill-down keeps the picked period + shops.
+- The drill-down reuses the employee "My analytics" page —
+  `build_employee_analytics` (`employees/services.py`, optional `shop_ids=`
+  scopes it to the viewer's active shop filter) rendered by
+  `employees/employee_analytics.html`; `employee_subject` in context swaps
+  the "My analytics" copy for the employee's name. Gated by
+  `analytics/employees`. Tests: `employees/tests.py::AnalyticsEmployeePageTests`.
 
 ## Expense payments (Analytics → Expenses → category)
 - `Expense` tracks `amount_paid` + `payment_status` (unpaid/partial/paid);
@@ -479,11 +500,28 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 ## Action popups on role dashboards
 - Sidebar `_action` items render `data-modal-open`/`data-href`; `workspace_base.html`
   opens `[data-modal="<name>"]` when the modal exists on the page, else follows the
-  href. `?modal=sell|buy-stock|register-expense` auto-opens on load.
+  href. `?modal=sell|buy-stock|register-expense|prepayment` auto-opens on load.
 - `expense_modal_context` / `buy_stock_modal_context` / `sell_modal_context`
   (employees/workspace.py) supply modal context **only for
   single-actionable-shop staff**; multi-shop staff fall back
   to the `data-href` (MY-SHOP picker / page).
+- **Customer prepayments** are the exception: `prepayment_modal_context`
+  works for multi-shop staff (a shop picker rides in the form), so the
+  company accountant's `/company-accountant/` and the cashier's
+  `/shop-cashier/` both popup `shops/partials/prepayment_modal.html`
+  (`data-modal="prepayment"`) and POST to `role_prepayments`
+  (`/<role>/prepayments/` — GET lists, POST registers via
+  `register_customer_prepayment`; `my_shop_prepayment_register` at
+  `my-shop/<id>/prepayments/` is the shop-scoped variant). Prepayments are
+  till money received ahead of orders — `_session_activity_totals` adds
+  `prepayments_*` per channel into Expected in till (they are not sales,
+  expenses, drawings, or credit collections), `day_session_report_details`
+  returns `prepayments` rows, and the day report + PDF render a "Customer
+  prepayments" money-flow row and detail table behind
+  `day_report_sec_prepayments`. Payment choices come from
+  `prepayment_payment_options` (the shop's active till channels only).
+  Doc code: `prepayment_doc_code` → `A0007` style. Tests:
+  `shops/tests/test_customer_prepayments.py`.
 - Endpoints used by dashboard popups must allow allocation-level access (no floor
   unlock): `_require_allocated_shop_access` — the staff-ID field in the payload
   authorises the write. Used by register expense, open/close day, verify-login-code,
@@ -847,15 +885,22 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Its permission default is the `ACCOUNTANT_ALLOWED_KEYS` allow-list in
   `employees/module_permissions.py` (`role_default_permission`) — analytics
   `view`/`balances`/`stock`/`suppliers` + stock-management
-  `view`/`movements`/`report`; everything else defaults to deny. Explicit HR
-  permission rows still override (the matrix works as for any role).
+  `view`/`movements`/`report` + `settings/company-pos` (the Cashiers
+  report's `?mode=settings` cashier-defaults panel); everything else
+  defaults to deny. Explicit HR permission rows still override (the matrix
+  works as for any role).
 - It is also in `FULL_STOCK_WORKFLOW_ROLES` so the stock-management view's
   role gate lets `movements`/`report` open — the per-mode permission check
   still blocks in/out/transfer/serials; treat the set as "eligible for the
   full stock pages", not "can run every stock action".
 - Dashboard sidebar (`sidebar_for_role_dashboard` →
   `_dashboard_analytics_section_links`) shows: Stock Management, Analytics,
-  Cashiers, Suppliers. Tests: `employees/tests.py::CompanyAccountantRoleTests`.
+  Cashiers, Suppliers. The sidebar **footer** gets an "Accounts settings"
+  link (`_footer_site_links` → `analytics/balances/?mode=settings`, marked
+  active via `sidebar_for_analytics_section(settings_active=…)` on the
+  settings mode) instead of the usual "System settings" — `settings/home`
+  is denied, so the settings hub would dead-end. Tests:
+  `employees/tests.py::CompanyAccountantRoleTests`.
 - The analytics **overview** (`/…/analytics/`, `_build_overview`) carries an
   "Employee performance" table after "Individual shops" — needed because the
   Employees section (`analytics/employees`) is not on the accountant's
@@ -903,21 +948,21 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   load fresh profiles so they never see it.
 - `chat` sessions share the key: `chat/auth.py::current_employee` honours
   `employee_active_role` when it is one of the employee's granted roles.
-- **IT support role picks are view-only**: when an IT-support primary acts in
-  a different role (`profile.db_role == it_support` and the picked role
-  differs), `_apply_active_role` sets `profile.view_only_role` (memory only;
-  `access.profile_view_only` reads it). The picked workspace behaves like
-  they are the ones in session — `cashier_session_blocks` returns nothing,
+- **IT support / super admin role picks get a writable support pass**: when
+  an IT-support or super-admin primary acts in a different role
+  (`profile.db_role` in `{it_support, super_admin}` and the picked role
+  differs), `_apply_active_role` sets `profile.support_pass` (memory only;
+  `access.profile_support_pass` reads it). The picked workspace is fully
+  writable — writes go through the normal endpoints — and a foreign open
+  cashier session still counts as "theirs" so support is never locked out
+  of a live day: `cashier_session_blocks` returns nothing,
   `_cashier_foreign_day_denied` passes, and the cashier day-summary /
   shop-day rows count the open session as "theirs" (`own_session`) so the
   till figures render and the badge names the employee actually in session
-  ("Open — {opener}") — but `SupportViewOnlyMiddleware` denies every unsafe
-  method outside a session-navigation allowlist (role picker, `my_shop
-  select/switch/leave`, shop login, logout). Mutating affordances are also
-  hidden: Sell/open-close/drawings/buy-stock sidebar links, the sell and
-  buy-stock modals, `can_draw`/`can_open_close` row flags, and a "View only"
-  badge on the day rows. `_cashier_own_days_only` returns False so day
-  report/history stay shop-wide. Tests: `SupportViewOnlyRoleTests`.
+  ("Open — {opener}"). Sidebar mutating links (Sell, open/close, Drawings,
+  Buy stock), the sell/buy-stock modals, and `can_draw`/`can_open_close`
+  row flags all work on the pass. `_cashier_own_days_only` returns False so
+  day report/history stay shop-wide. Tests: `SupportPassRoleTests`.
 - Tests: `employees/tests_multi_role.py` (`ActingShopRolePickTests` covers the
   shop step).
 
@@ -938,11 +983,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   exempt from POS kind toggles there (same exemption as sale/credit/
   quotation). Returns work (restock) — `can_return` includes gift.
 - Gifts never touch the day report till totals (`day_session_*` only reads
-  `kind=sale` for money flow) — they appear only in the report's
-  "Credit & gift — not in the till" section (`day_report_not_till_lines`,
-  `gifts` aggregate in `day_session_report_details`), alongside credit, as
-  value-not-money. They never join sales/credit revenue figures — they live
-  in their own analytics section + receipt browse filter (`kind=gift`).
+  `kind=sale` for money flow) — they appear only in the report's own
+  "Gifts — not in the till" + "Gift receipts" tables
+  (`day_report_not_till_lines` `key="gift"` line, `gifts` aggregate +
+  `credit_gift_receipts` in `day_session_report_details`), separate from
+  credit, as value-not-money. They never join sales/credit revenue
+  figures — they live in their own analytics section + receipt browse
+  filter (`kind=gift`).
 - Tests: `shops/tests/test_gift.py`.
 
 ## Receipt return / cancel permission
@@ -1011,6 +1058,81 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   keep running the stale file (a feature can look "missing" while the
   backend is correct).
 - Tests: `shops/tests/test_receipt_kind_change.py`.
+
+## Credit settlement → sale (paid-day revenue)
+- A credit converts to `kind=SALE` + `settled_from_credit=True` the moment
+  it's fully paid (`convert_settled_credit_to_sale` /
+  `record_credit_collection` in `shops/credit_settlement.py`; mirrors in
+  `chat/stock.py`). Surfaces: confirm-receipts, kind-change → sale,
+  client account pay (`apply_account_payment` / `apply_credit_receipt_payment`
+  FIFO), credit-note STK self-pay, full-return, chat.
+- **Paid day = revenue day**: every collection/conversion stamps
+  `confirmed_payment_at` (`paid_at` kwarg, default `timezone.now()`) — on a
+  settled sale that is the day the credit cleared. Analytics attributes
+  settled sales to that stamp, not `created_at`: `_settled_sale_range_q`
+  (period filter in `_receipts_qs` / `_trading_line_qs`) and
+  `_receipt_revenue_moment` / `_revenue_moment_trunc` (bucket truncs in
+  `_docs_by_bucket`, `_sales_breakdown_table`,
+  `_trading_by_bucket_for_period`). Settled rows with a NULL stamp fall
+  back to `created_at` (migration `0125` backfills from the last credit
+  PAYMENT event). Collection money also lands on the paid day via
+  `ClientCreditAccountEvent` PAYMENT_* `occurred_at` — the confirm /
+  kind-change flows now pass the entered `paid_at` as `occurred_at` too.
+- **Not in the till**: session/day till math excludes settled credits'
+  channel amounts — `day_session_balance_summary`,
+  `list_shop_day_sessions`, `_day_balance_data` all filter
+  `settled_from_credit=False`. Collections are account-level (analytics /
+  STK) and never enter a cashier's session till, so counting them on the
+  receipt's `created_at` day inflated the issue session's expected till.
+- How-many-paid / conversion data: `settled_from_credit` + the paid stamp
+  on the receipt, `ClientCreditAccountEvent` audit rows (meta.cleared),
+  the analytics Paid cash/M-Pesa/card/total columns, and the
+  "… now recorded as a sale" conversion notes in pay responses.
+- The session day report surfaces the collections in its money-flow area:
+  `day_session_report_details` returns `credit_payments` (rows + per-channel
+  totals + `receipts_converted`) from the window's PAYMENT_* events;
+  `build_day_session_report_page` adds a "Credit payments collected —
+  outside till" memo row + a per-payment table (Time/Receipt/Channel/
+  Outcome/Collected by/Amount, outcome = Converted to sale / Paid in full /
+  Part payment), and `build_shop_day_report_pdf` prints the same memo row +
+  detail table — all inside `day_report_sec_money_flow`, gated on
+  `pos.enable_credit`.
+- Tests: `shops/tests/test_credit_settlement.py`
+  (`SettledSaleRevenueDayTests`).
+
+## Receipt tally codes (dual kind codes on conversion)
+- `ShopReceipt.converted_from_kind` records the immediate source kind when a
+  receipt converts (`change_shop_receipt_kind`, `convert_settled_credit_to_sale`,
+  trade settlement, `chat/stock.py` mirror — every `save(update_fields=…)` site
+  lists it). `kind` stays the *current* kind.
+- `receipt_tally_code(receipt)` (`shops/services.py`) is the display code used
+  wherever a receipt is tallied/listed: unconverted receipts show their stored
+  number (`S0005`); converted ones show both `RECEIPT_TALLY_LETTERS` letters +
+  the original sequence — `CS0005` (credit→sale), `SC0007` (sale→credit),
+  `SG0003` (sale→gift). Rows converted before the field existed fall back to
+  `settled_from_credit`/`settled_from_trade` then `_infer_receipt_source_kind`
+  (reads the stored number's prefix). Migration `0128` backfills
+  `converted_from_kind` on pre-field conversions (settled flags + prefix
+  inference), and `_build_receipt_ticket_data` prints the tally code so a
+  converted doc never shows a misleading bare number on reprints.
+- `CustomerPrepayment` ("advancements") is not a receipt — its tally code is
+  `doc_code`/`prepayment_doc_code` (`DOC_NUMBER_PREFIX["prepayment"]` = `A`,
+  e.g. `A0007`), shown on the floor receipts list, analytics browse, the day
+  report prepayments table (Doc column, web + PDF), and the role prepayments
+  page.
+- Filters match **both** identities of a converted receipt: `list_shop_receipts`,
+  `_analytics_receipt_kind_filter`, `_confirm_receipt_sale_rows`, and chat
+  `list_receipts` all OR `kind=<k>` with `converted_from_kind=<k>` (+ the
+  `settled_from_*` flags), so a sale→credit shows under Sales and Credits;
+  "all"-type collectors dedupe by receipt id. Floor/analytics filters gain an
+  `advancement` type that lists `CustomerPrepayment` rows.
+- Consumed in `_receipt_list_item`/`tally_code`, `get_shop_receipt_detail`,
+  `_collect_analytics_receipts_browse` rows (`_row_payload`, raw number kept in
+  `search_text`), `build_analytics_receipts_list`, `_confirm_receipt_sale_rows`
+  (`number`), `day_session_report_details` (`flagged_receipts`,
+  `credit_gift_receipts`, `credit_payments`), the returned-receipts audit, and
+  chat `_receipt_list_row`/`_receipt_tally_code` + bot replies.
+- Tests: `shops/tests/test_tally_codes.py`.
 
 ## Shop switching (role workspaces + portal)
 - The "Switch shop" user-menu item + `shop_switch_modal.html` /

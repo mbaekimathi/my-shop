@@ -16,10 +16,10 @@
 <link rel="stylesheet" href="{% static 'css/app/stock.css' %}?v=20261118-fill-card">
 <link rel="stylesheet" href="{% static 'css/app/analytics.css' %}?v=20261119-items-sold">
 <link rel="stylesheet" href="{% static 'css/app/credit-note.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261120-day-history">
+<link rel="stylesheet" href="{% static 'css/app/pos.css' %}?v=20261121-prepayment">
 <link rel="stylesheet" href="{% static 'css/app/comms.css' %}?v=20261108-act-view">
 <link rel="stylesheet" href="{% static 'css/app/components.css' %}?v=20261019-split">
-<link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261120-clock-check">
+<link rel="stylesheet" href="{% static 'css/app/overrides.css' %}?v=20261121-clock-page">
 <link rel="stylesheet" href="{% static 'css/web-push.css' %}?v=20261112-webpush-fab">
 <link rel="stylesheet" href="{% static 'css/app/store-stock.css' %}?v=20261118-shelf-polish">
 {% endblock %}
@@ -375,6 +375,7 @@
       sell: "[data-sell-search]",
       "buy-stock": "[data-item-search]",
       "register-expense": "[data-expense-name-draft]",
+      prepayment: "[data-prepayment-name]",
       "shelf-stock": "[data-shelf-register-form] [data-shelf-category-input]",
       "store-stock-in": "[data-stock-flow-filter]",
       "store-stock-out": "[data-stock-flow-filter]",
@@ -383,7 +384,7 @@
       "shelf-stock-out": "[data-stock-flow-filter]",
       "shelf-stock-trade": "[data-stock-flow-filter]",
     };
-    ["sell", "buy-stock", "register-expense", "print-stock", "shelf-stock", "store-stock-in", "store-stock-out", "store-stock-trade", "shelf-stock-in", "shelf-stock-out", "shelf-stock-trade"].forEach((name) => {
+    ["sell", "buy-stock", "register-expense", "prepayment", "print-stock", "shelf-stock", "store-stock-in", "store-stock-out", "store-stock-trade", "shelf-stock-in", "shelf-stock-out", "shelf-stock-trade"].forEach((name) => {
       document.querySelectorAll(`[data-modal-open="${name}"]`).forEach((trigger) => {
         trigger.addEventListener("click", (event) => {
           if (name === "print-stock") {
@@ -419,7 +420,7 @@
     const openModalFromQuery = () => {
       const params = new URLSearchParams(window.location.search);
       const name = (params.get("modal") || "").trim();
-      if (name !== "sell" && name !== "buy-stock" && name !== "register-expense") return;
+      if (!["sell", "buy-stock", "register-expense", "prepayment"].includes(name)) return;
       const focusSelector =
         ACTION_MODAL_FOCUS[name] || "[data-expense-name-draft]";
       if (!openWorkspaceActionModal(name, focusSelector)) return;
@@ -442,7 +443,7 @@
         '.workspace-modal[data-modal]:not([hidden])'
       );
       const name = openModal?.getAttribute("data-modal");
-      if (name === "sell" || name === "buy-stock" || name === "register-expense") {
+      if (name === "sell" || name === "buy-stock" || name === "register-expense" || name === "prepayment") {
         closeWorkspaceActionModal(name);
       }
     });

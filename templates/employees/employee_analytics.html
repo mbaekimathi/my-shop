@@ -1,6 +1,6 @@
 {% extends "employees/workspace_base.html" %}
 
-{% block title %}My analytics — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+{% block title %}{% if employee_subject %}{{ employee_subject.label }} — Analytics{% else %}My analytics{% endif %} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
 <div class="employee-home">
@@ -9,8 +9,8 @@
     <div class="item-panel-head-top">
       <div>
         <p class="stock-kicker">Employee · Analytics</p>
-        <h2>My analytics</h2>
-        <p>Your sales performance, items sold, trends, and receipt statuses.</p>
+        <h2>{% if employee_subject %}{{ employee_subject.label }}{% else %}My analytics{% endif %}</h2>
+        <p>{% if employee_subject %}Sales performance, items sold, trends, and receipt statuses.{% else %}Your sales performance, items sold, trends, and receipt statuses.{% endif %}</p>
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
@@ -104,7 +104,7 @@
     </table>
     {% else %}
     <p class="ax-empty">
-      No item sales in this period yet. Items you sell on the shop floor will list here.
+      No item sales in this period yet.{% if not employee_subject %} Items you sell on the shop floor will list here.{% endif %}
     </p>
     {% endif %}
   </div>
@@ -230,7 +230,7 @@
       </ul>
       {% else %}
       <p class="ax-empty">
-        No item sales yet. Items you sell on the shop floor will rank here.
+        No item sales yet.{% if not employee_subject %} Items you sell on the shop floor will rank here.{% endif %}
       </p>
       {% endif %}
     </section>

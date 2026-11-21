@@ -79,6 +79,7 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
         ("my-shop", "stock_requests"),
         ("my-shop", "respond_stock_request"),
         ("my-shop", "register_expense"),
+        ("my-shop", "prepayments"),
         ("my-shop", "receipts"),
         ("my-shop", "return_receipt"),
         ("my-shop", "open_close"),
@@ -98,10 +99,12 @@ STORE_MANAGER_ROLES = frozenset(
     }
 )
 
-# Company accountant: read-only financial oversight. Default-deny like the
-# store managers — explicit HR rows still override. Sees the analytics
-# overview hub, the Cashiers report (balances), stock + supplier analytics,
-# and the stock-management view / movement / report pages.
+# Company accountant: financial oversight. Default-deny like the store
+# managers — explicit HR rows still override. Sees the analytics overview
+# hub, the Cashiers report (balances), stock + supplier analytics, the
+# stock-management view / movement / report pages, and the Cashiers report's
+# ?mode=settings panel (company defaults for cashier settings — the
+# accountant's "Accounts settings" sidebar link points there).
 ACCOUNTANT_ALLOWED_KEYS = frozenset(
     {
         ("analytics", "view"),
@@ -111,6 +114,12 @@ ACCOUNTANT_ALLOWED_KEYS = frozenset(
         ("stock-management", "view"),
         ("stock-management", "movements"),
         ("stock-management", "report"),
+        # Customer prepayments — register + list from the accountant dashboard.
+        ("my-shop", "prepayments"),
+        # Cashier settings defaults on the Cashiers report (?mode=settings).
+        # The same permission also opens Settings → POS by URL, but nothing
+        # links there for this role (settings/home stays denied).
+        ("settings", "company-pos"),
     }
 )
 

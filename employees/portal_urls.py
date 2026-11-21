@@ -111,6 +111,11 @@ urlpatterns = [
         name="my_shop_register_expense",
     ),
     path(
+        "my-shop/<int:shop_id>/prepayments/",
+        shop_views.my_shop_prepayment_register,
+        name="my_shop_prepayment_register",
+    ),
+    path(
         "my-shop/<int:shop_id>/receipts/",
         shop_views.my_shop_receipts,
         name="my_shop_receipts",
@@ -458,6 +463,11 @@ urlpatterns = [
         name="role_settings",
     ),
     path(
+        "<role_segment:role_segment>/prepayments/",
+        views.role_prepayments,
+        name="role_prepayments",
+    ),
+    path(
         "<role_segment:role_segment>/settings/communications/",
         views.legacy_settings_communications_redirect,
         name="legacy_role_settings_communications",
@@ -666,6 +676,11 @@ urlpatterns = [
         "<role_segment:role_segment>/analytics/balances/<int:session_id>/",
         analytics_views.analytics_day_session,
         name="analytics_day_session",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/employees/<int:employee_id>/",
+        analytics_views.analytics_employee,
+        name="analytics_employee",
     ),
     path(
         "<role_segment:role_segment>/analytics/<slug:section>/",

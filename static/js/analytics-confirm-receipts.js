@@ -695,6 +695,11 @@
     };
   };
 
+  const confirmMethodRequired = () => {
+    const wrap = modalBody?.querySelector("[data-confirm-paidby-wrap]");
+    return Boolean(wrap) && !wrap.hidden;
+  };
+
   const syncSubmitConfirm = () => {
     if (!submitConfirmBtn) return;
     const {
@@ -748,6 +753,7 @@
           Boolean(splitValues[channel]) &&
           Number.isFinite(Number(splitValues[channel]))
       );
+    const methodOk = !confirmMethodRequired() || Boolean(method);
     submitConfirmBtn.disabled = !(
       confirmMode &&
       !busy &&
@@ -755,7 +761,8 @@
       detailsOk &&
       amountOk &&
       splitOk &&
-      clientOk
+      clientOk &&
+      methodOk
     );
   };
 
@@ -827,9 +834,11 @@
     const creditNotice = String(receipt.credit_confirm_notice || "").trim();
     setConfirmStatus(
       creditNotice ||
-        (receipt.require_mpesa_reference_on_confirm && confirmRefApplies()
-          ? "Payment time defaults to now. Enter the reference number and staff 6-digit ID."
-          : "Payment time defaults to now. Enter staff 6-digit ID to confirm.")
+        (confirmMethodRequired()
+          ? "Select how the receipt was paid, then enter the staff 6-digit ID to confirm."
+          : receipt.require_mpesa_reference_on_confirm && confirmRefApplies()
+            ? "Payment time defaults to now. Enter the reference number and staff 6-digit ID."
+            : "Payment time defaults to now. Enter staff 6-digit ID to confirm.")
     );
     syncSubmitConfirm();
     refreshIcons();
@@ -1087,7 +1096,7 @@
     }
     currentDetail = payload;
     if (modalTitle) {
-      modalTitle.textContent = receipt.receipt_number || "Receipt";
+      modalTitle.textContent = receipt.tally_code || receipt.receipt_number || "Receipt";
     }
     if (modalActions) modalActions.hidden = false;
     confirmMode = false;
@@ -1269,9 +1278,7 @@
       const paidByOptions = optionMethods
         .map(
           (m) =>
-            `<option value="${m}"${m === saleMethod ? " selected" : ""}>${escapeHtml(
-              methodLabels[m]
-            )}</option>`
+            `<option value="${m}">${escapeHtml(methodLabels[m])}</option>`
         )
         .join("");
       paidByField = `<div class="shop-receipt-mpesa-ref" data-confirm-paidby-wrap${
@@ -1285,7 +1292,10 @@
         class="shop-receipt-mpesa-ref-input"
         name="payment_method"
         data-confirm-payment-method
+        required
+        aria-required="true"
       >
+        <option value="" disabled selected>Select payment method</option>
         ${paidByOptions}
       </select>
     </div>`;
@@ -1477,7 +1487,7 @@
           receipt.shop_name || "MY-SHOP"
         )} · ${escapeHtml(receipt.kind_label || "Receipt")}</p>
         <h3 class="shop-receipt-sheet-no">${escapeHtml(
-          receipt.receipt_number || "—"
+          receipt.tally_code || receipt.receipt_number || "—"
         )}</h3>
         <div class="shop-receipt-summary-badges">
           <span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(
@@ -1997,6 +2007,14 @@ ${confirmPanelHtml}`;
     } = confirmFieldValues();
     const receipt = currentDetail?.receipt || {};
     const saleConvert = kindChanged && targetKind === "sale";
+    if (confirmMethodRequired() && !method) {
+      setConfirmStatus("Select how the receipt was paid before confirming.", {
+        error: true,
+      });
+      modalBody?.querySelector("[data-confirm-payment-method]")?.focus();
+      syncSubmitConfirm();
+      return;
+    }
     if (kindChanged) {
       const clientRules = confirmClientRules();
       if (clientRules.nameRequired && !clientName) {

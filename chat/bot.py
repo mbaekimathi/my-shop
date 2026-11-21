@@ -31,6 +31,13 @@ from .myshop_models import (
     StockMovementLine,
 )
 
+def _tally(receipt) -> str:
+    """Tally code — converted receipts show both kind letters (CS0005)."""
+    from .stock import _receipt_tally_code
+
+    return _receipt_tally_code(receipt)
+
+
 COUNTED_STATUSES = ("active", "confirmed", "partial_return")
 ANALYTICS_ALL = "all"
 ANALYTICS_PENDING = "pending"
@@ -291,7 +298,7 @@ def _credit_rows(qs, shop_names=None) -> list:
             "customer": r.client_name or "Walk-in customer",
             "phone": (r.client_phone or "").strip()
             or phones.get(r.client_id, ""),
-            "receipt": r.receipt_number,
+            "receipt": _tally(r),
             "balance": money(r.balance),
             "due": (
                 r.credit_due_date.strftime("%d %b")
@@ -390,7 +397,7 @@ def _credit_reply(shop: Shop, text: str) -> str:
     for r in qs.order_by("-balance")[:5]:
         who = r.client_name or "Walk-in customer"
         due = f" (due {r.credit_due_date:%d %b})" if r.credit_due_date else ""
-        lines.append(f"- {who}: {money(r.balance)} on {r.receipt_number}{due}")
+        lines.append(f"- {who}: {money(r.balance)} on {_tally(r)}{due}")
     return "\n".join(lines)
 
 
@@ -499,7 +506,7 @@ def _receipts_reply(shop: Shop, text: str) -> str:
         who = r.client_name or "Walk-in customer"
         balance = (r.total or 0) - (r.amount_paid or 0)
         lines = [
-            f"*Receipt {r.receipt_number}* — {r.kind}",
+            f"*Receipt {_tally(r)}* — {r.kind}",
             f"Date: {timezone.localtime(r.created_at):%d %b %Y, %H:%M}",
             f"Customer: {who}",
             f"Total: *{money(r.total)}* ({r.payment_method})",
@@ -517,7 +524,7 @@ def _receipts_reply(shop: Shop, text: str) -> str:
     lines = [f"*Recent receipts — {shop.name}*", ""]
     for r in recent:
         lines.append(
-            f"- {r.receipt_number} ({r.kind}) — {money(r.total)} — "
+            f"- {_tally(r)} ({r.kind}) — {money(r.total)} — "
             f"{timezone.localtime(r.created_at):%d %b, %H:%M}"
         )
     lines.append("\nAsk *receipt 00123* for a specific one.")

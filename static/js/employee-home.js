@@ -90,7 +90,7 @@
   const renderDetail = (payload) => {
     const receipt = payload.receipt || {};
     if (modalTitle) {
-      modalTitle.textContent = receipt.receipt_number || "Receipt";
+      modalTitle.textContent = receipt.tally_code || receipt.receipt_number || "Receipt";
     }
 
     const lines = receipt.lines || [];
@@ -162,7 +162,7 @@
           receipt.shop_name || "MY-SHOP"
         )} · ${escapeHtml(receipt.kind_label || "Receipt")}</p>
         <h3 class="shop-receipt-sheet-no">${escapeHtml(
-          receipt.receipt_number || "—"
+          receipt.tally_code || receipt.receipt_number || "—"
         )}</h3>
         <div class="shop-receipt-summary-badges">
           <span class="shop-receipt-kind shop-receipt-kind--${escapeHtml(

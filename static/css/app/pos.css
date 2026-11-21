@@ -7288,6 +7288,51 @@ body.workspace-modal-open .stock-country-menu {
   width: 100%;
 }
 
+/* Register-prepayment popup — a stacked two-column form, not the
+   expense composer (which squeezes fields + a button into one row). */
+.prepayment-modal .buy-stock-modal-dialog {
+  width: min(34rem, 100%);
+}
+
+.prepayment-form.buy-stock-simple {
+  display: flex;
+  flex-direction: column;
+}
+
+.shop-expense-composer.prepayment-fields {
+  position: static;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 0.95rem;
+  align-items: start;
+  padding: 0;
+  background: transparent;
+}
+
+.shop-expense-composer.prepayment-fields .shop-cart-input > span {
+  white-space: normal;
+}
+
+.prepayment-fields .prepayment-shop,
+.prepayment-fields .prepayment-purpose {
+  grid-column: 1 / -1;
+}
+
+.prepayment-fields .shop-expense-composer-amount {
+  min-width: 0;
+}
+
+.prepayment-footer {
+  margin-top: auto;
+  padding: 0.85rem 1.25rem 1.1rem;
+  background: var(--surface);
+}
+
+@media (max-width: 560px) {
+  .shop-expense-composer.prepayment-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .shop-expense-page:not(.shop-expense-page--modal) .shop-expense-form.buy-stock-simple {
   min-height: min(70vh, 44rem);
   border: 1px solid var(--line);

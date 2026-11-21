@@ -710,7 +710,7 @@ class ConfirmSalesReceiptTests(TestCase):
         request.user = self.user
         context = build_confirm_receipts_page(profile=self.staff, request=request)
         kinds = {row["kind"] for row in context["rows"]}
-        self.assertEqual(kinds, {"sale", "credit"})
+        self.assertEqual(kinds, {"sale", "credit", "quotation"})
         self.assertEqual(context["kind_filter"], "all")
         self.assertEqual(context["status_filter"], "")
         # Bare page defaults to today (day range).
@@ -744,7 +744,8 @@ class ConfirmSalesReceiptTests(TestCase):
         document = build_confirm_receipts_print_document(
             profile=self.staff, request=request
         )
-        self.assertEqual(document["kind_label"], "Sales")
+        # ?kind=sale normalizes onto the combined Sales & credits filter.
+        self.assertEqual(document["kind_label"], "Sales & credits")
         self.assertGreaterEqual(document["receipt_total"], 1)
         self.assertTrue(
             any(row["number"] == "SL-PRINT-1" for row in document["rows"])
@@ -1328,8 +1329,8 @@ class AnalyticsPosFeatureVisibilityTests(TestCase):
             profile=self.staff, request=request, include_rows=False
         )
         values = {value for value, _label in page["kind_options"]}
-        self.assertNotIn("sale", values)
-        self.assertIn("credit", values)
+        # Sales & credits merges both — it stays while either flag is on.
+        self.assertIn("sales_credits", values)
         self.assertEqual(page["kind_filter"], "all")
 
         self._set_pos(enable_sale=True, enable_credit=False)
@@ -1337,8 +1338,14 @@ class AnalyticsPosFeatureVisibilityTests(TestCase):
             profile=self.staff, request=request, include_rows=False
         )
         values = {value for value, _label in page["kind_options"]}
-        self.assertIn("sale", values)
-        self.assertNotIn("credit", values)
+        self.assertIn("sales_credits", values)
+
+        self._set_pos(enable_sale=False, enable_credit=False)
+        page = build_confirm_receipts_page(
+            profile=self.staff, request=request, include_rows=False
+        )
+        values = {value for value, _label in page["kind_options"]}
+        self.assertNotIn("sales_credits", values)
 
     def test_tradings_visible_with_trade_in_only(self):
         from shops.services import (
@@ -1538,7 +1545,10 @@ class AnalyticsDaySessionReportTests(TestCase):
             [t["title"] for t in page["tables"]],
             [
                 "Money flow",
-                "Credit & gift — not in the till",
+                "Customer prepayments",
+                "Credit payments collected",
+                "Credit — not in the till",
+                "Gifts — not in the till",
                 "Items sold",
                 "Sales by employee",
                 "Pending & cancelled sales",
@@ -1551,9 +1561,9 @@ class AnalyticsDaySessionReportTests(TestCase):
         flow_labels = [r[0] for r in page["tables"][0]["rows"]]
         self.assertIn("Counted closing", flow_labels)
         self.assertIn("Variance", flow_labels)
-        items = page["tables"][2]
+        items = page["tables"][5]
         self.assertEqual(items["rows"][0][0], "Charger")
-        sellers = page["tables"][3]
+        sellers = page["tables"][6]
         self.assertEqual(sellers["rows"][0][0], "870066")
         self.assertEqual(sellers["rows"][0][1], "1")
         self.assertEqual(sellers["rows"][0][3], "KSh 250.00")
@@ -4609,7 +4619,24 @@ class CompanyAccountantRoleTests(TestCase):
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertEqual(
             labels,
-            ["Stock Management", "Analytics", "Cashiers", "Suppliers"],
+            [
+                "Stock Management",
+                "Analytics",
+                "Cashiers",
+                "Suppliers",
+                "Register prepayment",
+                "Prepayments",
+                "Clock in / out",
+            ],
+        )
+        accounts_link = next(
+            item
+            for item in sidebar["footer"]
+            if item["label"] == "Accounts settings"
+        )
+        self.assertEqual(
+            accounts_link["href"],
+            "/company-accountant/analytics/balances/?mode=settings",
         )
 
     def test_default_permissions_read_only_scope(self):
@@ -4621,6 +4648,8 @@ class CompanyAccountantRoleTests(TestCase):
             ("stock-management", "view"),
             ("stock-management", "movements"),
             ("stock-management", "report"),
+            ("settings", "company-pos"),
+            ("my-shop", "prepayments"),
         ):
             self.assertTrue(
                 self.employee_may(self.accountant, module, submodule),
@@ -4661,6 +4690,7 @@ class CompanyAccountantRoleTests(TestCase):
         for url in (
             "/company-accountant/analytics/",
             "/company-accountant/analytics/balances/",
+            "/company-accountant/analytics/balances/?mode=settings",
             "/company-accountant/analytics/stock/",
             "/company-accountant/analytics/suppliers/",
             "/company-accountant/stock-management/?mode=view",
@@ -4922,3 +4952,167 @@ class EmployeeHomeReceiptPreviewTests(TestCase):
         self.client.force_login(admin_user)
         response = self.client.get(f"/employee/receipts/{self.receipt.pk}/")
         self.assertEqual(response.status_code, 302)
+
+
+class AnalyticsEmployeePageTests(TestCase):
+    """Analytics → Employees rows open that employee's items-sold page."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="840021",
+            password="emp-analytics-pass",
+            email="it-emp-analytics@test.local",
+            first_name="IT",
+            last_name="SUPPORT",
+            is_active=True,
+        )
+        self.it = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840021",
+            phone_country_code="+254",
+            phone_number="700000951",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop_a = Shop.objects.create(
+            name="EMP SHOP A",
+            location="NAIROBI",
+            email="emp-a@test.local",
+            phone_number="0700000951",
+            login_code="840121",
+            password_hash="x",
+            created_by=self.it,
+        )
+        self.shop_b = Shop.objects.create(
+            name="EMP SHOP B",
+            location="MOMBASA",
+            email="emp-b@test.local",
+            phone_number="0700000952",
+            login_code="840122",
+            password_hash="x",
+            created_by=self.it,
+        )
+        cashier_user = User.objects.create_user(
+            username="840022",
+            password="cashier-pass",
+            email="cashier-analytics@test.local",
+            first_name="CASH",
+            last_name="IER",
+            is_active=True,
+        )
+        self.cashier = EmployeeProfile.objects.create(
+            user=cashier_user,
+            employee_id="840022",
+            phone_country_code="+254",
+            phone_number="700000953",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+
+    def _sale(self, *, shop, number, item_name, total=250):
+        receipt = ShopReceipt.objects.create(
+            shop=shop,
+            kind=ShopReceiptKind.SALE,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number=number,
+            client_name="Walk-in",
+            subtotal=total,
+            tax_percent=0,
+            tax_amount=0,
+            total=total,
+            amount_paid=total,
+            payment_method="cash",
+            created_by=self.cashier,
+        )
+        ShopReceiptLine.objects.create(
+            receipt=receipt,
+            item_name=item_name,
+            quantity=1,
+            unit_price=total,
+            line_total=total,
+        )
+        return receipt
+
+    def _employees_page(self):
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from employees.analytics_services import build_analytics_page
+
+        request = RequestFactory().get(
+            "/it-support/analytics/employees/",
+            {"range": "day", "date": timezone.localdate().isoformat()},
+        )
+        request.user = self.user
+        return build_analytics_page(
+            profile=self.it, request=request, section_slug="employees"
+        )["page"]
+
+    def test_staff_cell_links_to_employee_page(self):
+        self._sale(shop=self.shop_a, number="SL-EMP1", item_name="Charger")
+        page = self._employees_page()
+        table = next(
+            t for t in page["tables"] if t["title"] == "Cashier sales by shop"
+        )
+        row = table["rows"][0]
+        cells = row["cells"] if isinstance(row, dict) else row
+        staff_cell = cells[0]
+        self.assertEqual(staff_cell["label"], "CASH IER · 840022")
+        self.assertIn(
+            f"/it-support/analytics/employees/{self.cashier.pk}/",
+            staff_cell["href"],
+        )
+
+    def test_employee_page_lists_items_sold(self):
+        from django.utils import timezone
+
+        self._sale(shop=self.shop_a, number="SL-EMP2", item_name="Charger")
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/it-support/analytics/employees/{self.cashier.pk}/",
+            {"range": "day", "date": timezone.localdate().isoformat()},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["employee_subject"]["label"],
+            "CASH IER · 840022",
+        )
+        items = response.context["stats"]["items_sold"]
+        self.assertEqual([row["name"] for row in items], ["Charger"])
+        html = response.content.decode()
+        self.assertIn("Items sold", html)
+        self.assertIn("Charger", html)
+
+    def test_employee_page_scopes_items_to_selected_shop(self):
+        from django.utils import timezone
+
+        self._sale(shop=self.shop_a, number="SL-EMP3", item_name="Charger")
+        self._sale(shop=self.shop_b, number="SL-EMP4", item_name="Cable")
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/it-support/analytics/employees/{self.cashier.pk}/",
+            {
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+                "shop_id": str(self.shop_b.pk),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        items = response.context["stats"]["items_sold"]
+        self.assertEqual([row["name"] for row in items], ["Cable"])
+
+    def test_employee_page_404s_for_unknown_employee(self):
+        self.client.force_login(self.user)
+        response = self.client.get("/it-support/analytics/employees/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_employee_page_redirects_wrong_role_segment(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/shop-manager/analytics/employees/{self.cashier.pk}/"
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(
+            f"/it-support/analytics/employees/{self.cashier.pk}/",
+            response["Location"],
+        )

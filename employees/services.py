@@ -641,7 +641,10 @@ def _trend_bucket_windows(start, end, bucket_kind):
 
 
 def build_employee_analytics(
-    profile: EmployeeProfile, date_filter: dict | None = None
+    profile: EmployeeProfile,
+    date_filter: dict | None = None,
+    *,
+    shop_ids=None,
 ) -> dict:
     """Deeper performance breakdown for the employee "My analytics" page.
 
@@ -649,7 +652,9 @@ def build_employee_analytics(
     ``analytics_services._date_filter_context`` — stats scope to that window
     and the trend chart buckets as hours (day / short period), days (month /
     mid period) or months (year / long period). Without a filter the page
-    falls back to all-time stats and a trailing-12-month trend.
+    falls back to all-time stats and a trailing-12-month trend. ``shop_ids``
+    scopes the stats to those shops (analytics employee drill-down passes the
+    viewer's active shop filter).
     """
     from datetime import date, datetime, time
 
@@ -669,6 +674,8 @@ def build_employee_analytics(
     period_label = (date_filter or {}).get("report_period_label") or "All time"
 
     receipts = ShopReceipt.objects.filter(created_by=profile)
+    if shop_ids is not None:
+        receipts = receipts.filter(shop_id__in=shop_ids)
     if range_start and range_end:
         receipts = receipts.filter(
             created_at__gte=range_start, created_at__lt=range_end
@@ -760,9 +767,12 @@ def build_employee_analytics(
             Sum("total", filter=window & cancelled_status),
             Decimal("0.00"),
         )
-    trend_agg = ShopReceipt.objects.filter(
+    trend_qs = ShopReceipt.objects.filter(
         created_by=profile, kind=ShopReceiptKind.SALE
-    ).aggregate(**kwargs)
+    )
+    if shop_ids is not None:
+        trend_qs = trend_qs.filter(shop_id__in=shop_ids)
+    trend_agg = trend_qs.aggregate(**kwargs)
     trend_rows = [
         {
             "label": label,
@@ -781,14 +791,17 @@ def build_employee_analytics(
     if prev_start and prev_end:
         from .analytics_services import _trend_hint
 
+        prev_qs = ShopReceipt.objects.filter(
+            created_by=profile,
+            kind=ShopReceiptKind.SALE,
+            status__in=COUNTED_RECEIPT_STATUSES,
+            created_at__gte=prev_start,
+            created_at__lt=prev_end,
+        )
+        if shop_ids is not None:
+            prev_qs = prev_qs.filter(shop_id__in=shop_ids)
         prev_amount = (
-            ShopReceipt.objects.filter(
-                created_by=profile,
-                kind=ShopReceiptKind.SALE,
-                status__in=COUNTED_RECEIPT_STATUSES,
-                created_at__gte=prev_start,
-                created_at__lt=prev_end,
-            ).aggregate(
+            prev_qs.aggregate(
                 amount=Coalesce(Sum("total"), Decimal("0.00"))
             )["amount"]
         )
@@ -801,6 +814,8 @@ def build_employee_analytics(
         receipt__kind=ShopReceiptKind.SALE,
         receipt__status__in=COUNTED_RECEIPT_STATUSES,
     )
+    if shop_ids is not None:
+        top_lines = top_lines.filter(receipt__shop_id__in=shop_ids)
     if range_start and range_end:
         top_lines = top_lines.filter(
             receipt__created_at__gte=range_start,

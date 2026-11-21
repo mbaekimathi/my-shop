@@ -248,7 +248,7 @@
           '">' +
           '<span class="rcpt-row__top">' +
           "<strong>" +
-          escapeHtml(r.receipt_number) +
+          escapeHtml(r.tally_code || r.receipt_number) +
           "</strong>" +
           '<span class="rcpt-badge rcpt-badge--' +
           escapeHtml(r.status) +
@@ -330,7 +330,7 @@
         if (!data.ok) throw new Error(data.error || "Not found");
         var r = data.receipt;
         state.activeId = r.id;
-        els.detailTitle.textContent = r.receipt_number;
+        els.detailTitle.textContent = r.tally_code || r.receipt_number;
         var lines = (r.lines || [])
           .map(function (l) {
             var serials =
@@ -617,12 +617,12 @@
           if (!lines.length) {
             html +=
               '<section class="rcpt-return-group"><h4>' +
-              escapeHtml(r.receipt_number) +
+              escapeHtml(r.tally_code || r.receipt_number) +
               '</h4><p class="rcpt-empty">Nothing left to return.</p></section>';
           } else {
             html +=
               '<section class="rcpt-return-group"><h4>' +
-              escapeHtml(r.receipt_number) +
+              escapeHtml(r.tally_code || r.receipt_number) +
               "</h4>" +
               lines.join("") +
               "</section>";

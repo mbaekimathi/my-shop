@@ -81,6 +81,7 @@ def finalize_trade_if_cleared(receipt) -> str:
     if paid > 0 or _money(receipt.total) <= 0:
         receipt.kind = ShopReceiptKind.SALE
         receipt.settled_from_trade = True
+        receipt.converted_from_kind = ShopReceiptKind.TRADE_OUT
         _sync_sale_payment_fields(receipt)
         if receipt.status == ShopReceiptStatus.ACTIVE:
             receipt.status = ShopReceiptStatus.CONFIRMED
@@ -162,6 +163,7 @@ def record_trade_payment(
             "mpesa_amount",
             "card_amount",
             "settled_from_trade",
+            "converted_from_kind",
             "status",
         ):
             if field not in update_fields:
@@ -354,6 +356,7 @@ def record_trade_exchange(
             "mpesa_amount",
             "card_amount",
             "settled_from_trade",
+            "converted_from_kind",
             "status",
         ):
             if field not in update_fields:
@@ -527,6 +530,7 @@ def record_trade_return(receipt, *, lines, actor=None) -> dict:
                 "cash_amount",
                 "mpesa_amount",
                 "settled_from_trade",
+                "converted_from_kind",
                 "status",
             ):
                 if field not in update_fields:

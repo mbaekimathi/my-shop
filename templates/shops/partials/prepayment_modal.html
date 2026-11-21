@@ -1,0 +1,122 @@
+{% if prepayment_modal %}
+<div
+  class="workspace-modal buy-stock-modal register-expense-modal prepayment-modal"
+  data-modal="prepayment"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close="prepayment"></div>
+  <div
+    class="workspace-modal-dialog buy-stock-modal-dialog register-expense-modal-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="prepayment-modal-title"
+  >
+    <div class="workspace-modal-head buy-stock-modal-head">
+      <div class="buy-stock-modal-head-copy">
+        {% if prepayment_modal_shop %}
+        <p class="buy-stock-modal-kicker">{{ prepayment_modal_shop.name }}</p>
+        {% endif %}
+        <h2 id="prepayment-modal-title">Register prepayment</h2>
+        <p class="buy-stock-modal-lead">Record money a customer pays in advance.</p>
+      </div>
+      <button
+        class="workspace-icon-btn"
+        type="button"
+        aria-label="Close"
+        data-modal-close="prepayment"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="register-expense-modal-body">
+      <form
+        method="post"
+        action="{{ prepayment_form_url }}"
+        class="shop-expense-form buy-stock-simple prepayment-form"
+        novalidate
+      >
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ prepayment_next }}">
+        {% if prepayment_modal_shop %}
+        <input type="hidden" name="shop_id" value="{{ prepayment_modal_shop.pk }}">
+        {% endif %}
+        <div class="buy-stock-simple-main">
+          <div class="shop-expense-composer prepayment-fields">
+            {% if not prepayment_modal_shop %}
+            <label class="shop-cart-input prepayment-shop">
+              <span>Shop</span>
+              <select name="shop_id" required>
+                <option value="">Select shop</option>
+                {% for prepay_shop in prepayment_modal_shops %}
+                <option value="{{ prepay_shop.pk }}">{{ prepay_shop.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            {% endif %}
+            <label class="shop-cart-input shop-expense-composer-name">
+              <span>Customer name</span>
+              <input
+                type="text"
+                name="customer_name"
+                placeholder="e.g. Jane Wanjiku"
+                autocomplete="off"
+                maxlength="150"
+                data-uppercase
+                data-prepayment-name
+                required
+              >
+            </label>
+            <label class="shop-cart-input">
+              <span>Phone number</span>
+              <input
+                type="tel"
+                name="customer_phone"
+                placeholder="e.g. 0712 345 678"
+                autocomplete="off"
+                maxlength="32"
+                required
+              >
+            </label>
+            <label class="shop-cart-input prepayment-purpose">
+              <span>Purpose</span>
+              <input
+                type="text"
+                name="purpose"
+                placeholder="e.g. Sofa set order"
+                autocomplete="off"
+                maxlength="255"
+                required
+              >
+            </label>
+            <label class="shop-cart-input shop-expense-composer-amount">
+              <span>Amount</span>
+              <input
+                type="text"
+                name="amount"
+                inputmode="decimal"
+                placeholder="0"
+                required
+              >
+            </label>
+            <label class="shop-cart-input prepayment-method">
+              <span>Paid via</span>
+              <select name="payment_method" required>
+                {% for method, label in prepayment_payment_options %}
+                <option value="{{ method }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="buy-stock-simple-footer prepayment-footer">
+          <button type="submit" class="stock-float-submit buy-stock-simple-submit">
+            <i data-lucide="piggy-bank" aria-hidden="true"></i>
+            <span>Record prepayment</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}

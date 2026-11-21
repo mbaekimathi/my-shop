@@ -1969,9 +1969,42 @@ KIND_LABELS = {
     "sale": "Sale",
     "credit": "Credit",
     "quotation": "Quotation",
+    "gift": "Gift",
     "trade_out": "Trade out",
     "trade_in": "Trade in",
 }
+
+# Tally letters for converted receipts — mirrors
+# shops.services.RECEIPT_TALLY_LETTERS (CS0005 = credit → sale).
+_TALLY_LETTERS = {
+    "sale": "S",
+    "credit": "C",
+    "gift": "G",
+    "quotation": "Q",
+    "trade_out": "T",
+    "trade_in": "TI",
+}
+
+
+def _receipt_tally_code(receipt) -> str:
+    """Converted receipts show both kind letters + original sequence."""
+    number = (receipt.receipt_number or "").strip()
+    kind = (receipt.kind or "").strip()
+    source = (getattr(receipt, "converted_from_kind", "") or "").strip()
+    if not source:
+        if getattr(receipt, "settled_from_credit", False):
+            source = "credit"
+        elif getattr(receipt, "settled_from_trade", False):
+            source = "trade_out"
+    if not source or source == kind:
+        return number
+    src = _TALLY_LETTERS.get(source)
+    dst = _TALLY_LETTERS.get(kind)
+    if not src or not dst:
+        return number
+    match = re.search(r"(\d+)\s*$", number)
+    seq = match.group(1) if match else number
+    return f"{src}{dst}{seq}"
 
 PAYMENT_LABELS = {
     "cash": "Cash",
@@ -2085,6 +2118,7 @@ def _receipt_list_row(receipt) -> dict:
     return {
         "id": receipt.pk,
         "receipt_number": receipt.receipt_number,
+        "tally_code": _receipt_tally_code(receipt),
         "kind": kind,
         "kind_label": KIND_LABELS.get(kind, kind.title()),
         "status": status,
@@ -2175,10 +2209,21 @@ def list_receipts(
         qs = qs.filter(status=STATUS_PARTIAL_RETURN)
 
     kind_key = (kind or "").strip().lower()
-    if kind_key in ("sale", "credit", "quotation", "trade_out", "trade_in"):
-        qs = qs.filter(kind=kind_key)
+    if kind_key in ("sale", "credit", "quotation", "gift", "trade_out", "trade_in"):
+        # Converted receipts keep both identities (sale→credit shows under
+        # sales AND credits).
+        kind_match = Q(kind=kind_key) | Q(converted_from_kind=kind_key)
+        if kind_key == "credit":
+            kind_match |= Q(settled_from_credit=True)
+        elif kind_key == "trade_out":
+            kind_match |= Q(settled_from_trade=True)
+        qs = qs.filter(kind_match)
     elif kind_key in ("sales_credits", "sale_credit"):
-        qs = qs.filter(kind__in=("sale", "credit"))
+        qs = qs.filter(
+            Q(kind__in=("sale", "credit"))
+            | Q(converted_from_kind__in=("sale", "credit"))
+            | Q(settled_from_credit=True)
+        )
 
     q = (query or "").strip()
     if q:
@@ -2186,6 +2231,7 @@ def list_receipts(
             Q(receipt_number__icontains=q)
             | Q(client_name__icontains=q)
             | Q(client_phone__icontains=q)
+            | Q(converted_from_kind__icontains=q)
         )
 
     return [_receipt_list_row(r) for r in qs[:limit_n]]
@@ -2260,7 +2306,7 @@ def _sync_sale_payment_fields(receipt) -> None:
     receipt.cash_amount = paid
 
 
-def _convert_settled_credit_to_sale(receipt) -> bool:
+def _convert_settled_credit_to_sale(receipt, *, paid_at=None) -> bool:
     """Mirror credit_settlement.convert_settled_credit_to_sale (no save)."""
     if getattr(receipt, "kind", None) != "credit":
         return False
@@ -2275,19 +2321,29 @@ def _convert_settled_credit_to_sale(receipt) -> bool:
     receipt.kind = "sale"
     receipt.credit_due_date = None
     receipt.settled_from_credit = True
+    receipt.converted_from_kind = "credit"
+    receipt.confirmed_payment_at = paid_at or timezone.now()
     _sync_sale_payment_fields(receipt)
     return True
 
 
 def _record_credit_collection(
-    receipt, *, amount, payment_method: str, mpesa_receipt_number: str = ""
+    receipt,
+    *,
+    amount,
+    payment_method: str,
+    mpesa_receipt_number: str = "",
+    paid_at=None,
 ) -> bool:
     """Mirror credit_settlement.record_credit_collection — applies a payment
     and converts the receipt to a sale when fully settled."""
     apply = _money(amount)
     method = (payment_method or "cash").strip().lower()
+    payment_time = paid_at or timezone.now()
     receipt.amount_paid = _money(Decimal(receipt.amount_paid or 0) + apply)
     update_fields = ["amount_paid"]
+    receipt.confirmed_payment_at = payment_time
+    update_fields.append("confirmed_payment_at")
     if method == "mpesa":
         receipt.mpesa_amount = _money(
             Decimal(receipt.mpesa_amount or 0) + apply
@@ -2306,7 +2362,9 @@ def _record_credit_collection(
         receipt.cash_amount = _money(Decimal(receipt.cash_amount or 0) + apply)
         update_fields.append("cash_amount")
 
-    converted = _convert_settled_credit_to_sale(receipt)
+    converted = _convert_settled_credit_to_sale(
+        receipt, paid_at=payment_time
+    )
     if converted:
         for field in (
             "kind",
@@ -2316,6 +2374,7 @@ def _record_credit_collection(
             "mpesa_amount",
             "card_amount",
             "settled_from_credit",
+            "converted_from_kind",
         ):
             if field not in update_fields:
                 update_fields.append(field)
@@ -2499,12 +2558,15 @@ def _confirm_one_receipt(
                 amount=apply_amount,
                 payment_method=method,
                 mpesa_receipt_number=ref,
+                paid_at=paid_at,
             )
             receipt = ShopReceipt.objects.select_for_update().get(
                 pk=receipt.pk
             )
         else:
-            cleared_credit = _convert_settled_credit_to_sale(receipt)
+            cleared_credit = _convert_settled_credit_to_sale(
+                receipt, paid_at=paid_at
+            )
             if cleared_credit:
                 receipt.save(
                     update_fields=[
@@ -2515,6 +2577,8 @@ def _confirm_one_receipt(
                         "mpesa_amount",
                         "card_amount",
                         "settled_from_credit",
+                        "converted_from_kind",
+                        "confirmed_payment_at",
                     ]
                 )
 
@@ -2600,6 +2664,7 @@ def _confirm_one_receipt(
             "mpesa_amount",
             "card_amount",
             "settled_from_credit",
+            "converted_from_kind",
         ):
             if field not in update_fields:
                 update_fields.append(field)

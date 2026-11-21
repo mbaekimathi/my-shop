@@ -135,12 +135,14 @@ def _apply_active_role(request, profile) -> None:
         if active:
             profile.role = active
     _apply_acting_shop(request, profile)
-    # IT support acting in a different role gets a view-only pass: the picked
-    # workspace renders as theirs (a cashier day session counts as "their"
-    # session for display) while SupportViewOnlyMiddleware denies every write.
+    # IT support and super admin acting in a different role get a support
+    # pass: the picked workspace is fully writable and a cashier day session
+    # counts as "their" session, so support is never locked out of a live
+    # open day by the colleague-session rules.
     db_role = getattr(profile, "db_role", profile.role)
-    profile.view_only_role = (
-        db_role == EmployeeRole.IT_SUPPORT and profile.role != db_role
+    profile.support_pass = (
+        db_role in (EmployeeRole.IT_SUPPORT, EmployeeRole.SUPER_ADMIN)
+        and profile.role != db_role
     )
 
 
@@ -164,14 +166,14 @@ def _apply_acting_shop(request, profile) -> None:
         profile.acting_shop_id = acting
 
 
-def profile_view_only(profile) -> bool:
-    """True while IT support is acting in a different role.
+def profile_support_pass(profile) -> bool:
+    """True while IT support or super admin acts in a different role.
 
-    The picked role's pages render normally (a cashier day session counts as
-    "theirs" for display) but every write is denied — a read-only pass for
-    support staff browsing another role's workspace.
+    The picked role's pages render and write normally; a foreign open
+    cashier session still counts as "theirs" so support can inspect — and
+    act on — a live day without hitting the colleague-session lockout.
     """
-    return bool(getattr(profile, "view_only_role", False))
+    return bool(getattr(profile, "support_pass", False))
 
 
 def refresh_effective_role(request) -> None:

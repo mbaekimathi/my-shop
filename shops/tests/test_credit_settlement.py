@@ -72,8 +72,34 @@ class CreditSettlementHelperTests(SimpleTestCase):
         self.assertEqual(receipt.payment_method, ShopPaymentMethod.CASH)
         self.assertEqual(receipt.cash_amount, Decimal("100.00"))
         self.assertTrue(receipt.settled_from_credit)
+        self.assertIsNotNone(receipt.confirmed_payment_at)
+        self.assertIn("confirmed_payment_at", receipt.saved_fields)
         self.assertIsNone(receipt.credit_due_date)
         self.assertIn("kind", receipt.saved_fields)
+
+    def test_collection_uses_entered_paid_at(self):
+        from django.utils import timezone
+
+        receipt = self._receipt()
+        paid_at = timezone.now() - timezone.timedelta(days=3)
+        converted = record_credit_collection(
+            receipt,
+            amount=Decimal("100.00"),
+            payment_method="cash",
+            paid_at=paid_at,
+        )
+        self.assertTrue(converted)
+        self.assertEqual(receipt.confirmed_payment_at, paid_at)
+
+    def test_partial_collection_stamps_payment_moment(self):
+        receipt = self._receipt()
+        converted = record_credit_collection(
+            receipt, amount=Decimal("40.00"), payment_method="cash"
+        )
+        self.assertFalse(converted)
+        self.assertEqual(receipt.kind, ShopReceiptKind.CREDIT)
+        self.assertIsNotNone(receipt.confirmed_payment_at)
+        self.assertIn("confirmed_payment_at", receipt.saved_fields)
 
     def test_split_collections_become_both(self):
         receipt = self._receipt()
@@ -168,6 +194,7 @@ class CreditPaymentConversionTests(TestCase):
         self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
         self.assertEqual(receipt.payment_method, ShopPaymentMethod.CASH)
         self.assertTrue(receipt.settled_from_credit)
+        self.assertIsNotNone(receipt.confirmed_payment_at)
         self.assertIn("recorded as a sale", result["message"])
 
     def test_fifo_converts_only_fully_paid_receipts(self):
@@ -404,3 +431,192 @@ class SalesAnalyticsPaidCreditsTests(TestCase):
         self.assertEqual(shop_row[8]["amount"], "100")
         self.assertEqual(shop_row[8]["qty"], "1")
         self.assertEqual(shop_row[9]["amount"], "330")
+
+
+class SettledSaleRevenueDayTests(TestCase):
+    """A converted credit is recognised on the paid day, not the issue day."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="850032",
+            password="sales-day",
+            email="sales-day@test.local",
+            is_active=True,
+        )
+        self.cashier = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="850032",
+            phone_country_code="+254",
+            phone_number="700000972",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="SETTLE DAY SHOP",
+            location="NAIROBI",
+            email="settle-day-shop@test.local",
+            phone_number="0700000972",
+            login_code="850132",
+            password_hash="x",
+            created_by=self.cashier,
+        )
+        self.cashier.assigned_shops.add(self.shop)
+        self.client = Client.objects.create(
+            full_name="SETTLE DAY CLIENT",
+            phone_number="0700003022",
+            phone_normalized="254700003022",
+            created_by=self.cashier,
+        )
+        self._n = 0
+
+    def _receipt(self, **kwargs):
+        self._n += 1
+        defaults = {
+            "shop": self.shop,
+            "receipt_number": f"CR-DAY-{self._n}",
+            "kind": ShopReceiptKind.CREDIT,
+            "total": Decimal("80.00"),
+            "amount_paid": Decimal("0.00"),
+            "created_by": self.cashier,
+            "client": self.client,
+            "client_name": self.client.full_name,
+            "client_phone": self.client.phone_number,
+            "status": ShopReceiptStatus.ACTIVE,
+            "payment_method": ShopPaymentMethod.NONE,
+        }
+        defaults.update(kwargs)
+        return ShopReceipt.objects.create(**defaults)
+
+    def _sales_page(self, start, end):
+        from employees.analytics_services import _build_sales
+
+        return _build_sales(
+            {
+                "active_shop_ids": [self.shop.pk],
+                "filter_shops": [self.shop],
+                "start": start,
+                "end": end,
+                "prev_start": None,
+                "prev_end": None,
+                "role": self.cashier.role,
+                "query": "",
+            }
+        )
+
+    def test_paid_day_owns_the_sale_revenue(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        issued = timezone.now() - timedelta(days=5)
+        receipt = self._receipt()
+        ShopReceipt.objects.filter(pk=receipt.pk).update(created_at=issued)
+
+        result = apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=receipt.pk,
+            amount="80",
+        )
+        self.assertTrue(result["converted"])
+        receipt.refresh_from_db()
+        paid_at = receipt.confirmed_payment_at
+        self.assertIsNotNone(paid_at)
+
+        paid_day = self._sales_page(
+            paid_at - timedelta(hours=1), paid_at + timedelta(hours=1)
+        )
+        issue_day = self._sales_page(
+            issued - timedelta(hours=1), issued + timedelta(hours=1)
+        )
+
+        hero = paid_day["summary_board"]["hero"]["value"]
+        self.assertEqual(hero, "KSh 80.00")
+        paid_tiles = {
+            tile["label"]: tile["value"]
+            for tile in paid_day["summary_board"]["tiles"]
+        }
+        self.assertEqual(paid_tiles["Paid cash"], "KSh 80.00")
+        shop_rows = paid_day["tables"][0]["rows"]
+        self.assertEqual(shop_rows[0][0], self.shop.name)
+        self.assertEqual(shop_rows[0][9]["amount"], "80")
+
+        self.assertEqual(issue_day["summary_board"]["hero"]["value"], "KSh 0.00")
+
+    def test_settled_channels_stay_out_of_session_till(self):
+        from shops.services import (
+            day_session_balance_summary,
+            get_open_shop_day,
+            open_shop_day,
+        )
+
+        open_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "1000",
+                "mpesa_amount": "500",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": "850032",
+            },
+        )
+        session = get_open_shop_day(self.shop)
+        receipt = self._receipt()
+        apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=receipt.pk,
+            amount="80",
+        )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
+        self.assertEqual(receipt.cash_amount, Decimal("80.00"))
+        summary = day_session_balance_summary(session)
+        self.assertEqual(summary["cash_sales"], Decimal("0.00"))
+        self.assertEqual(summary["expected_cash"], Decimal("1000.00"))
+
+    def test_credit_payments_listed_in_day_report_details(self):
+        from shops.services import (
+            day_session_report_details,
+            get_open_shop_day,
+            open_shop_day,
+        )
+
+        open_shop_day(
+            shop=self.shop,
+            payload={
+                "cash_amount": "1000",
+                "mpesa_amount": "500",
+                "credit_amount": "0",
+                "stock_confirmed": True,
+                "login_code": "850032",
+            },
+        )
+        session = get_open_shop_day(self.shop)
+        part_paid = self._receipt(total=Decimal("120.00"))
+        apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=part_paid.pk,
+            amount="50",
+        )
+        fully_paid = self._receipt()
+        apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=fully_paid.pk,
+            amount="80",
+        )
+
+        details = day_session_report_details(session)
+        payments = details["credit_payments"]
+        self.assertEqual(payments["count"], 2)
+        self.assertEqual(payments["receipts_converted"], 1)
+        self.assertEqual(payments["cash"], Decimal("130.00"))
+        self.assertEqual(payments["total"], Decimal("130.00"))
+        rows = payments["rows"]
+        self.assertEqual(rows[0]["number"], part_paid.receipt_number)
+        self.assertFalse(rows[0]["converted"])
+        self.assertEqual(rows[0]["due_after"], Decimal("70.00"))
+        self.assertEqual(rows[0]["channel"], "cash")
+        self.assertEqual(rows[0]["client"], self.client.full_name)
+        # A converted credit shows its dual tally code (credit → sale).
+        self.assertEqual(rows[1]["number"], "CS2")
+        self.assertTrue(rows[1]["converted"])
+        self.assertEqual(rows[1]["amount"], Decimal("80.00"))

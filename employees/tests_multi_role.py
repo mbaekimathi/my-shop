@@ -318,10 +318,11 @@ class ActingShopRolePickTests(TestCase):
             link.get("label")
             for link in home.context["page_sidebar"]["primary"]
         }
-        # IT support acting as cashier is a view-only pass — read links stay,
-        # mutating actions (Sell, open/close, drawings) are dropped.
-        self.assertNotIn("Sell", labels)
-        self.assertNotIn("Open shop", labels)
+        # IT support acting as cashier gets a full support pass — every link
+        # a real cashier sees stays, including mutating actions.
+        self.assertIn("Sell", labels)
+        self.assertIn("Open shop", labels)
+        self.assertIn("Buy stock", labels)
         self.assertIn("Expenses", labels)
         self.assertIn("Receipts", labels)
         self.assertIn("Analytics", labels)
@@ -467,15 +468,16 @@ class ExtraRolesWriteTests(TestCase):
         "sync": {"max": 10_000, "window": 60},
     },
 )
-class SupportViewOnlyRoleTests(TestCase):
-    """IT support acting in a different role browses it read-only.
+class SupportPassRoleTests(TestCase):
+    """IT support acting in a different role gets a full writable pass.
 
     The picked workspace behaves like they are the ones in session — a
-    cashier day opened by someone else still shows its till — but every
-    write outside the session-navigation endpoints is denied.
+    cashier day opened by someone else still shows its till — and writes
+    go through: support is never locked out of a live open day and can
+    act on it.
     """
 
-    PASSWORD = "view-only-pass"
+    PASSWORD = "support-pass"
 
     def _employee(self, employee_id, role, *, extra_roles=""):
         user = User.objects.create_user(
@@ -507,9 +509,9 @@ class SupportViewOnlyRoleTests(TestCase):
             "840002", EmployeeRole.IT_SUPPORT, extra_roles="shop_cashier"
         )
         self.shop = Shop.objects.create(
-            name="VIEW ONLY SHOP",
+            name="SUPPORT PASS SHOP",
             location="NAIROBI",
-            email="view-only-shop@test.local",
+            email="support-pass-shop@test.local",
             phone_number="0700008401",
             login_code="840101",
             password_hash=make_password(self.PASSWORD),
@@ -537,7 +539,7 @@ class SupportViewOnlyRoleTests(TestCase):
             {"role": EmployeeRole.SHOP_CASHIER, "shop": str(self.shop.pk)},
         )
 
-    def test_dashboard_shows_foreign_day_till_read_only(self):
+    def test_dashboard_shows_foreign_day_till_with_actions(self):
         response = self.client.get(reverse("employees:role_shop_cashier"))
         self.assertEqual(response.status_code, 200)
         # The colleague-day lockout page is skipped and the till is visible.
@@ -548,12 +550,12 @@ class SupportViewOnlyRoleTests(TestCase):
         self.assertContains(response, "In till now")
         # …and the employee actually in session is named on the row.
         self.assertContains(response, "VIEW 840001")
-        # …but no mutating affordances are offered.
-        self.assertContains(response, "View only")
-        self.assertNotContains(response, "Close shop")
-        self.assertNotContains(response, "Record drawing")
+        # …and the pass is writable — the open day stays actionable.
+        self.assertNotContains(response, "View only")
+        self.assertContains(response, "Close shop")
+        self.assertContains(response, "Record drawing")
 
-    def test_day_picker_shows_till_without_actions(self):
+    def test_day_picker_shows_till_with_actions(self):
         response = self.client.get(
             reverse(
                 "employees:role_shop_day",
@@ -562,12 +564,12 @@ class SupportViewOnlyRoleTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "In till now")
-        self.assertContains(response, "View only")
+        self.assertNotContains(response, "View only")
         # The employee in session is named — the badge shows who owns the day.
         self.assertContains(response, "VIEW 840001")
-        self.assertNotContains(response, "Close shop")
+        self.assertContains(response, "Close shop")
 
-    def test_mutation_post_denied_json(self):
+    def test_mutation_post_allowed_json(self):
         response = self.client.post(
             reverse("employees:role_shop_cashier_settings"),
             {
@@ -577,12 +579,10 @@ class SupportViewOnlyRoleTests(TestCase):
             },
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(response.status_code, 403)
-        data = response.json()
-        self.assertFalse(data["ok"])
-        self.assertTrue(data["view_only"])
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
 
-    def test_checkout_post_denied(self):
+    def test_checkout_post_reaches_endpoint(self):
         response = self.client.post(
             reverse(
                 "employees:my_shop_checkout", kwargs={"shop_id": self.shop.pk}
@@ -590,8 +590,10 @@ class SupportViewOnlyRoleTests(TestCase):
             {"kind": "sale", "login_code": self.cashier.employee_id},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(response.status_code, 403)
-        self.assertTrue(response.json()["view_only"])
+        # The write reaches checkout — it may still fail validation (empty
+        # cart) but it is not blocked by the support pass.
+        self.assertNotEqual(response.status_code, 403)
+        self.assertNotIn("view_only", response.json())
 
     def test_catalog_read_allowed_on_foreign_day(self):
         response = self.client.get(
@@ -601,7 +603,7 @@ class SupportViewOnlyRoleTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-    def test_floor_unlock_allowed_but_writes_denied(self):
+    def test_floor_unlock_allowed_and_writes_reach_checkout(self):
         # Floor unlock is session navigation — it stays allowed.
         response = self.client.post(
             reverse("employees:my_shop_select"),
@@ -622,7 +624,8 @@ class SupportViewOnlyRoleTests(TestCase):
             {"kind": "sale", "login_code": self.cashier.employee_id},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(response.status_code, 403)
+        # Not the old view-only 403 — the real checkout endpoint answers.
+        self.assertNotIn("view_only", response.json())
 
     def test_acting_shop_switch_allowed(self):
         response = self.client.post(
@@ -634,6 +637,17 @@ class SupportViewOnlyRoleTests(TestCase):
         self.assertTrue(response.json()["ok"])
 
     def test_role_picker_post_still_allowed(self):
+        # While acting as cashier the support pass is set.
+        from django.test import RequestFactory
+
+        from employees.access import get_profile_for_request
+
+        request = RequestFactory().get("/shop-cashier/")
+        request.session = self.client.session
+        request.user = self.support.user
+        profile = get_profile_for_request(request)
+        self.assertTrue(getattr(profile, "support_pass", False))
+
         response = self.client.post(
             reverse("employees:select_role"),
             {"role": EmployeeRole.IT_SUPPORT},
@@ -643,16 +657,12 @@ class SupportViewOnlyRoleTests(TestCase):
             self.client.session[SESSION_ACTIVE_ROLE_KEY],
             EmployeeRole.IT_SUPPORT,
         )
-        # Back on the primary role the pass is writable again.
-        from django.test import RequestFactory
-
-        from employees.access import get_profile_for_request
-
+        # Back on the primary role the pass is off again.
         request = RequestFactory().get("/it-support/")
         request.session = self.client.session
         request.user = self.support.user
         profile = get_profile_for_request(request)
-        self.assertFalse(getattr(profile, "view_only_role", False))
+        self.assertFalse(getattr(profile, "support_pass", False))
 
     def test_day_history_stays_shop_wide(self):
         response = self.client.get(

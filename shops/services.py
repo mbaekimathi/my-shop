@@ -268,6 +268,7 @@ DOC_NUMBER_PREFIX = {
     "expense": "E",
     "shelf_movement": "H",
     "store_movement": "R",
+    "prepayment": "A",
 }
 RECEIPT_FORMAT_RE = re.compile(r"^[A-Za-z0-9]{1,8}$")
 RECEIPT_QR_CONTENTS = ("website", "receipt_details")
@@ -3611,6 +3612,97 @@ def preview_receipt_number(
     return format_simple_doc_number(prefix, 1)
 
 
+# Canonical letters used when a converted receipt shows both kind codes in
+# tallies: CS0005 (credit → sale), SC0007 (sale → credit), SG0003 (sale → gift).
+RECEIPT_TALLY_LETTERS = {
+    ShopReceiptKind.SALE: "S",
+    ShopReceiptKind.CREDIT: "C",
+    ShopReceiptKind.GIFT: "G",
+    ShopReceiptKind.QUOTATION: "Q",
+    ShopReceiptKind.TRADE_OUT: "T",
+    ShopReceiptKind.TRADE_IN: "TI",
+}
+_TALLY_SEQ_RE = re.compile(r"(\d+)\s*$")
+_TALLY_PREFIX_RE = re.compile(r"^([A-Za-z]+)")
+
+
+def _receipt_number_sequence(number: str) -> str:
+    match = _TALLY_SEQ_RE.search(number or "")
+    return match.group(1) if match else (number or "").strip()
+
+
+def _infer_receipt_source_kind(receipt, *, settings_row=None) -> str:
+    """Best-effort original kind for receipts converted before
+    ``converted_from_kind`` existed — read the stored number's prefix."""
+    number = (getattr(receipt, "receipt_number", "") or "").strip().upper()
+    match = _TALLY_PREFIX_RE.match(number)
+    if not match:
+        return ""
+    prefix = match.group(1)
+    kind = (getattr(receipt, "kind", "") or "").strip()
+    if not kind or kind not in RECEIPT_FORMAT_FIELDS:
+        return ""
+    settings = settings_row
+    if settings is None:
+        shop = getattr(receipt, "shop", None)
+        settings = (
+            get_effective_pos_settings(shop)
+            if shop is not None
+            else get_company_pos_settings()
+        )
+    # The number keeps the format of the kind it was issued as — a prefix that
+    # no longer matches the current kind marks a conversion.
+    if prefix in {
+        receipt_format_for_kind(kind, settings),
+        RECEIPT_FORMAT_DEFAULTS.get(kind, ""),
+    }:
+        return ""
+    for key in RECEIPT_FORMAT_FIELDS:
+        if key == kind:
+            continue
+        if prefix in (
+            receipt_format_for_kind(key, settings),
+            RECEIPT_FORMAT_DEFAULTS.get(key),
+        ):
+            return key
+    return ""
+
+
+def receipt_tally_code(receipt, *, settings_row=None) -> str:
+    """Document code for receipt lists and tallies.
+
+    Converted receipts carry both kind letters plus the original sequence —
+    CS0005 (credit → sale), SC0007 (sale → credit), SG0003 (sale → gift).
+    Unconverted receipts show their stored number (e.g. S0005).
+    """
+    number = (getattr(receipt, "receipt_number", "") or "").strip()
+    kind = (getattr(receipt, "kind", "") or "").strip()
+    source = (getattr(receipt, "converted_from_kind", "") or "").strip()
+    if not source:
+        if getattr(receipt, "settled_from_credit", False):
+            source = ShopReceiptKind.CREDIT
+        elif getattr(receipt, "settled_from_trade", False):
+            source = ShopReceiptKind.TRADE_OUT
+    if not source:
+        source = _infer_receipt_source_kind(
+            receipt, settings_row=settings_row
+        )
+    if not source or source == kind:
+        return number
+    src = RECEIPT_TALLY_LETTERS.get(source)
+    dst = RECEIPT_TALLY_LETTERS.get(kind)
+    if not src or not dst:
+        return number
+    return f"{src}{dst}{_receipt_number_sequence(number)}"
+
+
+def prepayment_doc_code(prepayment) -> str:
+    """Tally code for a customer prepayment/advancement, e.g. A0007."""
+    return format_simple_doc_number(
+        DOC_NUMBER_PREFIX["prepayment"], getattr(prepayment, "pk", 0) or 0
+    )
+
+
 def _next_receipt_sequence(*, shop: Shop, kind: str, prefix: str) -> int:
     """
     Next sequence for shop+kind.
@@ -5142,7 +5234,7 @@ def _build_receipt_ticket_data(receipt, lines) -> dict:
         "shop_phone": company_phone,
         "shop_branch": shop_branch,
         "logo_url": logo_url,
-        "receipt_number": receipt.receipt_number,
+        "receipt_number": receipt_tally_code(receipt),
         "kind": kind,
         "doc_type": doc_meta["doc_type"],
         "document_title": doc_meta["document_title"],
@@ -7737,6 +7829,19 @@ def stamp_session_activity_starts(sessions) -> None:
         )
 
 
+def _session_window_end(session):
+    """Exclusive upper bound for a session's activity window.
+
+    A live session's bound is "now" — nudged a microsecond so rows stamped in
+    the same clock tick (coarse timer granularity) still count.
+    """
+    if session.closed_at is not None:
+        return session.closed_at
+    from datetime import timedelta
+
+    return timezone.now() + timedelta(microseconds=1)
+
+
 def _money_or_zero(value) -> Decimal:
     try:
         return Decimal(str(value or 0)).quantize(Decimal("0.01"))
@@ -7862,14 +7967,19 @@ def _collect_return_payment_events_for_shops(
 
 
 def _session_activity_totals(
-    session, *, sales=None, expenses=None, supplier_payments=None, refunds=None
+    session,
+    *,
+    sales=None,
+    expenses=None,
+    supplier_payments=None,
+    refunds=None,
+    prepayments=None,
 ) -> dict:
     """Cash/M-Pesa sales and paid outflows inside a day session window.
 
-    Cashbox expected cash = opening cash + cash sales − return refunds
-    − expenses paid − owner drawings (cash) − suppliers paid.
-    M-Pesa expected = opening M-Pesa + M-Pesa sales − M-Pesa return refunds
-    − owner drawings (M-Pesa).
+    Cashbox expected cash = opening cash + cash sales + customer prepayments
+    (cash) − return refunds − expenses paid − owner drawings (cash)
+    − suppliers paid. M-Pesa/card follow the same shape.
     Owner drawings are equity, not operating expense.
 
     Sales use original tender (including later-returned receipts). Refunds are
@@ -7878,7 +7988,7 @@ def _session_activity_totals(
     from .models import ExpenseCategory
 
     opened = session_activity_start(session)
-    closed = session.closed_at or timezone.now()
+    closed = _session_window_end(session)
     cash_sales = Decimal("0.00")
     mpesa_sales = Decimal("0.00")
     card_sales = Decimal("0.00")
@@ -7891,6 +8001,10 @@ def _session_activity_totals(
     drawings_mpesa = Decimal("0.00")
     drawings_card = Decimal("0.00")
     suppliers_paid = Decimal("0.00")
+    prepayments_cash = Decimal("0.00")
+    prepayments_mpesa = Decimal("0.00")
+    prepayments_card = Decimal("0.00")
+    prepayments_count = 0
 
     for sale in sales or []:
         when = sale["created_at"]
@@ -7944,6 +8058,15 @@ def _session_activity_totals(
         if opened <= when < closed:
             suppliers_paid += Decimal(payment.get("amount_paid") or 0)
 
+    for row in prepayments or []:
+        when = row["created_at"]
+        if opened <= when < closed:
+            prepayments_cash += _money_or_zero(row.get("cash_amount"))
+            prepayments_mpesa += _money_or_zero(row.get("mpesa_amount"))
+            prepayments_card += _money_or_zero(row.get("card_amount"))
+            prepayments_count += 1
+    prepayments_total = prepayments_cash + prepayments_mpesa + prepayments_card
+
     opening_cash = Decimal(session.opening_cash or 0)
     opening_mpesa = Decimal(session.opening_mpesa or 0)
     opening_card = Decimal(getattr(session, "opening_card", None) or 0)
@@ -7951,16 +8074,17 @@ def _session_activity_totals(
     expected_cash = (
         opening_cash
         + cash_sales
+        + prepayments_cash
         - cash_refunds
         - expenses_paid
         - drawings_cash
         - suppliers_paid
     )
     expected_mpesa = (
-        opening_mpesa + mpesa_sales - mpesa_refunds - drawings_mpesa
+        opening_mpesa + mpesa_sales + prepayments_mpesa - mpesa_refunds - drawings_mpesa
     )
     expected_card = (
-        opening_card + card_sales - card_refunds - drawings_card
+        opening_card + card_sales + prepayments_card - card_refunds - drawings_card
     )
     # Till tracks physical channels only (cash + M-Pesa + card). Credit sales
     # are receivables, not money in the drawer.
@@ -8017,6 +8141,11 @@ def _session_activity_totals(
         "drawings_mpesa": drawings_mpesa,
         "drawings_card": drawings_card,
         "suppliers_paid": suppliers_paid,
+        "prepayments_cash": prepayments_cash,
+        "prepayments_mpesa": prepayments_mpesa,
+        "prepayments_card": prepayments_card,
+        "prepayments_total": prepayments_total,
+        "prepayments_count": prepayments_count,
         "expected_cash": expected_cash,
         "expected_mpesa": expected_mpesa,
         "expected_card": expected_card,
@@ -8042,13 +8171,28 @@ def _session_activity_totals(
     }
 
 
+def _prepayment_window_values(*, shop_id, start, end) -> list:
+    """Till-channel values for customer prepayments in [start, end)."""
+    from .models import CustomerPrepayment
+
+    if start >= end:
+        return []
+    return list(
+        CustomerPrepayment.objects.filter(
+            shop_id=shop_id,
+            created_at__gte=start,
+            created_at__lt=end,
+        ).values("created_at", "cash_amount", "mpesa_amount", "card_amount")
+    )
+
+
 def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
     """Recent open/closed day sessions for a shop (newest first), with balances.
 
     `opened_by` narrows the list to one employee's sessions — a cashier's day
     history only shows the days they opened.
     """
-    from .models import Expense, ShopDaySession, ShopReceipt
+    from .models import CustomerPrepayment, Expense, ShopDaySession, ShopReceipt
 
     try:
         limit_n = max(1, min(int(limit or 30), 100))
@@ -8074,13 +8218,12 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
 
     stamp_session_activity_starts(sessions)
     min_opened = min(session_activity_start(session) for session in sessions)
-    max_closed = max(
-        (session.closed_at or timezone.now()) for session in sessions
-    )
+    max_closed = max(_session_window_end(session) for session in sessions)
     sales = list(
         ShopReceipt.objects.filter(
             shop=shop,
             kind=ShopReceiptKind.SALE,
+            settled_from_credit=False,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
         ).values(
@@ -8129,6 +8272,13 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             amount_paid__gt=0,
         ).values("created_at", "amount_paid")
     )
+    prepayments = list(
+        CustomerPrepayment.objects.filter(
+            shop=shop,
+            created_at__gte=min_opened,
+            created_at__lt=max_closed,
+        ).values("created_at", "cash_amount", "mpesa_amount", "card_amount")
+    )
 
     rows = []
     for session in sessions:
@@ -8138,6 +8288,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             expenses=expenses,
             supplier_payments=supplier_payments,
             refunds=refunds,
+            prepayments=prepayments,
         )
         rows.append(
             {
@@ -8181,11 +8332,14 @@ def day_session_balance_summary(
     if session is None:
         return {}
 
-    closed = session.closed_at or timezone.now()
+    closed = _session_window_end(session)
     window_start = session_activity_start(session)
+    # Settled credits are excluded — their channels were collected later at
+    # account level (Paid columns / credit events), never through this till.
     sales_qs = ShopReceipt.objects.filter(
         shop_id=session.shop_id,
         kind=ShopReceiptKind.SALE,
+        settled_from_credit=False,
         created_at__gte=window_start,
         created_at__lt=closed,
     )
@@ -8250,6 +8404,9 @@ def day_session_balance_summary(
         expenses=expenses,
         supplier_payments=supplier_payments,
         refunds=refunds,
+        prepayments=_prepayment_window_values(
+            shop_id=session.shop_id, start=window_start, end=closed
+        ),
     )
 
 
@@ -8267,12 +8424,16 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         StockOutReason,
     )
 
-    from .models import ShopReceipt
+    from .models import (
+        ClientCreditAccountEvent,
+        ClientCreditAccountEventKind,
+        ShopReceipt,
+    )
 
     if session is None:
         return {}
 
-    closed = session.closed_at or timezone.now()
+    closed = _session_window_end(session)
     window = {
         "shop_id": session.shop_id,
         "created_at__gte": session_activity_start(session),
@@ -8596,7 +8757,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
             flagged_receipts.append(
                 {
                     "at": receipt.created_at,
-                    "number": receipt.receipt_number,
+                    "number": receipt_tally_code(receipt),
                     "items_label": items_label or "—",
                     "seller": seller or "—",
                     "status": receipt.status,
@@ -8635,7 +8796,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         credit_gift_receipts.append(
             {
                 "at": receipt.created_at,
-                "number": receipt.receipt_number,
+                "number": receipt_tally_code(receipt),
                 "items_label": items_label or "—",
                 "seller": seller or "—",
                 "kind": receipt.kind,
@@ -8646,6 +8807,125 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 ),
                 "total": receipt.total,
                 "paid": receipt.amount_paid,
+            }
+        )
+
+    # Credit collections during the session window — account-level payments
+    # that settled (or part-paid) credit notes. Fully paid ones converted to
+    # sales; the money never passed through this session's till, so it is
+    # reported for reference only (see the money-flow memo row).
+    credit_pay_channel = {
+        ClientCreditAccountEventKind.PAYMENT_CASH: ("cash", "Cash"),
+        ClientCreditAccountEventKind.PAYMENT_MPESA: ("mpesa", "M-Pesa"),
+        ClientCreditAccountEventKind.PAYMENT_CARD: ("card", "Card"),
+    }
+    credit_payment_rows = []
+    credit_pay_totals = {
+        "cash": Decimal("0.00"),
+        "mpesa": Decimal("0.00"),
+        "card": Decimal("0.00"),
+    }
+    converted_receipt_ids = set()
+    for event in (
+        ClientCreditAccountEvent.objects.filter(
+            shop_id=session.shop_id,
+            kind__in=tuple(credit_pay_channel),
+            occurred_at__gte=window["created_at__gte"],
+            occurred_at__lt=window["created_at__lt"],
+        )
+        .select_related("receipt", "client", "actor__user")
+        .order_by("occurred_at", "pk")
+    ):
+        channel, channel_label = credit_pay_channel[event.kind]
+        amount = _money_or_zero(event.amount)
+        credit_pay_totals[channel] += amount
+        receipt = event.receipt
+        converted = bool(
+            receipt is not None and receipt.settled_from_credit
+        )
+        if converted:
+            converted_receipt_ids.add(receipt.pk)
+        meta = event.meta or {}
+        due_after = None
+        raw_due = meta.get("due_after")
+        if raw_due not in (None, ""):
+            try:
+                due_after = Decimal(str(raw_due)).quantize(Decimal("0.01"))
+            except (InvalidOperation, TypeError, ValueError):
+                due_after = None
+        collected_by = ""
+        if event.actor_id and event.actor.user_id:
+            actor_user = event.actor.user
+            collected_by = (
+                f"{actor_user.first_name or ''} "
+                f"{actor_user.last_name or ''}".strip()
+                or actor_user.username
+            )
+        client_label = (
+            (event.client.full_name or "").strip() if event.client_id else ""
+        )
+        if not client_label and receipt is not None:
+            client_label = (receipt.client_name or "").strip()
+        credit_payment_rows.append(
+            {
+                "at": event.occurred_at,
+                "number": (
+                    receipt_tally_code(receipt) if receipt is not None else "—"
+                ),
+                "client": client_label or "—",
+                "channel": channel,
+                "channel_label": channel_label,
+                "ref": (meta.get("mpesa_receipt_number") or "").strip(),
+                "by": collected_by or "—",
+                "converted": converted,
+                "cleared": bool(meta.get("cleared")),
+                "due_after": due_after,
+                "amount": amount,
+            }
+        )
+    credit_payments = {
+        "rows": credit_payment_rows,
+        "count": len(credit_payment_rows),
+        "receipts_converted": len(converted_receipt_ids),
+        "cash": credit_pay_totals["cash"],
+        "mpesa": credit_pay_totals["mpesa"],
+        "card": credit_pay_totals["card"],
+        "total": sum(credit_pay_totals.values(), Decimal("0.00")),
+    }
+
+    prepayment_rows = []
+    from .models import CustomerPrepayment
+
+    for row in (
+        CustomerPrepayment.objects.filter(**window)
+        .select_related("created_by__user")
+        .order_by("created_at")
+    ):
+        recorded_by = ""
+        if row.created_by_id and row.created_by.user_id:
+            user = row.created_by.user
+            recorded_by = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+            )
+        prepayment_rows.append(
+            {
+                "at": row.created_at,
+                "number": prepayment_doc_code(row),
+                "customer_name": (row.customer_name or "").strip() or "—",
+                "customer_phone": (row.customer_phone or "").strip(),
+                "purpose": (row.purpose or "").strip() or "—",
+                "method": row.payment_method or "",
+                "method_label": (
+                    row.get_payment_method_display()
+                    if row.payment_method
+                    else ""
+                ),
+                "cash": Decimal(row.cash_amount or 0),
+                "mpesa": Decimal(row.mpesa_amount or 0),
+                "card": Decimal(row.card_amount or 0),
+                "amount": Decimal(row.amount or 0),
+                "by": recorded_by or "—",
             }
         )
 
@@ -8692,9 +8972,11 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         "flagged_receipts": flagged_receipts,
         "credit_gift_receipts": credit_gift_receipts,
         "credit_sales": _kind_totals(ShopReceiptKind.CREDIT),
+        "credit_payments": credit_payments,
         "gifts": _kind_totals(ShopReceiptKind.GIFT),
         "expenses": expense_rows,
         "drawings": drawing_rows,
+        "prepayments": prepayment_rows,
         "stock_purchases": stock_rows,
         "stock_out": stock_out_rows,
         "stock_out_est_total": stock_out_est_total,
@@ -8708,9 +8990,11 @@ def day_report_not_till_lines(*, summary, details, pos=None, shop=None):
 
     Cash/M-Pesa/card live in the money flow; credit is collected later and
     gifts are free issues, so they report separately as "not in the till".
-    A line is emitted only while that POS feature is enabled. `slips` is the
-    counted credit-notes trail (opening count → closing count → variance)
-    from `day_session_balance_summary`, when credit is enabled.
+    Each line carries ``key`` (``credit`` / ``gift``) so callers can render
+    the two kinds as separate tables; a line is emitted only while that POS
+    feature is enabled. `slips` is the counted credit-notes trail (opening
+    count → closing count → variance) from `day_session_balance_summary`,
+    when credit is enabled.
     """
     if pos is None and shop is not None:
         pos = get_effective_pos_settings(shop)
@@ -8721,6 +9005,7 @@ def day_report_not_till_lines(*, summary, details, pos=None, shop=None):
         credit = details.get("credit_sales") or {}
         lines.append(
             {
+                "key": "credit",
                 "label": "Credit sales",
                 "count": int(credit.get("count") or 0),
                 "value": credit.get("total"),
@@ -8737,6 +9022,7 @@ def day_report_not_till_lines(*, summary, details, pos=None, shop=None):
         gifts = details.get("gifts") or {}
         lines.append(
             {
+                "key": "gift",
                 "label": "Gift items",
                 "count": int(gifts.get("count") or 0),
                 "value": gifts.get("total"),
@@ -9188,6 +9474,13 @@ def build_shop_day_report_pdf(
             summary.get("sales_total"),
         ),
         _money_row(
+            f"Customer prepayments ({summary.get('prepayments_count') or 0})",
+            summary.get("prepayments_cash"),
+            summary.get("prepayments_mpesa"),
+            summary.get("prepayments_card"),
+            summary.get("prepayments_total"),
+        ),
+        _money_row(
             "Returns paid",
             summary.get("cash_refunds"),
             summary.get("mpesa_refunds"),
@@ -9251,6 +9544,22 @@ def build_shop_day_report_pdf(
             )
         )
         strong_rows.update({len(rows) - 1, len(rows)})
+    credit_payments = details.get("credit_payments") or {}
+    credit_pay_rows = credit_payments.get("rows") or []
+    credit_payments_sec = getattr(
+        pos, "enable_credit", False
+    ) and _sec("day_report_sec_credit_payments")
+    if credit_pay_rows and credit_payments_sec:
+        # Memo row — account-level collections; not part of this till.
+        rows.append(
+            _money_row(
+                "Credit payments collected — outside till",
+                credit_payments.get("cash"),
+                credit_payments.get("mpesa"),
+                credit_payments.get("card"),
+                credit_payments.get("total"),
+            )
+        )
 
     money_table = Table([head, *rows], colWidths=col_widths, repeatRows=1)
     money_style = [
@@ -9440,40 +9749,212 @@ def build_shop_day_report_pdf(
             cell_sm,
         )
 
-    # -- Credit & gift (not in the till) --------------------------------------
+    # -- Credit payments collected (account-level, outside the till) ---------
+    if credit_payments_sec:
+        credit_pay_rows_pdf = []
+        for pay in credit_pay_rows:
+            if pay["converted"]:
+                outcome = "Converted to sale"
+                outcome_color = "#0f766e"
+            elif pay["cleared"]:
+                outcome = "Paid in full"
+                outcome_color = "#0f766e"
+            else:
+                outcome = (
+                    f"Part — {_fmt(pay['due_after'])} due"
+                    if pay["due_after"] is not None
+                    else "Part payment"
+                )
+                outcome_color = "#b45309"
+            receipt_sub = pay["client"]
+            if pay["ref"]:
+                receipt_sub += f" · Ref {pay['ref']}"
+            credit_pay_rows_pdf.append(
+                [
+                    _p(_time(pay["at"]), cell_sm),
+                    Paragraph(
+                        f"<b>{_esc(pay['number'])}</b>"
+                        f"<br/><font size='6.8' color='#5b6b7c'>"
+                        f"{_esc(receipt_sub)}</font>",
+                        cell_sm,
+                    ),
+                    _p(pay["channel_label"], cell_sm),
+                    Paragraph(
+                        f"<font color='{outcome_color}'><b>"
+                        f"{_esc(outcome)}</b></font>",
+                        cell_sm,
+                    ),
+                    _p(pay["by"], cell_sm),
+                    _p(_fmt(pay["amount"]), cell_sm_right),
+                ]
+            )
+        converted_count = credit_payments.get("receipts_converted") or 0
+        pay_count = credit_payments.get("count") or 0
+        credit_pay_note = (
+            f"{pay_count} payment{'s' if pay_count != 1 else ''}"
+            f" · {_fmt(credit_payments.get('total'))} collected"
+        )
+        if converted_count:
+            credit_pay_note += (
+                f" · {converted_count} credit"
+                f"{'s' if converted_count != 1 else ''} converted to sales"
+            )
+        credit_pay_note += (
+            ". Collected on credit accounts — outside this session's till."
+        )
+        _detail_table(
+            "Credit payments collected",
+            [time_head, "Receipt", "Channel", "Outcome", "Collected by", "Amount"],
+            credit_pay_rows_pdf,
+            [
+                doc.width * 0.07,
+                doc.width * 0.30,
+                doc.width * 0.10,
+                doc.width * 0.22,
+                doc.width * 0.14,
+                doc.width * 0.17,
+            ],
+            aligns=["l", "l", "l", "l", "l", "r"],
+            dense=True,
+            empty_note="No credit payments collected this day.",
+            section="day_report_sec_credit_payments",
+        )
+        if credit_pay_rows_pdf:
+            story.append(Paragraph(_esc(credit_pay_note), note_style))
+
+    # -- Customer prepayments (money in ahead of orders) ---------------------
+    prepay_rows = details.get("prepayments") or []
+    prepay_total = sum(
+        (r["amount"] or Decimal("0")) for r in prepay_rows
+    )
+    _detail_table(
+        "Customer prepayments",
+        [
+            time_head,
+            "Doc",
+            "Customer",
+            "Purpose",
+            "Channel",
+            "Recorded by",
+            "Amount",
+        ],
+        [
+            [
+                _p(_time(r["at"]), cell_sm),
+                _p(r.get("number") or "—", cell_sm),
+                Paragraph(
+                    f"<b>{_esc(r['customer_name'])}</b>"
+                    + (
+                        f"<br/><font size='6.8' color='#5b6b7c'>"
+                        f"{_esc(r['customer_phone'])}</font>"
+                        if r.get("customer_phone")
+                        else ""
+                    ),
+                    cell_sm,
+                ),
+                _p(r["purpose"], cell_sm),
+                _p(r["method_label"], cell_sm),
+                _p(r["by"], cell_sm),
+                _p(_fmt(r["amount"]), cell_sm_right),
+            ]
+            for r in prepay_rows
+        ],
+        [
+            doc.width * 0.07,
+            doc.width * 0.09,
+            doc.width * 0.22,
+            doc.width * 0.24,
+            doc.width * 0.08,
+            doc.width * 0.13,
+            doc.width * 0.17,
+        ],
+        aligns=["l", "l", "l", "l", "l", "l", "r"],
+        footer=["Total", "", "", "", "", "", _fmt(prepay_total)],
+        dense=True,
+        empty_note="No customer prepayments recorded this day.",
+        section="day_report_sec_prepayments",
+    )
+    if prepay_rows and _sec("day_report_sec_prepayments"):
+        story.append(
+            Paragraph(
+                _esc(
+                    "Prepayments are money received in advance — they are "
+                    "part of Expected in till."
+                ),
+                note_style,
+            )
+        )
+
+    # -- Credit / gifts (not in the till) — reported separately --------------
     not_till = day_report_not_till_lines(
         summary=summary, details=details, pos=pos
     )
-    not_till_rows = []
-    for line_row in not_till.get("lines") or []:
-        not_till_rows.append(
-            [
-                _p(line_row["label"], cell_sm),
-                _p(str(line_row.get("count") or 0), cell_sm_right),
-                _p(_fmt(line_row.get("value")), cell_sm_right),
-                _p(
-                    _fmt(line_row["collected"])
-                    if line_row.get("collected") is not None
-                    else "—",
-                    cell_sm_right,
-                ),
-                _p(
-                    _fmt(line_row["due"])
-                    if line_row.get("due") is not None
-                    else "—",
-                    cell_sm_right,
-                ),
-            ]
-        )
+    not_till_by_key = {
+        line_row["key"]: line_row for line_row in not_till.get("lines") or []
+    }
     credit_gift_rows = details.get("credit_gift_receipts") or []
-    if _sec("day_report_sec_not_till") and (
-        not_till_rows or credit_gift_rows
-    ):
-        if not_till_rows:
+
+    def _receipt_rows_pdf(kind):
+        return [
+            r for r in credit_gift_rows if r["kind"] == kind
+        ]
+
+    def _kind_receipt_table(title, kind, section):
+        rows = _receipt_rows_pdf(kind)
+        if not rows:
+            return
+        total = sum((r["total"] or Decimal("0")) for r in rows)
+        _detail_table(
+            title,
+            [time_head, "Receipt", "Sold by", "Status", "Amount"],
+            [
+                [
+                    _p(_time(r["at"]), cell_sm),
+                    _receipt_cell(r),
+                    _p(r["seller"], cell_sm),
+                    _receipt_status_cell(r),
+                    _p(_fmt(r["total"]), cell_sm_right),
+                ]
+                for r in rows
+            ],
+            [
+                doc.width * 0.07,
+                doc.width * 0.40,
+                doc.width * 0.24,
+                doc.width * 0.11,
+                doc.width * 0.18,
+            ],
+            aligns=["l", "l", "l", "l", "r"],
+            footer=["Total", "", "", "", _fmt(total)],
+            dense=True,
+            section=section,
+        )
+
+    if _sec("day_report_sec_not_till"):
+        credit_line = not_till_by_key.get("credit")
+        if credit_line is not None:
             _detail_table(
-                "Credit & gift — not in the till",
+                "Credit — not in the till",
                 ["Document", "Docs", "Value", "Collected", "Still due"],
-                not_till_rows,
+                [
+                    [
+                        _p(credit_line["label"], cell_sm),
+                        _p(str(credit_line.get("count") or 0), cell_sm_right),
+                        _p(_fmt(credit_line.get("value")), cell_sm_right),
+                        _p(
+                            _fmt(credit_line["collected"])
+                            if credit_line.get("collected") is not None
+                            else "—",
+                            cell_sm_right,
+                        ),
+                        _p(
+                            _fmt(credit_line["due"])
+                            if credit_line.get("due") is not None
+                            else "—",
+                            cell_sm_right,
+                        ),
+                    ]
+                ],
                 [
                     doc.width * 0.4,
                     doc.width * 0.11,
@@ -9498,48 +9979,54 @@ def build_shop_day_report_pdf(
             story.append(
                 Paragraph(
                     _esc(
-                        "Credit is collected later and gifts are free issues — "
-                        "neither adds to Expected in till."
+                        "Credit is collected later — it does not add to "
+                        "Expected in till."
                         + slips_text
                     ),
                     note_style,
                 )
             )
-        if credit_gift_rows:
-            credit_gift_total = sum(
-                (r["total"] or Decimal("0")) for r in credit_gift_rows
-            )
+        _kind_receipt_table(
+            "Credit receipts",
+            ShopReceiptKind.CREDIT,
+            "day_report_sec_not_till",
+        )
+
+    if _sec("day_report_sec_gift"):
+        gift_line = not_till_by_key.get("gift")
+        if gift_line is not None:
             _detail_table(
-                "Credit & gift receipts",
-                [time_head, "Receipt", "Sold by", "Status", "Amount"],
+                "Gifts — not in the till",
+                ["Document", "Docs", "Value"],
                 [
                     [
-                        _p(_time(r["at"]), cell_sm),
-                        _receipt_cell(r),
-                        _p(r["seller"], cell_sm),
-                        _receipt_status_cell(
-                            {
-                                **r,
-                                "status_label": (
-                                    f"{r['kind_label']} · {r['status_label']}"
-                                ),
-                            }
-                        ),
-                        _p(_fmt(r["total"]), cell_sm_right),
+                        _p(gift_line["label"], cell_sm),
+                        _p(str(gift_line.get("count") or 0), cell_sm_right),
+                        _p(_fmt(gift_line.get("value")), cell_sm_right),
                     ]
-                    for r in credit_gift_rows
                 ],
                 [
-                    doc.width * 0.07,
-                    doc.width * 0.40,
-                    doc.width * 0.24,
-                    doc.width * 0.11,
+                    doc.width * 0.4,
                     doc.width * 0.18,
+                    doc.width * 0.42,
                 ],
-                aligns=["l", "l", "l", "l", "r"],
-                footer=["Total", "", "", "", _fmt(credit_gift_total)],
+                aligns=["l", "r", "r"],
                 dense=True,
             )
+            story.append(
+                Paragraph(
+                    _esc(
+                        "Gifts are free issues — they do not add to "
+                        "Expected in till."
+                    ),
+                    note_style,
+                )
+            )
+        _kind_receipt_table(
+            "Gift receipts",
+            ShopReceiptKind.GIFT,
+            "day_report_sec_gift",
+        )
 
     # -- Items sold -----------------------------------------------------------
     sold_rows = details.get("items_sold") or []
@@ -9966,7 +10453,7 @@ def day_sales_status_summary(session) -> dict:
     from .models import ShopReceipt
 
     zero = Decimal("0.00")
-    closed = session.closed_at or timezone.now()
+    closed = _session_window_end(session)
     window_start = session_activity_start(session)
     status_bucket = {
         ShopReceiptStatus.ACTIVE: "pending",
@@ -10576,6 +11063,142 @@ def register_shop_expense(*, shop: Shop, profile, payload: dict) -> dict:
     }
 
 
+# Payment methods a customer prepayment can arrive on — one till channel each.
+PREPAYMENT_PAYMENT_METHODS = (
+    (ShopPaymentMethod.CASH, "cash_amount"),
+    (ShopPaymentMethod.MPESA, "mpesa_amount"),
+    (ShopPaymentMethod.CARD, "card_amount"),
+)
+
+
+def prepayment_payment_options(*, shop: Shop | None = None, pos=None) -> list:
+    """(method, label) pairs the register-prepayment form may offer.
+
+    Mirrors the shop's active till channels — a disabled channel can't take
+    prepayment money (cash stays as fallback when every channel is off).
+    """
+    channels = shop_day_balance_channels(shop=shop, pos=pos)
+    labels = dict(ShopPaymentMethod.choices)
+    options = [
+        (method, labels.get(method, method))
+        for method, _field in PREPAYMENT_PAYMENT_METHODS
+        if channels.get(_field.removesuffix("_amount"))
+    ]
+    return options or [(ShopPaymentMethod.CASH, labels[ShopPaymentMethod.CASH])]
+
+
+@transaction.atomic
+def register_customer_prepayment(*, shop: Shop, profile, payload: dict) -> dict:
+    """Validate the popup payload and save one customer prepayment.
+
+    The signed-in profile records it directly; a posted ``login_code`` (staff
+    6-digit ID) overrides the actor for shared-floor / portal sessions.
+    """
+    from employees.services import verify_active_employee_code
+
+    from .models import CustomerPrepayment
+
+    if shop.is_suspended:
+        raise ValidationError(f"Shop “{shop.name}” is suspended.")
+
+    login_code = (payload.get("login_code") or "").strip()
+    authorising = None
+    if login_code:
+        authorising = verify_active_employee_code(login_code)
+        if authorising is None:
+            raise ValidationError("Enter a valid active staff 6-digit ID.")
+    elif profile is not None:
+        authorising = profile
+    if authorising is None:
+        raise ValidationError("Enter a valid active staff 6-digit ID.")
+
+    from employees.module_permissions import ensure_employee_may
+
+    ensure_employee_may(
+        authorising,
+        "my-shop",
+        "prepayments",
+        message="You do not have permission to register customer prepayments.",
+    )
+
+    customer_name = (payload.get("customer_name") or "").strip().upper()
+    if not customer_name:
+        raise ValidationError("Customer name is required.")
+    customer_name = customer_name[:200]
+
+    customer_phone_raw = (payload.get("customer_phone") or "").strip()
+    phone_digits = re.sub(r"\D+", "", customer_phone_raw)
+    if len(phone_digits) < 7:
+        raise ValidationError("Enter a valid customer phone number.")
+    customer_phone = format_kenya_phone(customer_phone_raw)
+
+    purpose = (payload.get("purpose") or "").strip()
+    if not purpose:
+        raise ValidationError("Enter the prepayment purpose.")
+    if len(purpose) > 255:
+        purpose = purpose[:255]
+
+    try:
+        amount = _money(payload.get("amount"))
+    except ValidationError as exc:
+        raise ValidationError("Enter a valid prepayment amount.") from exc
+    if amount <= 0:
+        raise ValidationError("Prepayment amount must be greater than zero.")
+
+    allowed = {method for method, _label in prepayment_payment_options(shop=shop)}
+    method = (payload.get("payment_method") or "").strip().lower()
+    if method not in allowed:
+        raise ValidationError("Choose how the customer paid.")
+    channel_field = dict(PREPAYMENT_PAYMENT_METHODS)[method]
+
+    amounts = {"cash_amount": 0, "mpesa_amount": 0, "card_amount": 0}
+    amounts[channel_field] = amount
+
+    client = None
+    try:
+        client = upsert_client(
+            full_name=customer_name,
+            phone=customer_phone,
+            profile=authorising,
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Prepayment client upsert failed"
+        )
+
+    prepayment = CustomerPrepayment.objects.create(
+        shop=shop,
+        client=client,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+        purpose=purpose,
+        amount=amount,
+        payment_method=method,
+        **amounts,
+        created_by=authorising,
+    )
+
+    return {
+        "prepayment": prepayment,
+        "doc_code": prepayment_doc_code(prepayment),
+        "authorised_by": authorising.user.get_full_name()
+        or authorising.user.username,
+        "message": (
+            f"Prepayment of KSh {_money_ksh(amount)} recorded for "
+            f"{customer_name} ({shop.name}) — {prepayment_doc_code(prepayment)}."
+        ),
+    }
+
+
+def _money_ksh(amount) -> str:
+    value = Decimal(amount or 0)
+    if value == value.quantize(Decimal("1")):
+        return f"{value.quantize(Decimal('1')):,}"
+    return f"{value.quantize(Decimal('0.01')):,}"
+
+
 @transaction.atomic
 def register_owner_drawing(*, shop: Shop, profile, payload: dict) -> dict:
     """Record an owner drawing against the open shop day (equity, not opex).
@@ -10854,6 +11477,7 @@ def _receipt_list_item(receipt) -> dict:
         "id": receipt.pk,
         "source": "pos",
         "receipt_number": receipt.receipt_number,
+        "tally_code": receipt_tally_code(receipt),
         "kind": receipt.kind,
         "kind_label": receipt.get_kind_display(),
         "status": receipt.status,
@@ -10990,6 +11614,45 @@ def _expense_receipt_list_item(expense) -> dict:
     }
 
 
+def _prepayment_receipt_list_item(prepayment) -> dict:
+    created = timezone.localtime(prepayment.created_at)
+    cashier = employee_display_name(
+        prepayment.created_by if prepayment.created_by_id else None
+    )
+    purpose = (prepayment.purpose or "").strip()
+    return {
+        "id": prepayment.pk,
+        "source": "prepayment",
+        "receipt_number": prepayment_doc_code(prepayment),
+        "tally_code": prepayment_doc_code(prepayment),
+        "kind": "advancement",
+        "kind_label": "Advancement",
+        "status": "recorded",
+        "status_label": "Recorded",
+        "payment_method": prepayment.payment_method or "",
+        "payment_label": (
+            prepayment.get_payment_method_display()
+            if prepayment.payment_method
+            else "—"
+        ),
+        "mpesa_receipt_number": "",
+        "client_name": (prepayment.customer_name or "").strip(),
+        "client_phone": (prepayment.customer_phone or "").strip(),
+        "shop_name": prepayment.shop.name if getattr(prepayment, "shop", None) else "",
+        "purpose": purpose,
+        "total": str(prepayment.amount),
+        "created_at": created.isoformat(),
+        "created_label": created.strftime("%d %b %Y · %H:%M"),
+        "cashier": cashier,
+        "sold_as": "",
+        "sold_as_label": "—",
+        "can_return": False,
+        "can_confirm": False,
+        "can_cancel": False,
+        "can_set_pending": False,
+    }
+
+
 def _receipt_line_payload(line, *, sold_serials_by_item=None) -> dict:
     remaining = line.remaining_quantity
     remaining_serials = line.remaining_serial_numbers
@@ -11108,6 +11771,17 @@ def list_shop_receipts(
         kind_key = "stock"
     elif kind_key in ("expense", "expenses", "expense-suppliers", "expense_suppliers"):
         kind_key = "expense"
+    elif kind_key in (
+        "advancement",
+        "advancements",
+        "advance",
+        "advances",
+        "prepayment",
+        "prepayments",
+        "deposit",
+        "deposits",
+    ):
+        kind_key = "advancement"
     else:
         raise ValidationError("Unknown receipt type filter.")
 
@@ -11123,6 +11797,7 @@ def list_shop_receipts(
     )
     include_stock = kind_key in ("all", "stock")
     include_expense = kind_key in ("all", "expense")
+    include_advancement = kind_key in ("all", "advancement")
 
     merged = []
 
@@ -11142,7 +11817,13 @@ def list_shop_receipts(
             .order_by("-created_at", "-id")
         )
         if kind_key == "sales_credits":
-            pos_qs = pos_qs.filter(kind__in=("sale", "credit"))
+            # Converted receipts keep both identities: a credit→sale shows
+            # under credits too, a sale→credit under sales.
+            pos_qs = pos_qs.filter(
+                Q(kind__in=("sale", "credit"))
+                | Q(converted_from_kind__in=("sale", "credit"))
+                | Q(settled_from_credit=True)
+            )
         elif kind_key in (
             "sale",
             "credit",
@@ -11151,13 +11832,19 @@ def list_shop_receipts(
             "trade_in",
             "gift",
         ):
-            pos_qs = pos_qs.filter(kind=kind_key)
+            kind_match = Q(kind=kind_key) | Q(converted_from_kind=kind_key)
+            if kind_key == "credit":
+                kind_match |= Q(settled_from_credit=True)
+            elif kind_key == "trade_out":
+                kind_match |= Q(settled_from_trade=True)
+            pos_qs = pos_qs.filter(kind_match)
         if q:
             pos_qs = pos_qs.filter(
                 Q(receipt_number__icontains=q)
                 | Q(client_name__icontains=q)
                 | Q(client_phone__icontains=q)
                 | Q(kind__icontains=q)
+                | Q(converted_from_kind__icontains=q)
             )
         merged.extend(_receipt_list_item(row) for row in pos_qs)
 
@@ -11214,6 +11901,38 @@ def list_shop_receipts(
                         expense.name or "",
                         "expense",
                         "supplier",
+                    ]
+                ).lower()
+                if q_l not in hay:
+                    continue
+            merged.append(item)
+
+    if include_advancement:
+        from .models import CustomerPrepayment
+
+        prepay_qs = (
+            CustomerPrepayment.objects.filter(
+                shop=shop,
+                created_at__gte=start_dt,
+                created_at__lte=end_dt,
+            )
+            .select_related("created_by__user", "shop")
+            .order_by("-created_at", "-id")
+        )
+        for prepay in prepay_qs:
+            item = _prepayment_receipt_list_item(prepay)
+            if q_l:
+                hay = " ".join(
+                    [
+                        item["receipt_number"],
+                        item["client_name"],
+                        item["client_phone"],
+                        item["kind_label"],
+                        item["cashier"],
+                        item["purpose"],
+                        "advancement",
+                        "prepayment",
+                        "deposit",
                     ]
                 ).lower()
                 if q_l not in hay:
@@ -11497,6 +12216,57 @@ def get_shop_receipt_detail(*, shop: Shop, receipt_id: int, source: str = "pos")
                 }
             ],
         )
+
+    if source_key in ("prepayment", "advancement"):
+        from .models import CustomerPrepayment
+
+        try:
+            prepay = CustomerPrepayment.objects.select_related(
+                "created_by__user", "shop"
+            ).get(pk=receipt_id, shop=shop)
+        except CustomerPrepayment.DoesNotExist as exc:
+            raise ValidationError(
+                "Advancement not found for this shop."
+            ) from exc
+        item = _prepayment_receipt_list_item(prepay)
+        purpose = item["purpose"] or "Customer prepayment"
+        return {
+            "ok": True,
+            "receipt": {
+                **item,
+                "subtotal": str(prepay.amount),
+                "tax_percent": "0",
+                "tax_amount": "0",
+                "cash_amount": str(prepay.cash_amount),
+                "mpesa_amount": str(prepay.mpesa_amount),
+                "card_amount": str(prepay.card_amount),
+                "payment_methods": [],
+                "require_mpesa_reference_on_confirm": False,
+                "lines": [
+                    {
+                        "id": 1,
+                        "item_id": None,
+                        "item_name": purpose,
+                        "quantity": 1,
+                        "returned_quantity": 0,
+                        "remaining_quantity": 1,
+                        "unit_price": str(prepay.amount),
+                        "line_total": str(prepay.amount),
+                        "remaining_total": str(prepay.amount),
+                        "serial_numbers": [],
+                        "returned_serial_numbers": [],
+                        "remaining_serial_numbers": [],
+                        "track_serial": False,
+                    }
+                ],
+                "returnable_lines": [],
+            },
+            "receipt_text": "",
+            "receipt_ticket": None,
+            "receipt_qr": {"enabled": False},
+            "receipt_font": {},
+            "receipt_paper_width": "80",
+        }
 
     if source_key in ("delivery", "goods_received", "transfer"):
         from items.models import StockRequestStatus
@@ -12625,7 +13395,7 @@ def return_shop_receipt_items(
 
     from shops.credit_settlement import convert_settled_credit_to_sale
 
-    if convert_settled_credit_to_sale(receipt):
+    if convert_settled_credit_to_sale(receipt, paid_at=now):
         receipt.save(
             update_fields=[
                 "kind",
@@ -12635,6 +13405,8 @@ def return_shop_receipt_items(
                 "card_amount",
                 "credit_due_date",
                 "settled_from_credit",
+                "converted_from_kind",
+                "confirmed_payment_at",
             ]
         )
 
@@ -13256,6 +14028,7 @@ def confirm_shop_receipt(
                 amount=apply_amount,
                 payment_method=method,
                 mpesa_receipt_number=ref,
+                paid_at=paid_at,
             )
             # record_credit_collection saves; reload locked row for further updates.
             receipt = (
@@ -13274,6 +14047,7 @@ def confirm_shop_receipt(
                         payment_method=method,
                         actor=actor,
                         mpesa_receipt_number=ref,
+                        occurred_at=paid_at,
                     )
                 except Exception:
                     import logging
@@ -13285,7 +14059,9 @@ def confirm_shop_receipt(
         else:
             from shops.credit_settlement import convert_settled_credit_to_sale
 
-            cleared_credit = convert_settled_credit_to_sale(receipt)
+            cleared_credit = convert_settled_credit_to_sale(
+                receipt, paid_at=paid_at
+            )
             if cleared_credit:
                 receipt.save(
                     update_fields=[
@@ -13296,6 +14072,8 @@ def confirm_shop_receipt(
                         "mpesa_amount",
                         "card_amount",
                         "settled_from_credit",
+                        "converted_from_kind",
+                        "confirmed_payment_at",
                     ]
                 )
 
@@ -13378,6 +14156,7 @@ def confirm_shop_receipt(
             "mpesa_amount",
             "card_amount",
             "settled_from_credit",
+            "converted_from_kind",
         ):
             if field not in update_fields:
                 update_fields.append(field)
@@ -13822,6 +14601,7 @@ def change_shop_receipt_kind(
                     amount=due,
                     payment_method=method,
                     mpesa_receipt_number=ref,
+                    paid_at=paid_at,
                 )
                 receipt = (
                     ShopReceipt.objects.select_for_update()
@@ -13839,6 +14619,7 @@ def change_shop_receipt_kind(
                             payment_method=method,
                             actor=actor,
                             mpesa_receipt_number=ref,
+                            occurred_at=paid_at,
                         )
                     except Exception:
                         import logging
@@ -13852,7 +14633,9 @@ def change_shop_receipt_kind(
                     convert_settled_credit_to_sale,
                 )
 
-                converted = convert_settled_credit_to_sale(receipt)
+                converted = convert_settled_credit_to_sale(
+                    receipt, paid_at=paid_at
+                )
             update_fields = ["status"]
             if receipt.kind != ShopReceiptKind.SALE:
                 receipt.kind = ShopReceiptKind.SALE
@@ -13921,6 +14704,9 @@ def change_shop_receipt_kind(
             _receipt_kind_change_deduct_stock(
                 shop=shop, receipt=receipt, actor=actor, now=now
             )
+        receipt.converted_from_kind = source_kind
+        if "converted_from_kind" not in update_fields:
+            update_fields.append("converted_from_kind")
         receipt.status = ShopReceiptStatus.CONFIRMED
         if ref:
             receipt.mpesa_receipt_number = ref
@@ -13957,6 +14743,7 @@ def change_shop_receipt_kind(
         "mpesa_receipt_number",
         "amount_paid",
         "settled_from_credit",
+        "converted_from_kind",
     ]
     receipt.kind = target_kind
     receipt.payment_method = ShopPaymentMethod.NONE
@@ -13966,6 +14753,7 @@ def change_shop_receipt_kind(
     receipt.mpesa_receipt_number = ""
     receipt.amount_paid = Decimal("0.00")
     receipt.settled_from_credit = False
+    receipt.converted_from_kind = source_kind
 
     if source_kind == ShopReceiptKind.QUOTATION:
         # Quotation stock was never deducted — deduct it for the new kind.
@@ -13991,7 +14779,8 @@ def change_shop_receipt_kind(
             if due_date < timezone.localdate():
                 raise ValidationError("Payment due date cannot be in the past.")
         receipt.credit_due_date = due_date
-        update_fields.append("credit_due_date")
+        receipt.confirmed_payment_at = None
+        update_fields += ["credit_due_date", "confirmed_payment_at"]
         message = f"Receipt {receipt.receipt_number} converted to a credit."
     elif target_kind == ShopReceiptKind.GIFT:
         # Gifts issue free of charge and are confirmed on creation.

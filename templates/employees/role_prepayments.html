@@ -1,0 +1,150 @@
+{% extends "employees/workspace_base.html" %}
+{% load static %}
+
+{% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+
+{% block workspace_content %}
+<section class="home" data-animate="rise">
+  <header class="home-hero">
+    <p class="home-kicker">{{ role_label }}</p>
+    <h2 class="home-title">
+      {% if meta.icon %}
+      <span class="home-title-icon" aria-hidden="true"><i data-lucide="{{ meta.icon }}"></i></span>
+      {% endif %}
+      {{ meta.headline }}
+    </h2>
+    {% if meta.summary %}
+    <p class="home-sub">{{ meta.summary }}</p>
+    {% endif %}
+  </header>
+
+  <section
+    class="item-panel item-panel--dense"
+    aria-labelledby="prepayment-list-title"
+    data-animate="rise"
+  >
+    <header class="item-panel-head">
+      <div class="item-panel-head-top">
+        <div>
+          <p class="stock-kicker">{{ role_label }}</p>
+          <h2 id="prepayment-list-title">Prepayments</h2>
+          <p>Customer money received in advance, newest first.</p>
+        </div>
+        <div class="stock-stats">
+          <p class="stock-stat">
+            <strong>{{ prepayment_count }}</strong>
+            <span>recorded</span>
+          </p>
+          <p class="stock-stat">
+            <strong>KSh {{ prepayment_total|floatformat:2 }}</strong>
+            <span>total</span>
+          </p>
+        </div>
+      </div>
+      <div class="item-panel-head-actions">
+        <form class="prepayment-filters" method="get" action="">
+          {% if prepayment_shops|length > 1 %}
+          <label class="shop-cart-input">
+            <span>Shop</span>
+            <select name="shop">
+              <option value="">All shops</option>
+              {% for prepay_shop in prepayment_shops %}
+              <option
+                value="{{ prepay_shop.pk }}"
+                {% if prepayment_shop and prepay_shop.pk == prepayment_shop.pk %}selected{% endif %}
+              >
+                {{ prepay_shop.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </label>
+          {% endif %}
+          <label class="shop-cart-input">
+            <span>Search</span>
+            <input
+              type="search"
+              name="q"
+              value="{{ prepayment_query }}"
+              placeholder="Name, phone or purpose"
+            >
+          </label>
+          <button type="submit" class="btn btn--ghost">
+            <i data-lucide="search" aria-hidden="true"></i>
+            Filter
+          </button>
+        </form>
+        {% if prepayment_modal %}
+        <button
+          type="button"
+          class="btn btn--primary"
+          data-modal-open="prepayment"
+        >
+          <i data-lucide="piggy-bank" aria-hidden="true"></i>
+          Register prepayment
+        </button>
+        {% endif %}
+      </div>
+    </header>
+
+    {% if prepayment_rows %}
+    <div class="item-table-wrap">
+      <p class="hr-scroll-hint" aria-hidden="true">Scroll sideways for all columns</p>
+      <table class="item-table item-table--dense">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Doc</th>
+            <th scope="col" class="item-col--item">Customer</th>
+            <th scope="col">Purpose</th>
+            <th scope="col">Paid via</th>
+            {% if show_shop_column %}
+            <th scope="col">Shop</th>
+            {% endif %}
+            <th scope="col">Recorded by</th>
+            <th scope="col" class="item-col--amount">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in prepayment_rows %}
+          <tr>
+            <td data-label="When">
+              {{ row.created_at|date:"d M Y · H:i" }}
+            </td>
+            <td data-label="Doc">
+              <strong>{{ row.doc_code }}</strong>
+            </td>
+            <td class="item-cell--item" data-label="Customer">
+              <strong>{{ row.customer_name }}</strong>
+              <small>{{ row.customer_phone }}</small>
+            </td>
+            <td data-label="Purpose">{{ row.purpose }}</td>
+            <td data-label="Paid via">{{ row.get_payment_method_display }}</td>
+            {% if show_shop_column %}
+            <td data-label="Shop">{{ row.shop.name }}</td>
+            {% endif %}
+            <td data-label="Recorded by">
+              {{ row.created_by.user.get_full_name|default:row.created_by.user.username }}
+            </td>
+            <td class="item-cell--amount" data-label="Amount">
+              KSh {{ row.amount|floatformat:2 }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% include "employees/partials/pagination_nav.html" with employees_page=prepayment_page pagination_label="Prepayment pages" %}
+    {% else %}
+    <div class="home-empty">
+      <i data-lucide="piggy-bank" aria-hidden="true"></i>
+      <p>
+        <strong>No customer prepayments yet.</strong>
+        Use Register prepayment to record one.
+      </p>
+    </div>
+    {% endif %}
+  </section>
+</section>
+
+{% include "shops/partials/prepayment_modal.html" %}
+{% endblock %}

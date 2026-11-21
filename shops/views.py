@@ -21,7 +21,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from employees.access import (
     active_employee_required,
     get_profile_for_request,
-    profile_view_only,
+    profile_support_pass,
     role_from_url_segment,
     role_home_url_name,
     role_url_segment,
@@ -140,6 +140,7 @@ from .services import (
     receipt_print_copies,
     receipt_qr_for_settings,
     receipt_return_notice_line,
+    register_customer_prepayment,
     register_owner_drawing,
     register_shop_expense,
     return_shop_receipt_items,
@@ -1724,7 +1725,7 @@ def _cashier_foreign_day_denied(request, profile, shop, *, as_json=False):
     if (
         profile is None
         or getattr(profile, "role", None) != EmployeeRole.SHOP_CASHIER
-        or profile_view_only(profile)
+        or profile_support_pass(profile)
     ):
         return None
     open_session = get_open_shop_day(shop)
@@ -1747,15 +1748,15 @@ def _cashier_own_days_only(profile) -> bool:
 
     The shop day belongs to whoever opened it (same rule as the foreign-day
     lockout); portal sessions and other roles keep the shop-wide view.
-    A view-only pass (IT support acting as cashier) isn't really in session —
-    it keeps the shop-wide view of every recorded day.
+    A support pass (IT support / super admin acting as cashier) isn't really
+    in session — it keeps the shop-wide view of every recorded day.
     """
     from employees.models import EmployeeRole
 
     return (
         profile is not None
         and getattr(profile, "role", None) == EmployeeRole.SHOP_CASHIER
-        and not profile_view_only(profile)
+        and not profile_support_pass(profile)
     )
 
 
@@ -2990,6 +2991,87 @@ def my_shop_register_expense(request, shop_id):
                 "next": next_url,
                 **print_payload,
             }
+        )
+    return redirect(next_url)
+
+
+@shop_floor_required
+@require_http_methods(["GET", "POST"])
+def my_shop_prepayment_register(request, shop_id):
+    """Register a customer prepayment (popup on role dashboards)."""
+    profile, shop, denied = _require_allocated_shop_access(request, shop_id)
+    if denied:
+        if isinstance(denied, JsonResponse):
+            return denied
+        if _wants_json_response(request):
+            return JsonResponse(
+                {"ok": False, "error": "Shop session required."}, status=403
+            )
+        return denied
+    denied = _require_my_shop_permission(
+        request,
+        profile,
+        "prepayments",
+        as_json=_wants_json_response(request),
+        portal_ok=True,
+    )
+    if denied:
+        return denied
+
+    wants_json = _wants_json_response(request)
+    back_url = request.get_full_path()
+
+    def _default_next() -> str:
+        if profile is not None:
+            from employees.access import role_url_segment
+
+            return "{}?{}".format(
+                reverse(
+                    "employees:role_prepayments",
+                    kwargs={"role_segment": role_url_segment(profile.role)},
+                ),
+                urlencode({"shop": shop.pk}),
+            )
+        return reverse(
+            "employees:my_shop_workspace", kwargs={"shop_id": shop.pk}
+        )
+
+    if request.method == "GET":
+        next_url = (request.GET.get("next") or "").strip()
+        if not (next_url.startswith("/") and not next_url.startswith("//")):
+            next_url = _default_next()
+        return redirect(next_url)
+
+    try:
+        result = register_customer_prepayment(
+            shop=shop, profile=profile, payload=request.POST
+        )
+    except ValidationError as exc:
+        form_errors = _validation_errors(exc)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": form_errors[0]
+                    if form_errors
+                    else "Could not record the prepayment.",
+                },
+                status=400,
+            )
+        for message in form_errors:
+            messages.error(request, message)
+        next_url = (request.POST.get("next") or "").strip()
+        if not (next_url.startswith("/") and not next_url.startswith("//")):
+            next_url = _default_next()
+        return redirect(next_url)
+
+    messages.success(request, result["message"])
+    next_url = (request.POST.get("next") or "").strip()
+    if not (next_url.startswith("/") and not next_url.startswith("//")):
+        next_url = _default_next()
+    if wants_json:
+        return JsonResponse(
+            {"ok": True, "message": result["message"], "next": next_url}
         )
     return redirect(next_url)
 

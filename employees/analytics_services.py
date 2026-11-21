@@ -50,6 +50,7 @@ from shops.models import (
     Client,
     ClientCreditAccountEvent,
     ClientCreditAccountEventKind,
+    CustomerPrepayment,
     Expense,
     ExpenseCategory,
     ExpensePaymentStatus,
@@ -67,6 +68,8 @@ from shops.services import (
     _qty_number,
     format_simple_doc_number,
     get_effective_pos_settings,
+    prepayment_doc_code,
+    receipt_tally_code,
 )
 
 ANALYTICS_SECTIONS = (
@@ -2431,6 +2434,32 @@ def _apply_analytics_receipt_status(qs, status_key: str | None, *, field: str = 
     return qs.filter(**{f"{field}__in": statuses})
 
 
+def _settled_sale_range_q(*, start, end, prefix: str = "") -> Q:
+    """Period filter honouring the paid day on settled-from-credit sales.
+
+    Normal receipts fall into a period by ``created_at`` (print day). A credit
+    that was fully paid and converted to a sale is recognised on the day the
+    money was confirmed — stamped on ``confirmed_payment_at`` — so its revenue
+    lands on the paid day, not the day the credit was issued. Settled rows
+    with no payment stamp (legacy data) fall back to ``created_at``.
+    """
+    p = f"{prefix}__" if prefix else ""
+    settled = f"{p}settled_from_credit"
+    paid_field = f"{p}confirmed_payment_at"
+    created_field = f"{p}created_at"
+    paid_range = Q(**{settled: True, f"{paid_field}__isnull": False})
+    normal = Q()
+    if start is not None:
+        paid_range &= Q(**{f"{paid_field}__gte": start})
+        normal &= Q(**{f"{created_field}__gte": start})
+    if end is not None:
+        paid_range &= Q(**{f"{paid_field}__lt": end})
+        normal &= Q(**{f"{created_field}__lt": end})
+    return paid_range | (
+        (Q(**{settled: False}) | Q(**{f"{paid_field}__isnull": True})) & normal
+    )
+
+
 def _receipts_qs(
     *,
     shop_ids,
@@ -2441,10 +2470,8 @@ def _receipts_qs(
     receipt_status=None,
 ):
     qs = ShopReceipt.objects.filter(shop_id__in=shop_ids)
-    if start is not None:
-        qs = qs.filter(created_at__gte=start)
-    if end is not None:
-        qs = qs.filter(created_at__lt=end)
+    if start is not None or end is not None:
+        qs = qs.filter(_settled_sale_range_q(start=start, end=end))
     if kinds:
         qs = qs.filter(kind__in=kinds)
     if receipt_status:
@@ -3147,10 +3174,10 @@ def _trading_line_qs(*, shop_ids, start, end, kinds, receipt_status=None):
         )
     else:
         qs = qs.exclude(receipt__status=ShopReceiptStatus.CANCELLED)
-    if start is not None:
-        qs = qs.filter(receipt__created_at__gte=start)
-    if end is not None:
-        qs = qs.filter(receipt__created_at__lt=end)
+    if start is not None or end is not None:
+        qs = qs.filter(
+            _settled_sale_range_q(start=start, end=end, prefix="receipt")
+        )
     return qs
 
 
@@ -3873,6 +3900,11 @@ ANALYTICS_RECEIPT_KINDS = {
         "label": "Expense supplier receipts",
         "short_label": "Expense suppliers",
     },
+    "advancements": {
+        "slug": "advancements",
+        "label": "Customer advancements",
+        "short_label": "Advancements",
+    },
     "cancelled": {
         "slug": "cancelled",
         "label": "Cancelled receipts",
@@ -3886,21 +3918,44 @@ ANALYTICS_RECEIPT_KINDS = {
 }
 
 def _analytics_receipt_kind_filter(kind: str):
+    # Converted receipts keep both identities: a credit→sale counts under
+    # sales AND credits, a sale→gift under sales AND gifts.
+    def _kind_both(k):
+        q = Q(kind=k) | Q(converted_from_kind=k)
+        if k == ShopReceiptKind.CREDIT:
+            q |= Q(settled_from_credit=True)
+        elif k == ShopReceiptKind.TRADE_OUT:
+            q |= Q(settled_from_trade=True)
+        return q
+
     key = (kind or "").strip().lower()
     if key == "sales":
-        return Q(kind=ShopReceiptKind.SALE) & ~Q(status=ShopReceiptStatus.CANCELLED)
+        return _kind_both(ShopReceiptKind.SALE) & ~Q(
+            status=ShopReceiptStatus.CANCELLED
+        )
     if key == "credits":
-        return Q(kind=ShopReceiptKind.CREDIT) & ~Q(status=ShopReceiptStatus.CANCELLED)
+        return _kind_both(ShopReceiptKind.CREDIT) & ~Q(
+            status=ShopReceiptStatus.CANCELLED
+        )
     if key == "quotations":
-        return Q(kind=ShopReceiptKind.QUOTATION) & ~Q(
+        return _kind_both(ShopReceiptKind.QUOTATION) & ~Q(
             status=ShopReceiptStatus.CANCELLED
         )
     if key in {"gift", "gifts"}:
-        return Q(kind=ShopReceiptKind.GIFT) & ~Q(status=ShopReceiptStatus.CANCELLED)
+        return _kind_both(ShopReceiptKind.GIFT) & ~Q(
+            status=ShopReceiptStatus.CANCELLED
+        )
     if key == "trade_in":
-        return Q(kind=ShopReceiptKind.TRADE_IN) & ~Q(status=ShopReceiptStatus.CANCELLED)
+        return _kind_both(ShopReceiptKind.TRADE_IN) & ~Q(
+            status=ShopReceiptStatus.CANCELLED
+        )
     if key == "trade_out":
-        return Q(kind=ShopReceiptKind.TRADE_OUT) & ~Q(status=ShopReceiptStatus.CANCELLED)
+        return _kind_both(ShopReceiptKind.TRADE_OUT) & ~Q(
+            status=ShopReceiptStatus.CANCELLED
+        )
+    if key in {"advancement", "advancements", "advance", "advances", "prepayment", "prepayments", "deposit", "deposits"}:
+        # Advancements are CustomerPrepayment rows, not POS receipts.
+        return Q(pk__in=[])
     if key in {"tradings", "trades", "trade"}:
         flags = _pos_feature_flags()
         q = Q(pk__in=[])
@@ -4200,6 +4255,81 @@ def _list_expense_supplier_receipt_rows(*, shop_ids, start, end, search="", limi
     return rows
 
 
+def _list_prepayment_receipt_rows(*, shop_ids, start, end, search="", limit=None):
+    """Customer prepayment/advancement rows for analytics receipt lists."""
+    qs = (
+        CustomerPrepayment.objects.filter(
+            shop_id__in=shop_ids,
+            created_at__gte=start,
+            created_at__lt=end,
+        )
+        .select_related("shop", "created_by", "created_by__user")
+        .order_by("-created_at", "-id")
+    )
+    rows = []
+    search_l = (search or "").strip().lower()
+    for prepay in qs:
+        number = prepayment_doc_code(prepay)
+        shop_name = prepay.shop.name if prepay.shop else "—"
+        customer = (prepay.customer_name or "").strip() or "—"
+        phone = (prepay.customer_phone or "").strip() or "—"
+        purpose = (prepay.purpose or "").strip() or "Advance payment"
+        items_detail = [
+            {
+                "name": purpose,
+                "qty": "",
+                "unit": "",
+                "total": _money_ksh(prepay.amount),
+            }
+        ]
+        cashier = _cashier_label(getattr(prepay, "created_by", None))
+        status_label = (
+            prepay.get_payment_method_display()
+            if prepay.payment_method
+            else "Recorded"
+        )
+        haystack = " ".join(
+            [
+                number,
+                shop_name,
+                customer,
+                phone,
+                purpose,
+                cashier,
+                status_label,
+                "advancement",
+                "prepayment",
+                "deposit",
+            ]
+        ).lower()
+        if search_l and search_l not in haystack:
+            continue
+        rows.append(
+            {
+                "number": number,
+                "shop": shop_name,
+                "client": customer,
+                "client_name": customer,
+                "phone": phone,
+                "items": purpose,
+                "items_detail": items_detail,
+                "total": _money_ksh(prepay.amount),
+                "total_raw": Decimal(prepay.amount or 0),
+                "status": status_label,
+                "kind": "Advancement",
+                "when": timezone.localtime(prepay.created_at).strftime(
+                    "%d %b %Y · %H:%M"
+                ),
+                "when_dt": prepay.created_at,
+                "cashier": cashier or "—",
+                "sort_id": prepay.pk,
+            }
+        )
+        if limit is not None and len(rows) >= limit:
+            break
+    return rows
+
+
 def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
     """Filterable receipt list for one analytics document type across shops."""
     spec = get_analytics_receipt_kind(kind)
@@ -4253,6 +4383,13 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
             )
         )
 
+    if slug == "advancements":
+        return _list_payload(
+            _list_prepayment_receipt_rows(
+                shop_ids=shop_ids, start=start, end=end, search=search
+            )
+        )
+
     qs = (
         ShopReceipt.objects.filter(
             shop_id__in=shop_ids,
@@ -4273,6 +4410,7 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
             | Q(client_phone__icontains=search)
             | Q(shop__name__icontains=search)
             | Q(lines__item_name__icontains=search)
+            | Q(converted_from_kind__icontains=search)
         ).distinct()
 
     rows = []
@@ -4283,7 +4421,7 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
             client = f"{client} · {row.client_phone}"
         rows.append(
             {
-                "number": row.receipt_number,
+                "number": receipt_tally_code(row),
                 "shop": row.shop.name if row.shop else "—",
                 "client": client,
                 "items": _receipt_line_items_label(row.lines.all()),
@@ -4319,8 +4457,11 @@ CONFIRM_RECEIPT_STATUS_FILTERS = (
 )
 
 CONFIRM_RECEIPT_KIND_FILTERS = (
-    ("sale", "Sales"),
-    ("credit", "Credits"),
+    ("sales_credits", "Sales & credits"),
+    ("quotation", "Quotations"),
+    ("gift", "Gifts"),
+    ("trade_out", "Trade out"),
+    ("trade_in", "Trade in"),
     ("delivery", "Delivery notes"),
     ("goods_received", "Goods received"),
     ("all", "All types"),
@@ -4386,8 +4527,16 @@ def _confirm_receipt_sale_rows(
     if not kind_list:
         return []
 
+    # Converted receipts keep both identities — a sale→credit row answers to
+    # both the sales and the credits filter.
+    kind_match = Q(kind__in=kind_list) | Q(converted_from_kind__in=kind_list)
+    if ShopReceiptKind.CREDIT in kind_list:
+        kind_match |= Q(settled_from_credit=True)
+    if ShopReceiptKind.TRADE_OUT in kind_list:
+        kind_match |= Q(settled_from_trade=True)
     qs = (
-        ShopReceipt.objects.filter(shop_id__in=shop_ids, kind__in=kind_list)
+        ShopReceipt.objects.filter(shop_id__in=shop_ids)
+        .filter(kind_match)
         .select_related("shop", "created_by", "created_by__user")
         .annotate(
             has_customer_delivery=Exists(
@@ -4398,6 +4547,9 @@ def _confirm_receipt_sale_rows(
             "id",
             "shop_id",
             "receipt_number",
+            "converted_from_kind",
+            "settled_from_credit",
+            "settled_from_trade",
             "client_name",
             "client_phone",
             "mpesa_receipt_number",
@@ -4426,6 +4578,7 @@ def _confirm_receipt_sale_rows(
             | Q(client_name__icontains=search)
             | Q(client_phone__icontains=search)
             | Q(shop__name__icontains=search)
+            | Q(converted_from_kind__icontains=search)
         )
 
     def _serialize(receipts):
@@ -4438,6 +4591,7 @@ def _confirm_receipt_sale_rows(
         require_by_shop: dict[int, bool] = {}
         for row in receipts:
             is_credit = row.kind == ShopReceiptKind.CREDIT
+            tally_code = receipt_tally_code(row)
             credit_state = credit_confirm_state(row) if is_credit else None
             is_pending = row.status == ShopReceiptStatus.ACTIVE
             is_confirmed = row.status == ShopReceiptStatus.CONFIRMED
@@ -4491,7 +4645,7 @@ def _confirm_receipt_sale_rows(
                         False,
                     )
                 )
-            kind_label = "Credit" if is_credit else "Sale"
+            kind_label = row.get_kind_display()
             if bool(getattr(row, "has_customer_delivery", False)):
                 sold_as = "delivery"
                 sold_as_label = "Delivery"
@@ -4515,11 +4669,25 @@ def _confirm_receipt_sale_rows(
                 credit_confirm_notice = (credit_state or {}).get("confirm_notice") or ""
                 credit_due = str((credit_state or {}).get("due") or "0.00")
                 credit_paid = str((credit_state or {}).get("paid") or "0.00")
-            else:
+            elif row.kind == ShopReceiptKind.SALE:
                 can_confirm = is_pending or is_cancelled or is_partial
                 can_cancel = is_pending or is_confirmed or is_partial
                 can_set_pending = is_confirmed or is_cancelled
                 can_edit_status = True
+                status_rank = CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9)
+                credit_clear_on_confirm = False
+                credit_clear_mode = ""
+                credit_confirm_notice = ""
+                credit_due = "0.00"
+                credit_paid = "0.00"
+            else:
+                # Quotations / gifts / trades are review-only rows here —
+                # they confirm through their own flows (kind change, trade
+                # settlement), not the confirm-receipts actions.
+                can_confirm = False
+                can_cancel = False
+                can_set_pending = False
+                can_edit_status = False
                 status_rank = CONFIRM_RECEIPT_STATUS_RANK.get(row.status, 9)
                 credit_clear_on_confirm = False
                 credit_clear_mode = ""
@@ -4531,7 +4699,7 @@ def _confirm_receipt_sale_rows(
                     "receipt_id": row.pk,
                     "shop_id": row.shop_id,
                     "source": "pos",
-                    "number": row.receipt_number,
+                    "number": tally_code,
                     "shop": shop_name,
                     "client": client,
                     "client_phone": client_phone,
@@ -4541,7 +4709,7 @@ def _confirm_receipt_sale_rows(
                     "amount_label": amount_label,
                     "status": status_value,
                     "status_label": status_label,
-                    "kind": "credit" if is_credit else "sale",
+                    "kind": row.kind,
                     "kind_label": kind_label,
                     "sold_as": sold_as,
                     "sold_as_label": sold_as_label,
@@ -4564,6 +4732,7 @@ def _confirm_receipt_sale_rows(
                     "search_text": " ".join(
                         [
                             row.receipt_number or "",
+                            tally_code,
                             client,
                             client_phone,
                             sold_by,
@@ -4765,10 +4934,16 @@ def _confirm_receipt_transfer_rows(
 
 
 def _confirm_receipts_count_label(kind_key: str) -> str:
-    if kind_key == "sale":
-        return "sales receipt"
-    if kind_key == "credit":
-        return "credit receipt"
+    if kind_key in ("sale", "credit", "sales_credits"):
+        return "receipt"
+    if kind_key == "quotation":
+        return "quotation"
+    if kind_key == "gift":
+        return "gift receipt"
+    if kind_key == "trade_out":
+        return "trade out note"
+    if kind_key == "trade_in":
+        return "trade in note"
     if kind_key == "delivery":
         return "delivery note"
     if kind_key == "goods_received":
@@ -4781,10 +4956,27 @@ def _confirm_receipts_map_receipt_kind(raw: str) -> str:
     key = (raw or "").strip().lower()
     if key in ("all", "any"):
         return "all"
-    if key in ("sale", "sales"):
-        return "sale"
-    if key in ("credit", "credits"):
-        return "credit"
+    if key in (
+        "sale",
+        "sales",
+        "credit",
+        "credits",
+        "sales_credits",
+        "sale_credit",
+    ):
+        return "sales_credits"
+    if key in ("quotation", "quotations", "quote"):
+        return "quotation"
+    if key in ("gift", "gifts"):
+        return "gift"
+    if key in ("trade_out", "trade-out", "tradeouts"):
+        return "trade_out"
+    if key in ("trade_in", "trade-in", "tradeins"):
+        return "trade_in"
+    if key == "delivery":
+        return "delivery"
+    if key in ("goods_received", "goods-received"):
+        return "goods_received"
     return ""
 
 
@@ -4803,6 +4995,15 @@ def _confirm_receipts_effective_params(request) -> dict:
     if not (params.get("kind") or "").strip():
         mapped = _confirm_receipts_map_receipt_kind(params.get("receipt_kind"))
         params["kind"] = mapped or "all"
+    # Legacy links: separate sale/credit filters merged into Sales & credits.
+    if (params.get("kind") or "").strip().lower() in (
+        "sale",
+        "sales",
+        "credit",
+        "credits",
+        "sale_credit",
+    ):
+        params["kind"] = "sales_credits"
     return params
 
 
@@ -4828,7 +5029,7 @@ def _confirm_receipts_query_context(*, profile, request) -> dict:
     )
     kind_key = (params.get("kind") or "all").strip().lower()
     if kind_key not in {value for value, _label in kind_options}:
-        kind_key = kind_options[0][0] if kind_options else "sale"
+        kind_key = kind_options[0][0] if kind_options else "sales_credits"
     return {
         **filters,
         "search": "",
@@ -4841,10 +5042,20 @@ def _confirm_receipts_query_context(*, profile, request) -> dict:
 
 
 def _confirm_kind_enabled(kind_key: str, flags: dict) -> bool:
+    if kind_key == "sales_credits":
+        return bool(flags.get("sale", True)) or bool(flags.get("credit", True))
     if kind_key == "sale":
         return bool(flags.get("sale", True))
     if kind_key == "credit":
         return bool(flags.get("credit", True))
+    if kind_key == "quotation":
+        return bool(flags.get("quotation", True))
+    if kind_key == "gift":
+        return bool(flags.get("gift", True))
+    if kind_key == "trade_out":
+        return bool(flags.get("trade_out", True))
+    if kind_key == "trade_in":
+        return bool(flags.get("trade_in", True))
     # Transfers ("delivery", "goods_received") and "all" are always listed.
     return True
 
@@ -4860,7 +5071,31 @@ def _confirm_receipts_collect_rows(
     rows = []
     band_limit = None if limit is None else int(limit)
     flags = flags or _pos_feature_flags()
-    if kind_key in ("sale", "all") and flags["sale"]:
+    pos_kinds_map = {
+        "sales_credits": [ShopReceiptKind.SALE, ShopReceiptKind.CREDIT],
+        "sale": [ShopReceiptKind.SALE],
+        "credit": [ShopReceiptKind.CREDIT],
+        "quotation": [ShopReceiptKind.QUOTATION],
+        "gift": [ShopReceiptKind.GIFT],
+        "trade_out": [ShopReceiptKind.TRADE_OUT],
+        "trade_in": [ShopReceiptKind.TRADE_IN],
+    }
+    kind_flag_keys = {
+        ShopReceiptKind.SALE: "sale",
+        ShopReceiptKind.CREDIT: "credit",
+        ShopReceiptKind.QUOTATION: "quotation",
+        ShopReceiptKind.GIFT: "gift",
+        ShopReceiptKind.TRADE_OUT: "trade_out",
+        ShopReceiptKind.TRADE_IN: "trade_in",
+    }
+    if kind_key == "all":
+        wanted_kinds = list(kind_flag_keys)
+    else:
+        wanted_kinds = pos_kinds_map.get(kind_key, [])
+    wanted_kinds = [
+        kind for kind in wanted_kinds if flags.get(kind_flag_keys[kind], True)
+    ]
+    if wanted_kinds:
         rows.extend(
             _confirm_receipt_sale_rows(
                 shop_ids=shop_ids,
@@ -4869,19 +5104,7 @@ def _confirm_receipts_collect_rows(
                 status_key=status_key,
                 search=search,
                 limit=band_limit,
-                kinds=[ShopReceiptKind.SALE],
-            )
-        )
-    if kind_key in ("credit", "all") and flags["credit"]:
-        rows.extend(
-            _confirm_receipt_sale_rows(
-                shop_ids=shop_ids,
-                start=start,
-                end=end,
-                status_key=status_key,
-                search=search,
-                limit=band_limit,
-                kinds=[ShopReceiptKind.CREDIT],
+                kinds=wanted_kinds,
             )
         )
     if kind_key in ("delivery", "goods_received", "all"):
@@ -4896,6 +5119,18 @@ def _confirm_receipts_collect_rows(
                 limit=band_limit,
             )
         )
+
+    # "all" runs the sale + credit queries — a converted receipt matches both
+    # (kind and converted_from_kind), so drop the duplicate.
+    seen_rows = set()
+    deduped = []
+    for row in rows:
+        key = (row.get("source"), row.get("receipt_id"))
+        if key in seen_rows:
+            continue
+        seen_rows.add(key)
+        deduped.append(row)
+    rows = deduped
 
     rows.sort(
         key=lambda row: (
@@ -7804,6 +8039,24 @@ def _account_pay_url(role) -> str:
     )
 
 
+def analytics_employee_url(role, employee_id, *, query: str = "") -> str:
+    """Analytics → Employees drill-down (/…/analytics/employees/<id>/)."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    href = reverse(
+        "employees:analytics_employee",
+        kwargs={
+            "role_segment": role_url_segment(role),
+            "employee_id": int(employee_id),
+        },
+    )
+    if query:
+        return f"{href}?{query}"
+    return href
+
+
 def supplier_account_url(role, kind: str, supplier_id, *, query: str = "") -> str:
     from django.urls import reverse
 
@@ -8687,9 +8940,12 @@ def _day_balance_data(filters) -> dict:
         max_closed = max(
             (session.closed_at or now) for session in activity_sessions
         )
+        # Settled credits never touched a session till — their channels were
+        # collected at account level on the paid day (credit events).
         day_sales_qs = ShopReceipt.objects.filter(
             shop_id__in=shop_ids,
             kind=ShopReceiptKind.SALE,
+            settled_from_credit=False,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
         )
@@ -9724,6 +9980,41 @@ def _created_at_trunc(field: str, bucket_kind: str):
     return TruncMonth(shifted, tzinfo=utc)
 
 
+def _receipt_revenue_moment(prefix: str = ""):
+    """Moment a receipt's revenue belongs to.
+
+    ``confirmed_payment_at`` on settled-from-credit sales (the day the credit
+    cleared), ``created_at`` everywhere else. ``prefix`` is the relation path
+    when reached through a join (e.g. ``receipt`` on line querysets).
+    """
+    p = f"{prefix}__" if prefix else ""
+    return Case(
+        When(
+            **{
+                f"{p}settled_from_credit": True,
+                f"{p}confirmed_payment_at__isnull": False,
+            },
+            then=F(f"{p}confirmed_payment_at"),
+        ),
+        default=F(f"{p}created_at"),
+        output_field=DateTimeField(),
+    )
+
+
+def _revenue_moment_trunc(bucket_kind: str, *, prefix: str = ""):
+    """Bucket receipts by revenue day — paid day for settled credit sales."""
+    shifted = ExpressionWrapper(
+        _receipt_revenue_moment(prefix) + _local_utc_offset(),
+        output_field=DateTimeField(),
+    )
+    utc = dt_timezone.utc
+    if bucket_kind == "hour":
+        return TruncHour(shifted, tzinfo=utc)
+    if bucket_kind == "day":
+        return TruncDay(shifted, tzinfo=utc)
+    return TruncMonth(shifted, tzinfo=utc)
+
+
 def _bucket_label(moment, bucket_kind: str) -> str:
     if moment is None:
         return ""
@@ -9812,7 +10103,7 @@ def _trading_by_bucket_for_period(
         F("unit_cost") * (F("quantity") - F("returned_quantity")),
         output_field=DecimalField(max_digits=14, decimal_places=2),
     )
-    trunc = _created_at_trunc("receipt__created_at", bucket_kind)
+    trunc = _revenue_moment_trunc(bucket_kind, prefix="receipt")
     for row in (
         trading_line_qs.annotate(bucket=trunc)
         .values("bucket", "receipt__kind")
@@ -9907,7 +10198,7 @@ def _opex_and_drawings_by_bucket(
 
 
 def _docs_by_bucket(qs, *, bucket_kind: str) -> dict[str, int]:
-    trunc = _created_at_trunc("created_at", bucket_kind)
+    trunc = _revenue_moment_trunc(bucket_kind)
     return {
         _bucket_label(row["bucket"], bucket_kind): int(row["docs"] or 0)
         for row in qs.annotate(bucket=trunc)
@@ -10894,6 +11185,18 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 hint=sales_hint,
             )
         )
+    if day_report_section_enabled(profile, "day_report_sec_prepayments"):
+        prepay_count = int(summary.get("prepayments_count") or 0)
+        metrics.append(
+            _metric(
+                "Customer prepayments",
+                _money_ksh(summary.get("prepayments_total")),
+                hint=(
+                    f"{prepay_count} payment"
+                    f"{'s' if prepay_count != 1 else ''} received"
+                ),
+            )
+        )
     if day_report_section_enabled(profile, "day_report_sec_expenses"):
         unpaid_expenses = sum(
             (
@@ -10942,20 +11245,24 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 _money_ksh(summary.get("suppliers_paid")),
             )
         )
-    if day_report_section_enabled(profile, "day_report_sec_not_till"):
-        unpaid_sales = _zero()
-        if getattr(pos, "enable_credit", False):
-            unpaid_sales += Decimal(
-                (details.get("credit_sales") or {}).get("due") or 0
-            )
-        if getattr(pos, "enable_gift", True):
-            unpaid_sales += Decimal(
-                (details.get("gifts") or {}).get("total") or 0
-            )
+    if day_report_section_enabled(
+        profile, "day_report_sec_not_till"
+    ) and getattr(pos, "enable_credit", False):
         metrics.append(
             _metric(
-                "Unpaid sales (credit + gifts)",
-                _money_ksh(unpaid_sales),
+                "Unpaid credit sales",
+                _money_ksh(
+                    (details.get("credit_sales") or {}).get("due")
+                ),
+            )
+        )
+    if day_report_section_enabled(
+        profile, "day_report_sec_gift"
+    ) and getattr(pos, "enable_gift", True):
+        metrics.append(
+            _metric(
+                "Gift items issued",
+                _money_ksh((details.get("gifts") or {}).get("total")),
             )
         )
     if day_report_section_enabled(profile, "day_report_sec_expenses"):
@@ -11018,6 +11325,11 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             summary.get("sales_total"),
         ),
         _flow_row(
+            f"Customer prepayments ({summary.get('prepayments_count') or 0})",
+            _channel_values("prepayments"),
+            summary.get("prepayments_total"),
+        ),
+        _flow_row(
             "Returns paid",
             {
                 "cash": summary.get("cash_refunds"),
@@ -11076,6 +11388,27 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             _money_cell(total_variance, tone=_variance_tone(total_variance))
         )
         flow_rows.append(variance_cells)
+    credit_payments = details.get("credit_payments") or {}
+    credit_pay_rows = credit_payments.get("rows") or []
+    credit_payments_sec = getattr(
+        pos, "enable_credit", False
+    ) and day_report_section_enabled(
+        profile, "day_report_sec_credit_payments"
+    )
+    if credit_pay_rows and credit_payments_sec:
+        # Memo row — the collections are real money received this day but
+        # sat on credit accounts, not in this session's till.
+        flow_rows.append(
+            _flow_row(
+                "Credit payments collected — outside till",
+                {
+                    "cash": credit_payments.get("cash"),
+                    "mpesa": credit_payments.get("mpesa"),
+                    "card": credit_payments.get("card"),
+                },
+                credit_payments.get("total"),
+            )
+        )
 
     # "Dates" day-report pick (off by default): row times gain the date so
     # gap-window activity from before the session opened is identifiable.
@@ -11095,87 +11428,214 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             return "—"
         return {"label": name or "—", "sub": phone}
 
+    money_footnote = (
+        "Expected in till = opening + sales + prepayments − returns − "
+        "expenses − stock bought − drawings. "
+        "Variance = counted − expected."
+    )
+    if credit_pay_rows and credit_payments_sec:
+        money_footnote += (
+            " Credit payments collected are account-level collections "
+            "(fully paid credits convert to sales) — they are not part of "
+            "this session's expected till."
+        )
     tables = [
         _table(
             "Money flow",
             flow_columns,
             flow_rows,
             empty="No money movement recorded this day.",
-            footnote=(
-                "Expected in till = opening + sales − returns − expenses − "
-                "stock bought − drawings. Variance = counted − expected."
-            ),
+            footnote=money_footnote,
             section="day_report_sec_money_flow",
         ),
     ]
 
+    prepay_rows = details.get("prepayments") or []
+    prepay_total = sum(
+        (Decimal(row.get("amount") or 0) for row in prepay_rows), _zero()
+    )
+    tables.append(
+        _table(
+            "Customer prepayments",
+            [
+                time_header,
+                "Doc",
+                "Customer",
+                "Purpose",
+                "Channel",
+                "Recorded by",
+                {"label": "Amount", "money": True},
+            ],
+            [
+                [
+                    _time(row["at"]),
+                    row.get("number") or "—",
+                    {
+                        "label": row["customer_name"],
+                        "sub": row.get("customer_phone") or "",
+                    },
+                    row["purpose"],
+                    row.get("method_label") or "—",
+                    row["by"],
+                    _money_ksh(row["amount"]),
+                ]
+                for row in prepay_rows
+            ],
+            empty="No customer prepayments recorded this day.",
+            footnote=(
+                f"{len(prepay_rows)} prepayment"
+                f"{'s' if len(prepay_rows) != 1 else ''}"
+                f" · {_money_ksh(prepay_total)} received."
+                " Money in ahead of orders — part of Expected in till."
+            ),
+            section="day_report_sec_prepayments",
+        )
+    )
+
+    if getattr(pos, "enable_credit", False):
+        credit_pay_table_rows = []
+        for pay in credit_pay_rows:
+            if pay["converted"]:
+                outcome = {
+                    "kind": "status",
+                    "label": "Converted to sale",
+                    "tone": "good",
+                }
+            elif pay["cleared"]:
+                outcome = {
+                    "kind": "status",
+                    "label": "Paid in full",
+                    "tone": "good",
+                }
+            else:
+                outcome = {
+                    "kind": "status",
+                    "label": (
+                        f"Part payment — {_money_ksh(pay['due_after'])} due"
+                        if pay["due_after"] is not None
+                        else "Part payment"
+                    ),
+                    "tone": "warn",
+                }
+            receipt_sub = pay["client"]
+            if pay["ref"]:
+                receipt_sub += f" · Ref {pay['ref']}"
+            credit_pay_table_rows.append(
+                [
+                    _time(pay["at"]),
+                    {"label": pay["number"], "sub": receipt_sub},
+                    pay["channel_label"],
+                    outcome,
+                    pay["by"],
+                    _money_ksh(pay["amount"]),
+                ]
+            )
+        converted_count = credit_payments.get("receipts_converted") or 0
+        credit_pay_footnote = (
+            f"{credit_payments.get('count') or 0} payment"
+            f"{'s' if (credit_payments.get('count') or 0) != 1 else ''}"
+            f" · {_money_ksh(credit_payments.get('total'))} collected"
+        )
+        if converted_count:
+            credit_pay_footnote += (
+                f" · {converted_count} credit"
+                f"{'s' if converted_count != 1 else ''} converted to sales"
+            )
+        credit_pay_footnote += (
+            ". Collected on credit accounts — outside this session's till."
+        )
+        tables.append(
+            _table(
+                "Credit payments collected",
+                [
+                    time_header,
+                    "Receipt",
+                    "Channel",
+                    "Outcome",
+                    "Collected by",
+                    {"label": "Amount", "money": True},
+                ],
+                credit_pay_table_rows,
+                empty="No credit payments collected this day.",
+                footnote=credit_pay_footnote,
+                section="day_report_sec_credit_payments",
+            )
+        )
+
     not_till = day_report_not_till_lines(
         summary=summary, details=details, pos=pos
     )
-    not_till_rows = []
-    for line in not_till.get("lines") or []:
-        not_till_rows.append(
-            [
-                line["label"],
-                str(line.get("count") or 0),
-                _money_ksh(line.get("value")),
-                (
-                    _money_ksh(line.get("collected"))
-                    if line.get("collected") is not None
-                    else "—"
-                ),
-                (
-                    _money_ksh(line.get("due"))
-                    if line.get("due") is not None
-                    else "—"
-                ),
-            ]
-        )
-    credit_gift_rows = []
+    not_till_by_key = {
+        line["key"]: line for line in not_till.get("lines") or []
+    }
     credit_gift_tone = {
         ShopReceiptStatus.ACTIVE: "warn",
         ShopReceiptStatus.CANCELLED: "bad",
     }
-    for row in details.get("credit_gift_receipts") or []:
-        credit_gift_rows.append(
-            [
-                _time(row["at"]),
-                {"label": row["number"], "sub": row["items_label"]},
-                row["seller"],
-                {
-                    "kind": "status",
-                    "label": (
-                        f"{row['kind_label']} · {row['status_label']}"
-                    ),
-                    "tone": credit_gift_tone.get(row["status"], "good"),
-                },
-                _money_ksh(row["total"]),
+
+    def _receipt_rows(kind):
+        rows = []
+        for row in details.get("credit_gift_receipts") or []:
+            if row["kind"] != kind:
+                continue
+            rows.append(
+                [
+                    _time(row["at"]),
+                    {"label": row["number"], "sub": row["items_label"]},
+                    row["seller"],
+                    {
+                        "kind": "status",
+                        "label": row["status_label"],
+                        "tone": credit_gift_tone.get(row["status"], "good"),
+                    },
+                    _money_ksh(row["total"]),
+                ]
+            )
+        return rows
+
+    def _not_till_row(line, *, with_due):
+        cells = [
+            line["label"],
+            str(line.get("count") or 0),
+            _money_ksh(line.get("value")),
+        ]
+        if with_due:
+            cells += [
+                _money_ksh(line.get("collected"))
+                if line.get("collected") is not None
+                else "—",
+                _money_ksh(line.get("due"))
+                if line.get("due") is not None
+                else "—",
             ]
-        )
-    if not_till_rows or credit_gift_rows:
-        if not_till_rows:
-            not_till_footnote = (
-                "Credit is collected later and gifts are free issues — "
-                "neither adds to Expected in till."
+        return cells
+
+    credit_line = not_till_by_key.get("credit")
+    credit_receipt_rows = _receipt_rows(ShopReceiptKind.CREDIT)
+    if credit_line is not None or credit_receipt_rows:
+        if credit_line is not None:
+            credit_footnote = (
+                "Credit is collected later — it does not add to "
+                "Expected in till."
             )
             slips = not_till.get("slips")
             if slips:
-                not_till_footnote += (
+                credit_footnote += (
                     f" Credit slips counted: opened "
                     f"{_money_ksh(slips.get('opened'))}"
                 )
                 if not is_open:
-                    not_till_footnote += (
+                    credit_footnote += (
                         f" · counted {_money_ksh(slips.get('counted'))}"
                     )
                     if slips.get("variance") is not None:
-                        not_till_footnote += (
+                        credit_footnote += (
                             f" · diff {_money_ksh(slips['variance'])}"
                         )
-                not_till_footnote += "."
+                credit_footnote += "."
             tables.append(
                 _table(
-                    "Credit & gift — not in the till",
+                    "Credit — not in the till",
                     [
                         "Document",
                         {"label": "Docs", "money": True},
@@ -11183,27 +11643,66 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                         {"label": "Collected", "money": True},
                         {"label": "Still due", "money": True},
                     ],
-                    not_till_rows,
+                    [_not_till_row(credit_line, with_due=True)],
                     empty="",
-                    footnote=not_till_footnote,
+                    footnote=credit_footnote,
                     section="day_report_sec_not_till",
                 )
             )
-        if credit_gift_rows:
-            credit_gift_table = _table(
-                "Credit & gift receipts",
-                [
-                    time_header,
-                    "Receipt",
-                    "Sold by",
-                    "Status",
-                    {"label": "Amount", "money": True},
-                ],
-                credit_gift_rows,
-                empty="No credit or gift receipts this day.",
-                section="day_report_sec_not_till",
+        if credit_receipt_rows:
+            tables.append(
+                _table(
+                    "Credit receipts",
+                    [
+                        time_header,
+                        "Receipt",
+                        "Sold by",
+                        "Status",
+                        {"label": "Amount", "money": True},
+                    ],
+                    credit_receipt_rows,
+                    empty="No credit receipts this day.",
+                    section="day_report_sec_not_till",
+                )
             )
-            tables.append(credit_gift_table)
+
+    gift_line = not_till_by_key.get("gift")
+    gift_receipt_rows = _receipt_rows(ShopReceiptKind.GIFT)
+    if gift_line is not None or gift_receipt_rows:
+        if gift_line is not None:
+            tables.append(
+                _table(
+                    "Gifts — not in the till",
+                    [
+                        "Document",
+                        {"label": "Docs", "money": True},
+                        {"label": "Value", "money": True},
+                    ],
+                    [_not_till_row(gift_line, with_due=False)],
+                    empty="",
+                    footnote=(
+                        "Gifts are free issues — they do not add to "
+                        "Expected in till."
+                    ),
+                    section="day_report_sec_gift",
+                )
+            )
+        if gift_receipt_rows:
+            tables.append(
+                _table(
+                    "Gift receipts",
+                    [
+                        time_header,
+                        "Receipt",
+                        "Sold by",
+                        "Status",
+                        {"label": "Amount", "money": True},
+                    ],
+                    gift_receipt_rows,
+                    empty="No gift receipts this day.",
+                    section="day_report_sec_gift",
+                )
+            )
 
     items_sold = details.get("items_sold") or []
     items_qty_total = sum(
@@ -11831,7 +12330,7 @@ def _sales_breakdown_table(
         zero_money,
     )
 
-    trunc = _created_at_trunc("created_at", bucket_kind)
+    trunc = _revenue_moment_trunc(bucket_kind)
     total_by_bucket: dict[str, tuple[int, Decimal]] = {}
     cash_by_bucket: dict[str, tuple[int, Decimal]] = {}
     mpesa_by_bucket: dict[str, tuple[int, Decimal]] = {}
@@ -15064,7 +15563,7 @@ def build_trade_out_detail(*, profile, receipt_id: int, request=None) -> dict:
     return {
         **filters,
         "receipt": receipt,
-        "receipt_number": receipt.receipt_number,
+        "receipt_number": receipt_tally_code(receipt),
         "shop_name": receipt.shop.name if receipt.shop else "—",
         "client_name": receipt.client_name or "Walk-in",
         "client_phone": receipt.client_phone or "",
@@ -16796,6 +17295,7 @@ def _build_employees(filters):
         if entry is None:
             entry = {
                 "label": label,
+                "staff_pk": row["created_by_id"],
                 "by_shop": {},
                 "total_docs": 0,
                 "total_amount": _zero(),
@@ -16813,11 +17313,25 @@ def _build_employees(filters):
     columns.append(_pair_total_col(pair_qty="Docs", pair_amt="Amt"))
 
     table_rows = []
+    role = filters.get("role")
+    query = filters.get("query") or ""
     for entry in sorted(
         by_staff.values(),
         key=lambda row: (-row["total_amount"], row["label"].lower()),
     ):
-        cells = [entry["label"]]
+        if entry["staff_pk"] and role is not None:
+            cells = [
+                {
+                    "href": analytics_employee_url(
+                        role,
+                        entry["staff_pk"],
+                        query=query,
+                    ),
+                    "label": entry["label"],
+                }
+            ]
+        else:
+            cells = [entry["label"]]
         for shop in shops:
             docs, amount = entry["by_shop"].get(shop.pk, (0, _zero()))
             cells.append(
@@ -18315,6 +18829,17 @@ def _normalize_analytics_receipt_kind(raw: str) -> str:
         "expense_suppliers",
     ):
         return "expense"
+    if receipt_kind in (
+        "advancement",
+        "advancements",
+        "advance",
+        "advances",
+        "prepayment",
+        "prepayments",
+        "deposit",
+        "deposits",
+    ):
+        return "advancements"
     if receipt_kind in ("cancelled", "cancel"):
         return "cancelled"
     if receipt_kind in ("partial-returns", "partial_returns", "partial"):
@@ -18347,6 +18872,8 @@ _RECEIPT_KIND_CELL_TONE = {
     ShopReceiptKind.GIFT: "violet",
     "stock": "shops",
     "expense": "cost",
+    "advancement": "good",
+    "advancements": "good",
 }
 
 # Status pill tones keyed by ShopReceiptStatus value.
@@ -18399,6 +18926,24 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             shop_ids=shop_ids, start=start, end=end
         )
     )
+    prepay_by_shop: dict[int, tuple[int, Decimal]] = {}
+    if not walkins_only:
+        for row in (
+            CustomerPrepayment.objects.filter(
+                shop_id__in=shop_ids,
+                created_at__gte=start,
+                created_at__lt=end,
+            )
+            .values("shop_id")
+            .annotate(
+                docs=Count("id"),
+                amount=Coalesce(Sum("amount"), _zero()),
+            )
+        ):
+            prepay_by_shop[row["shop_id"]] = (
+                int(row["docs"] or 0),
+                Decimal(row["amount"] or 0),
+            )
 
     kind_specs = tuple(
         row
@@ -18411,11 +18956,12 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             ("trade_in", "Trade in"),
             ("stock", "Stock suppliers"),
             ("expense", "Expense suppliers"),
+            ("advancements", "Advancements"),
             ("cancelled", "Cancelled"),
             ("partial-returns", "Partial returns"),
         )
         if _browse_kind_enabled(row[0], flags)
-        and not (walkins_only and row[0] in ("stock", "expense"))
+        and not (walkins_only and row[0] in ("stock", "expense", "advancements"))
     )
     all_kind_specs = kind_specs
     if receipt_kind:
@@ -18449,6 +18995,8 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             by_shop = stock_by_shop
         elif kind_slug == "expense":
             by_shop = expense_by_shop
+        elif kind_slug == "advancements":
+            by_shop = prepay_by_shop
         else:
             kind_filter = _analytics_receipt_kind_filter(kind_slug)
             for row in (
@@ -18521,6 +19069,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         "sales",
         "credits",
         "quotations",
+        "gifts",
         "trade_out",
         "trade_in",
         "cancelled",
@@ -18528,6 +19077,9 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
     )
     include_stock = not walkins_only and receipt_kind in ("", "stock")
     include_expense = not walkins_only and receipt_kind in ("", "expense")
+    include_advancements = (
+        not walkins_only and receipt_kind in ("", "advancements")
+    )
 
     def _row_payload(
         *,
@@ -18548,6 +19100,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         receipt_id=None,
         shop_id=None,
         items_detail=None,
+        raw_number="",
     ):
         items_label = (items or "").strip() or "—"
         items_cell = {
@@ -18609,6 +19162,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                         cell.get("label") if isinstance(cell, dict) else cell
                         for cell in cells
                     ),
+                    raw_number,
                     shop_label,
                     client_sub,
                 )
@@ -18635,6 +19189,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             "sales",
             "credits",
             "quotations",
+            "gifts",
             "trade_out",
             "trade_in",
             "cancelled",
@@ -18655,6 +19210,8 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                 enabled_q |= Q(kind=ShopReceiptKind.CREDIT)
             if flags["quotation"]:
                 enabled_q |= Q(kind=ShopReceiptKind.QUOTATION)
+            if flags["gift"]:
+                enabled_q |= Q(kind=ShopReceiptKind.GIFT)
             if flags["trade_out"]:
                 enabled_q |= Q(kind=ShopReceiptKind.TRADE_OUT)
             if flags["trade_in"]:
@@ -18670,7 +19227,8 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             items_detail = _receipt_line_items_detail(row.lines.all())
             merged.append(
                 _row_payload(
-                    number=row.receipt_number,
+                    number=receipt_tally_code(row),
+                    raw_number=row.receipt_number,
                     kind_label=row.get_kind_display(),
                     client_name=client_name,
                     phone=phone,
@@ -18731,6 +19289,28 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                     sort_id=row["sort_id"],
                     shop=row.get("shop") or "",
                     kind_slug="expense",
+                    status_label=row.get("status") or "",
+                    total_raw=row.get("total_raw"),
+                )
+            )
+    if include_advancements:
+        for row in _list_prepayment_receipt_rows(
+            shop_ids=shop_ids, start=start, end=end
+        ):
+            merged.append(
+                _row_payload(
+                    number=row["number"],
+                    kind_label=row["kind"],
+                    client_name=row.get("client_name") or row["client"] or "—",
+                    phone=row.get("phone") or "—",
+                    items=row.get("items") or "—",
+                    items_detail=row.get("items_detail"),
+                    total=row["total"],
+                    when=row["when"],
+                    when_dt=row["when_dt"],
+                    sort_id=row["sort_id"],
+                    shop=row.get("shop") or "",
+                    kind_slug="advancement",
                     status_label=row.get("status") or "",
                     total_raw=row.get("total_raw"),
                 )
@@ -19145,7 +19725,7 @@ def build_return_receipts_audits(*, profile, request=None, status_filter: str = 
             {
                 "id": receipt.pk,
                 "when_label": when_label,
-                "receipt_number": receipt.receipt_number,
+                "receipt_number": receipt_tally_code(receipt),
                 "kind_label": receipt.get_kind_display(),
                 "status": receipt.status,
                 "status_label": receipt.get_status_display(),

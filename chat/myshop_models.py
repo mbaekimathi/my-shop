@@ -110,6 +110,7 @@ class ShopReceipt(models.Model):
     status = models.CharField(max_length=20)
     settled_from_credit = models.BooleanField(default=False)
     settled_from_trade = models.BooleanField(default=False)
+    converted_from_kind = models.CharField(max_length=16, blank=True, default="")
     trade_exchange_value = models.DecimalField(
         max_digits=12, decimal_places=2, default=0
     )

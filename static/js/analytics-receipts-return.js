@@ -222,7 +222,7 @@
     const receipt = payload.receipt || {};
     currentDetail = payload;
     if (modalTitle) {
-      modalTitle.textContent = receipt.receipt_number || "Receipt";
+      modalTitle.textContent = receipt.tally_code || receipt.receipt_number || "Receipt";
     }
     if (modalActions) modalActions.hidden = false;
     if (startReturnBtn) startReturnBtn.hidden = !receipt.can_return;

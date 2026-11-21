@@ -293,6 +293,17 @@ class ShopReceipt(models.Model):
         db_index=True,
         help_text="True when this sale was converted from a cleared trade-out receipt.",
     )
+    converted_from_kind = models.CharField(
+        max_length=16,
+        choices=ShopReceiptKind.choices,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "Receipt kind this receipt was converted from (latest conversion) — "
+            "tally lists show both letters, e.g. CS0005 for credit→sale."
+        ),
+    )
     trade_exchange_value = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -2043,6 +2054,62 @@ class Expense(models.Model):
 
     def __str__(self):
         return f"{self.name} — {self.amount} ({self.shop.name})"
+
+
+class CustomerPrepayment(models.Model):
+    """Money a customer paid in advance (deposit) — counts as till money in."""
+
+    shop = models.ForeignKey(
+        Shop,
+        on_delete=models.PROTECT,
+        related_name="customer_prepayments",
+    )
+    client = models.ForeignKey(
+        Client,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="prepayments",
+    )
+    customer_name = models.CharField(max_length=200)
+    customer_phone = models.CharField(max_length=40)
+    purpose = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(
+        max_length=16,
+        choices=ShopPaymentMethod.choices,
+        default=ShopPaymentMethod.CASH,
+    )
+    cash_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    mpesa_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    card_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    created_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.PROTECT,
+        related_name="customer_prepayments_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["shop", "created_at"],
+                name="custprepay_shop_created_idx",
+            ),
+        ]
+
+    @property
+    def doc_code(self) -> str:
+        """Tally code for prepayments/advancements, e.g. A0007."""
+        from shops.services import format_simple_doc_number, DOC_NUMBER_PREFIX
+
+        return format_simple_doc_number(
+            DOC_NUMBER_PREFIX["prepayment"], self.pk or 0
+        )
+
+    def __str__(self):
+        return f"{self.customer_name} — {self.amount} ({self.shop.name})"
 
 
 class ClientCreditAccountEventKind(models.TextChoices):

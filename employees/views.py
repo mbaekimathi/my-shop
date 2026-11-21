@@ -94,7 +94,7 @@ from .access import (
     active_employee_required,
     get_profile,
     get_profile_for_request,
-    profile_view_only,
+    profile_support_pass,
     redirect_to_role_home,
     refresh_effective_role,
     role_home_url_name,
@@ -144,6 +144,7 @@ from .workspace import (
     get_dashboard_module,
     get_settings_section,
     get_settings_sections,
+    prepayment_modal_context,
     sell_modal_context,
     set_cashier_day_report_section_pref,
     set_cashier_sell_pref,
@@ -253,6 +254,11 @@ def _render_role_page(request, expected_role):
         context.update(sell_modal_context(request, profile))
         context.update(buy_stock_modal_context(request, profile))
         context.update(cashier_day_summaries_context(request, profile))
+    if expected_role in (
+        EmployeeRole.SHOP_CASHIER,
+        EmployeeRole.COMPANY_ACCOUNTANT,
+    ):
+        context.update(prepayment_modal_context(request, profile))
     return render(request, "employees/role_home.html", context)
 
 
@@ -1010,7 +1016,13 @@ def employee_my_analytics(request):
 @active_employee_required
 @require_http_methods(["GET", "POST"])
 def employee_clock(request):
-    from .attendance import clock_in, clock_out, entries_for, open_entry_for
+    from .attendance import (
+        clock_in,
+        clock_out,
+        clock_summary,
+        entries_for,
+        open_entry_for,
+    )
 
     profile = get_profile_for_request(request)
     if request.method == "POST":
@@ -1038,9 +1050,19 @@ def employee_clock(request):
         return redirect("employees:employee_clock")
 
     open_entry = open_entry_for(profile)
+    summary = clock_summary(profile, open_entry=open_entry)
     entries_page = Paginator(entries_for(profile), 15).get_page(
         request.GET.get("page") or 1
     )
+    now = timezone.now()
+    today = timezone.localdate(now)
+    longest_seconds = summary["longest_seconds"] or 1
+    for entry in entries_page.object_list:
+        end = entry.clock_out or now
+        seconds = max(0, int((end - entry.clock_in).total_seconds()))
+        entry.dur_pct = f"{min(100.0, seconds / longest_seconds * 100):.1f}"
+        age = (today - entry.work_date).days
+        entry.rel_label = {0: "Today", 1: "Yesterday"}.get(age, "")
     return render(
         request,
         "employees/employee_clock.html",
@@ -1055,6 +1077,7 @@ def employee_clock(request):
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
             "open_entry": open_entry,
+            "clock": summary,
             "entries_page": entries_page,
             "pagination": _employee_home_pagination(request, entries_page),
             "page_sidebar": sidebar_for_role_dashboard(
@@ -1620,7 +1643,7 @@ def role_shop_day(request, role_segment):
     can_record_drawing = employee_may(
         profile, "my-shop", "register_expense"
     )
-    view_only = profile_view_only(profile)
+    support_pass = profile_support_pass(profile)
     mode = (request.GET.get("mode") or "").strip().lower()
     if mode not in {"drawings", "report", "history"}:
         mode = ""
@@ -1633,14 +1656,14 @@ def role_shop_day(request, role_segment):
         open_session = state.get("open_session")
         is_open = open_session is not None
         stale_open = bool(state.get("stale_open"))
-        # Till data is only for the session this cashier opened — a view-only
-        # pass (IT support acting as cashier) counts as the opener so the
-        # figures stay visible; actions stay hidden and writes stay denied.
+        # Till data is only for the session this cashier opened — a support
+        # pass (IT support / super admin acting as cashier) counts as the
+        # opener so the figures stay visible and the day stays actionable.
         own_session = is_open and (
-            open_session.opened_by_id == profile.pk or view_only
+            open_session.opened_by_id == profile.pk or support_pass
         )
-        # Keep the real opener's name on view-only rows too — the support
-        # pass needs to see which employee actually owns the session.
+        # Keep the real opener's name on support-pass rows too — the pass
+        # needs to see which employee actually owns the session.
         other_opener = ""
         if (
             is_open
@@ -1695,12 +1718,9 @@ def role_shop_day(request, role_segment):
                     kwargs={"shop_id": shop.pk},
                 ),
                 "can_draw": (
-                    can_record_drawing
-                    and own_session
-                    and not stale_open
-                    and not view_only
+                    can_record_drawing and own_session and not stale_open
                 ),
-                "view_only": view_only,
+                "support_pass": support_pass,
                 "action_label": action_label,
                 "action_icon": action_icon,
             }
@@ -1757,6 +1777,140 @@ def role_shop_day(request, role_segment):
             "drawing_mode": drawing_mode,
         },
     )
+
+
+@active_employee_required
+@require_http_methods(["GET", "POST"])
+def role_prepayments(request, role_segment):
+    """Customer prepayments — register via popup (POST) and list (GET)."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        raise Http404("Role portal not found.")
+    expected_segment = role_url_segment(profile.role)
+    if role_segment != expected_segment:
+        return redirect(
+            "employees:role_prepayments", role_segment=expected_segment
+        )
+
+    from .module_permissions import require_module_permission
+
+    denied = require_module_permission(
+        request, profile, "my-shop", "prepayments"
+    )
+    if denied is not None:
+        return denied
+
+    from items.services import actionable_shops_for_profile
+    from shops.models import CustomerPrepayment
+    from shops.services import register_customer_prepayment
+
+    base_url = reverse(
+        "employees:role_prepayments",
+        kwargs={"role_segment": expected_segment},
+    )
+    shops = actionable_shops_for_profile(profile)
+    shops_by_pk = {str(shop.pk): shop for shop in shops}
+
+    if request.method == "POST":
+        next_url = (request.POST.get("next") or "").strip()
+        if not (next_url.startswith("/") and not next_url.startswith("//")):
+            next_url = base_url
+        shop_id = str(request.POST.get("shop_id") or "").strip()
+        shop = shops_by_pk.get(shop_id)
+        if shop is None and not shop_id and len(shops) == 1:
+            shop = shops[0]
+        if shop is None:
+            messages.error(
+                request, "Pick a shop to record the prepayment for."
+            )
+            return redirect(next_url)
+        try:
+            result = register_customer_prepayment(
+                shop=shop, profile=profile, payload=request.POST
+            )
+        except ValidationError as exc:
+            for error in exc.messages:
+                messages.error(request, error)
+            return redirect(next_url)
+        messages.success(request, result["message"])
+        return redirect(next_url)
+
+    from django.db.models import Q, Sum
+
+    selected_shop = shops_by_pk.get(
+        str(request.GET.get("shop") or "").strip()
+    )
+    query = (request.GET.get("q") or "").strip()
+    rows = (
+        CustomerPrepayment.objects.filter(shop__in=shops)
+        .select_related("shop", "created_by__user")
+        .order_by("-created_at")
+    )
+    if selected_shop is not None:
+        rows = rows.filter(shop=selected_shop)
+    if query:
+        rows = rows.filter(
+            Q(customer_name__icontains=query)
+            | Q(customer_phone__icontains=query)
+            | Q(purpose__icontains=query)
+        )
+    total_amount = rows.aggregate(total=Sum("amount"))["total"] or 0
+    page = Paginator(rows, 25).get_page(request.GET.get("page"))
+
+    filter_params = {}
+    if selected_shop is not None:
+        filter_params["shop"] = selected_shop.pk
+    if query:
+        filter_params["q"] = query
+    filter_query = urlencode(filter_params)
+
+    def _page_url(number):
+        params = {**filter_params, "page": number}
+        return f"{base_url}?{urlencode(params)}"
+
+    pagination = {
+        "previous_url": (
+            _page_url(page.previous_page_number())
+            if page.has_previous()
+            else ""
+        ),
+        "next_url": (
+            _page_url(page.next_page_number()) if page.has_next() else ""
+        ),
+    }
+
+    context = {
+        "profile": profile,
+        "meta": {
+            "title": "Customer prepayments",
+            "headline": "Customer prepayments",
+            "summary": (
+                "Money customers pay in advance — recorded against the shop "
+                "day and shown on the cashier's day report."
+            ),
+            "icon": "piggy-bank",
+        },
+        "role_label": profile.get_role_display(),
+        "status_label": profile.get_status_display(),
+        "page_sidebar": sidebar_for_role_dashboard(
+            profile.role,
+            profile=profile,
+            active_slug="prepayments",
+            omit_dashboard_link=False,
+        ),
+        "prepayment_rows": page.object_list,
+        "prepayment_page": page,
+        "prepayment_shops": shops,
+        "prepayment_shop": selected_shop,
+        "prepayment_query": query,
+        "prepayment_total": total_amount,
+        "prepayment_count": page.paginator.count,
+        "filter_query": filter_query,
+        "pagination": pagination,
+        "show_shop_column": len(shops) != 1,
+    }
+    context.update(prepayment_modal_context(request, profile))
+    return render(request, "employees/role_prepayments.html", context)
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver"}

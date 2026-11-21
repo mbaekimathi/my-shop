@@ -29,16 +29,13 @@
           {% if row.stale_open %}
           Yesterday — left open
           {% elif row.own_session %}
-          Open{% if row.view_only and row.other_opener %} — {{ row.other_opener }}{% endif %}
+          Open{% if row.support_pass and row.other_opener %} — {{ row.other_opener }}{% endif %}
           {% elif row.other_open %}
           Open — {{ row.other_opener }}
           {% else %}
           Closed
           {% endif %}
         </span>
-        {% if row.view_only %}
-        <span class="shop-day-badge">View only</span>
-        {% endif %}
         {% if row.open_session %}
         <small>opened {{ row.open_session.opened_at|date:"M j, H:i" }} by {{ row.open_session.opened_by.user.get_full_name|default:row.open_session.opened_by.user.username }}</small>
         {% endif %}
@@ -58,6 +55,14 @@
           <span class="home-stat-text">
             <span class="home-stat-label">Sales collected</span>
             <strong class="home-stat-value">KSh {{ row.summary.sales_total|floatformat:0 }}</strong>
+          </span>
+        </div>
+        <div class="home-stat">
+          <span class="home-stat-icon" aria-hidden="true"><i data-lucide="piggy-bank"></i></span>
+          <span class="home-stat-text">
+            <span class="home-stat-label">Prepayments</span>
+            <strong class="home-stat-value">KSh {{ row.summary.prepayments_total|floatformat:0 }}</strong>
+            <small>{{ row.summary.prepayments_count }} received</small>
           </span>
         </div>
         <div class="home-stat">
@@ -142,7 +147,7 @@
           <i data-lucide="history" aria-hidden="true"></i>
           Day history
         </a>
-        {% elif not row.view_only %}
+        {% else %}
         {% if drawing_mode %}
         {% if row.can_draw %}
         <a class="btn btn--primary" href="{{ row.drawing_url }}">

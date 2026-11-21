@@ -4,45 +4,158 @@
 {% block title %}Clock in / out — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
-<div class="employee-home">
-<section class="item-panel item-panel--dense" data-animate="rise">
+<div class="employee-home clock-page">
+
+<section class="clock-hero{% if open_entry %} is-live{% endif %}" data-animate="rise">
+  <div class="clock-hero__aurora" aria-hidden="true"></div>
+
+  <div class="clock-hero__main">
+    <p class="stock-kicker">Employee · Attendance</p>
+    <h2 class="clock-hero__title">Clock in / out</h2>
+
+    {% if open_entry %}
+    <p class="clock-hero__status">
+      <span class="clock-pulse" aria-hidden="true"></span>
+      On shift since {{ open_entry.clock_in|date:"H:i" }} · {{ open_entry.clock_in|date:"j M Y" }}
+    </p>
+    <p class="clock-hero__timer">
+      <span class="clock-hero__elapsed" data-clock-elapsed="{{ clock.open_seconds }}">{{ clock.open_label }}</span>
+      <span class="clock-hero__elapsed-sub">elapsed this shift</span>
+    </p>
+    {% else %}
+    <p class="clock-hero__status">
+      <span class="clock-pulse clock-pulse--idle" aria-hidden="true"></span>
+      Off the clock — ready when you are.
+    </p>
+    <p class="clock-hero__timer">
+      <span class="clock-hero__elapsed clock-hero__elapsed--idle" data-clock-now>{{ clock.now_label }}</span>
+      <span class="clock-hero__elapsed-sub">local time</span>
+    </p>
+    {% endif %}
+
+    <form class="clock-hero__form" method="post">
+      {% csrf_token %}
+      {% if open_entry %}
+      <button type="submit" name="action" value="clock_out" class="clock-btn clock-btn--out">
+        <i data-lucide="log-out" aria-hidden="true"></i>Clock out
+      </button>
+      {% else %}
+      <button type="submit" name="action" value="clock_in" class="clock-btn clock-btn--in">
+        <i data-lucide="log-in" aria-hidden="true"></i>Clock in
+      </button>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="clock-hero__dial" aria-hidden="true">
+    <div class="clock-dial" data-clock-dial style="--p: {{ clock.open_progress }}">
+      <div class="clock-dial__core">
+        <i data-lucide="{% if open_entry %}timer{% else %}moon{% endif %}"></i>
+        <span>{% if open_entry %}Live{% else %}Idle{% endif %}</span>
+      </div>
+    </div>
+    <p class="clock-dial__hint">{% if open_entry %}of an 8h day{% else %}ring fills while you work{% endif %}</p>
+  </div>
+</section>
+
+<section class="clock-stats" data-animate="rise" data-delay="1" aria-label="Hours worked summary">
+  <article class="clock-stat">
+    <i data-lucide="sun" aria-hidden="true"></i>
+    <div><strong>{{ clock.today_label }}</strong><span>Today</span></div>
+  </article>
+  <article class="clock-stat">
+    <i data-lucide="calendar-days" aria-hidden="true"></i>
+    <div>
+      <strong>{{ clock.week_label }}</strong>
+      <span>This week · {{ clock.week_days }} day{{ clock.week_days|pluralize }}</span>
+    </div>
+  </article>
+  <article class="clock-stat">
+    <i data-lucide="bar-chart-3" aria-hidden="true"></i>
+    <div><strong>{{ clock.avg_label|default:"—" }}</strong><span>Avg per day this week</span></div>
+  </article>
+  <article class="clock-stat">
+    <i data-lucide="flame" aria-hidden="true"></i>
+    <div><strong>{{ clock.streak }}</strong><span>day{{ clock.streak|pluralize:"s" }} streak</span></div>
+  </article>
+  <article class="clock-stat">
+    <i data-lucide="alarm-clock" aria-hidden="true"></i>
+    <div><strong>{{ clock.usual_in|default:"—" }}</strong><span>Usual clock-in</span></div>
+  </article>
+  <article class="clock-stat">
+    <i data-lucide="hourglass" aria-hidden="true"></i>
+    <div><strong>{{ clock.longest_label }}</strong><span>Longest shift · 30d</span></div>
+  </article>
+</section>
+
+<section class="item-panel item-panel--dense clock-trend" data-animate="rise" data-delay="2">
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
-        <p class="stock-kicker">Employee · Attendance</p>
-        <h2>Clock in / out</h2>
+        <h2>Hours trend</h2>
         <p>
-          {% if open_entry %}
-          Clocked in since {{ open_entry.clock_in|date:"j M Y · H:i" }}.
-          {% else %}
-          You are not clocked in.
-          {% endif %}
+          Daily hours over the last 14 days
+          {% if clock.trend.avg_label %}· avg {{ clock.trend.avg_label }} per worked day{% endif %}.
         </p>
       </div>
       <div class="stock-stats">
         <p class="stock-stat">
-          {% if open_entry %}
-          <strong>Clocked in</strong>
-          <span>since {{ open_entry.clock_in|date:"H:i" }}</span>
-          {% else %}
-          <strong>Clocked out</strong>
-          <span>no open shift</span>
-          {% endif %}
+          <strong>{{ clock.days_30 }}</strong>
+          <span>days worked · 30d</span>
         </p>
       </div>
     </div>
-    <form class="stock-report-filters stock-report-filters--serials" method="post">
-      {% csrf_token %}
-      {% if open_entry %}
-      <button type="submit" name="action" value="clock_out" class="stock-report-apply">Clock out</button>
-      {% else %}
-      <button type="submit" name="action" value="clock_in" class="stock-report-apply">Clock in</button>
-      {% endif %}
-    </form>
   </header>
+  {% if clock.trend.bars and not clock.trend.empty %}
+  <div class="clock-trend__chart">
+    <svg
+      class="clock-bars"
+      viewBox="0 0 {{ clock.trend.width }} {{ clock.trend.height }}"
+      role="img"
+      aria-label="Hours worked per day, last 14 days"
+    >
+      <line
+        class="clock-bars__track"
+        x1="0" y1="{{ clock.trend.track_y }}"
+        x2="{{ clock.trend.width }}" y2="{{ clock.trend.track_y }}"
+      />
+      {% if clock.trend.avg_y %}
+      <line
+        class="clock-bars__avg"
+        x1="0" y1="{{ clock.trend.avg_y }}"
+        x2="{{ clock.trend.width }}" y2="{{ clock.trend.avg_y }}"
+      />
+      {% endif %}
+      {% for bar in clock.trend.bars %}
+      <rect
+        class="clock-bars__bar{% if bar.is_today %} is-today{% endif %}{% if bar.is_empty %} is-empty{% endif %}"
+        x="{{ bar.x }}" y="{{ bar.y }}"
+        width="{{ bar.w }}" height="{{ bar.h }}"
+        rx="3" style="--i: {{ forloop.counter0 }}"
+      ><title>{{ bar.title }}</title></rect>
+      {% endfor %}
+      {% for label in clock.trend.labels %}
+      <text
+        class="clock-bars__label"
+        x="{{ label.x }}" y="{{ clock.trend.label_y }}"
+        text-anchor="middle"
+      >{{ label.text }}</text>
+      {% endfor %}
+    </svg>
+    <div class="clock-trend__legend">
+      <span><i class="clock-dot clock-dot--teal" aria-hidden="true"></i>Hours worked</span>
+      <span><i class="clock-dot clock-dot--accent" aria-hidden="true"></i>Today</span>
+      {% if clock.trend.avg_label %}
+      <span><i class="clock-dot clock-dot--dash" aria-hidden="true"></i>Daily avg · {{ clock.trend.avg_label }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="ax-empty">No hours logged in the last 14 days — your first clock-in starts the chart.</p>
+  {% endif %}
 </section>
 
-<section class="item-panel item-panel--dense" data-animate="rise" data-delay="1">
+<section class="item-panel item-panel--dense" data-animate="rise" data-delay="3">
   <header class="item-panel-head">
     <div class="item-panel-head-top">
       <div>
@@ -54,7 +167,7 @@
 
   {% if entries_page.object_list %}
   <div class="item-table-wrap item-table-wrap--receipts">
-    <table class="item-table item-table--dense">
+    <table class="item-table item-table--dense clock-records">
       <thead>
         <tr>
           <th scope="col">Date</th>
@@ -66,13 +179,23 @@
       </thead>
       <tbody>
         {% for entry in entries_page.object_list %}
-        <tr>
-          <td data-label="Date">{{ entry.work_date|date:"j M Y" }}</td>
+        <tr{% if entry.is_open %} class="is-open"{% endif %}>
+          <td data-label="Date">
+            {{ entry.work_date|date:"j M Y" }}
+            {% if entry.rel_label %}<span class="clock-rel">{{ entry.rel_label }}</span>{% endif %}
+          </td>
           <td data-label="Clock in">{{ entry.clock_in|date:"H:i" }}</td>
           <td data-label="Clock out">
             {% if entry.clock_out %}{{ entry.clock_out|date:"H:i" }}{% else %}—{% endif %}
           </td>
-          <td data-label="Duration">{{ entry.duration_label|default:"—" }}</td>
+          <td data-label="Duration">
+            <span class="clock-dur">
+              <span class="clock-dur__track" aria-hidden="true">
+                <span class="clock-dur__fill" style="width: {{ entry.dur_pct }}%"></span>
+              </span>
+              {{ entry.duration_label|default:"—" }}
+            </span>
+          </td>
           <td class="item-cell--status" data-label="Status">
             {% if entry.is_open %}
             <span class="status-pill status-pill--active">Clocked in</span>
@@ -96,4 +219,38 @@
   {% endif %}
 </section>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (() => {
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const fmtElapsed = (s) => {
+      const h = Math.floor(s / 3600);
+      return `${h}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+    };
+    const elapsedEl = document.querySelector("[data-clock-elapsed]");
+    if (elapsedEl) {
+      let elapsed = parseInt(elapsedEl.getAttribute("data-clock-elapsed") || "0", 10) || 0;
+      const dial = document.querySelector("[data-clock-dial]");
+      const tick = () => {
+        elapsed += 1;
+        elapsedEl.textContent = fmtElapsed(elapsed);
+        dial?.style.setProperty("--p", Math.min(1, elapsed / (8 * 3600)).toFixed(4));
+      };
+      elapsedEl.textContent = fmtElapsed(elapsed);
+      setInterval(tick, 1000);
+    }
+    const nowEl = document.querySelector("[data-clock-now]");
+    if (nowEl) {
+      const tickNow = () => {
+        const d = new Date();
+        nowEl.textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+      };
+      setInterval(tickNow, 1000);
+      tickNow();
+    }
+  })();
+</script>
 {% endblock %}
