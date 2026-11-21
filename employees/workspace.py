@@ -707,6 +707,12 @@ def sidebar_for_rider(profile=None, *, active="open"):
             url_name="employees:rider_completed_deliveries",
             active=active == "completed",
         ),
+        _link(
+            "Clock in / out",
+            "clock",
+            url_name="employees:employee_clock",
+            active=active == "clock",
+        ),
     ]
     return resolve_sidebar_hrefs(
         {

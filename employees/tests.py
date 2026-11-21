@@ -1819,6 +1819,12 @@ class DashboardSidebarLinkTests(TestCase):
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertNotIn("Dashboard", labels)
 
+    def test_every_role_dashboard_has_clock_link(self):
+        for role in EmployeeRole:
+            sidebar = sidebar_for_role_dashboard(role)
+            labels = [item["label"] for item in sidebar["primary"]]
+            self.assertIn("Clock in / out", labels, role)
+
     def test_other_pages_start_with_dashboard(self):
         cases = (
             sidebar_for_suppliers(EmployeeRole.IT_SUPPORT),

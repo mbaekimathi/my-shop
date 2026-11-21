@@ -60,6 +60,15 @@ def sale_create_api(request):
     if not employee_may(profile, "my-shop", "sale"):
         return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
 
+    from employees.attendance import clock_in_block_message
+
+    block_message = clock_in_block_message(profile)
+    if block_message:
+        return JsonResponse(
+            {"ok": False, "error": "clock_in_required", "message": block_message},
+            status=400,
+        )
+
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
     except json.JSONDecodeError:
