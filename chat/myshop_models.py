@@ -127,6 +127,43 @@ class ShopReceipt(models.Model):
         managed = False
         db_table = "shops_shopreceipt"
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        if "kind" not in instance.get_deferred_fields():
+            instance._db_kind = instance.kind
+        return instance
+
+    def refresh_from_db(self, *args, **kwargs):
+        super().refresh_from_db(*args, **kwargs)
+        self._db_kind = self.kind
+
+    def save(self, *args, **kwargs):
+        # Same conversion guard as shops.ShopReceipt: a write that changes
+        # `kind` must record the source so tallies show the dual code.
+        update_fields = kwargs.get("update_fields")
+        if self.pk is not None and (
+            update_fields is None or "kind" in update_fields
+        ):
+            previous_kind = getattr(self, "_db_kind", None)
+            if previous_kind is None:
+                previous_kind = (
+                    type(self)
+                    ._default_manager.filter(pk=self.pk)
+                    .values_list("kind", flat=True)
+                    .first()
+                )
+            if previous_kind and previous_kind != self.kind:
+                self.converted_from_kind = previous_kind
+                if update_fields is not None and (
+                    "converted_from_kind" not in update_fields
+                ):
+                    kwargs["update_fields"] = set(update_fields) | {
+                        "converted_from_kind"
+                    }
+        super().save(*args, **kwargs)
+        self._db_kind = self.kind
+
     def __str__(self):
         return f"{self.receipt_number} ({self.kind})"
 
@@ -550,6 +587,9 @@ class ShelfItem(models.Model):
     category = models.CharField(max_length=120, blank=True, default="")
     unit = models.CharField(max_length=40, blank=True, default="")
     quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    low_stock_threshold = models.DecimalField(
+        max_digits=12, decimal_places=3, default=0
+    )
     is_archived = models.BooleanField(default=False)
     is_suspended = models.BooleanField(default=False)
 
@@ -573,6 +613,7 @@ class ShelfStockMovement(models.Model):
     balance_after = models.DecimalField(
         max_digits=12, decimal_places=3, default=0
     )
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     reason = models.CharField(max_length=16, blank=True, default="")
     note = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -650,3 +691,54 @@ class ShopDeliveryAssignedRider(models.Model):
     class Meta:
         managed = False
         db_table = "shops_shopdelivery_assigned_riders"
+
+
+class CustomerPrepayment(models.Model):
+    """Advance customer deposit (`shops_customerprepayment`) — till money in."""
+
+    id = models.BigAutoField(primary_key=True)
+    shop_id = models.BigIntegerField()
+    client_id = models.BigIntegerField(null=True, blank=True)
+    customer_name = models.CharField(max_length=200)
+    customer_phone = models.CharField(max_length=40)
+    purpose = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=16, default="cash")
+    cash_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    mpesa_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    card_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    created_by_id = models.BigIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = "shops_customerprepayment"
+        ordering = ["-created_at"]
+
+
+class ClientCreditAccountEvent(models.Model):
+    """Credit-account audit row (`shops_clientcreditaccountevent`).
+
+    The ``payment_*`` kinds are collections against credit receipts — till
+    money in on ``occurred_at``, separate from the sale receipts they settle.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    client_id = models.BigIntegerField()
+    shop_id = models.BigIntegerField(null=True, blank=True)
+    receipt_id = models.BigIntegerField(null=True, blank=True)
+    stk_payment_id = models.BigIntegerField(null=True, blank=True)
+    kind = models.CharField(max_length=32)
+    amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    detail = models.CharField(max_length=255, blank=True, default="")
+    meta = models.JSONField(default=dict, blank=True)
+    actor_id = models.BigIntegerField(null=True, blank=True)
+    occurred_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = "shops_clientcreditaccountevent"
+        ordering = ["-occurred_at", "-pk"]

@@ -11,12 +11,14 @@ import re
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Case, Count, DecimalField, F, Q, Sum, Value, When
 from django.utils import timezone
 
 from .myshop_models import (
     Client,
+    ClientCreditAccountEvent,
     CompanyPosSettings,
+    CustomerPrepayment,
     Expense,
     Item,
     ShelfItem,
@@ -24,6 +26,7 @@ from .myshop_models import (
     Shop,
     ShopDaySession,
     ShopItemPrice,
+    ShopPosSettings,
     ShopReceipt,
     ShopReceiptLine,
     ShopStock,
@@ -44,6 +47,10 @@ ANALYTICS_PENDING = "pending"
 ANALYTICS_CONFIRMED = "confirmed"
 SALE_KIND = "sale"
 CREDIT_KIND = "credit"
+GIFT_KIND = "gift"
+# Credit account collections — ClientCreditAccountEvent kinds that put money
+# in the till (the "Credit payments collected" day-report section).
+CREDIT_PAID_KINDS = ("payment_cash", "payment_mpesa", "payment_card")
 
 GREETING_RE = re.compile(
     r"^(hi+|hello|hey|habari|mambo|sasa|niaje|good\s*(morning|afternoon|evening|day)|"
@@ -60,6 +67,7 @@ STOP_WORDS = {
     "show", "me", "my", "our", "what", "whats", "what's", "please", "tell",
     "get", "any", "some", "item", "items", "product", "products", "quantity",
     "qty", "level", "levels", "current", "currently", "there", "cost",
+    "shelf", "shelves",
 }
 
 
@@ -258,6 +266,54 @@ def _sales_label(date_label: str, status_key: str) -> str:
     return f"{date_label} · {_status_scope_label(status_key)}"
 
 
+def _settled_window_q(start_dt, end_dt) -> Q:
+    """Paid-day window for settled-from-credit sales (mirrors analytics).
+
+    A credit converted to a sale is recognised on the day the money was
+    confirmed (``confirmed_payment_at``); every other receipt keys on
+    ``created_at``. Settled rows with no payment stamp fall back to
+    ``created_at`` — same rule as ``employees.analytics_services``.
+    """
+    paid = Q(
+        settled_from_credit=True,
+        confirmed_payment_at__isnull=False,
+        confirmed_payment_at__gte=start_dt,
+        confirmed_payment_at__lt=end_dt,
+    )
+    normal = (
+        Q(settled_from_credit=False) | Q(confirmed_payment_at__isnull=True)
+    ) & Q(created_at__gte=start_dt, created_at__lt=end_dt)
+    return paid | normal
+
+
+_MONEY = DecimalField(max_digits=14, decimal_places=2)
+
+
+def _tender_exprs() -> dict:
+    """Cash/M-Pesa/card aggregates — settled-from-credit sales tender 0 here.
+
+    Their money arrived through credit account collections, not the POS till,
+    so analytics zeroes their channel columns (``_build_sales``); the bot's
+    channel splits follow the same rule.
+    """
+    zero = Value(Decimal("0"), output_field=_MONEY)
+
+    def _tender(field):
+        return Sum(
+            Case(
+                When(settled_from_credit=False, then=F(field)),
+                default=zero,
+                output_field=_MONEY,
+            )
+        )
+
+    return {
+        "cash": _tender("cash_amount"),
+        "mpesa": _tender("mpesa_amount"),
+        "card": _tender("card_amount"),
+    }
+
+
 def _receipts(shop: Shop, start, end, kinds=(SALE_KIND,), receipt_status=None):
     start_dt, end_dt = _window(start, end)
     statuses = _analytics_statuses(receipt_status or analytics_receipt_default())
@@ -265,9 +321,7 @@ def _receipts(shop: Shop, start, end, kinds=(SALE_KIND,), receipt_status=None):
         shop_id=shop.pk,
         kind__in=kinds,
         status__in=statuses,
-        created_at__gte=start_dt,
-        created_at__lt=end_dt,
-    )
+    ).filter(_settled_window_q(start_dt, end_dt))
 
 
 def _credit_rows(qs, shop_names=None) -> list:
@@ -325,10 +379,8 @@ def _sales_reply(shop: Shop, text: str) -> str:
     agg = qs.aggregate(
         total=Sum("total"),
         count=Count("id"),
-        cash=Sum("cash_amount"),
-        mpesa=Sum("mpesa_amount"),
-        card=Sum("card_amount"),
         paid=Sum("amount_paid"),
+        **_tender_exprs(),
     )
     count = agg["count"] or 0
     if not count:
@@ -369,6 +421,44 @@ def _expenses_reply(shop: Shop, text: str) -> str:
             "By category: "
             + ", ".join(f"{r['category']} {money(r['t'])}" for r in by_cat)
         )
+    return "\n".join(lines)
+
+
+def _prepay_code(row) -> str:
+    """A0007-style code — same shape as ``format_simple_doc_number``."""
+    n = max(1, int(row.pk or 1))
+    width = 4 if n < 10000 else len(str(n))
+    return f"A{n:0{width}d}"
+
+
+def _prepayments_reply(shop: Shop, text: str) -> str:
+    start, end, label = _date_range(text)
+    start_dt, end_dt = _window(start, end)
+    qs = CustomerPrepayment.objects.filter(
+        shop_id=shop.pk, created_at__gte=start_dt, created_at__lt=end_dt
+    )
+    total = qs.aggregate(t=Sum("amount"))["t"] or 0
+    count = qs.count()
+    if not count:
+        return f"No customer prepayments for {shop.name} {label}."
+    lines = [
+        f"*Customer prepayments — {shop.name} ({label})*",
+        f"Total: *{money(total)}* across "
+        f"{count} payment{'s' if count != 1 else ''}",
+        "",
+    ]
+    for r in qs.order_by("-created_at")[:8]:
+        channels = _dec(r.cash_amount) + _dec(r.mpesa_amount) + _dec(
+            r.card_amount
+        )
+        purpose = (r.purpose or "").strip()
+        lines.append(
+            f"- {_prepay_code(r)}: {r.customer_name} "
+            f"{money(channels or r.amount)} ({r.payment_method})"
+            + (f" — {purpose}" if purpose else "")
+        )
+    if count > 8:
+        lines.append(f"...plus {count - 8} more.")
     return "\n".join(lines)
 
 
@@ -422,45 +512,78 @@ def _stock_reply(shop: Shop, text: str) -> str:
     query = _stock_query(text)
     if not query:
         return "Which item? Try *stock sugar* or *price of cement*."
-    items = Item.objects.filter(is_suspended=False)
-    for word in query.split():
-        items = items.filter(name__icontains=word)
-    items = list(items[:4])
-    if not items:
+    modes = shop_stock_modes(shop)
+    lines = []
+    if modes["items"]:
+        items = Item.objects.filter(is_suspended=False)
+        for word in query.split():
+            items = items.filter(name__icontains=word)
+        for item in list(items[:4]):
+            stock_row = ShopStock.objects.filter(
+                shop_id=shop.pk, item_id=item.pk
+            ).first()
+            mine = stock_row.quantity if stock_row else Decimal("0")
+            price = _price_for(item, shop)
+            lines.append(
+                f"*{item.name}* ({item.category})\n"
+                f"In stock at {shop.name}: *{qty_fmt(mine)}*  |  "
+                f"Price: {money(price)}  |  "
+                f"All shops: {qty_fmt(item.stock)}"
+            )
+    if modes["shelf"]:
+        shelf_qs = ShelfItem.objects.filter(
+            shop_id=shop.pk, is_suspended=False, is_archived=False
+        )
+        for word in query.split():
+            shelf_qs = shelf_qs.filter(name__icontains=word)
+        for item in list(shelf_qs[:4]):
+            unit = f" {item.unit}" if item.unit else ""
+            lines.append(
+                f"*{item.name}* (shelf)\n"
+                f"On the shelf at {shop.name}: "
+                f"*{qty_fmt(item.quantity)}*{unit}"
+            )
+    if not lines:
         return (
             f"I couldn't find an item matching \"{query}\" in the catalogue. "
             "Check the spelling or try a shorter name."
         )
-    lines = []
-    for item in items:
-        stock_row = ShopStock.objects.filter(shop_id=shop.pk, item_id=item.pk).first()
-        mine = stock_row.quantity if stock_row else Decimal("0")
-        price = _price_for(item, shop)
-        lines.append(
-            f"*{item.name}* ({item.category})\n"
-            f"In stock at {shop.name}: *{qty_fmt(mine)}*  |  Price: {money(price)}  |  "
-            f"All shops: {qty_fmt(item.stock)}"
-        )
-    return "\n\n".join(lines)
+    return "\n\n".join(lines[:6])
 
 
 def _low_stock_reply(shop: Shop, text: str) -> str:
-    rows = (
-        ShopStock.objects.filter(shop_id=shop.pk)
-        .select_related()
-    )
-    item_ids = [r.item_id for r in rows]
-    items = {i.pk: i for i in Item.objects.filter(pk__in=item_ids, is_suspended=False)}
+    modes = shop_stock_modes(shop)
     low = []
-    for r in rows:
-        item = items.get(r.item_id)
-        if not item:
-            continue
-        threshold = r.low_stock_threshold or 0
-        if threshold and r.quantity <= threshold:
-            low.append((item.name, r.quantity, threshold))
-        elif not threshold and r.quantity <= 5:
-            low.append((item.name, r.quantity, 5))
+    if modes["items"]:
+        rows = (
+            ShopStock.objects.filter(shop_id=shop.pk)
+            .select_related()
+        )
+        item_ids = [r.item_id for r in rows]
+        items = {
+            i.pk: i
+            for i in Item.objects.filter(pk__in=item_ids, is_suspended=False)
+        }
+        for r in rows:
+            item = items.get(r.item_id)
+            if not item:
+                continue
+            threshold = r.low_stock_threshold or 0
+            if threshold and r.quantity <= threshold:
+                low.append((item.name, r.quantity, threshold))
+            elif not threshold and r.quantity <= 5:
+                low.append((item.name, r.quantity, 5))
+    if modes["shelf"]:
+        shelf_rows = ShelfItem.objects.filter(
+            shop_id=shop.pk, is_suspended=False, is_archived=False
+        )
+        for item in shelf_rows:
+            threshold = item.low_stock_threshold or 0
+            name = f"{item.name} (shelf)"
+            if threshold and item.quantity <= threshold:
+                low.append((name, item.quantity, threshold))
+            elif not threshold and item.quantity <= 5:
+                low.append((name, item.quantity, 5))
     if not low:
         return f"Nothing is running low at {shop.name} right now. Stock looks healthy."
     low.sort(key=lambda x: x[1])
@@ -578,12 +701,25 @@ def _daily_summary_reply(shop: Shop, text: str) -> str:
         .filter(balance__gt=0)
         .aggregate(t=Sum("balance"))
     )
+    prepay = CustomerPrepayment.objects.filter(
+        shop_id=shop.pk, created_at__gte=start_dt, created_at__lt=end_dt
+    ).aggregate(t=Sum("amount"))
+    credit_paid = ClientCreditAccountEvent.objects.filter(
+        shop_id=shop.pk,
+        kind__in=CREDIT_PAID_KINDS,
+        occurred_at__gte=start_dt,
+        occurred_at__lt=end_dt,
+    ).aggregate(t=Sum("amount"))
     lines = [
         f"*{scope.capitalize()} at {shop.name}*",
         f"Sales: *{money(sales['t'])}* ({sales['c'] or 0} receipts)",
         f"Expenses: {money(expenses['t'])}",
         f"Outstanding credit: {money(credit['t'])}",
     ]
+    if prepay["t"]:
+        lines.append(f"Customer prepayments: {money(prepay['t'])}")
+    if credit_paid["t"]:
+        lines.append(f"Credit payments: {money(credit_paid['t'])}")
     return "\n".join(lines)
 
 
@@ -596,12 +732,14 @@ def _help_reply(shop: Shop) -> str:
         "- sales today pending / confirmed — override analytics default "
         f"(currently *{default}*)\n"
         "- expenses today / this month\n"
+        "- prepayments — customer deposits received\n"
         "- summary — quick snapshot of today\n"
         "- credit — outstanding customer balances\n\n"
         "*Stock & products*\n"
-        "- stock <item> — on-hand quantity, e.g. *stock sugar*\n"
+        "- stock <item> — on-hand quantity (items & shelf), e.g. *stock sugar*\n"
         "- price of <item>\n"
         "- low stock — items below their alert level\n"
+        "- stock movement / shelf stock movement — recent in/out & transfers\n"
         "- top sellers / items sold — best movers "
         f"(default *{default}* receipts)\n\n"
         "*Operations*\n"
@@ -694,35 +832,111 @@ def _stock_movement_groups(shop: Shop, text: str):
     return label, groups
 
 
-def _stock_movement_rows(shop: Shop, text: str):
-    """(label, rows) — flat movement line dicts for the text reply."""
-    label, groups = _stock_movement_groups(shop, text)
-    rows = []
-    for g in groups:
-        for it in g["items"]:
-            rows.append(
-                {
-                    "kind": g["kind"],
-                    "head": g["head"],
-                    "item": it["item"],
-                    "qty": it["qty"],
-                    "status": g["status"],
-                }
+def _shelf_movement_groups(shop: Shop, start_dt, end_dt) -> list:
+    """Per-shop shelf ledger groups (in/register → tin, out → tout)."""
+    item_ids = list(
+        ShelfItem.objects.filter(shop_id=shop.pk).values_list(
+            "pk", flat=True
+        )
+    )
+    if not item_ids:
+        return []
+    moves = list(
+        ShelfStockMovement.objects.filter(
+            shelf_item_id__in=item_ids,
+            created_at__gte=start_dt,
+            created_at__lt=end_dt,
+        ).order_by("-created_at", "-id")[:40]
+    )
+    items = {
+        i.pk: i
+        for i in ShelfItem.objects.filter(
+            pk__in={m.shelf_item_id for m in moves}
+        )
+    }
+    groups = []
+    for mv in moves:
+        item = items.get(mv.shelf_item_id)
+        if mv.movement_type == "out":
+            head, kind = "Shelf out", "tout"
+        elif mv.movement_type == "register":
+            head, kind = "Registered", "tin"
+        else:
+            head, kind = "Shelf in", "tin"
+        status = " · ".join(
+            bit
+            for bit in (
+                SHELF_REASON_LABELS.get(mv.reason, mv.reason),
+                (mv.note or "").strip(),
             )
-    return label, rows
+            if bit
+        )
+        groups.append(
+            {
+                "kind": kind,
+                "head": head,
+                "status": status,
+                "when": timezone.localtime(mv.created_at).strftime(
+                    "%d %b, %H:%M"
+                ),
+                "items": [
+                    {
+                        "item": item.name if item else "?",
+                        "qty": qty_fmt(mv.quantity),
+                    }
+                ],
+            }
+        )
+    return groups
+
+
+def _shelf_groups_dated(shop: Shop, text: str):
+    start, end, label = _date_range(text)
+    start_dt, end_dt = _window(start, end)
+    return label, _shelf_movement_groups(shop, start_dt, end_dt)
+
+
+def _shop_movement(shop: Shop, text: str):
+    """(label, groups, ledger, disabled_reply) — item or shelf ledger.
+
+    Same routing as the all-shops assistant: a ``shelf``/``item`` keyword
+    picks explicitly, a bare query defaults to the enabled ledger, and a
+    ledger that's off answers honestly instead of pretending empty.
+    """
+    modes = shop_stock_modes(shop)
+    ledger = _movement_ledger(text, modes)
+    disabled = _movement_disabled_reply(ledger, modes)
+    if disabled is not None:
+        return None, [], ledger, disabled
+    if ledger == "shelf":
+        label, groups = _shelf_groups_dated(shop, text)
+    else:
+        label, groups = _stock_movement_groups(shop, text)
+    return label, groups, ledger, None
 
 
 def _stock_movement_reply(shop: Shop, text: str) -> str:
-    label, rows = _stock_movement_rows(shop, text)
-    if not rows:
-        return f"No stock movements for {shop.name} {label}."
-    lines = [f"*Stock movement — {shop.name} ({label})*", ""]
-    for r in rows:
-        sign = "+IN" if r["kind"] == "in" else ("-OUT" if r["kind"] == "out" else r["head"])
-        lines.append(
-            f"{sign}: {r['item']} ×{r['qty']}"
-            + (f" ({r['status']})" if r["status"] else "")
+    label, groups, ledger, disabled = _shop_movement(shop, text)
+    if disabled is not None:
+        return disabled
+    if not groups:
+        what = (
+            "shelf stock movements" if ledger == "shelf" else "stock movements"
         )
+        return f"No {what} for {shop.name} {label}."
+    head = "Shelf stock movement" if ledger == "shelf" else "Stock movement"
+    lines = [f"*{head} — {shop.name} ({label})*", ""]
+    for g in groups:
+        sign = (
+            "+IN"
+            if g["kind"] == "in"
+            else ("-OUT" if g["kind"] == "out" else g["head"])
+        )
+        for it in g["items"]:
+            lines.append(
+                f"{sign}: {it['item']} ×{it['qty']}"
+                + (f" ({g['status']})" if g["status"] else "")
+            )
     return "\n".join(lines)
 
 
@@ -790,9 +1004,7 @@ def card_meta(shop: Shop, text: str):
         status = resolve_receipt_status(t)
         qs = _receipts(shop, start, end, receipt_status=status)
         agg = qs.aggregate(
-            total=Sum("total"), count=Count("id"),
-            cash=Sum("cash_amount"), mpesa=Sum("mpesa_amount"),
-            card=Sum("card_amount"),
+            total=Sum("total"), count=Count("id"), **_tender_exprs()
         )
         if not (agg["count"] or 0):
             return None
@@ -886,10 +1098,13 @@ def card_meta(shop: Shop, text: str):
         }
 
     if re.search(r"\b(stock movements?|movements?|transfers?|moved)\b", low):
-        label, groups = _stock_movement_groups(shop, t)
-        if not groups:
+        label, groups, ledger, disabled = _shop_movement(shop, t)
+        if disabled is not None or not groups:
             return None
-        return {"movement": {"label": label, "groups": groups}}
+        card = {"movement": {"label": label, "groups": groups}}
+        if ledger == "shelf":
+            card["movement"]["title"] = "Shelf stock movement"
+        return card
 
     if re.search(r"\b(summary|report|overview|snapshot|today's|todays|performance)\b", low):
         start, end, label = _date_range(t)
@@ -943,9 +1158,7 @@ def _all_receipts(start, end, kinds=(SALE_KIND,), receipt_status=None):
     return ShopReceipt.objects.filter(
         kind__in=kinds,
         status__in=statuses,
-        created_at__gte=start_dt,
-        created_at__lt=end_dt,
-    )
+    ).filter(_settled_window_q(start_dt, end_dt))
 
 
 def _dec(value) -> Decimal:
@@ -1026,11 +1239,16 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
     Period totals span every active shop regardless of sessions so the
     report reconciles with the Sales/Expenses cards.
 
+    Money in follows the real day report: POS channel tender (settled-from-
+    credit sales tender 0 — their cash arrived via credit account
+    collections), plus customer prepayments and credit payments collected,
+    each under its own day-report section. Paid out covers expenses,
+    owner drawings, item+shelf supplier payments and till refunds.
+
     ``section_visible`` is an optional ``(section_key) -> bool`` predicate —
     the viewer's day-report section picks (``day_report_section_enabled``).
-    A switched-off paid-out part (expenses/item stock/drawings; refunds
-    follow money flow) is dropped from ``paid_out`` and each row's ``out``,
-    so hidden sections neither display nor count in the totals.
+    A switched-off part is dropped from ``paid_out`` / each row's ``in`` /
+    ``out``, so hidden sections neither display nor count in the totals.
     """
     from bisect import bisect_right
 
@@ -1038,13 +1256,25 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
     out_enabled = {
         "expenses": _sec("day_report_sec_expenses"),
         "stock": _sec("day_report_sec_item_stock"),
+        "shelf": _sec("day_report_sec_shelf_stock"),
         "drawings": _sec("day_report_sec_drawings"),
         "refunds": _sec("day_report_sec_money_flow"),
+    }
+    in_enabled = {
+        "sales": _sec("day_report_sec_money_flow"),
+        "prepayments": _sec("day_report_sec_prepayments"),
+        "credit_paid": _sec("day_report_sec_credit_payments"),
     }
 
     def _out_total(cell):
         return sum(
             (cell[kind] for kind, on in out_enabled.items() if on),
+            Decimal("0"),
+        )
+
+    def _in_total(cell):
+        return sum(
+            (cell[kind] for kind, on in in_enabled.items() if on),
             Decimal("0"),
         )
 
@@ -1084,7 +1314,8 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
         _all_receipts(start, end, receipt_status=status)
         .filter(shop_id__in=shop_ids)
         .values(
-            "shop_id", "created_at", "total",
+            "shop_id", "created_at", "total", "settled_from_credit",
+            "confirmed_payment_at",
             "cash_amount", "mpesa_amount", "card_amount",
         )
     )
@@ -1104,6 +1335,42 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
             amount_paid__gt=0,
         ).values("shop_id", "created_at", "amount_paid")
     )
+    shelf_item_shop = dict(
+        ShelfItem.objects.filter(shop_id__in=shop_ids).values_list(
+            "pk", "shop_id"
+        )
+    )
+    shelf_rows = (
+        list(
+            ShelfStockMovement.objects.filter(
+                shelf_item_id__in=list(shelf_item_shop),
+                movement_type__in=("in", "register"),
+                created_at__gte=start_dt,
+                created_at__lt=end_dt,
+                amount_paid__gt=0,
+            ).values("shelf_item_id", "created_at", "amount_paid")
+        )
+        if shelf_item_shop
+        else []
+    )
+    prepay_rows = list(
+        CustomerPrepayment.objects.filter(
+            shop_id__in=shop_ids,
+            created_at__gte=start_dt,
+            created_at__lt=end_dt,
+        ).values(
+            "shop_id", "created_at", "amount",
+            "cash_amount", "mpesa_amount", "card_amount",
+        )
+    )
+    credit_paid_rows = list(
+        ClientCreditAccountEvent.objects.filter(
+            shop_id__in=shop_ids,
+            kind__in=CREDIT_PAID_KINDS,
+            occurred_at__gte=start_dt,
+            occurred_at__lt=end_dt,
+        ).values("shop_id", "occurred_at", "amount")
+    )
     refund_rows = _refund_events(shop_ids, start_dt, end_dt)
     credit = ShopReceipt.objects.filter(
         shop_id__in=shop_ids,
@@ -1112,13 +1379,21 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
         created_at__gte=start_dt,
         created_at__lt=end_dt,
     ).aggregate(t=Sum("total"), paid=Sum("amount_paid"))
+    gift_total = _dec(
+        _all_receipts(start, end, kinds=(GIFT_KIND,), receipt_status=status)
+        .filter(shop_id__in=shop_ids)
+        .aggregate(t=Sum("total"))["t"]
+    )
 
     def _new_cell():
         return {
             "sales": Decimal("0"),
             "receipts": 0,
+            "prepayments": Decimal("0"),
+            "credit_paid": Decimal("0"),
             "expenses": Decimal("0"),
             "stock": Decimal("0"),
+            "shelf": Decimal("0"),
             "drawings": Decimal("0"),
             "refunds": Decimal("0"),
         }
@@ -1143,17 +1418,30 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
     tot = {
         key: Decimal("0")
         for key in ("sales", "cash", "mpesa", "card", "expenses",
-                    "drawings", "stock", "refunds")
+                    "drawings", "stock", "shelf", "refunds",
+                    "prepayments", "credit_paid")
     }
     tot["receipts"] = 0
     for r in sales_rows:
         amount = _dec(r["total"])
         tot["sales"] += amount
         tot["receipts"] += 1
-        tot["cash"] += _dec(r["cash_amount"])
-        tot["mpesa"] += _dec(r["mpesa_amount"])
-        tot["card"] += _dec(r["card_amount"])
-        _add(r["shop_id"], r["created_at"], amount, "sales")
+        if r["settled_from_credit"]:
+            # Money landed via credit account collections — the channels
+            # stay zero here and the paid-day owns the activity window.
+            when = r["confirmed_payment_at"] or r["created_at"]
+            tender = Decimal("0")
+        else:
+            when = r["created_at"]
+            tender = (
+                _dec(r["cash_amount"])
+                + _dec(r["mpesa_amount"])
+                + _dec(r["card_amount"])
+            )
+            tot["cash"] += _dec(r["cash_amount"])
+            tot["mpesa"] += _dec(r["mpesa_amount"])
+            tot["card"] += _dec(r["card_amount"])
+        _add(r["shop_id"], when, tender, "sales")
     for r in expense_rows:
         paid = r["amount_paid"] if r["amount_paid"] is not None else r["amount"]
         paid = _dec(paid)
@@ -1167,6 +1455,27 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
         paid = _dec(r["amount_paid"])
         tot["stock"] += paid
         _add(r["shop_id"], r["created_at"], paid, "stock")
+    for r in shelf_rows:
+        paid = _dec(r["amount_paid"])
+        tot["shelf"] += paid
+        _add(
+            shelf_item_shop.get(r["shelf_item_id"]),
+            r["created_at"],
+            paid,
+            "shelf",
+        )
+    for r in prepay_rows:
+        paid = (
+            _dec(r["cash_amount"])
+            + _dec(r["mpesa_amount"])
+            + _dec(r["card_amount"])
+        ) or _dec(r["amount"])
+        tot["prepayments"] += paid
+        _add(r["shop_id"], r["created_at"], paid, "prepayments")
+    for r in credit_paid_rows:
+        paid = _dec(r["amount"])
+        tot["credit_paid"] += paid
+        _add(r["shop_id"], r["occurred_at"], paid, "credit_paid")
     for sid, when, amount in refund_rows:
         tot["refunds"] += amount
         _add(sid, when, amount, "refunds")
@@ -1204,6 +1513,7 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
                 "cashier": names.get(s.opened_by_id) or "—",
                 "sales": bucket["sales"],
                 "receipts": bucket["receipts"],
+                "in": _in_total(bucket),
                 "out": _out_total(bucket),
             }
         )
@@ -1220,6 +1530,7 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
                 "cashier": "—",
                 "sales": bucket["sales"],
                 "receipts": bucket["receipts"],
+                "in": _in_total(bucket),
                 "out": _out_total(bucket),
             }
         )
@@ -1231,13 +1542,17 @@ def _all_shops_report(start, end, status, section_visible=None) -> dict:
         "cash": tot["cash"],
         "mpesa": tot["mpesa"],
         "card": tot["card"],
+        "prepayments": tot["prepayments"],
+        "credit_paid": tot["credit_paid"],
         "expenses": tot["expenses"],
         "stock": tot["stock"],
+        "shelf": tot["shelf"],
         "drawings": tot["drawings"],
         "refunds": tot["refunds"],
         "paid_out": _out_total(tot),
         "credit": credit_total,
         "credit_due": max(Decimal("0"), credit_total - _dec(credit["paid"])),
+        "gift": gift_total,
         "rows": rows[:REPORT_ROW_CAP],
         "sessions_total": len(rows),
     }
@@ -1283,6 +1598,23 @@ def company_stock_modes() -> dict:
         "items": bool(getattr(row, "enable_stock_tracking", True)),
         "shelf": bool(getattr(row, "enable_shelf_mode", False)),
     }
+
+
+def shop_stock_modes(shop) -> dict:
+    """Stock modes for one shop — company flags AND the shop's own override.
+
+    Same rule as ``shops.services.shop_stock_mode_flags``: a shop running
+    custom POS settings (``override_pos``) narrows the company toggles;
+    shops on company defaults follow the company mode.
+    """
+    modes = company_stock_modes()
+    row = ShopPosSettings.objects.filter(
+        shop_id=shop.pk, override_pos=True
+    ).first()
+    if row is not None:
+        modes["items"] = modes["items"] and bool(row.enable_stock_tracking)
+        modes["shelf"] = modes["shelf"] and bool(row.enable_shelf_mode)
+    return modes
 
 
 def _movement_ledger(text: str, modes: dict) -> str:
@@ -1452,6 +1784,29 @@ def reply_for_all(text: str, section_visible=None) -> str:
         ] + [f"- {shops.get(r['shop_id'], '?')}: {money(r['t'])}" for r in rows]
         return "\n".join(lines)
 
+    if re.search(r"\b(prepayments?|deposits?|advancements?|advances?)\b", low):
+        rows = (
+            CustomerPrepayment.objects.filter(
+                created_at__gte=start_dt, created_at__lt=end_dt
+            )
+            .values("shop_id")
+            .annotate(t=Sum("amount"), c=Count("id"))
+            .order_by("-t")
+        )
+        if not rows:
+            return f"No customer prepayments across all shops {label}."
+        total = sum(r["t"] or 0 for r in rows)
+        lines = [
+            f"*Customer prepayments — ALL SHOPS ({label})*",
+            f"Total: *{money(total)}*",
+            "",
+        ] + [
+            f"- {shops.get(r['shop_id'], '?')}: {money(r['t'])}"
+            f" ({r['c']} payment{'s' if r['c'] != 1 else ''})"
+            for r in rows
+        ]
+        return "\n".join(lines)
+
     if re.search(r"\b(stock movements?|movements?|transfers?|moved)\b", low):
         modes = company_stock_modes()
         ledger = _movement_ledger(t, modes)
@@ -1498,6 +1853,8 @@ def reply_for_all(text: str, section_visible=None) -> str:
             out_parts.append(f"expenses {money(rep['expenses'])}")
         if _sec("day_report_sec_item_stock"):
             out_parts.append(f"stock {money(rep['stock'])}")
+        if _sec("day_report_sec_shelf_stock") and rep["shelf"]:
+            out_parts.append(f"shelf {money(rep['shelf'])}")
         if _sec("day_report_sec_drawings"):
             out_parts.append(f"drawings {money(rep['drawings'])}")
         if money_flow_on and rep["refunds"]:
@@ -1510,6 +1867,14 @@ def reply_for_all(text: str, section_visible=None) -> str:
                 f"Cash {money(rep['cash'])}  |  M-Pesa {money(rep['mpesa'])}"
                 f"  |  Card {money(rep['card'])}",
             ]
+        if _sec("day_report_sec_prepayments") and rep["prepayments"]:
+            lines.append(
+                f"Customer prepayments: {money(rep['prepayments'])}"
+            )
+        if _sec("day_report_sec_credit_payments") and rep["credit_paid"]:
+            lines.append(
+                f"Credit payments collected: {money(rep['credit_paid'])}"
+            )
         if out_parts:
             lines.append(
                 f"Paid out: {money(rep['paid_out'])} — {' · '.join(out_parts)}"
@@ -1519,12 +1884,19 @@ def reply_for_all(text: str, section_visible=None) -> str:
             if rep["credit_due"]:
                 credit_line += f" ({money(rep['credit_due'])} still due)"
             lines.append(credit_line)
+        if _sec("day_report_sec_gift") and rep["gift"]:
+            lines.append(f"Gifts issued: {money(rep['gift'])}")
         if rep["rows"]:
+            in_on = (
+                money_flow_on
+                or _sec("day_report_sec_prepayments")
+                or _sec("day_report_sec_credit_payments")
+            )
             lines += ["", "*Sessions*"]
             for r in rep["rows"]:
                 row_bits = []
-                if money_flow_on:
-                    row_bits.append(f"in {money(r['sales'])}")
+                if in_on:
+                    row_bits.append(f"in {money(r['in'])}")
                 if out_parts:
                     row_bits.append(f"out {money(r['out'])}")
                 tail = f" — {', '.join(row_bits)}" if row_bits else ""
@@ -1569,9 +1941,7 @@ def reply_for_all(text: str, section_visible=None) -> str:
 
     if re.search(r"\b(sale|sales|sell|sold|revenue|income)\b", low):
         agg = _all_receipts(start, end, receipt_status=status).aggregate(
-            total=Sum("total"), count=Count("id"),
-            cash=Sum("cash_amount"), mpesa=Sum("mpesa_amount"),
-            card=Sum("card_amount"),
+            total=Sum("total"), count=Count("id"), **_tender_exprs()
         )
         count = agg["count"] or 0
         if not count:
@@ -1601,6 +1971,7 @@ def reply_for_all(text: str, section_visible=None) -> str:
         f"- sales today pending / confirmed (default *{default}*)\n"
         "- credits — outstanding balances per shop\n"
         "- expenses today / this month\n"
+        "- prepayments — customer deposits per shop\n"
         "- stock movement — item stock; *shelf stock movement* for shelf\n"
         "- report — sessions & money per shop\n\n"
         "Pick a single shop from the picker for its chats and details."
@@ -1771,10 +2142,17 @@ def card_for_all(text: str, section_visible=None):
                     "refunds": money(rep["refunds"]),
                 }
             )
+        if _sec("day_report_sec_prepayments") and rep["prepayments"]:
+            report["prepayments"] = money(rep["prepayments"])
+        if _sec("day_report_sec_credit_payments") and rep["credit_paid"]:
+            report["credit_paid"] = money(rep["credit_paid"])
+        if _sec("day_report_sec_gift") and rep["gift"]:
+            report["gift"] = money(rep["gift"])
         out_on = (
             money_flow_on
             or _sec("day_report_sec_expenses")
             or _sec("day_report_sec_item_stock")
+            or _sec("day_report_sec_shelf_stock")
             or _sec("day_report_sec_drawings")
         )
         if out_on:
@@ -1783,6 +2161,8 @@ def card_for_all(text: str, section_visible=None):
                 report["expenses"] = money(rep["expenses"])
             if _sec("day_report_sec_item_stock"):
                 report["stock"] = money(rep["stock"])
+            if _sec("day_report_sec_shelf_stock") and rep["shelf"]:
+                report["shelf"] = money(rep["shelf"])
             if _sec("day_report_sec_drawings"):
                 report["drawings"] = money(rep["drawings"])
         if _sec("day_report_sec_not_till"):
@@ -1816,9 +2196,7 @@ def card_for_all(text: str, section_visible=None):
 
     if re.search(r"\b(sale|sales|sell|sold|revenue|income)\b", low):
         agg = _all_receipts(start, end, receipt_status=status).aggregate(
-            total=Sum("total"), count=Count("id"),
-            cash=Sum("cash_amount"), mpesa=Sum("mpesa_amount"),
-            card=Sum("card_amount"),
+            total=Sum("total"), count=Count("id"), **_tender_exprs()
         )
         if not (agg["count"] or 0):
             return None
@@ -1882,6 +2260,8 @@ def reply_for(shop: Shop, text: str) -> str:
         return _sales_reply(shop, t)
     if re.search(r"\b(expense|expenses|spent|spending|costs?)\b", low):
         return _expenses_reply(shop, t)
+    if re.search(r"\b(prepayments?|deposits?|advancements?|advances?)\b", low):
+        return _prepayments_reply(shop, t)
     if re.search(r"\b(credits?|debts?|owe|owed|deni|denis|balances?)\b", low):
         return _credit_reply(shop, t)
     if re.search(r"\b(stock movements?|movements?|transfers?|moved)\b", low):

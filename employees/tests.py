@@ -4624,7 +4624,6 @@ class CompanyAccountantRoleTests(TestCase):
                 "Analytics",
                 "Cashiers",
                 "Suppliers",
-                "Register prepayment",
                 "Prepayments",
                 "Clock in / out",
             ],

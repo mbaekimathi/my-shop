@@ -89,6 +89,12 @@ def _client_credit_sidebar(profile, *, client_name, client_id, active):
     )
 
 
+def _is_cashier(profile):
+    from .models import EmployeeRole
+
+    return getattr(profile, "role", None) == EmployeeRole.SHOP_CASHIER
+
+
 def _analytics_meta(section):
     return {
         "title": f"{section['label']} · Analytics",
@@ -289,11 +295,19 @@ def _render_analytics(
                     profile.role, profile=profile, active=section["slug"]
                 )
                 if section["slug"] in {"stock", "supply"}
-                else sidebar_for_role_dashboard(
-                    profile.role,
-                    profile=profile,
-                    active_slug=section["slug"],
-                    omit_dashboard_link=False,
+                else (
+                    sidebar_for_analytics_section(
+                        profile.role,
+                        active_view=section["slug"],
+                        profile=profile,
+                    )
+                    if _is_cashier(profile)
+                    else sidebar_for_role_dashboard(
+                        profile.role,
+                        profile=profile,
+                        active_slug=section["slug"],
+                        omit_dashboard_link=False,
+                    )
                 )
                 if section["slug"] in ANALYTICS_DASHBOARD_SECTION_SLUGS
                 else sidebar_for_analytics(
@@ -1553,11 +1567,17 @@ def analytics_client_account(request, role_segment, client_id):
             "module": module,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_role_dashboard(
-                profile.role,
-                profile=profile,
-                active_slug="clients",
-                omit_dashboard_link=False,
+            "page_sidebar": (
+                sidebar_for_analytics_section(
+                    profile.role, active_view="clients", profile=profile
+                )
+                if _is_cashier(profile)
+                else sidebar_for_role_dashboard(
+                    profile.role,
+                    profile=profile,
+                    active_slug="clients",
+                    omit_dashboard_link=False,
+                )
             ),
             "back_href": back_href,
             "back_label": "Back to clients",

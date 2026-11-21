@@ -2094,7 +2094,6 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                     )
                 )
     if profile is None or employee_may(profile, "my-shop", "prepayments"):
-        links.append(prepayment_action(profile))
         links.append(
             _link(
                 "Prepayments",
@@ -2259,7 +2258,6 @@ def sidebar_for_role_dashboard(
         if profile is None or employee_may(
             profile, "my-shop", "prepayments"
         ):
-            primary.append(prepayment_action(profile))
             primary.append(
                 _link(
                     "Prepayments",
@@ -2334,6 +2332,116 @@ def sidebar_for_cashier_settings(profile):
                 ],
             ),
         }
+    )
+
+
+def focused_role_sidebar(role, *, profile=None, page="", primary=None):
+    """Minimal sidebar for non-dashboard role pages — Dashboard + page links."""
+    dashboard_url = reverse(role_home_url_name(role))
+    return resolve_sidebar_hrefs(
+        {
+            "page": page,
+            "dashboard_url": dashboard_url,
+            "omit_dashboard_link": True,
+            "primary": [
+                _link("Dashboard", "layout-dashboard", href=dashboard_url),
+                *(primary or []),
+            ],
+            "footer": _footer_site_links(
+                profile=profile,
+                tail=[
+                    _link("Sign out", "log-out", url_name="employees:logout", danger=True),
+                ],
+            ),
+        }
+    )
+
+
+def sidebar_for_prepayments(role, profile=None):
+    """Sidebar for the role prepayments page — the only place the
+    "Register prepayment" action lives."""
+    from .module_permissions import employee_may
+
+    primary = []
+    if profile is None or employee_may(profile, "my-shop", "prepayments"):
+        primary.append(prepayment_action(profile))
+        primary.append(
+            _link(
+                "Prepayments",
+                "piggy-bank",
+                href=prepayment_list_url(profile),
+                active=True,
+            )
+        )
+    return focused_role_sidebar(
+        role, profile=profile, page="role_prepayments", primary=primary
+    )
+
+
+def sidebar_for_employee_clock(profile):
+    """Clock page sidebar — focused for cashiers, dashboard nav otherwise."""
+    role = getattr(profile, "role", None)
+    if role == EmployeeRole.SHOP_CASHIER:
+        return focused_role_sidebar(
+            role,
+            profile=profile,
+            page="employee_clock",
+            primary=[
+                _link(
+                    "Clock in / out",
+                    "clock",
+                    url_name="employees:employee_clock",
+                    active=True,
+                )
+            ],
+        )
+    return sidebar_for_role_dashboard(role, profile=profile, active_slug="clock")
+
+
+def sidebar_for_cashier_shop_day(profile, *, mode=""):
+    """Focused sidebar for the cashier shop-day picker — mode links only."""
+    from .module_permissions import employee_may
+
+    role = getattr(profile, "role", None) or EmployeeRole.SHOP_CASHIER
+    day_url = reverse(
+        "employees:role_shop_day",
+        kwargs={"role_segment": role_url_segment(role)},
+    )
+    primary = [
+        _link(
+            "Open / Close shop",
+            "door-open",
+            href=day_url,
+            active=mode not in {"drawings", "report", "history"},
+        )
+    ]
+    if profile is None or employee_may(profile, "my-shop", "register_expense"):
+        primary.append(
+            _link(
+                "Drawings",
+                "hand-coins",
+                href="{}?{}".format(day_url, urlencode({"mode": "drawings"})),
+                active=mode == "drawings",
+            )
+        )
+    primary.extend(
+        [
+            _link(
+                "Day report",
+                "file-text",
+                href="{}?{}".format(day_url, urlencode({"mode": "report"})),
+                active=mode == "report",
+            ),
+            _link(
+                "Day history",
+                "history",
+                href="{}?{}".format(day_url, urlencode({"mode": "history"})),
+                active=mode == "history",
+            ),
+        ]
+    )
+    return focused_role_sidebar(
+        role, profile=profile, page="role_shop_day", primary=primary
     )
 
 

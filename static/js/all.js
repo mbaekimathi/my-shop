@@ -314,9 +314,16 @@
         ["Receipts", rp.receipts],
         ["Cash", rp.cash],
         ["M-Pesa", rp.mpesa],
-        ["Card", rp.card],
-        ["Paid out", rp.paid_out]
-      ].filter(function (r) {
+        ["Card", rp.card]
+      ];
+      if (rp.prepayments && rp.prepayments !== "KSh 0.00") {
+        rstats.push(["Prepayments", rp.prepayments]);
+      }
+      if (rp.credit_paid && rp.credit_paid !== "KSh 0.00") {
+        rstats.push(["Credit paid", rp.credit_paid]);
+      }
+      rstats.push(["Paid out", rp.paid_out]);
+      rstats = rstats.filter(function (r) {
         return r[1] !== undefined && r[1] !== null;
       });
       if (rp.credit && rp.credit !== "KSh 0.00") {
@@ -324,6 +331,9 @@
           ["Credit issued", rp.credit],
           ["Still due", rp.credit_due]
         );
+      }
+      if (rp.gift && rp.gift !== "KSh 0.00") {
+        rstats.push(["Gifts issued", rp.gift]);
       }
       var rbody = (rp.rows || []).map(function (r, i) {
         var attrs = r.href

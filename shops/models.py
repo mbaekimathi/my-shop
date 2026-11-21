@@ -378,6 +378,45 @@ class ShopReceipt(models.Model):
             ),
         ]
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        if "kind" not in instance.get_deferred_fields():
+            instance._db_kind = instance.kind
+        return instance
+
+    def refresh_from_db(self, *args, **kwargs):
+        super().refresh_from_db(*args, **kwargs)
+        self._db_kind = self.kind
+
+    def save(self, *args, **kwargs):
+        # Conversion guard: any write that changes `kind` must record the
+        # source kind so tallies can render the dual code (CS0417-style).
+        # Stamps converted_from_kind even when a caller forgets — including
+        # save(update_fields=[...]) writes that would otherwise drop it.
+        update_fields = kwargs.get("update_fields")
+        if self.pk is not None and (
+            update_fields is None or "kind" in update_fields
+        ):
+            previous_kind = getattr(self, "_db_kind", None)
+            if previous_kind is None:
+                previous_kind = (
+                    type(self)
+                    ._default_manager.filter(pk=self.pk)
+                    .values_list("kind", flat=True)
+                    .first()
+                )
+            if previous_kind and previous_kind != self.kind:
+                self.converted_from_kind = previous_kind
+                if update_fields is not None and (
+                    "converted_from_kind" not in update_fields
+                ):
+                    kwargs["update_fields"] = set(update_fields) | {
+                        "converted_from_kind"
+                    }
+        super().save(*args, **kwargs)
+        self._db_kind = self.kind
+
     def __str__(self):
         return f"{self.receipt_number} ({self.get_kind_display()})"
 

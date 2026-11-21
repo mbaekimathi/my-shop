@@ -221,3 +221,40 @@ class ReceiptTallyCodeTests(TestCase):
         sources = sorted(row["source"] for row in rows)
         self.assertEqual(sources.count("prepayment"), 1)
         self.assertEqual(sources.count("pos"), 1)
+
+    def test_kind_change_without_stamp_is_auto_guarded(self):
+        """Regression for the S0417-style bug: a kind change that forgets to
+        stamp converted_from_kind still records the source via the model
+        save guard — even inside save(update_fields=[...])."""
+        receipt = self._receipt(ShopReceiptKind.SALE, "S0417")
+        receipt.kind = ShopReceiptKind.CREDIT
+        receipt.save(update_fields=["kind"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.converted_from_kind, ShopReceiptKind.SALE)
+        self.assertEqual(receipt_tally_code(receipt), "SC0417")
+
+    def test_kind_change_via_full_save_is_auto_guarded(self):
+        receipt = self._receipt(ShopReceiptKind.CREDIT, "C0042")
+        receipt.kind = ShopReceiptKind.SALE
+        receipt.save()
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.converted_from_kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(receipt_tally_code(receipt), "CS0042")
+
+    def test_second_conversion_stamps_latest_source(self):
+        receipt = self._receipt(ShopReceiptKind.SALE, "S0050")
+        receipt.kind = ShopReceiptKind.CREDIT
+        receipt.save(update_fields=["kind"])
+        receipt.kind = ShopReceiptKind.GIFT
+        receipt.save(update_fields=["kind"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.converted_from_kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(receipt_tally_code(receipt), "CG0050")
+
+    def test_kind_unchanged_save_leaves_stamp_alone(self):
+        receipt = self._receipt(ShopReceiptKind.SALE, "S0060")
+        receipt.total = Decimal("250.00")
+        receipt.save(update_fields=["total"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.converted_from_kind, "")
+        self.assertEqual(receipt_tally_code(receipt), "S0060")

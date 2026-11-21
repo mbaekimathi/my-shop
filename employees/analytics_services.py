@@ -11580,8 +11580,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 continue
             rows.append(
                 [
-                    _time(row["at"]),
-                    {"label": row["number"], "sub": row["items_label"]},
+                    {"label": row["number"], "sub": _time(row["at"])},
                     row["seller"],
                     {
                         "kind": "status",
@@ -11654,7 +11653,6 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 _table(
                     "Credit receipts",
                     [
-                        time_header,
                         "Receipt",
                         "Sold by",
                         "Status",
@@ -11692,7 +11690,6 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 _table(
                     "Gift receipts",
                     [
-                        time_header,
                         "Receipt",
                         "Sold by",
                         "Status",
@@ -11791,8 +11788,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     for row in flagged:
         flagged_rows.append(
             [
-                _time(row["at"]),
-                {"label": row["number"], "sub": row["items_label"]},
+                {"label": row["number"], "sub": _time(row["at"])},
                 row["seller"],
                 {
                     "kind": "status",
@@ -11809,7 +11805,6 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     flagged_table = _table(
         "Pending & cancelled sales",
         [
-            time_header,
             "Receipt",
             "Sold by",
             "Status",

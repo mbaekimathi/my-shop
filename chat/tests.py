@@ -43,8 +43,10 @@ if _myshop_apps_installed():
         StoreStock,
     )
     from shops.models import (
+        ClientCreditAccountEvent,
         CompanyPosSettings,
         CompanyProfile,
+        CustomerPrepayment,
         Shop,
         ShopDelivery,
         ShopPosSettings,
@@ -73,6 +75,8 @@ if _myshop_apps_installed():
     ClientModel = mm.Client
     CompanyStockSettings = mm.CompanyStockSettings
 else:
+    CustomerPrepayment = mm.CustomerPrepayment
+    ClientCreditAccountEvent = mm.ClientCreditAccountEvent
     Shop = mm.Shop
     Item = mm.Item
     ShopStock = mm.ShopStock
@@ -123,6 +127,8 @@ UNMANAGED = [
     ShopDeliveryAssignedRider,
     ClientModel,
     CompanyStockSettings,
+    CustomerPrepayment,
+    ClientCreditAccountEvent,
 ]
 
 
@@ -2280,7 +2286,7 @@ class ReceiptsPageTests(ChatTestCase):
         receipt.refresh_from_db()
         self.assertEqual(receipt.status, "confirmed")
 
-    def test_confirm_rejects_non_pending(self):
+    def test_confirm_partial_return_keeps_marker(self):
         receipt = self.make_sale()
         receipt.status = "partial_return"
         receipt.save(update_fields=["status"])
@@ -2289,7 +2295,10 @@ class ReceiptsPageTests(ChatTestCase):
             data=json.dumps({"ids": [receipt.pk], "staff_code": "654321"}),
             content_type="application/json",
         )
-        self.assertFalse(resp.json()["ok"])
+        # Partially returned sales confirm while keeping the return marker.
+        self.assertTrue(resp.json()["ok"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, "partial_return")
         # Already-confirmed sales confirm idempotently (canonical semantics).
         receipt.status = "confirmed"
         receipt.save(update_fields=["status"])
@@ -3182,6 +3191,7 @@ class AllShopsReportSectionTests(ChatTestCase):
         sec = self._sec(
             day_report_sec_expenses=True,
             day_report_sec_item_stock=True,
+            day_report_sec_shelf_stock=True,
             day_report_sec_drawings=True,
             day_report_sec_money_flow=True,
         )
@@ -3564,3 +3574,280 @@ class ShelfStockActionTests(ChatTestCase):
         )
         self.assertFalse(data["ok"])
         self.assertIn("Item stock is off", data["error"])
+
+
+class BotMoneySemanticsTests(ChatTestCase):
+    """The bot's money math matches the analytics/day-report rules:
+    settled-from-credit sales land on the paid day and tender nothing on
+    the POS channels; customer prepayments and credit collections count
+    as till money in; shelf supplier payments count as paid out."""
+
+    EMPLOYEE_DDL = PendingConfirmTests.EMPLOYEE_DDL
+
+    def setUp(self):
+        super().setUp()
+        self.prepare_employee_fixtures()
+        self.client_row = ClientModel.objects.create(
+            full_name="Jane Mbuya", phone_number="0700000099",
+            phone_normalized="0700000099",
+        )
+
+    @staticmethod
+    def _sec(**off):
+        def inner(key):
+            return not off.get(key, False)
+        return inner
+
+    def _settled_sale(self, *, total="400"):
+        receipt = self.create_receipt(
+            shop_id=self.shop_a.pk, receipt_number="SET-1", kind="sale",
+            payment_method="cash", client_name="Jane Mbuya",
+            total=Decimal(total), amount_paid=Decimal(total),
+            cash_amount=Decimal(total), mpesa_amount=Decimal("0"),
+            status="active", settled_from_credit=True,
+            confirmed_payment_at=timezone.now(),
+        )
+        return receipt
+
+    def _prepay(self, **kw):
+        kw.setdefault("shop_id", self.shop_a.pk)
+        kw.setdefault("customer_name", "Jane Mbuya")
+        kw.setdefault("customer_phone", "0700000099")
+        kw.setdefault("purpose", "Sofa deposit")
+        kw.setdefault("amount", Decimal("500"))
+        kw.setdefault("payment_method", "cash")
+        kw.setdefault("cash_amount", Decimal("500"))
+        kw.setdefault("created_by_id", self.staff_pk)
+        return CustomerPrepayment.objects.create(**kw)
+
+    def _credit_paid(self, amount="200", kind="payment_cash"):
+        return ClientCreditAccountEvent.objects.create(
+            client_id=self.client_row.pk, shop_id=self.shop_a.pk,
+            kind=kind, amount=Decimal(amount),
+            occurred_at=timezone.now(),
+        )
+
+    # --- settled-from-credit sales -------------------------------------
+
+    def test_settled_sale_tenders_zero_on_sales_reply(self):
+        self._settled_sale()
+        reply = reply_for(self.shop_a, "sales today all")
+        # The sale counts as revenue but tenders nothing — its money came
+        # through credit account collections.
+        self.assertIn("KSh 400.00", reply)
+        self.assertIn("Cash KSh 0.00", reply)
+
+    def test_settled_sale_counts_on_paid_day(self):
+        receipt = self._settled_sale()
+        ShopReceipt.objects.filter(pk=receipt.pk).update(
+            created_at=timezone.now() - timedelta(days=2)
+        )
+        self.assertIn("KSh 400.00", reply_for(self.shop_a, "sales today all"))
+        self.assertIn(
+            "No sales recorded",
+            reply_for(self.shop_a, "sales yesterday all"),
+        )
+
+    def test_settled_sale_adds_no_till_money_to_report(self):
+        self._settled_sale()
+        from .bot import card_for_all, reply_for_all
+
+        reply = reply_for_all("report")
+        self.assertIn("Cash KSh 0.00", reply)
+        self.assertIn("in KSh 0.00", reply)
+        card = card_for_all("report")["report"]
+        self.assertEqual(card["cash"], "KSh 0.00")
+
+    # --- prepayments ----------------------------------------------------
+
+    def test_prepayments_reply_and_report(self):
+        self._prepay()
+        reply = reply_for(self.shop_a, "prepayments today")
+        self.assertIn("Customer prepayments", reply)
+        self.assertIn("Jane Mbuya", reply)
+        self.assertIn("KSh 500.00", reply)
+
+        from .bot import card_for_all, reply_for_all
+
+        reply = reply_for_all("report")
+        self.assertIn("Customer prepayments: KSh 500.00", reply)
+        self.assertIn("in KSh 500.00", reply)
+        card = card_for_all("report")["report"]
+        self.assertEqual(card["prepayments"], "KSh 500.00")
+
+    def test_prepayments_section_off_hides_and_uncounts(self):
+        self._prepay()
+        from .bot import card_for_all, reply_for_all
+
+        sec = self._sec(day_report_sec_prepayments=True)
+        reply = reply_for_all("report", section_visible=sec)
+        self.assertNotIn("prepayments", reply.lower())
+        self.assertIn("in KSh 0.00", reply)
+        self.assertNotIn(
+            "prepayments", card_for_all("report", section_visible=sec)["report"]
+        )
+
+    def test_prepayments_all_shops_listing(self):
+        self._prepay()
+        from .bot import reply_for_all
+
+        reply = reply_for_all("prepayments")
+        self.assertIn("Customer prepayments — ALL SHOPS", reply)
+        self.assertIn("Alpha Store", reply)
+
+    # --- credit payments collected --------------------------------------
+
+    def test_credit_paid_counts_as_money_in(self):
+        self._credit_paid("200")
+        from .bot import card_for_all, reply_for_all
+
+        reply = reply_for_all("report")
+        self.assertIn("Credit payments collected: KSh 200.00", reply)
+        self.assertIn("in KSh 200.00", reply)
+        card = card_for_all("report")["report"]
+        self.assertEqual(card["credit_paid"], "KSh 200.00")
+
+    def test_credit_paid_section_off_hides_and_uncounts(self):
+        self._credit_paid("200")
+        from .bot import card_for_all, reply_for_all
+
+        sec = self._sec(day_report_sec_credit_payments=True)
+        reply = reply_for_all("report", section_visible=sec)
+        self.assertNotIn("Credit payments collected", reply)
+        self.assertIn("in KSh 0.00", reply)
+        self.assertNotIn(
+            "credit_paid",
+            card_for_all("report", section_visible=sec)["report"],
+        )
+
+    def test_summary_shows_prepayments_and_credit_paid(self):
+        self._prepay()
+        self._credit_paid("200")
+        reply = reply_for(self.shop_a, "summary today")
+        self.assertIn("Customer prepayments: KSh 500.00", reply)
+        self.assertIn("Credit payments: KSh 200.00", reply)
+
+    # --- shelf supplier payments + gifts --------------------------------
+
+    def test_shelf_supplier_payment_in_paid_out(self):
+        shelf = ShelfItem.objects.create(
+            shop_id=self.shop_a.pk, name="Rice", quantity=Decimal("10")
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item_id=shelf.pk, movement_type="in",
+            quantity=Decimal("10"), amount_paid=Decimal("250"),
+        )
+        from .bot import reply_for_all
+
+        reply = reply_for_all("report")
+        self.assertIn("shelf KSh 250.00", reply)
+        self.assertIn("Paid out: KSh 250.00", reply)
+        sec = self._sec(day_report_sec_shelf_stock=True)
+        reply = reply_for_all("report", section_visible=sec)
+        self.assertNotIn("shelf", reply)
+        self.assertIn("Paid out: KSh 0.00", reply)
+
+    def test_gift_line_on_report(self):
+        self.create_receipt(
+            shop_id=self.shop_a.pk, receipt_number="G-1", kind="gift",
+            payment_method="cash", client_name="Staff",
+            total=Decimal("150"), amount_paid=Decimal("0"),
+            cash_amount=Decimal("0"), mpesa_amount=Decimal("0"),
+            status="active",
+        )
+        from .bot import reply_for_all
+
+        reply = reply_for_all("report")
+        self.assertIn("Gifts issued: KSh 150.00", reply)
+        reply = reply_for_all(
+            "report", section_visible=self._sec(day_report_sec_gift=True)
+        )
+        self.assertNotIn("Gifts issued", reply)
+
+
+class ShopShelfAssistantTests(ChatTestCase):
+    """The per-shop assistant knows the shelf ledger — movement queries
+    route like the all-shops one, and stock lookups find shelf items."""
+
+    def setUp(self):
+        super().setUp()
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": True,
+                "enable_shelf_mode": True,
+            },
+        )
+        self.shelf = ShelfItem.objects.create(
+            shop_id=self.shop_a.pk, name="Sugar", unit="kg",
+            quantity=Decimal("10"),
+        )
+
+    def _set_modes(self, items, shelf):
+        CompanyPosSettings.objects.filter(pk=1).update(
+            enable_stock_tracking=items, enable_shelf_mode=shelf
+        )
+
+    def test_shelf_movement_reply(self):
+        ShelfStockMovement.objects.create(
+            shelf_item_id=self.shelf.pk, movement_type="in",
+            quantity=Decimal("5"),
+        )
+        reply = reply_for(self.shop_a, "shelf stock movement")
+        self.assertIn("Shelf stock movement", reply)
+        self.assertIn("Sugar ×5", reply)
+
+    def test_shelf_movement_card(self):
+        ShelfStockMovement.objects.create(
+            shelf_item_id=self.shelf.pk, movement_type="out",
+            quantity=Decimal("2"), reason="waste",
+        )
+        from .bot import card_meta
+
+        card = card_meta(self.shop_a, "shelf stock movement")
+        mv = card["movement"]
+        self.assertEqual(mv["title"], "Shelf stock movement")
+        self.assertEqual(mv["groups"][0]["head"], "Shelf out")
+        self.assertIn("Waste", mv["groups"][0]["status"])
+
+    def test_bare_movement_uses_shelf_when_items_off(self):
+        self._set_modes(items=False, shelf=True)
+        ShelfStockMovement.objects.create(
+            shelf_item_id=self.shelf.pk, movement_type="in",
+            quantity=Decimal("5"),
+        )
+        reply = reply_for(self.shop_a, "stock movement")
+        self.assertIn("Shelf stock movement", reply)
+        self.assertIn("Sugar ×5", reply)
+
+    def test_shelf_query_when_shelf_mode_off(self):
+        self._set_modes(items=True, shelf=False)
+        self.assertIn(
+            "Shelf stock is off",
+            reply_for(self.shop_a, "shelf stock movement"),
+        )
+
+    def test_shop_override_disables_shelf(self):
+        ShopPosSettings.objects.create(
+            shop_id=self.shop_a.pk, override_pos=True,
+            enable_stock_tracking=True, enable_shelf_mode=False,
+        )
+        reply = reply_for(self.shop_a, "shelf stock movement")
+        self.assertIn("Shelf stock is off", reply)
+
+    def test_stock_lookup_finds_shelf_item(self):
+        reply = reply_for(self.shop_a, "stock sugar")
+        self.assertIn("*Sugar* (shelf)", reply)
+        self.assertIn("*10* kg", reply)
+
+    def test_stock_lookup_skips_shelf_when_mode_off(self):
+        self._set_modes(items=True, shelf=False)
+        reply = reply_for(self.shop_a, "stock sugar")
+        self.assertIn("couldn't find", reply)
+
+    def test_low_stock_includes_shelf(self):
+        ShelfItem.objects.filter(pk=self.shelf.pk).update(
+            quantity=Decimal("2")
+        )
+        reply = reply_for(self.shop_a, "low stock")
+        self.assertIn("Sugar (shelf)", reply)

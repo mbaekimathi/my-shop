@@ -9745,7 +9745,7 @@ def build_shop_day_report_pdf(
         return Paragraph(
             f"<b>{_esc(row['number'])}</b>"
             f"<br/><font size='6.8' color='#5b6b7c'>"
-            f"{_esc(row['items_label'])}</font>",
+            f"{_esc(_time(row['at']))}</font>",
             cell_sm,
         )
 
@@ -9906,10 +9906,9 @@ def build_shop_day_report_pdf(
         total = sum((r["total"] or Decimal("0")) for r in rows)
         _detail_table(
             title,
-            [time_head, "Receipt", "Sold by", "Status", "Amount"],
+            ["Receipt", "Sold by", "Status", "Amount"],
             [
                 [
-                    _p(_time(r["at"]), cell_sm),
                     _receipt_cell(r),
                     _p(r["seller"], cell_sm),
                     _receipt_status_cell(r),
@@ -9918,14 +9917,13 @@ def build_shop_day_report_pdf(
                 for r in rows
             ],
             [
-                doc.width * 0.07,
-                doc.width * 0.40,
-                doc.width * 0.24,
-                doc.width * 0.11,
-                doc.width * 0.18,
+                doc.width * 0.34,
+                doc.width * 0.28,
+                doc.width * 0.16,
+                doc.width * 0.22,
             ],
-            aligns=["l", "l", "l", "l", "r"],
-            footer=["Total", "", "", "", _fmt(total)],
+            aligns=["l", "l", "l", "r"],
+            footer=["Total", "", "", _fmt(total)],
             dense=True,
             section=section,
         )
@@ -10103,10 +10101,9 @@ def build_shop_day_report_pdf(
     )
     _detail_table(
         "Pending & cancelled sales",
-        [time_head, "Receipt", "Sold by", "Status", "Amount"],
+        ["Receipt", "Sold by", "Status", "Amount"],
         [
             [
-                _p(_time(r["at"]), cell_sm),
                 _receipt_cell(r),
                 _p(r["seller"], cell_sm),
                 _receipt_status_cell(r),
@@ -10115,14 +10112,13 @@ def build_shop_day_report_pdf(
             for r in flagged_rows
         ],
         [
-            doc.width * 0.07,
-            doc.width * 0.40,
-            doc.width * 0.24,
-            doc.width * 0.11,
-            doc.width * 0.18,
+            doc.width * 0.34,
+            doc.width * 0.28,
+            doc.width * 0.16,
+            doc.width * 0.22,
         ],
-        aligns=["l", "l", "l", "l", "r"],
-        footer=["Total", "", "", "", _fmt(flagged_total)],
+        aligns=["l", "l", "l", "r"],
+        footer=["Total", "", "", _fmt(flagged_total)],
         dense=True,
         empty_note="No pending or cancelled sales this day.",
         section="day_report_sec_flagged",

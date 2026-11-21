@@ -272,16 +272,24 @@ class CustomerPrepaymentTests(TestCase):
         self.assertIn(response.status_code, (302, 403))
         self.assertEqual(CustomerPrepayment.objects.count(), 0)
 
-    def test_cashier_dashboard_shows_popup_and_action(self):
+    def test_cashier_register_action_lives_on_prepayments_page(self):
         client = self._login(self.cashier)
-        response = client.get(reverse("employees:role_shop_cashier"))
+        dashboard = client.get(reverse("employees:role_shop_cashier"))
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertNotContains(dashboard, 'data-modal-open="prepayment"')
+
+        response = client.get(self._prepayments_url(self.cashier.role))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-modal="prepayment"')
         self.assertContains(response, 'data-modal-open="prepayment"')
 
-    def test_accountant_dashboard_shows_popup_and_action(self):
+    def test_accountant_register_action_lives_on_prepayments_page(self):
         client = self._login(self.accountant)
-        response = client.get(reverse("employees:role_company_accountant"))
+        dashboard = client.get(reverse("employees:role_company_accountant"))
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertNotContains(dashboard, 'data-modal-open="prepayment"')
+
+        response = client.get(self._prepayments_url(self.accountant.role))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-modal="prepayment"')
         self.assertContains(response, 'data-modal-open="prepayment"')

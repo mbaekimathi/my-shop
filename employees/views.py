@@ -152,8 +152,11 @@ from .workspace import (
     set_day_report_status_pref,
     settings_section_url,
     sidebar_for_cashier_settings,
+    sidebar_for_cashier_shop_day,
+    sidebar_for_employee_clock,
     sidebar_for_marketing_links,
     sidebar_for_module,
+    sidebar_for_prepayments,
     sidebar_for_profile,
     sidebar_for_rider,
     sidebar_for_role_dashboard,
@@ -254,11 +257,6 @@ def _render_role_page(request, expected_role):
         context.update(sell_modal_context(request, profile))
         context.update(buy_stock_modal_context(request, profile))
         context.update(cashier_day_summaries_context(request, profile))
-    if expected_role in (
-        EmployeeRole.SHOP_CASHIER,
-        EmployeeRole.COMPANY_ACCOUNTANT,
-    ):
-        context.update(prepayment_modal_context(request, profile))
     return render(request, "employees/role_home.html", context)
 
 
@@ -1080,11 +1078,7 @@ def employee_clock(request):
             "clock": summary,
             "entries_page": entries_page,
             "pagination": _employee_home_pagination(request, entries_page),
-            "page_sidebar": sidebar_for_role_dashboard(
-                profile.role,
-                profile=profile,
-                active_slug="clock",
-            ),
+            "page_sidebar": sidebar_for_employee_clock(profile),
         },
     )
 
@@ -1762,15 +1756,19 @@ def role_shop_day(request, role_segment):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_role_dashboard(
-                profile.role,
-                profile=profile,
-                active_slug={
-                    "drawings": "drawings",
-                    "report": "day-report",
-                    "history": "day-history",
-                }.get(mode, "shop-day"),
-                omit_dashboard_link=False,
+            "page_sidebar": (
+                sidebar_for_cashier_shop_day(profile, mode=mode)
+                if profile.role == EmployeeRole.SHOP_CASHIER
+                else sidebar_for_role_dashboard(
+                    profile.role,
+                    profile=profile,
+                    active_slug={
+                        "drawings": "drawings",
+                        "report": "day-report",
+                        "history": "day-history",
+                    }.get(mode, "shop-day"),
+                    omit_dashboard_link=False,
+                )
             ),
             "day_shops": day_shops,
             "day_mode": mode,
@@ -1892,11 +1890,8 @@ def role_prepayments(request, role_segment):
         },
         "role_label": profile.get_role_display(),
         "status_label": profile.get_status_display(),
-        "page_sidebar": sidebar_for_role_dashboard(
-            profile.role,
-            profile=profile,
-            active_slug="prepayments",
-            omit_dashboard_link=False,
+        "page_sidebar": sidebar_for_prepayments(
+            profile.role, profile=profile
         ),
         "prepayment_rows": page.object_list,
         "prepayment_page": page,

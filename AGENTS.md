@@ -456,10 +456,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   since-disabled modes with data). The all-shops assistant's generated
   "report" honours them too: `api_all_chat` passes the same predicate into
   `reply_for_all` / `card_for_all` → `_all_shops_report` — Sales/channels
-  + refunds follow `day_report_sec_money_flow`, expenses/stock/drawings
-  their own keys, credit `day_report_sec_not_till`, the items-sold
-  trailer `day_report_sec_items_sold`, and Paid out / each session's
-  `out` sum only the enabled parts (sessions rows always list). Tests:
+  + refunds follow `day_report_sec_money_flow`, customer prepayments
+  `day_report_sec_prepayments`, credit collections
+  `day_report_sec_credit_payments`, expenses/item stock/shelf
+  stock/drawings their own keys, credit `day_report_sec_not_till`, gifts
+  `day_report_sec_gift`, the items-sold trailer
+  `day_report_sec_items_sold`, and Paid out / each session's `out` sum
+  only the enabled parts (sessions rows always list). Tests:
   `chat/tests.py::AllShopsReportSectionTests`.
   The two stock toggles also double as the **paid-from-till switch**:
   `day_report_sec_item_stock` / `day_report_sec_shelf_stock` feed
@@ -506,10 +509,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   single-actionable-shop staff**; multi-shop staff fall back
   to the `data-href` (MY-SHOP picker / page).
 - **Customer prepayments** are the exception: `prepayment_modal_context`
-  works for multi-shop staff (a shop picker rides in the form), so the
-  company accountant's `/company-accountant/` and the cashier's
-  `/shop-cashier/` both popup `shops/partials/prepayment_modal.html`
-  (`data-modal="prepayment"`) and POST to `role_prepayments`
+  works for multi-shop staff (a shop picker rides in the form). The
+  "Register prepayment" action lives **only on the role prepayments page
+  sidebar** (`sidebar_for_prepayments` — dashboards no longer carry it);
+  the page popups `shops/partials/prepayment_modal.html`
+  (`data-modal="prepayment"`, also via its own header button) and POSTs to
+  `role_prepayments`
   (`/<role>/prepayments/` — GET lists, POST registers via
   `register_customer_prepayment`; `my_shop_prepayment_register` at
   `my-shop/<id>/prepayments/` is the shop-scoped variant). Prepayments are
@@ -528,7 +533,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   **buy stock POST, stock-supplier search, and checkout POST**
   (`my_shop_checkout`). Catalog GETs, serial search, and the client lookup use
   `_require_shop_read_access`.
-- Cashier dashboard (`_cashier_dashboard_links`): no Stock Management link — "Sell"
+- Cashier dashboard (`_cashier_dashboard_links`) links render **only on
+  `/shop-cashier/`** — other cashier pages get focused sidebars
+  (`focused_role_sidebar` — Dashboard + page links): the shop-day picker
+  uses `sidebar_for_cashier_shop_day` (mode links), the clock page
+  `sidebar_for_employee_clock`, prepayments `sidebar_for_prepayments`, and
+  the clients analytics pages `sidebar_for_analytics_section`. No Stock
+  Management link — "Sell"
   action (`sell_action`, first quick action, gated by `my-shop/workspace` +
   any of sale/credit/quotation, per-employee `sell` sidebar pref) opens
   `shops/partials/sell_modal.html` (`data-modal="sell"`, `cashier-sell.js`)
@@ -1022,6 +1033,14 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `FloorReceiptReturnPermissionTests`).
 
 ## Confirm-receipts: change receipt type
+- The page Type filter (`CONFIRM_RECEIPT_KIND_FILTERS`) merges sales +
+  credits into one **Sales & credits** (`sales_credits`) option and lists
+  every other receipt kind (quotations, gifts, trade out/in, delivery
+  notes, goods received) — "All types" pulls them all. Legacy
+  `?kind=sale|credit` params normalize to `sales_credits` in
+  `_confirm_receipts_effective_params`. Non-sale/credit rows are
+  review-only there (`can_confirm`/`can_cancel`/`can_edit_status` off) —
+  quotations/gifts/trades still confirm through their own flows.
 - The confirm modal can convert a **pending** sale/credit to another kind
   (sale / credit / gift / quotation) — gated by the
   `analytics/change-receipt-type` permission on the **viewing** profile.
@@ -1111,7 +1130,14 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   the original sequence — `CS0005` (credit→sale), `SC0007` (sale→credit),
   `SG0003` (sale→gift). Rows converted before the field existed fall back to
   `settled_from_credit`/`settled_from_trade` then `_infer_receipt_source_kind`
-  (reads the stored number's prefix). Migration `0128` backfills
+  (reads the stored number's prefix). `ShopReceipt.save()` enforces the
+  provenance at the model level too (`from_db`/`refresh_from_db` track the
+  loaded kind): any write that changes `kind` — including
+  `save(update_fields=[...])` — auto-stamps `converted_from_kind` with the
+  previous kind and appends the field to `update_fields`, so a missed
+  stamping path can't produce a bare renumbered receipt again. The
+  unmanaged `chat.myshop_models.ShopReceipt` mirror carries the same guard.
+  Migration `0128` backfills
   `converted_from_kind` on pre-field conversions (settled flags + prefix
   inference), and `_build_receipt_ticket_data` prints the tally code so a
   converted doc never shows a misleading bare number on reprints.
@@ -1167,3 +1193,32 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `profile.acting_shop_id`.
 - Tests: `shops/tests/test_shop_switch.py` (`ShopSwitchTests`,
   `EmployeeShopSwitchTests`).
+
+## Chatbot (`chat` app)
+- Rule-based assistant, no external AI: `chat/bot.py` `reply_for(shop,
+  text)` drives the per-shop chat (sales / expenses / credit / stock /
+  movements / top sellers / receipts / day status / prepayments);
+  `reply_for_all` / `card_for_all` drive the all-shops assistant
+  (`/chatbot/`, `api_all_chat`) whose cards render via
+  `static/js/all.js`.
+- `chat/myshop_models.py` mirrors the shared MY-SHOP tables as
+  `managed = False` models — keep the mirrored columns (and the
+  `ShopReceipt` conversion guard) in sync with `shops/models.py` when the
+  real schema changes.
+- Money semantics track the canonical services rather than older
+  receipt-day math: `settled_from_credit` sales are excluded from till
+  channel totals (their tender fields are zeroed via `_tender_exprs`)
+  and attributed to the paid day through `confirmed_payment_at`
+  (`_settled_window_q`); `CustomerPrepayment.cash/mpesa/card_amount` and
+  `ClientCreditAccountEvent` PAYMENT_* rows are counted as separate
+  money-in streams; `ShelfStockMovement.amount_paid` joins the paid-out
+  side.
+- Per-shop stock lookups honour the shop's own stock modes via
+  `shop_stock_modes` (per-shop `ShopPosSettings` override → company
+  default): item vs shelf ledgers are only searched when that mode is
+  on, and shelf items appear in stock / low-stock replies only in
+  shelf / both mode.
+- Tests: `chat/tests.py` (`BotMoneySemanticsTests`,
+  `ShopShelfAssistantTests`, `AllShopsReportSectionTests`,
+  `AllShopsShelfMovementTests`). The suite takes ~8 min:
+  `MYSQL_DATABASE=myshop_<slug> python manage.py test chat -v 1`.
