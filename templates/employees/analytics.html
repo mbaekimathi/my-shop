@@ -67,6 +67,11 @@
         <a class="ax-apply ax-apply--ghost" href="{{ credit_audits_href }}">Activity analytics</a>
       </div>
       {% endif %}
+      {% if page.cashier_settings_href %}
+      <div class="ax-top-actions">
+        <a class="ax-apply ax-apply--ghost" href="{{ page.cashier_settings_href }}">Cashier settings</a>
+      </div>
+      {% endif %}
       {% if page.receipts_print_modal %}
       <div class="ax-top-actions">
         <button
@@ -447,6 +452,10 @@
     </article>
     {% endfor %}
   </div>
+  {% endif %}
+
+  {% if page.cashier_settings_mode %}
+  {% include "employees/partials/analytics_cashier_settings.html" %}
   {% endif %}
 
   {% if page.view_tabs %}
@@ -861,6 +870,9 @@
 
 {% block extra_js %}
 {{ block.super }}
+{% if page.cashier_settings_mode %}
+<script defer src="{% static 'js/pos-settings.js' %}?v=15"></script>
+{% endif %}
 {% if page.receipts_print_modal %}
 <script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
 {% endif %}

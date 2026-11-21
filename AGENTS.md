@@ -210,6 +210,23 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   (`filters["selected_employee_id"]`), the dropdown renders only for
   `section_slug == "balances"`. `_day_balance_data` carries
   `id`/`opened_by_id`/`closed_by_id` on every `session_rows` entry.
+- `?mode=settings` swaps the sessions list for **Cashier settings** —
+  company-wide options that govern cashier sessions
+  (`_build_balances_settings` + `BALANCES_CASHIER_SETTING_GROUPS`: Open &
+  close incl. `require_clock_in` + schedule mode/per-shop times, Shop
+  switching, Session timeout incl. both idle limits). Gated by
+  `settings/company-pos` — the header "Cashier settings" button renders
+  only with it (`filters["can_edit_company_pos"]`), and the GET mode itself
+  is perm-checked in `_render_analytics`. The panel is
+  `employees/partials/analytics_cashier_settings.html`
+  (`data-pos-settings` + `pos-settings.js`), which POSTs to the balances
+  URL — `analytics_section` allows POST for `balances` only and
+  `_balances_settings_post` handles `toggle_pos_setting` (restricted to
+  `BALANCES_CASHIER_SETTING_FIELDS`), `set_open_close_mode`,
+  `set_open_close_times`, `set_employee_session_timeout` and
+  `set_shop_session_timeout`, re-checking `analytics/balances` +
+  `settings/company-pos`. POSTs on other sections → 405. Tests:
+  `employees/tests_cashier_settings.py::BalancesCashierSettingsTests`.
 - The session report page is built by `build_day_session_report_page` — the
   same sections as the day accounting PDF (money flow, items sold,
   sales by employee, pending/cancelled sales, drawings, expenses,
@@ -395,6 +412,22 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `ShopWorkingHoursSettings` times — same as Settings → POS) and is gated by
   `settings/company-pos`. Template `employees/settings_cashier.html`. Tests:
   `employees/tests_cashier_settings.py`.
+
+## Clock in / out (`/employee/clock/`)
+- Every role dashboard sidebar carries a "Clock in / out" link
+  (`sidebar_for_role_dashboard` + `sidebar_for_rider`);
+  `DashboardSidebarLinkTests.test_every_role_dashboard_has_clock_link`
+  asserts it for every `EmployeeRole`.
+- `require_clock_in` (Settings → POS → Open & close, also in the
+  analytics-balances Cashier settings panel) is company-only — it is NOT in
+  `SHOP_POS_FIELD_NAMES`, so shop POS overrides can't weaken it. When on,
+  `clock_in_block_message` (`employees/attendance.py`) blocks sale-like
+  checkouts (sale/credit/trade-out/trade-in/gift) in
+  `complete_shop_checkout` and the standalone `pos:sale_create` API until
+  the authorising profile has an open clock entry; a clocked-out
+  (auto-closed at day end) entry does not count. Floor JS shows the block
+  via `staff-code` verify (`clocked_in` flag) before checkout. Tests:
+  `shops/tests/test_clock_in_enforcement.py`.
 
 ## Action popups on role dashboards
 - Sidebar `_action` items render `data-modal-open`/`data-href`; `workspace_base.html`

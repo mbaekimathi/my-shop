@@ -3682,6 +3682,14 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
     filters["can_pay_accounts"] = employee_may(
         profile, "analytics", "account_pay"
     )
+    filters["can_edit_company_pos"] = employee_may(
+        profile, "settings", "company-pos"
+    )
+    filters["balances_mode"] = (
+        (request.GET.get("mode") or "").strip().lower()
+        if section["slug"] == "balances"
+        else ""
+    )
     filters["query"] = request.GET.urlencode()
     filters["search_query"] = (request.GET.get("q") or "").strip()
     filters["receipt_kind"] = (request.GET.get("receipt_kind") or "").strip().lower()
@@ -10360,6 +10368,125 @@ def _build_revenue(filters):
     return page
 
 
+# ?mode=settings on the Cashiers page — the company-wide POS flags that
+# govern cashier sessions (open & close, shop switching, idle sign-out).
+BALANCES_CASHIER_SETTING_GROUPS = (
+    {
+        "title": "Open & close",
+        "summary": "",
+        "toggles": (
+            ("enable_open_close", "Compulsory open & close"),
+            ("require_clock_in", "Compulsory clock in"),
+        ),
+        "show_open_close_schedule": True,
+    },
+    {
+        "title": "Shop switching",
+        "summary": "",
+        "toggles": (
+            (
+                "enable_passwordless_shop_switch",
+                "Switch shops without password",
+            ),
+        ),
+    },
+    {
+        "title": "Session timeout",
+        "summary": (
+            "Off = a session ends only when the user logs out. On = the "
+            "user is signed out after the set minutes of inactivity."
+        ),
+        "toggles": (
+            ("enable_employee_session_timeout", "Employee session"),
+            ("enable_shop_session_timeout", "Shop session"),
+        ),
+        "show_session_timeouts": True,
+    },
+)
+
+BALANCES_CASHIER_SETTING_FIELDS = frozenset(
+    field
+    for group in BALANCES_CASHIER_SETTING_GROUPS
+    for field, _label in group["toggles"]
+)
+
+
+def _build_balances_settings(filters):
+    """?mode=settings — company cashier session options on the Cashiers page."""
+    from django.urls import reverse
+
+    from shops.services import (
+        get_company_pos_settings,
+        get_company_working_hours_settings,
+        list_working_hours_shop_rows,
+        pos_toggle_enabled,
+    )
+
+    from .access import role_url_segment
+    from .workspace import settings_section_url
+
+    role = filters.get("role")
+    role_segment = role_url_segment(role) if role is not None else ""
+    back_href = ""
+    if role_segment:
+        back_href = reverse(
+            "employees:analytics_section",
+            kwargs={"role_segment": role_segment, "section": "balances"},
+        )
+    pos = get_company_pos_settings()
+    groups = []
+    for group in BALANCES_CASHIER_SETTING_GROUPS:
+        groups.append(
+            {
+                "title": group["title"],
+                "summary": group["summary"],
+                "show_open_close_schedule": bool(
+                    group.get("show_open_close_schedule")
+                ),
+                "show_session_timeouts": bool(
+                    group.get("show_session_timeouts")
+                ),
+                "toggles": [
+                    {
+                        "field": field,
+                        "label": label,
+                        "enabled": pos_toggle_enabled(pos, field),
+                    }
+                    for field, label in group["toggles"]
+                ],
+            }
+        )
+    return {
+        "headline": "Cashier settings",
+        "lead": (
+            "Company-wide options for cashier sessions — compulsory open "
+            "& close and clock in, shop switching, and idle sign-out."
+        ),
+        "alerts": [],
+        "insights": [],
+        "tables": [],
+        "back_href": back_href,
+        "back_label": "Sessions",
+        "hide_date_filters": True,
+        "cashier_settings_mode": True,
+        "pos_settings": pos,
+        "settings_groups": groups,
+        "working_hours_enabled": bool(
+            get_company_working_hours_settings().enabled
+        ),
+        "open_close_times_shops": list_working_hours_shop_rows(),
+        "working_hours_settings_url": settings_section_url(
+            role, "working-hours"
+        ),
+        "employee_timeout_minutes": int(
+            getattr(pos, "employee_session_timeout_minutes", 0) or 0
+        ),
+        "shop_timeout_minutes": int(
+            getattr(pos, "shop_session_timeout_minutes", 0) or 0
+        ),
+    }
+
+
 def _build_balances(filters):
     """Cashiers report — shop day sessions the viewer can open and review."""
     from urllib.parse import urlencode
@@ -10369,19 +10496,25 @@ def _build_balances(filters):
 
     from .access import role_url_segment
 
+    role = filters.get("role")
+    role_segment = role_url_segment(role) if role is not None else ""
+    if (filters.get("balances_mode") or "") == "settings":
+        return _build_balances_settings(filters)
+
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
     shops_by_id = {shop.pk: shop for shop in shops}
 
-    role = filters.get("role")
-    role_segment = role_url_segment(role) if role is not None else ""
     balances_url = ""
     back_query = ""
+    cashier_settings_href = ""
     if role_segment:
         balances_url = reverse(
             "employees:analytics_section",
             kwargs={"role_segment": role_segment, "section": "balances"},
         )
+        if filters.get("can_edit_company_pos"):
+            cashier_settings_href = f"{balances_url}?mode=settings"
         query = (filters.get("query") or "").strip()
         if query:
             balances_url = f"{balances_url}?{query}"
@@ -10532,6 +10665,7 @@ def _build_balances(filters):
         ],
         "filter_employees": filter_employees,
         "selected_employee_id": selected_employee_id,
+        "cashier_settings_href": cashier_settings_href,
         "sessions_layout": True,
     }
 
@@ -10641,66 +10775,109 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         + Decimal(summary.get("mpesa_refunds") or 0)
         + Decimal(summary.get("card_refunds") or 0)
     )
-    paid_out = (
-        Decimal(summary.get("expenses_paid") or 0)
-        + Decimal(summary.get("suppliers_paid") or 0)
-        + Decimal(summary.get("drawings_paid") or 0)
-        + refunds_total
-    )
     sales_count = int(details.get("sales_count") or 0)
     total_variance = summary.get("total_variance")
 
     metrics = [
+        _metric("Cashier", opened_by),
+        _metric("Session start", f"{opened_local:%d %b %Y · %H:%M}"),
         _metric(
-            "Status",
-            "Open" if is_open else "Closed",
+            "Session end",
+            (
+                f"{closed_local:%d %b %Y · %H:%M}"
+                if closed_local
+                else "Still open"
+            ),
             hint=(
                 "Live preview — still counting"
                 if is_open
-                else "Day counted and closed"
+                else (f"Closed by {closed_by}" if closed_by != "—" else "")
             ),
             tone="warn" if is_open else "good",
         ),
-        _metric(
-            "Opened with",
-            _money_ksh(summary.get("opening_total")),
-            hint=f"Float at {opened_local:%H:%M}",
-        ),
-        _metric(
-            "Sales collected",
-            _money_ksh(summary.get("sales_total")),
-            hint=f"{sales_count} receipt{'s' if sales_count != 1 else ''}",
-        ),
-        _metric(
-            "Paid out",
-            _money_ksh(paid_out),
-            hint="Expenses · stock · drawings · returns",
-            tone="warn" if paid_out > 0 else "neutral",
-        ),
     ]
-    if is_open:
+    if day_report_section_enabled(profile, "day_report_sec_money_flow"):
+        sales_hint = f"{sales_count} receipt{'s' if sales_count != 1 else ''}"
+        if sales_scope_label:
+            sales_hint += f" · {sales_scope_label.lower()}"
         metrics.append(
             _metric(
-                "Expected closing",
-                _money_ksh(summary.get("expected_total")),
-                hint="Opening + sales − paid out",
+                "Sales generated",
+                _money_ksh(summary.get("sales_total")),
+                hint=sales_hint,
             )
         )
-    else:
-        metrics.append(
-            _metric(
-                "Counted closing",
-                _money_ksh(summary.get("closing_total")),
-                hint=f"Counted at {closed_local:%H:%M}",
-            )
+    if day_report_section_enabled(profile, "day_report_sec_expenses"):
+        unpaid_expenses = sum(
+            (
+                max(
+                    Decimal(row.get("amount") or 0)
+                    - Decimal(row.get("paid") or 0),
+                    _zero(),
+                )
+                for row in details.get("expenses") or []
+            ),
+            _zero(),
         )
         metrics.append(
             _metric(
-                "Close variance",
-                _money_ksh(total_variance),
-                hint="Counted − expected",
-                tone=_variance_tone(total_variance),
+                "Expenses paid",
+                _money_ksh(summary.get("expenses_paid")),
             )
+        )
+    item_stock_sec = day_report_section_enabled(
+        profile, "day_report_sec_item_stock"
+    )
+    shelf_stock_sec = day_report_section_enabled(
+        profile, "day_report_sec_shelf_stock"
+    )
+    stock_head_groups = (
+        (details.get("stock_purchases") or [] if item_stock_sec else [])
+        + (details.get("shelf_purchases") or [] if shelf_stock_sec else [])
+    )
+    if stock_head_groups:
+        stock_unpaid = _zero()
+        for group in stock_head_groups:
+            group_value = sum(
+                (
+                    Decimal(line["total"])
+                    for line in group.get("lines") or []
+                    if line.get("total") is not None
+                ),
+                _zero(),
+            )
+            stock_unpaid += max(
+                group_value - Decimal(group.get("paid") or 0), _zero()
+            )
+        metrics.append(
+            _metric(
+                "Stock purchased — paid",
+                _money_ksh(summary.get("suppliers_paid")),
+            )
+        )
+    if day_report_section_enabled(profile, "day_report_sec_not_till"):
+        unpaid_sales = _zero()
+        if getattr(pos, "enable_credit", False):
+            unpaid_sales += Decimal(
+                (details.get("credit_sales") or {}).get("due") or 0
+            )
+        if getattr(pos, "enable_gift", True):
+            unpaid_sales += Decimal(
+                (details.get("gifts") or {}).get("total") or 0
+            )
+        metrics.append(
+            _metric(
+                "Unpaid sales (credit + gifts)",
+                _money_ksh(unpaid_sales),
+            )
+        )
+    if day_report_section_enabled(profile, "day_report_sec_expenses"):
+        metrics.append(
+            _metric("Unpaid expenses", _money_ksh(unpaid_expenses))
+        )
+    if stock_head_groups:
+        metrics.append(
+            _metric("Unpaid stock purchased", _money_ksh(stock_unpaid))
         )
 
     channel_cols = day_report_channel_columns(

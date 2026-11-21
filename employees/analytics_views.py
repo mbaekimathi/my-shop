@@ -4,7 +4,12 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
-from django.views.decorators.http import require_GET, require_POST
+from django.http import HttpResponseNotAllowed
+from django.views.decorators.http import (
+    require_GET,
+    require_http_methods,
+    require_POST,
+)
 
 from .access import (
     active_employee_required,
@@ -148,6 +153,14 @@ def _render_analytics(
         return denied
 
     section = get_analytics_section(section_slug)
+    if section["slug"] == "balances" and (
+        request.GET.get("mode") or ""
+    ).strip().lower() == "settings":
+        denied = require_module_permission(
+            request, profile, "settings", "company-pos"
+        )
+        if denied is not None:
+            return denied
     module = get_dashboard_module("analytics", profile.role) or {
         "slug": "analytics",
         "label": "Analytics",
@@ -309,8 +322,167 @@ def analytics_dashboard(request, profile, meta, module, page_sidebar=None):
     return _render_analytics(request, profile, section_slug="overview")
 
 
+def _balances_settings_post(request, profile):
+    """POST /…/analytics/balances/ — company cashier settings toggles.
+
+    The ?mode=settings panel on the Cashiers page edits the company POS rows
+    that govern cashier sessions, so writes need settings/company-pos (not
+    just analytics/balances) and the toggle fields are restricted to the
+    ones the panel shows.
+    """
+    from django.contrib import messages
+
+    from shops.services import (
+        list_active_shops,
+        pos_toggle_enabled,
+        set_company_pos_setting,
+        set_employee_session_timeout_minutes,
+        set_shop_session_timeout_minutes,
+        set_working_hours_enabled,
+        stock_mode_of,
+        update_shop_working_hours_from_post,
+    )
+
+    from .analytics_services import BALANCES_CASHIER_SETTING_FIELDS
+    from .module_permissions import require_module_permission
+
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in (request.headers.get("Accept") or "")
+    )
+    denied = require_module_permission(
+        request, profile, "analytics", "balances", as_json=wants_json
+    )
+    if denied is not None:
+        return denied
+    denied = require_module_permission(
+        request, profile, "settings", "company-pos", as_json=wants_json
+    )
+    if denied is not None:
+        return denied
+
+    back_href = f"{request.path}?mode=settings"
+
+    def _fail(message, status=400):
+        if wants_json:
+            return JsonResponse({"ok": False, "error": message}, status=status)
+        messages.error(request, message)
+        return redirect(back_href)
+
+    def _saved(message):
+        if wants_json:
+            return None
+        messages.success(request, message)
+        return redirect(back_href)
+
+    action = (request.POST.get("action") or "").strip()
+    if action == "toggle_pos_setting":
+        field = (request.POST.get("field") or "").strip()
+        if field not in BALANCES_CASHIER_SETTING_FIELDS:
+            return _fail("Unknown cashier setting.")
+        enabled = (request.POST.get("enabled") or "").strip() in (
+            "1",
+            "true",
+            "on",
+            "yes",
+        )
+        try:
+            row = set_company_pos_setting(field=field, enabled=enabled)
+        except ValidationError as exc:
+            message = (
+                "; ".join(exc.messages)
+                if hasattr(exc, "messages")
+                else str(exc)
+            )
+            return _fail(message)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "field": field,
+                    "enabled": pos_toggle_enabled(row, field),
+                    "stock_mode": stock_mode_of(row),
+                }
+            )
+        return _saved("Setting updated.")
+    if action == "set_open_close_mode":
+        mode = (request.POST.get("mode") or "").strip().lower()
+        if mode not in ("anytime", "set"):
+            return _fail("Choose a valid open & close schedule.")
+        row = set_working_hours_enabled(enabled=(mode == "set"))
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "open_close_mode": mode,
+                    "working_hours_enabled": bool(row.enabled),
+                }
+            )
+        return _saved("Open & close schedule updated.")
+    if action == "set_open_close_times":
+        try:
+            update_shop_working_hours_from_post(
+                request.POST, list_active_shops()
+            )
+        except ValidationError as exc:
+            message = (
+                "; ".join(exc.messages)
+                if hasattr(exc, "messages")
+                else str(exc)
+            )
+            return _fail(message)
+        if wants_json:
+            return JsonResponse({"ok": True})
+        return _saved("Opening & closing times saved.")
+    if action == "set_employee_session_timeout":
+        try:
+            row = set_employee_session_timeout_minutes(
+                minutes=request.POST.get("employee_timeout_minutes") or ""
+            )
+        except ValidationError as exc:
+            message = (
+                "; ".join(exc.messages)
+                if hasattr(exc, "messages")
+                else str(exc)
+            )
+            return _fail(message)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "employee_session_timeout_minutes": (
+                        row.employee_session_timeout_minutes
+                    ),
+                }
+            )
+        return _saved("Employee session timeout updated.")
+    if action == "set_shop_session_timeout":
+        try:
+            row = set_shop_session_timeout_minutes(
+                minutes=request.POST.get("shop_timeout_minutes") or ""
+            )
+        except ValidationError as exc:
+            message = (
+                "; ".join(exc.messages)
+                if hasattr(exc, "messages")
+                else str(exc)
+            )
+            return _fail(message)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "shop_session_timeout_minutes": (
+                        row.shop_session_timeout_minutes
+                    ),
+                }
+            )
+        return _saved("Shop session timeout updated.")
+    return _fail("Unknown action.")
+
+
 @active_employee_required
-@require_GET
+@require_http_methods(["GET", "POST"])
 def analytics_section(request, role_segment, section):
     """Dedicated analytics page for one domain (/…/analytics/<section>/)."""
     profile = get_profile_for_request(request)
@@ -332,6 +504,11 @@ def analytics_section(request, role_segment, section):
         from django.http import Http404
 
         raise Http404("Module not found.")
+
+    if request.method == "POST":
+        if (section or "").strip().lower() != "balances":
+            return HttpResponseNotAllowed(["GET"])
+        return _balances_settings_post(request, profile)
 
     return _render_analytics(request, profile, section_slug=section)
 

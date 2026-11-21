@@ -548,3 +548,197 @@ class CashierSettingsTests(TestCase):
         )
         response = client.get("/shop-cashier/settings/")
         self.assertEqual(response.status_code, 302)
+
+
+@override_settings(
+    ALLOWED_HOSTS=["testserver", "localhost"],
+    RATE_LIMITS={
+        "login": {"max": 10_000, "window": 60},
+        "check_employee_id": {"max": 10_000, "window": 60},
+        "register": {"max": 10_000, "window": 60},
+        "sync": {"max": 10_000, "window": 60},
+    },
+)
+class BalancesCashierSettingsTests(TestCase):
+    """?mode=settings on /…/analytics/balances/ — company cashier session
+    options (open & close, shop switching, idle sign-out) editable from the
+    Cashiers analytics page under the settings/company-pos permission."""
+
+    PASSWORD = "balances-settings-pass"
+    BALANCES_URL = "/it-support/analytics/balances/"
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="830100",
+            password=self.PASSWORD,
+            email="830100@test.local",
+            first_name="IT",
+            last_name="SUPPORT",
+            is_active=True,
+        )
+        self.staff = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="830100",
+            phone_country_code="+254",
+            phone_number="700000100",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.IT_SUPPORT,
+        )
+        self.shop = Shop.objects.create(
+            name="BALANCES SHOP",
+            location="NAIROBI",
+            email="balances-shop@test.local",
+            phone_number="0700003100",
+            login_code="870310",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        set_working_hours_enabled(enabled=False)
+        self.client = Client()
+        self.client.post(
+            reverse("employees:login"),
+            {"username": "830100", "password": self.PASSWORD},
+        )
+
+    def test_cashiers_page_links_to_settings_mode(self):
+        response = self.client.get(self.BALANCES_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cashier settings")
+        self.assertContains(response, f"{self.BALANCES_URL}?mode=settings")
+
+    def test_settings_mode_lists_cashier_groups(self):
+        response = self.client.get(f"{self.BALANCES_URL}?mode=settings")
+        self.assertEqual(response.status_code, 200)
+        page = response.context["page"]
+        self.assertTrue(page["cashier_settings_mode"])
+        self.assertEqual(page["back_label"], "Sessions")
+        self.assertIn(self.BALANCES_URL, page["back_href"])
+        groups = {group["title"]: group for group in page["settings_groups"]}
+        self.assertEqual(
+            set(groups),
+            {"Open & close", "Shop switching", "Session timeout"},
+        )
+        fields = {
+            toggle["field"]
+            for group in groups.values()
+            for toggle in group["toggles"]
+        }
+        self.assertEqual(
+            fields,
+            {
+                "enable_open_close",
+                "require_clock_in",
+                "enable_passwordless_shop_switch",
+                "enable_employee_session_timeout",
+                "enable_shop_session_timeout",
+            },
+        )
+        self.assertContains(response, "Compulsory open")
+        self.assertContains(response, "Switch shops without password")
+        self.assertContains(response, "Employee session")
+
+    def test_toggle_updates_company_pos_row(self):
+        response = self.client.post(
+            self.BALANCES_URL,
+            {
+                "action": "toggle_pos_setting",
+                "field": "enable_passwordless_shop_switch",
+                "enabled": "0",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertTrue(data["ok"])
+        self.assertFalse(data["enabled"])
+        self.assertFalse(
+            get_company_pos_settings().enable_passwordless_shop_switch
+        )
+
+    def test_toggle_rejects_fields_off_the_panel(self):
+        response = self.client.post(
+            self.BALANCES_URL,
+            {
+                "action": "toggle_pos_setting",
+                "field": "enable_tax",
+                "enabled": "1",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_session_timeout_minutes_save(self):
+        response = self.client.post(
+            self.BALANCES_URL,
+            {
+                "action": "set_employee_session_timeout",
+                "employee_timeout_minutes": "45",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            get_company_pos_settings().employee_session_timeout_minutes,
+            45,
+        )
+
+    def test_open_close_mode_and_times_save(self):
+        response = self.client.post(
+            self.BALANCES_URL,
+            {"action": "set_open_close_mode", "mode": "set"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(get_company_working_hours_settings().enabled)
+
+        response = self.client.post(
+            self.BALANCES_URL,
+            {
+                "action": "set_open_close_times",
+                f"shop_{self.shop.pk}_start_time": "08:15",
+                f"shop_{self.shop.pk}_end_time": "19:30",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        from shops.models import ShopWorkingHoursSettings
+
+        hours = ShopWorkingHoursSettings.objects.get(shop=self.shop)
+        self.assertEqual(str(hours.start_time)[:5], "08:15")
+        self.assertEqual(str(hours.end_time)[:5], "19:30")
+
+    def test_settings_denied_without_company_pos_permission(self):
+        from employees.models import EmployeeModulePermission
+
+        EmployeeModulePermission.objects.create(
+            employee=self.staff,
+            module_slug="settings",
+            submodule_slug="company-pos",
+            allowed=False,
+        )
+        response = self.client.post(
+            self.BALANCES_URL,
+            {
+                "action": "toggle_pos_setting",
+                "field": "enable_open_close",
+                "enabled": "0",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        response = self.client.get(f"{self.BALANCES_URL}?mode=settings")
+        self.assertEqual(response.status_code, 302)
+
+        # …and the header shortcut drops off the sessions list.
+        response = self.client.get(self.BALANCES_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Cashier settings")
+
+    def test_post_on_other_sections_returns_405(self):
+        response = self.client.post(
+            "/it-support/analytics/sales/",
+            {"action": "toggle_pos_setting"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 405)
