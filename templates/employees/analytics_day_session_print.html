@@ -199,16 +199,6 @@
       font-weight: 600;
       color: var(--muted);
     }
-    .chip {
-      display: inline-block;
-      padding: 0.05rem 0.35rem;
-      border: 1px solid #333;
-      border-radius: 999px;
-      font-size: 0.66rem;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
     .sheet-empty {
       margin: 0.2rem 0;
       font-size: 0.78rem;
@@ -395,7 +385,6 @@
     body.paper-58 .sheet-section { margin-bottom: 0.6rem; }
     body.paper-58 .sheet-section > h2 { font-size: 0.68rem; border-left-width: 1.6mm; }
     body.paper-58 table.sheet-grid { font-size: 0.62rem; }
-    body.paper-58 .chip { font-size: 0.52rem; }
     body.paper-58 .sheet-empty,
     body.paper-58 .sheet-foot,
     body.paper-58 .sheet-footer { font-size: 0.54rem; }
@@ -651,7 +640,7 @@
               data-label="{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}"
               {% if cell.kind == "money" or cell.kind == "pct" or col.money %}class="num"{% endif %}
             >
-              <span class="cell-v">{% if cell.href %}{{ cell.label|cut:ksh_prefix }}{% elif cell.kind == "money" or cell.kind == "pct" %}{{ cell.label|cut:ksh_prefix }}{% elif cell.kind == "qty_amount" %}{{ cell.qty }} · {{ cell.amount|cut:ksh_prefix }}{% elif cell.kind == "status" %}<span class="chip">{{ cell.label|cut:ksh_prefix }}</span>{% elif cell.kind == "empty" %}&mdash;{% elif cell.label and cell.sub %}<strong>{{ cell.label|cut:ksh_prefix }}</strong><br><small>{{ cell.sub|cut:ksh_prefix }}</small>{% elif cell.label %}{{ cell.label|cut:ksh_prefix }}{% else %}{{ cell|cut:ksh_prefix }}{% endif %}</span>
+              <span class="cell-v">{% if cell.href %}{{ cell.label|cut:ksh_prefix }}{% elif cell.kind == "money" or cell.kind == "pct" %}{{ cell.label|cut:ksh_prefix }}{% elif cell.kind == "qty_amount" %}{{ cell.qty }} · {{ cell.amount|cut:ksh_prefix }}{% elif cell.kind == "status" %}{{ cell.label|cut:ksh_prefix }}{% elif cell.kind == "empty" %}&mdash;{% elif cell.label and cell.sub %}<strong>{{ cell.label|cut:ksh_prefix }}</strong><br><small>{{ cell.sub|cut:ksh_prefix }}</small>{% elif cell.label %}{{ cell.label|cut:ksh_prefix }}{% else %}{{ cell|cut:ksh_prefix }}{% endif %}</span>
             </td>
             {% endif %}
             {% endfor %}
