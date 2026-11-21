@@ -295,41 +295,6 @@
     table.sheet-grid.stack tr.row-group td::after { content: none; }
     table.sheet-grid.stack tr.row-total td { font-weight: 800; }
 
-    /* ===== Mini cards (thermal pending sales) ===== */
-    /* The Pending & cancelled table is too wide for roll paper, so on
-       80/58 mm each receipt prints as a small card — a bold "time ·
-       receipt" line with the amount on the right, then the items /
-       seller / status wrapped underneath, like an items-sold row. */
-    .sheet-cards {
-      display: grid;
-      gap: 0.25rem;
-    }
-    .sheet-minicard {
-      border: 1px solid var(--line);
-      border-radius: 3px;
-      padding: 0.18rem 0.35rem;
-      break-inside: avoid;
-    }
-    .sheet-minicard-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 0.4rem;
-      font-size: 0.72rem;
-      font-weight: 800;
-    }
-    .sheet-minicard-amt { white-space: nowrap; }
-    .sheet-minicard-sub {
-      font-size: 0.62rem;
-      font-weight: 600;
-      color: var(--muted);
-      overflow-wrap: anywhere;
-    }
-    .sheet-minicard .chip {
-      font-size: 0.56rem;
-      padding: 0.02rem 0.28rem;
-    }
-
     /* Thermal trims to the essentials — the kicker, meta chips, KPI
        strip (its figures repeat in Money flow), table footnotes and
        empty sections are A4/PDF detail, not roll paper. */
@@ -659,47 +624,6 @@
     <section class="sheet-section">
       <h2>{{ table.title }}</h2>
       {% if table.rows %}
-      {% if table.mini and paper != "a4" %}
-      <div class="sheet-cards">
-        {% for row in table.rows %}
-        {% if row.group_header %}
-        <p class="sheet-minicard-sub">{{ row.label|cut:ksh_prefix }}</p>
-        {% else %}
-        {% with cells=row.cells|default:row %}
-        <div class="sheet-minicard">
-          <div class="sheet-minicard-top">
-            <strong>{{ cells.0 }}{% if cells.1.label %} · {{ cells.1.label }}{% endif %}</strong>
-            <strong class="sheet-minicard-amt">{{ cells.4|cut:ksh_prefix }}</strong>
-          </div>
-          <div class="sheet-minicard-sub">
-            {% if cells.1.sub %}{{ cells.1.sub }} · {% endif %}{{ cells.2 }}{% if cells.3.label %} · <span class="chip">{{ cells.3.label }}</span>{% endif %}
-          </div>
-        </div>
-        {% endwith %}
-        {% endif %}
-        {% endfor %}
-      </div>
-      {% elif table.section == "day_report_sec_expenses" and paper != "a4" %}
-      <div class="sheet-cards">
-        {% for row in table.rows %}
-        {% if row.group_header %}
-        <p class="sheet-minicard-sub">{{ row.label|cut:ksh_prefix }}</p>
-        {% else %}
-        {% with cells=row.cells|default:row %}
-        <div class="sheet-minicard">
-          <div class="sheet-minicard-top">
-            <strong>{{ cells.0 }} · {{ cells.1 }}</strong>
-            <strong class="sheet-minicard-amt">{{ cells.6|cut:ksh_prefix }}</strong>
-          </div>
-          <div class="sheet-minicard-sub">
-            {{ cells.2 }} · Qty {{ cells.3 }}{% if cells.4.label %} · {{ cells.4.label }}{% if cells.4.sub %} ({{ cells.4.sub }}){% endif %}{% else %} · {{ cells.4 }}{% endif %}{% if cells.5.label %} · <span class="chip">{{ cells.5.label }}</span>{% endif %}
-          </div>
-        </div>
-        {% endwith %}
-        {% endif %}
-        {% endfor %}
-      </div>
-      {% else %}
       {% with col_count=table.columns|length %}
       <table class="sheet-grid{% if paper == "80" and col_count > 5 %} stack{% elif paper == "58" and col_count > 4 %} stack{% endif %}">
         <thead>
@@ -739,7 +663,6 @@
         </tbody>
       </table>
       {% endwith %}
-      {% endif %}
       {% else %}
       <p class="sheet-empty">{{ table.empty }}</p>
       {% endif %}

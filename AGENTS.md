@@ -227,8 +227,15 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `set_shop_session_timeout`, re-checking `analytics/balances` +
   `settings/company-pos`. POSTs on other sections → 405. Tests:
   `employees/tests_cashier_settings.py::BalancesCashierSettingsTests`.
-- The session report page is built by `build_day_session_report_page` — the
-  same sections as the day accounting PDF (money flow, items sold,
+- The session report page is built by `build_day_session_report_page` —
+  rendered as a **flat ledger, no cards**: `.ax--day-report` CSS at the end
+  of `analytics.css` strips the `ax-card`/`ax-kpi` chrome into plain
+  sections and keeps real rows/columns at every width (the shared
+  mobile card-collapse is overridden — tables scroll sideways instead).
+  The `?paper=` sheet renders every table through `sheet-grid`/`stack`
+  (thermal mini/expense "sheet-minicard" blocks were removed), and the
+  A4 PDF dropped the `BOX` outlines + padding for hairline rows.
+  Same sections as the day accounting PDF (money flow, items sold,
   sales by employee, pending/cancelled sales, drawings, expenses,
   stocked in/out via
   `day_session_balance_summary` / `day_session_report_details` with the
@@ -389,10 +396,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   ::DayReportCountedStatusesTests`.
 - The "Day report sections" group is also **per-employee** —
   `DAY_REPORT_SECTION_TOGGLES` (employees/workspace.py) stores
-  `sidebar_prefs["day_report_sec_<section>"]` keys (missing = on), POSTed as
+  `sidebar_prefs["day_report_sec_<section>"]` keys (missing = on, except
+  `DAY_REPORT_SECTIONS_OFF_BY_DEFAULT`), POSTed as
   the pref key itself through `action=toggle_pos_setting`:
   money flow / not-in-till / items sold / sales by employee / pending &
-  cancelled / drawings / expenses / item stock in-out / shelf stock in-out.
+  cancelled / drawings / expenses / item stock in-out / shelf stock in-out /
+  dates.
   `day_report_section_enabled(profile, key)` checks them; the on-screen
   report tags each table via `_table(section=…)` and filters
   `page["tables"]`, while `build_shop_day_report_pdf` takes a
@@ -407,6 +416,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   stock-ins did NOT leave the till, so they're dropped from
   `suppliers_paid` ("Stock bought") and Expected in till on the report
   page and PDF alike (other callers default to from-till).
+  `day_report_sec_dates` ("Dates") is the lone **opt-in** pick —
+  `DAY_REPORT_SECTIONS_OFF_BY_DEFAULT` keeps it off until enabled; on,
+  every row-level Time cell renders `dd Mmm · HH:MM` and the Time headers
+  read "Date · time" on the page, the `?paper=` sheet, and the A4 PDF
+  (`build_shop_day_report_pdf` reads it through `section_visible`, so
+  callers without a predicate keep time-only rows). It tags no table —
+  display-only.
 - The "Open & close" group edits the shared company rows
   (`enable_open_close`, `CompanyWorkingHoursSettings.enabled`, per-shop
   `ShopWorkingHoursSettings` times — same as Settings → POS) and is gated by

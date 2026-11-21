@@ -15,8 +15,15 @@ from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
+from decimal import Decimal
+
 from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
-from shops.models import Shop
+from shops.models import (
+    Expense,
+    ExpenseCategory,
+    ExpensePaymentStatus,
+    Shop,
+)
 from shops.services import close_shop_day, open_shop_day
 
 
@@ -473,3 +480,46 @@ class CashierDayReportScopeTests(TestCase):
             row["session"].pk for row in response.context["day_sessions"]
         }
         self.assertEqual(session_ids, {own.pk, colleague.pk})
+
+    def _expense_in_session(self):
+        return Expense.objects.create(
+            shop=self.shop,
+            category=ExpenseCategory.TRANSPORT,
+            name="Fuel",
+            amount=Decimal("40"),
+            amount_paid=Decimal("40"),
+            payment_status=ExpensePaymentStatus.PAID,
+            created_by=self.next,
+        )
+
+    def _expense_time_cell(self, client, session):
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        table = next(
+            t
+            for t in response.context["page"]["tables"]
+            if t["title"] == "Expenses incurred"
+        )
+        return table["columns"][0], table["rows"][0][0]
+
+    def test_dates_toggle_adds_date_to_row_times(self):
+        """The opt-in "Dates" pick renders row times as date · time."""
+        session = self._open_day(self.next)
+        self._expense_in_session()
+        self.next.sidebar_prefs = {"day_report_sec_dates": True}
+        self.next.save(update_fields=["sidebar_prefs"])
+
+        client = self._login(self.next)
+        column, cell = self._expense_time_cell(client, session)
+        self.assertEqual(column, "Date · time")
+        self.assertRegex(cell, r"^\d{2} \w{3} · \d{2}:\d{2}$")
+
+    def test_dates_default_off_keeps_time_only(self):
+        """No pref stored — rows keep the plain HH:MM time."""
+        session = self._open_day(self.next)
+        self._expense_in_session()
+
+        client = self._login(self.next)
+        column, cell = self._expense_time_cell(client, session)
+        self.assertEqual(column, "Time")
+        self.assertRegex(cell, r"^\d{2}:\d{2}$")

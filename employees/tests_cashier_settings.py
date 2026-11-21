@@ -418,7 +418,10 @@ class CashierSettingsTests(TestCase):
         )
 
     def test_day_report_section_toggle_persists(self):
-        from employees.workspace import DAY_REPORT_SECTION_TOGGLES
+        from employees.workspace import (
+            DAY_REPORT_SECTION_TOGGLES,
+            DAY_REPORT_SECTIONS_OFF_BY_DEFAULT,
+        )
 
         response = self.client.get("/shop-cashier/settings/")
         toggles = response.context["day_report_section_toggles"]
@@ -426,7 +429,21 @@ class CashierSettingsTests(TestCase):
             {toggle["field"] for toggle in toggles},
             {key for key, _label in DAY_REPORT_SECTION_TOGGLES},
         )
-        self.assertTrue(all(toggle["enabled"] for toggle in toggles))
+        # Section toggles default on; opt-in display picks default off.
+        self.assertTrue(
+            all(
+                toggle["enabled"]
+                for toggle in toggles
+                if toggle["field"] not in DAY_REPORT_SECTIONS_OFF_BY_DEFAULT
+            )
+        )
+        self.assertTrue(
+            all(
+                not toggle["enabled"]
+                for toggle in toggles
+                if toggle["field"] in DAY_REPORT_SECTIONS_OFF_BY_DEFAULT
+            )
+        )
 
         response = self.client.post(
             "/shop-cashier/settings/",
@@ -457,6 +474,38 @@ class CashierSettingsTests(TestCase):
             if toggle["enabled"]
         }
         self.assertNotIn("day_report_sec_expenses", enabled)
+
+    def test_day_report_dates_toggle_opts_in(self):
+        """The opt-in "Dates" pick turns on via the same toggle POST."""
+        response = self.client.post(
+            "/shop-cashier/settings/",
+            {
+                "action": "toggle_pos_setting",
+                "field": "day_report_sec_dates",
+                "enabled": "1",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.content),
+            {
+                "ok": True,
+                "field": "day_report_sec_dates",
+                "enabled": True,
+            },
+        )
+        self.cashier.refresh_from_db()
+        self.assertEqual(
+            self.cashier.sidebar_prefs.get("day_report_sec_dates"), True
+        )
+        response = self.client.get("/shop-cashier/settings/")
+        enabled = {
+            toggle["field"]
+            for toggle in response.context["day_report_section_toggles"]
+            if toggle["enabled"]
+        }
+        self.assertIn("day_report_sec_dates", enabled)
 
     def test_day_report_section_rejects_unknown_field(self):
         response = self.client.post(

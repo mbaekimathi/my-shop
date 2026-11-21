@@ -9123,16 +9123,14 @@ def build_shop_day_report_pdf(
     kpi_table.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, -1), surface),
-                ("BACKGROUND", (3, 0), (3, 0), accent_soft),
                 ("LINEABOVE", (0, 0), (-1, 0), 1.5, accent),
-                ("BOX", (0, 0), (-1, -1), 0.75, line),
-                ("INNERGRID", (0, 0), (-1, -1), 0.5, line),
+                ("LINEBELOW", (0, 0), (-1, -1), 0.75, line),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 7),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING", (0, 0), (0, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ]
         )
     )
@@ -9259,12 +9257,13 @@ def build_shop_day_report_pdf(
         ("BACKGROUND", (0, 0), (-1, 0), head_fill),
         ("LINEBELOW", (0, 0), (-1, 0), 0.75, head_fill),
         ("LINEBELOW", (0, 1), (-1, -1), 0.4, line),
-        ("BOX", (0, 0), (-1, -1), 0.75, line),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.75, line),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.75, line),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, surface]),
     ]
     for index in sorted(strong_rows):
@@ -9345,7 +9344,7 @@ def build_shop_day_report_pdf(
         """Modern horizontal-rule detail table; cells may be str or Paragraph."""
         if section and not _sec(section):
             return
-        story.append(Spacer(1, 11))
+        story.append(Spacer(1, 9))
         if not rows:
             story.append(_section_heading(title))
             story.append(Spacer(1, 5))
@@ -9359,8 +9358,8 @@ def build_shop_day_report_pdf(
         body_r = cell_sm_right if dense else cell_right
         foot_l = cell_sm_strong if dense else cell_strong
         foot_r = cell_sm_strong_right if dense else cell_strong_right
-        pad_v = 3 if dense else 5
-        pad_h = 5 if dense else 6
+        pad_v = 3
+        pad_h = 4
 
         def _head(i, text):
             return _p(text, head_r if aligns[i] == "r" else head_l)
@@ -9390,7 +9389,8 @@ def build_shop_day_report_pdf(
             ("BACKGROUND", (0, 0), (-1, 0), head_fill),
             ("LINEBELOW", (0, 0), (-1, 0), 0.75, head_fill),
             ("LINEBELOW", (0, 1), (-1, body_end), 0.4, line),
-            ("BOX", (0, 0), (-1, -1), 0.75, line),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.75, line),
+            ("LINEBELOW", (0, -1), (-1, -1), 0.75, line),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), pad_h),
             ("RIGHTPADDING", (0, 0), (-1, -1), pad_h),
@@ -9423,8 +9423,17 @@ def build_shop_day_report_pdf(
             KeepTogether([_section_heading(title), Spacer(1, 5), table])
         )
 
+    # "Dates" day-report pick (off by default, opt-in): row times gain the
+    # date. Only a caller that passes a section_visible predicate can turn
+    # it on — bare callers keep the time-only layout.
+    show_dates = bool(section_visible) and _sec("day_report_sec_dates")
+    time_head = "Date · time" if show_dates else "Time"
+
     def _time(at):
-        return timezone.localtime(at).strftime("%H:%M")
+        local = timezone.localtime(at)
+        if show_dates:
+            return local.strftime("%d %b · %H:%M")
+        return local.strftime("%H:%M")
 
     receipt_status_colors = {
         ShopReceiptStatus.ACTIVE: "#b45309",
@@ -9517,7 +9526,7 @@ def build_shop_day_report_pdf(
             )
             _detail_table(
                 "Credit & gift receipts",
-                ["Time", "Receipt", "Sold by", "Status", "Amount"],
+                [time_head, "Receipt", "Sold by", "Status", "Amount"],
                 [
                     [
                         _p(_time(r["at"]), cell_sm),
@@ -9622,7 +9631,7 @@ def build_shop_day_report_pdf(
     )
     _detail_table(
         "Pending & cancelled sales",
-        ["Time", "Receipt", "Sold by", "Status", "Amount"],
+        [time_head, "Receipt", "Sold by", "Status", "Amount"],
         [
             [
                 _p(_time(r["at"]), cell_sm),
@@ -9650,7 +9659,9 @@ def build_shop_day_report_pdf(
     # -- Drawings -------------------------------------------------------------
     drawing_rows = details.get("drawings") or []
     drawing_headers = (
-        ["Time · detail"] + [label for _k, label in channel_cols] + ["Total"]
+        [f"{time_head} · detail"]
+        + [label for _k, label in channel_cols]
+        + ["Total"]
     )
     drawing_ncol = len(drawing_headers)
     drawing_widths = [doc.width * 0.46] + [
@@ -9699,7 +9710,7 @@ def build_shop_day_report_pdf(
     )
     _detail_table(
         "Expenses incurred",
-        ["Time", "Expense", "Category", "Qty", "Supplier", "Status", "Paid"],
+        [time_head, "Expense", "Category", "Qty", "Supplier", "Status", "Paid"],
         [
             [
                 _p(_time(r["at"])),
@@ -9811,7 +9822,7 @@ def build_shop_day_report_pdf(
         )
         _detail_table(
             title,
-            ["Time", "Item", "Qty", "Amount", "Total", "Supplier", "Paid"],
+            [time_head, "Item", "Qty", "Amount", "Total", "Supplier", "Paid"],
             stock_rows,
             [
                 doc.width * 0.07,
@@ -9868,7 +9879,7 @@ def build_shop_day_report_pdf(
         )
         _detail_table(
             title,
-            ["Time", "Item", "Qty", "Reason", "Amount", "Total"],
+            [time_head, "Item", "Qty", "Reason", "Amount", "Total"],
             [
                 [
                     _p(_time(r["at"]), cell_sm),

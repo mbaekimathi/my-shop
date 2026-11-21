@@ -9985,3 +9985,277 @@ body.ax-credit-due-open {
     white-space: normal;
   }
 }
+
+/* ============================================================
+   Day report — flat ledger (no cards)
+   The session report reads as one compact list: plain sections
+   and real row/column tables at every width — KPI tiles, table
+   cards and the mobile card-collapse are all flattened.
+   ============================================================ */
+
+/* ---------- Header + KPIs as ledger lines ---------- */
+
+.ax.ax--day-report .ax-top {
+  width: 100%;
+  max-width: min(58rem, 100%);
+  margin-inline: auto;
+  justify-self: center;
+  padding: 0 0 0.7rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.ax.ax--day-report .ax-kpis {
+  display: block;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.ax.ax--day-report .ax-kpi {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem 0.6rem;
+  min-width: 0;
+  padding: 0.24rem 0;
+  border: 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--line) 75%, transparent);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.ax.ax--day-report .ax-kpi:last-child {
+  border-bottom: 0;
+}
+
+.ax.ax--day-report .ax-kpi::before {
+  content: none;
+}
+
+.ax.ax--day-report .ax-kpi:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.ax.ax--day-report .ax-kpi span {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.ax.ax--day-report .ax-kpi strong {
+  margin-left: auto;
+  font-size: 0.92rem;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: right;
+}
+
+.ax.ax--day-report .ax-kpi em {
+  font-size: 0.66rem;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: right;
+}
+
+/* ---------- Alerts de-carded ---------- */
+
+.ax.ax--day-report .ax-alert {
+  padding: 0.45rem 0.65rem;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* ---------- Tables as flat list sections ---------- */
+
+.ax.ax--day-report .ax-grid--tables {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.ax.ax--day-report .ax-card {
+  width: 100%;
+  justify-self: stretch;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.ax.ax--day-report .ax-card:last-child {
+  border-bottom: 0;
+}
+
+.ax.ax--day-report .ax-card-head {
+  padding: 0.6rem 0 0.3rem;
+  border-bottom: 0;
+}
+
+.ax.ax--day-report .ax-table-wrap--list {
+  border-top: 0;
+}
+
+.ax.ax--day-report .ax-scroll-hint {
+  padding: 0.2rem 0 0;
+}
+
+.ax.ax--day-report .ax-table {
+  width: 100%;
+}
+
+.ax.ax--day-report .ax-table thead th {
+  padding: 0.42rem 0.55rem;
+}
+
+.ax.ax--day-report .ax-table tbody td {
+  padding: 0.4rem 0.55rem;
+}
+
+.ax.ax--day-report .ax-table thead th:first-child,
+.ax.ax--day-report .ax-table thead th.ax-th--item,
+.ax.ax--day-report .ax-table tbody td:first-child,
+.ax.ax--day-report .ax-table tbody td.ax-cell--primary {
+  padding-left: 0;
+}
+
+.ax.ax--day-report .ax-table thead th:last-child,
+.ax.ax--day-report .ax-table tbody td:last-child {
+  padding-right: 0;
+}
+
+.ax.ax--day-report .ax-table tbody tr.ax-row--group td {
+  padding: 0.32rem 0.55rem;
+}
+
+.ax.ax--day-report .ax-footnote {
+  padding: 0.4rem 0 0.65rem;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 75%, transparent);
+  background: none;
+}
+
+.ax.ax--day-report .ax-card .ax-empty {
+  margin: 0.45rem 0;
+  padding: 0.4rem 0;
+  text-align: left;
+}
+
+/* ---------- Narrow screens: keep real rows & columns ----------
+   The shared analytics tables collapse into stacked cards under
+   900px/699px; the day report instead keeps its grid and scrolls
+   sideways — the "Scroll sideways" hint stays on. */
+@media (max-width: 899px) {
+  .ax.ax--day-report .ax-table-wrap,
+  .ax.ax--day-report .ax-table-wrap--scroll,
+  .ax.ax--day-report .ax-table-wrap--list {
+    overflow-x: auto;
+    border-top: 0;
+  }
+
+  .ax.ax--day-report .ax-scroll-hint {
+    display: block;
+  }
+
+  .ax.ax--day-report .ax-table {
+    display: table;
+    width: 100%;
+    min-width: 26rem;
+    background: transparent;
+    font-size: 0.8rem;
+  }
+
+  .ax.ax--day-report .ax-table thead {
+    display: table-header-group;
+  }
+
+  .ax.ax--day-report .ax-table tbody {
+    display: table-row-group;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr {
+    display: table-row;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-bottom: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .ax.ax--day-report .ax-table th,
+  .ax.ax--day-report .ax-table td {
+    display: table-cell;
+    padding: 0.4rem 0.55rem;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+    white-space: normal;
+    text-align: left;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .ax.ax--day-report .ax-table td::before {
+    content: none;
+  }
+
+  .ax.ax--day-report .ax-table td > *:last-child {
+    margin-left: 0;
+    text-align: inherit;
+  }
+
+  .ax.ax--day-report .ax-table td.ax-cell--money,
+  .ax.ax--day-report .ax-table td.ax-cell--pair {
+    text-align: right;
+  }
+
+  /* First cell keeps being a normal column — no title band. */
+  .ax.ax--day-report .ax-table-wrap .ax-table tbody tr td:first-child,
+  .ax.ax--day-report .ax-table-wrap .ax-table tbody tr td.ax-cell--primary {
+    display: table-cell;
+    position: static;
+    padding: 0.4rem 0.55rem;
+    padding-left: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+    background: transparent;
+    box-shadow: none;
+    font-weight: 400;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    text-align: left;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr:last-child td:first-child,
+  .ax.ax--day-report .ax-table tbody tr:last-child td.ax-cell--primary {
+    border-bottom: 0;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr.ax-row--group {
+    display: table-row;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr.ax-row--group td {
+    display: table-cell;
+    padding: 0.32rem 0.55rem;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+  }
+}

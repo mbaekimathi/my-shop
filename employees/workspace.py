@@ -1644,19 +1644,28 @@ DAY_REPORT_SECTION_TOGGLES = (
     ("day_report_sec_expenses", "Expenses incurred"),
     ("day_report_sec_item_stock", "Stocked in & stocked out"),
     ("day_report_sec_shelf_stock", "Shelf stocked in & out"),
+    ("day_report_sec_dates", "Dates"),
 )
 DAY_REPORT_SECTION_PREF_KEYS = frozenset(
     key for key, _label in DAY_REPORT_SECTION_TOGGLES
 )
 
+# Opt-in display picks — they stay off until the employee turns them on,
+# unlike the section toggles which are on until switched off.
+DAY_REPORT_SECTIONS_OFF_BY_DEFAULT = frozenset({"day_report_sec_dates"})
+
 
 def day_report_section_enabled(profile, key: str) -> bool:
-    """True unless the employee hid this section in Cashier settings."""
-    if profile is None or not key:
-        return True
+    """True unless the employee hid this section in Cashier settings.
+
+    Keys in ``DAY_REPORT_SECTIONS_OFF_BY_DEFAULT`` are opt-in: a missing
+    pref means off instead of on.
+    """
     prefs = getattr(profile, "sidebar_prefs", None) or {}
     value = prefs.get(key)
-    return True if value is None else bool(value)
+    if value is None:
+        return key not in DAY_REPORT_SECTIONS_OFF_BY_DEFAULT
+    return bool(value)
 
 
 def cashier_day_report_section_key_from_field(field: str) -> str:

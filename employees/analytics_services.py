@@ -10990,8 +10990,16 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         )
         flow_rows.append(variance_cells)
 
+    # "Dates" day-report pick (off by default): row times gain the date so
+    # gap-window activity from before the session opened is identifiable.
+    show_dates = day_report_section_enabled(profile, "day_report_sec_dates")
+    time_header = "Date · time" if show_dates else "Time"
+
     def _time(at):
-        return timezone.localtime(at).strftime("%H:%M")
+        local = timezone.localtime(at)
+        if show_dates:
+            return local.strftime("%d %b · %H:%M")
+        return local.strftime("%H:%M")
 
     def _supplier_cell(name, phone):
         name = (name or "").strip()
@@ -11098,7 +11106,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
             credit_gift_table = _table(
                 "Credit & gift receipts",
                 [
-                    "Time",
+                    time_header,
                     "Receipt",
                     "Sold by",
                     "Status",
@@ -11108,7 +11116,6 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                 empty="No credit or gift receipts this day.",
                 section="day_report_sec_not_till",
             )
-            credit_gift_table["mini"] = True
             tables.append(credit_gift_table)
 
     items_sold = details.get("items_sold") or []
@@ -11216,7 +11223,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
     flagged_table = _table(
         "Pending & cancelled sales",
         [
-            "Time",
+            time_header,
             "Receipt",
             "Sold by",
             "Status",
@@ -11232,11 +11239,10 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         else "",
         section="day_report_sec_flagged",
     )
-    flagged_table["mini"] = True
     tables.append(flagged_table)
 
     drawing_rows = details.get("drawings") or []
-    drawing_columns = [{"label": "Time · detail"}]
+    drawing_columns = [{"label": f"{time_header} · detail"}]
     drawing_columns += [
         {"label": label, "money": True} for _key, label in channel_cols
     ]
@@ -11295,7 +11301,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         _table(
             "Expenses incurred",
             [
-                "Time",
+                time_header,
                 "Expense",
                 "Category",
                 {"label": "Qty", "money": True},
@@ -11497,7 +11503,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         return _table(
             title,
             [
-                "Time",
+                time_header,
                 "Item",
                 {"label": "Qty", "money": True},
                 "Reason",
