@@ -157,19 +157,48 @@ class CashierSessionBlockTests(TestCase):
         self.assertContains(response, "Quick actions")
 
     def test_cashier_settings_and_day_picker_blocked(self):
+        """Day picker is blocked; cashier settings stays reachable."""
         self._open_day()
         client = self._login(self.next)
-        for url in (
-            reverse("employees:role_shop_cashier_settings"),
-            reverse("employees:role_shop_day", kwargs={"role_segment": "shop-cashier"}),
-        ):
-            response = client.get(url)
-            self.assertEqual(response.status_code, 200, url)
-            self.assertTemplateUsed(
-                response, "employees/cashier_session_blocked.html"
-            )
+        response = client.get(
+            reverse("employees:role_shop_day", kwargs={"role_segment": "shop-cashier"})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(
+            response, "employees/cashier_session_blocked.html"
+        )
+        response = client.get(reverse("employees:role_shop_cashier_settings"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "employees/settings_cashier.html")
+
+    def test_blocked_page_links_cashier_settings(self):
+        self._open_day()
+        client = self._login(self.next)
+        response = client.get(reverse("employees:role_shop_cashier"))
+        self.assertEqual(response.status_code, 200)
+        labels = {
+            item["label"]
+            for item in response.context["page_sidebar"]["footer"]
+            if item.get("type") == "link"
+        }
+        self.assertIn("Cashier settings", labels)
 
     def test_cashier_post_denied_with_json(self):
+        self._open_day()
+        client = self._login(self.next)
+        response = client.post(
+            reverse(
+                "employees:role_shop_day", kwargs={"role_segment": "shop-cashier"}
+            ),
+            {"action": "toggle_pos_setting"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["ok"])
+        self.assertIn("PREVIOUS CASHIER", response.json()["error"])
+
+    def test_cashier_settings_post_allowed_while_blocked(self):
+        """Settings toggles are personal prefs — they still save while blocked."""
         self._open_day()
         client = self._login(self.next)
         response = client.post(
@@ -177,9 +206,10 @@ class CashierSessionBlockTests(TestCase):
             {"action": "toggle_pos_setting", "field": "sidebar_sell", "enabled": "0"},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(response.status_code, 403)
-        self.assertFalse(response.json()["ok"])
-        self.assertIn("PREVIOUS CASHIER", response.json()["error"])
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.next.refresh_from_db()
+        self.assertFalse(self.next.sidebar_prefs.get("sell"))
 
     def test_day_toggle_denied_for_next_cashier(self):
         self._open_day()

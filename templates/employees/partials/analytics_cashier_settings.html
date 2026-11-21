@@ -22,6 +22,7 @@ balances URL via pos-settings.js.{% endcomment %}
               class="perm-switch-input"
               {% if toggle.enabled %}checked{% endif %}
               data-pos-toggle
+              {% if group.stock_mode %}data-stock-mode-toggle{% endif %}
               data-field="{{ toggle.field }}"
               aria-label="{{ toggle.label }}"
             >

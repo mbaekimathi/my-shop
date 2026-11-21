@@ -125,6 +125,7 @@ from .throttle import rate_limit
 from .workspace import (
     CASHIER_SIDEBAR_LINKS,
     DAY_REPORT_SECTION_TOGGLES,
+    DAY_REPORT_STATUS_MODES,
     ROLE_PAGE_META,
     SELL_POPUP_TOGGLES,
     buy_stock_modal_context,
@@ -1565,11 +1566,7 @@ def cashier_settings(request):
                     "label": label,
                     "enabled": day_report_status_mode(profile) == mode,
                 }
-                for mode, label in (
-                    ("all", "All receipts"),
-                    ("pending", "Pending receipts only"),
-                    ("confirmed", "Confirmed receipts only"),
-                )
+                for mode, label in DAY_REPORT_STATUS_MODES
             ],
             "day_report_section_toggles": [
                 {

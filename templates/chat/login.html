@@ -173,19 +173,31 @@
   </main>
 </div>
 
-<div class="install-toast" data-install-toast role="status" hidden>
-  <span class="install-toast__icon" aria-hidden="true"><i data-lucide="smartphone"></i></span>
-  <div class="install-toast__body">
-    <b>Get the app</b>
-    <small data-install-hint>Install {{ company_name|default:"MY-SHOP" }} Chat for one-tap access.</small>
+<div class="install-fab" data-install-fab hidden>
+  <button
+    type="button"
+    class="install-fab__btn"
+    data-install-open
+    aria-label="Install app — tap for options, drag to move"
+    title="Install app"
+  >
+    <i data-lucide="smartphone" aria-hidden="true"></i>
+  </button>
+  <div class="install-fab__pop" data-install-pop role="dialog" aria-label="Install app" hidden>
+    <div class="install-fab__pop-body">
+      <b>Get the app</b>
+      <small data-install-hint>Install {{ company_name|default:"MY-SHOP" }} Chat for one-tap access.</small>
+    </div>
+    <div class="install-fab__pop-actions">
+      <button type="button" class="btn install-fab__install" data-install-btn>
+        <i data-lucide="download" aria-hidden="true"></i>
+        <span>Install</span>
+      </button>
+      <button type="button" class="install-fab__hide" data-install-close aria-label="Hide install button" title="Hide for this session">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
   </div>
-  <button type="button" class="btn install-toast__btn" data-install-btn>
-    <i data-lucide="download" aria-hidden="true"></i>
-    <span>Install</span>
-  </button>
-  <button type="button" class="install-toast__close" data-install-close aria-label="Dismiss install prompt">
-    <i data-lucide="x" aria-hidden="true"></i>
-  </button>
 </div>
 {% endblock %}
 
@@ -226,18 +238,21 @@
       });
     }
 
-    // PWA install toast — floats over the page like a notification instead
-    // of sitting inside the form. Shown when the browser can install, or on
-    // mobile for manual Add-to-Home-Screen instructions. Dismissed once per
-    // session.
-    var installToast = document.querySelector("[data-install-toast]");
+    // PWA install chip — a small floating button instead of a banner, so it
+    // never blocks the page. Tap it for install options, drag it to any
+    // spot along the screen edges (the spot is remembered), or hide it for
+    // the session. Shown when the browser can install, or on mobile for
+    // manual Add-to-Home-Screen instructions.
+    var installFab = document.querySelector("[data-install-fab]");
+    var fabBtn = document.querySelector("[data-install-open]");
+    var installPop = document.querySelector("[data-install-pop]");
     var installBtn = document.querySelector("[data-install-btn]");
-    var installClose = document.querySelector("[data-install-close]");
+    var installHide = document.querySelector("[data-install-close]");
     var installHint = document.querySelector("[data-install-hint]");
     var deferredPrompt = null;
 
-    if (installToast) {
-      // Already installed → running standalone → never show the toast.
+    if (installFab && fabBtn && installPop) {
+      // Already installed → running standalone → never show the chip.
       var installed =
         window.matchMedia("(display-mode: standalone)").matches ||
         window.matchMedia("(display-mode: fullscreen)").matches ||
@@ -251,22 +266,138 @@
         window.matchMedia("(pointer: coarse)").matches ||
         /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
-      function showInstallToast() {
-        if (!installed && !dismissed) installToast.hidden = false;
+      var FAB_MARGIN = 14;
+      var fabSide = "right";
+      var fabY = 0.78;
+      try {
+        var savedPos = JSON.parse(localStorage.getItem("myshop-install-fab-pos") || "null");
+        if (savedPos) {
+          if (savedPos.side === "left" || savedPos.side === "right") fabSide = savedPos.side;
+          if (typeof savedPos.y === "number" && isFinite(savedPos.y)) {
+            fabY = Math.min(Math.max(savedPos.y, 0), 1);
+          }
+        }
+      } catch (e) {}
+
+      function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
+
+      function placeFab() {
+        var w = installFab.offsetWidth || 48;
+        var h = installFab.offsetHeight || 48;
+        installFab.style.left =
+          (fabSide === "left" ? FAB_MARGIN : window.innerWidth - w - FAB_MARGIN) + "px";
+        installFab.style.top =
+          clamp(fabY * window.innerHeight - h / 2, FAB_MARGIN, window.innerHeight - h - FAB_MARGIN) + "px";
+        installFab.style.right = "auto";
+        installFab.style.bottom = "auto";
+        installFab.dataset.side = fabSide;
       }
 
+      function setPopOpen(open) {
+        if (!open) { installPop.hidden = true; return; }
+        // Open below the button when it sits too near the top of the screen.
+        var top = parseFloat(installFab.style.top);
+        installFab.classList.toggle("is-below", isFinite(top) && top < 200);
+        installPop.hidden = false;
+      }
+
+      var foldTimer = null;
+      function scheduleFold() {
+        if (foldTimer) clearTimeout(foldTimer);
+        foldTimer = setTimeout(function () { setPopOpen(false); }, 8000);
+      }
+      installFab.addEventListener("pointerdown", function () {
+        if (foldTimer) { clearTimeout(foldTimer); foldTimer = null; }
+      }, true);
+
+      function showInstallFab() {
+        if (installed || dismissed || !installFab.hidden) return;
+        installFab.hidden = false;
+        placeFab();
+        // Show the install options once so the chip's purpose is clear,
+        // then it folds back to just the icon.
+        setPopOpen(true);
+        scheduleFold();
+      }
+
+      // Drag anywhere; on release snap to the nearest screen edge and
+      // remember the spot. A plain tap toggles the popover via click below.
+      var drag = null;
+      var ignoreClick = false;
+      fabBtn.addEventListener("pointerdown", function (e) {
+        drag = {
+          id: e.pointerId,
+          sx: e.clientX,
+          sy: e.clientY,
+          ox: installFab.offsetLeft,
+          oy: installFab.offsetTop,
+          moved: false
+        };
+        try { fabBtn.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      fabBtn.addEventListener("pointermove", function (e) {
+        if (!drag || e.pointerId !== drag.id) return;
+        var dx = e.clientX - drag.sx;
+        var dy = e.clientY - drag.sy;
+        if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+        if (!drag.moved) {
+          drag.moved = true;
+          installFab.classList.add("is-dragging");
+          setPopOpen(false);
+        }
+        var w = installFab.offsetWidth;
+        var h = installFab.offsetHeight;
+        installFab.style.left = clamp(drag.ox + dx, FAB_MARGIN, window.innerWidth - w - FAB_MARGIN) + "px";
+        installFab.style.top = clamp(drag.oy + dy, FAB_MARGIN, window.innerHeight - h - FAB_MARGIN) + "px";
+      });
+      function endDrag(e) {
+        if (!drag || (e.pointerId !== undefined && e.pointerId !== drag.id)) return;
+        var wasDrag = drag.moved;
+        drag = null;
+        installFab.classList.remove("is-dragging");
+        if (!wasDrag) return;
+        var w = installFab.offsetWidth;
+        var h = installFab.offsetHeight;
+        fabSide = installFab.offsetLeft + w / 2 < window.innerWidth / 2 ? "left" : "right";
+        fabY = (installFab.offsetTop + h / 2) / window.innerHeight;
+        placeFab();
+        try {
+          localStorage.setItem(
+            "myshop-install-fab-pos",
+            JSON.stringify({ side: fabSide, y: fabY })
+          );
+        } catch (err) {}
+        ignoreClick = true;
+        setTimeout(function () { ignoreClick = false; }, 60);
+      }
+      fabBtn.addEventListener("pointerup", endDrag);
+      fabBtn.addEventListener("pointercancel", endDrag);
+      fabBtn.addEventListener("click", function () {
+        if (ignoreClick) return;
+        setPopOpen(installPop.hidden);
+      });
+      document.addEventListener("pointerdown", function (e) {
+        if (!installPop.hidden && !installFab.contains(e.target)) setPopOpen(false);
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") setPopOpen(false);
+      });
+      window.addEventListener("resize", function () {
+        if (!installFab.hidden) placeFab();
+      });
+
       if (!installed && !dismissed) {
-        // Mobile browsers without a programmatic prompt still get manual
-        // Add-to-Home-Screen instructions; desktop waits for the event.
-        if (isMobile) setTimeout(showInstallToast, 1800);
+        // Mobile browsers without a programmatic prompt still get the chip
+        // (manual instructions); desktop waits for the event.
+        if (isMobile) setTimeout(showInstallFab, 1800);
         window.addEventListener("beforeinstallprompt", function (e) {
           e.preventDefault();
           deferredPrompt = e;
-          setTimeout(showInstallToast, 1200);
+          setTimeout(showInstallFab, 1200);
         });
       }
       window.addEventListener("appinstalled", function () {
-        installToast.hidden = true;
+        installFab.hidden = true;
       });
       if (installBtn) {
         installBtn.addEventListener("click", function () {
@@ -279,9 +410,9 @@
           }
         });
       }
-      if (installClose) {
-        installClose.addEventListener("click", function () {
-          installToast.hidden = true;
+      if (installHide) {
+        installHide.addEventListener("click", function () {
+          installFab.hidden = true;
           dismissed = true;
           try { sessionStorage.setItem("myshop-install-dismissed", "1"); } catch (e) {}
         });

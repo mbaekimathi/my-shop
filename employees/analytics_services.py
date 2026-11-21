@@ -10423,7 +10423,18 @@ def _build_balances_settings(filters):
     )
 
     from .access import role_url_segment
-    from .workspace import settings_section_url
+    from .workspace import (
+        CASHIER_SIDEBAR_LINKS,
+        DAY_REPORT_SECTIONS_OFF_BY_DEFAULT,
+        DAY_REPORT_SECTION_TOGGLES,
+        DAY_REPORT_STATUS_MODES,
+        SELL_POPUP_TOGGLES,
+        cashier_default_day_report_status,
+        cashier_default_pref,
+        cashier_sidebar_pref_field,
+        day_report_status_pref_field,
+        settings_section_url,
+    )
 
     role = filters.get("role")
     role_segment = role_url_segment(role) if role is not None else ""
@@ -10433,8 +10444,83 @@ def _build_balances_settings(filters):
             "employees:analytics_section",
             kwargs={"role_segment": role_segment, "section": "balances"},
         )
+
+    def _default_on(key, *, off_by_default=False):
+        value = cashier_default_pref(key)
+        if value is None:
+            return not off_by_default
+        return bool(value)
+
+    status_mode = cashier_default_day_report_status()
+    # The per-cashier picks from /shop-cashier/settings/ shown as company
+    # defaults — a cashier's own pick still wins where they have set one.
+    groups = [
+        {
+            "title": "Dashboard sidebar",
+            "summary": (
+                "Company default menu links on the cashier dashboard. A "
+                "cashier's own pick on Cashier settings still wins."
+            ),
+            "toggles": [
+                {
+                    "field": cashier_sidebar_pref_field(key),
+                    "label": label,
+                    "enabled": _default_on(key),
+                }
+                for key, label in CASHIER_SIDEBAR_LINKS
+            ],
+        },
+        {
+            "title": "Sell popup",
+            "summary": (
+                "Company defaults for the dashboard Sell popup — document "
+                "types, payment methods, and price editing."
+            ),
+            "toggles": [
+                {
+                    "field": key,
+                    "label": label,
+                    "enabled": _default_on(key),
+                }
+                for key, label in SELL_POPUP_TOGGLES
+            ],
+        },
+        {
+            "title": "Day report",
+            "summary": (
+                "Which receipt statuses count as sales in the day "
+                "accounting report by default."
+            ),
+            "stock_mode": True,
+            "toggles": [
+                {
+                    "field": day_report_status_pref_field(mode),
+                    "label": label,
+                    "enabled": status_mode == mode,
+                }
+                for mode, label in DAY_REPORT_STATUS_MODES
+            ],
+        },
+        {
+            "title": "Day report sections",
+            "summary": (
+                "Company defaults for the tables shown in the day "
+                "accounting report."
+            ),
+            "toggles": [
+                {
+                    "field": key,
+                    "label": label,
+                    "enabled": _default_on(
+                        key,
+                        off_by_default=key in DAY_REPORT_SECTIONS_OFF_BY_DEFAULT,
+                    ),
+                }
+                for key, label in DAY_REPORT_SECTION_TOGGLES
+            ],
+        },
+    ]
     pos = get_company_pos_settings()
-    groups = []
     for group in BALANCES_CASHIER_SETTING_GROUPS:
         groups.append(
             {
@@ -10459,8 +10545,9 @@ def _build_balances_settings(filters):
     return {
         "headline": "Cashier settings",
         "lead": (
-            "Company-wide options for cashier sessions — compulsory open "
-            "& close and clock in, shop switching, and idle sign-out."
+            "Company-wide options for cashier sessions — cashier "
+            "dashboard and day report defaults, compulsory open & close "
+            "and clock in, shop switching, and idle sign-out."
         ),
         "alerts": [],
         "insights": [],
@@ -11333,12 +11420,11 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         has_total = False
         for group in groups:
             source = (group.get("source_label") or "").strip() or "Stock in"
-            header = f"{_time(group['at'])} · {source}"
+            paid_note = source
             if group.get("paid"):
-                header += f" · Paid {_money_ksh(group['paid'])}"
+                paid_note += f" · Paid {_money_ksh(group['paid'])}"
             elif group.get("payment_label"):
-                header += f" · {group['payment_label']}"
-            rows.append({"group_header": True, "label": header})
+                paid_note += f" · {group['payment_label']}"
             lines = group.get("lines") or [
                 {
                     "item": "Stock purchase",
@@ -11349,7 +11435,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                     "supplier_phone": "",
                 }
             ]
-            for line in lines:
+            for index, line in enumerate(lines):
                 if line.get("qty") is not None:
                     qty_total += Decimal(line["qty"])
                 if line.get("total") is not None:
@@ -11357,7 +11443,11 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                     has_total = True
                 rows.append(
                     [
-                        line["item"],
+                        _time(group["at"]),
+                        {
+                            "label": line["item"],
+                            "sub": paid_note if index == 0 else source,
+                        },
                         (
                             _qty_label(line["qty"])
                             if line.get("qty") is not None
@@ -11394,6 +11484,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
                     "total_row": True,
                     "cells": [
                         "Total",
+                        "",
                         _qty_label(qty_total),
                         "",
                         (
@@ -11417,6 +11508,7 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         return _table(
             title,
             [
+                time_header,
                 "Item",
                 {"label": "Qty", "money": True},
                 {"label": "Amount", "money": True},

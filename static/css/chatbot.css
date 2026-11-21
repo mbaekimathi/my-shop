@@ -3657,66 +3657,87 @@ html[data-theme="dark"] .pick-total small { color: #8696a0; }
   --wa-input-bg: var(--wa-panel-2);
 }
 
-/* Login — install-app toast (floating notification, outside the form) */
+/* Login — install-app chip: small draggable floating button + popover */
 
-.install-toast {
+.install-fab {
   position: fixed;
-  left: 50%;
-  bottom: calc(1.1rem + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  right: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
   z-index: 90;
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  width: min(26rem, calc(100% - 2rem));
-  padding: 0.7rem 0.7rem 0.7rem 0.8rem;
+  animation: install-fab-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1.15);
+}
+
+@keyframes install-fab-in {
+  from { transform: translateY(1.2rem); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.install-fab__btn {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #00a884;
+  color: #fff;
+  cursor: grab;
+  box-shadow: 0 10px 24px rgba(9, 26, 24, 0.35);
+  touch-action: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.install-fab__btn:hover { transform: scale(1.07); }
+.install-fab.is-dragging .install-fab__btn {
+  cursor: grabbing;
+  transform: scale(1.12);
+  box-shadow: 0 14px 32px rgba(9, 26, 24, 0.45);
+  transition: none;
+}
+.install-fab__btn .lucide { width: 1.35rem; height: 1.35rem; }
+
+.install-fab__pop {
+  position: absolute;
+  bottom: calc(100% + 0.6rem);
+  right: 0;
+  width: min(16rem, calc(100vw - 2rem));
+  padding: 0.75rem 0.8rem;
+  display: grid;
+  gap: 0.55rem;
   border: 1px solid color-mix(in srgb, #00a884 35%, #e9edef);
-  border-radius: 16px;
+  border-radius: 14px;
   background: #ffffff;
   color: #14201e;
   box-shadow: 0 16px 44px rgba(9, 26, 24, 0.4);
-  animation: install-toast-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1.15);
 }
 
-html[data-theme="dark"] .install-toast {
+.install-fab[data-side="left"] .install-fab__pop { right: auto; left: 0; }
+.install-fab.is-below .install-fab__pop { bottom: auto; top: calc(100% + 0.6rem); }
+
+html[data-theme="dark"] .install-fab__pop {
   background: #111b21;
   color: #e9edef;
   border-color: color-mix(in srgb, #00a884 45%, #2a3942);
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6);
 }
 
-@keyframes install-toast-in {
-  from { transform: translate(-50%, 1.4rem); opacity: 0; }
-  to { transform: translate(-50%, 0); opacity: 1; }
-}
+.install-fab__pop-body { display: grid; }
+.install-fab__pop-body b { font-size: 0.85rem; }
+.install-fab__pop-body small { color: #667781; font-size: 0.72rem; }
+html[data-theme="dark"] .install-fab__pop-body small { color: #8696a0; }
 
-.install-toast__icon {
-  width: 2.2rem;
-  height: 2.2rem;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #00a884;
-  color: #fff;
-}
+.install-fab__pop-actions { display: flex; align-items: center; gap: 0.45rem; }
 
-.install-toast__icon .lucide { width: 1.1rem; height: 1.1rem; }
-
-.install-toast__body { flex: 1; min-width: 0; display: grid; }
-.install-toast__body b { font-size: 0.85rem; }
-.install-toast__body small { color: #667781; font-size: 0.72rem; }
-html[data-theme="dark"] .install-toast__body small { color: #8696a0; }
-
-.install-toast__btn {
-  flex: 0 0 auto;
+.install-fab__install {
+  flex: 1;
   gap: 0.35rem;
   padding: 0.45rem 0.85rem;
   border-radius: 999px;
   font-size: 0.8rem;
 }
 
-.install-toast__close {
+.install-fab__hide {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
@@ -3730,15 +3751,10 @@ html[data-theme="dark"] .install-toast__body small { color: #8696a0; }
   cursor: pointer;
 }
 
-.install-toast__close:hover { background: rgba(102, 119, 129, 0.16); }
-html[data-theme="dark"] .install-toast__close { color: #8696a0; }
-html[data-theme="dark"] .install-toast__close:hover { background: rgba(134, 150, 160, 0.16); }
-.install-toast__close .lucide { width: 0.95rem; height: 0.95rem; }
-
-@media (max-width: 420px) {
-  .install-toast { flex-wrap: wrap; }
-  .install-toast__btn { order: 4; flex: 1; }
-}
+.install-fab__hide:hover { background: rgba(102, 119, 129, 0.16); }
+html[data-theme="dark"] .install-fab__hide { color: #8696a0; }
+html[data-theme="dark"] .install-fab__hide:hover { background: rgba(134, 150, 160, 0.16); }
+.install-fab__hide .lucide { width: 0.95rem; height: 0.95rem; }
 
 /* ==========================================================================
    Cart refresh — modern item rows, steppers, per-breakpoint panel fit.

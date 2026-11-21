@@ -230,6 +230,14 @@ class CashierSessionBlockMiddleware:
         if not request.path_info.startswith(f"/{segment}/"):
             return self.get_response(request)
 
+        # Cashier settings stays reachable while blocked — it only stores the
+        # employee's own picks (sidebar links, Sell popup, day report), never
+        # day-session data; the open & close group is perm-gated separately.
+        from django.urls import reverse
+
+        if request.path_info == reverse("employees:role_shop_cashier_settings"):
+            return self.get_response(request)
+
         profile = get_profile_for_request(request)
         if (
             profile is None

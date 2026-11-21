@@ -158,6 +158,33 @@ class CashierSettingsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Expenses", self._sidebar_labels())
 
+    def test_company_default_applies_until_cashier_picks_own(self):
+        from employees.workspace import set_cashier_default_pref
+
+        # No own pick → the company default drives the dashboard link.
+        set_cashier_default_pref("expenses", False)
+        self.assertNotIn("Expenses", self._sidebar_labels())
+
+        response = self.client.get("/shop-cashier/settings/")
+        self.assertEqual(response.status_code, 200)
+        toggles = {
+            toggle["field"]: toggle["enabled"]
+            for toggle in response.context["sidebar_toggles"]
+        }
+        self.assertFalse(toggles["sidebar_expenses"])
+
+        # The cashier's own pick wins over the company default.
+        self.client.post(
+            "/shop-cashier/settings/",
+            {
+                "action": "toggle_pos_setting",
+                "field": "sidebar_expenses",
+                "enabled": "1",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertIn("Expenses", self._sidebar_labels())
+
     def test_settings_page_lists_sell_popup_toggles(self):
         response = self.client.get("/shop-cashier/settings/")
         self.assertEqual(response.status_code, 200)
@@ -610,8 +637,11 @@ class CashierSettingsTests(TestCase):
 )
 class BalancesCashierSettingsTests(TestCase):
     """?mode=settings on /…/analytics/balances/ — company cashier session
-    options (open & close, shop switching, idle sign-out) editable from the
-    Cashiers analytics page under the settings/company-pos permission."""
+    options (open & close, shop switching, idle sign-out) plus company
+    defaults for the per-cashier picks (dashboard sidebar, Sell popup, day
+    report status/sections), editable from the Cashiers analytics page
+    under the settings/company-pos permission. A cashier's own
+    sidebar_prefs entry still wins over the company default."""
 
     PASSWORD = "balances-settings-pass"
     BALANCES_URL = "/it-support/analytics/balances/"
@@ -665,7 +695,15 @@ class BalancesCashierSettingsTests(TestCase):
         groups = {group["title"]: group for group in page["settings_groups"]}
         self.assertEqual(
             set(groups),
-            {"Open & close", "Shop switching", "Session timeout"},
+            {
+                "Dashboard sidebar",
+                "Sell popup",
+                "Day report",
+                "Day report sections",
+                "Open & close",
+                "Shop switching",
+                "Session timeout",
+            },
         )
         fields = {
             toggle["field"]
@@ -680,11 +718,45 @@ class BalancesCashierSettingsTests(TestCase):
                 "enable_passwordless_shop_switch",
                 "enable_employee_session_timeout",
                 "enable_shop_session_timeout",
+                "sidebar_sell",
+                "sidebar_open_close",
+                "sidebar_drawings",
+                "sidebar_day_report",
+                "sidebar_day_history",
+                "sidebar_expenses",
+                "sidebar_receipts",
+                "sidebar_analytics",
+                "sidebar_buy_stock",
+                "sidebar_suppliers",
+                "sell_sale",
+                "sell_credit",
+                "sell_quotation",
+                "sell_gift",
+                "sell_pay_cash",
+                "sell_pay_mpesa",
+                "sell_pay_card",
+                "sell_edit_prices",
+                "day_report_status_all",
+                "day_report_status_pending",
+                "day_report_status_confirmed",
+                "day_report_sec_money_flow",
+                "day_report_sec_not_till",
+                "day_report_sec_items_sold",
+                "day_report_sec_sellers",
+                "day_report_sec_flagged",
+                "day_report_sec_drawings",
+                "day_report_sec_expenses",
+                "day_report_sec_item_stock",
+                "day_report_sec_shelf_stock",
+                "day_report_sec_dates",
             },
         )
         self.assertContains(response, "Compulsory open")
         self.assertContains(response, "Switch shops without password")
         self.assertContains(response, "Employee session")
+        self.assertContains(response, "Dashboard sidebar")
+        self.assertContains(response, "Sell popup")
+        self.assertContains(response, "Pending receipts only")
 
     def test_toggle_updates_company_pos_row(self):
         response = self.client.post(
@@ -791,3 +863,96 @@ class BalancesCashierSettingsTests(TestCase):
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
         self.assertEqual(response.status_code, 405)
+
+    def _post_toggle(self, field, enabled="1"):
+        return self.client.post(
+            self.BALANCES_URL,
+            {
+                "action": "toggle_pos_setting",
+                "field": field,
+                "enabled": enabled,
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+    def test_sidebar_default_toggle_writes_company_pref(self):
+        from employees.workspace import (
+            cashier_sidebar_pref_enabled,
+            set_cashier_sidebar_pref,
+        )
+
+        response = self._post_toggle("sidebar_suppliers", "0")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(json.loads(response.content)["enabled"])
+        self.assertFalse(
+            get_company_pos_settings().cashier_default_prefs["suppliers"]
+        )
+        # An employee without their own pick follows the company default.
+        self.assertFalse(
+            cashier_sidebar_pref_enabled(self.staff, "suppliers")
+        )
+        # …but an employee's own pick still wins.
+        set_cashier_sidebar_pref(self.staff, "suppliers", True)
+        self.assertTrue(cashier_sidebar_pref_enabled(self.staff, "suppliers"))
+
+    def test_sell_default_toggle_writes_company_pref(self):
+        from employees.workspace import (
+            cashier_sell_pref_enabled,
+            sell_payment_methods,
+        )
+
+        response = self._post_toggle("sell_pay_card", "0")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            get_company_pos_settings().cashier_default_prefs["sell_pay_card"]
+        )
+        self.assertFalse(
+            cashier_sell_pref_enabled(self.staff, "sell_pay_card")
+        )
+        methods = sell_payment_methods(self.staff)
+        self.assertNotIn("card", methods)
+        self.assertNotIn("cash_card", methods)
+
+    def test_day_report_default_status_pick(self):
+        from employees.workspace import (
+            cashier_default_day_report_status,
+            day_report_status_mode,
+        )
+
+        response = self._post_toggle("day_report_status_pending")
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertTrue(data["enabled"])
+        self.assertEqual(data["stock_mode"], "day_report_status_pending")
+        self.assertEqual(cashier_default_day_report_status(), "pending")
+        self.assertEqual(day_report_status_mode(self.staff), "pending")
+        # Turning a one-of pick off is rejected — pick another instead.
+        response = self._post_toggle("day_report_status_pending", "0")
+        self.assertEqual(response.status_code, 400)
+
+    def test_day_report_section_default_toggle(self):
+        from employees.workspace import day_report_section_enabled
+
+        response = self._post_toggle("day_report_sec_drawings", "0")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            day_report_section_enabled(
+                self.staff, "day_report_sec_drawings"
+            )
+        )
+        # Opt-in sections can be turned on company-wide too.
+        response = self._post_toggle("day_report_sec_dates")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            day_report_section_enabled(self.staff, "day_report_sec_dates")
+        )
+
+    def test_pref_fields_reject_unknown(self):
+        for field in (
+            "sidebar_nope",
+            "sell_nope",
+            "day_report_sec_nope",
+            "day_report_status_nope",
+        ):
+            response = self._post_toggle(field)
+            self.assertEqual(response.status_code, 400, field)

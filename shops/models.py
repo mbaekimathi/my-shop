@@ -962,6 +962,16 @@ class CompanyPosSettings(models.Model):
             "day/period window."
         ),
     )
+    cashier_default_prefs = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Company-wide defaults for the per-cashier picks on Cashier "
+            "settings (dashboard sidebar links, Sell popup options, day "
+            "report status and sections). A cashier's own sidebar_prefs "
+            "entry still wins where they have set one."
+        ),
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

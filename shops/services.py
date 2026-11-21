@@ -9335,8 +9335,6 @@ def build_shop_day_report_pdf(
         *,
         aligns=None,
         footer=None,
-        spans=None,
-        group_backgrounds=None,
         dense=False,
         empty_note="None recorded.",
         section="",
@@ -9397,22 +9395,9 @@ def build_shop_day_report_pdf(
             ("TOPPADDING", (0, 0), (-1, -1), pad_v),
             ("BOTTOMPADDING", (0, 0), (-1, -1), pad_v),
         ]
-        if group_backgrounds is not None:
-            for start_row, end_row in group_backgrounds:
-                commands.append(
-                    (
-                        "BACKGROUND",
-                        (0, start_row),
-                        (-1, end_row),
-                        surface,
-                    )
-                )
-        else:
-            commands.append(
-                ("ROWBACKGROUNDS", (0, 1), (-1, body_end), [white, surface])
-            )
-        for span in spans or []:
-            commands.append(("SPAN",) + span)
+        commands.append(
+            ("ROWBACKGROUNDS", (0, 1), (-1, body_end), [white, surface])
+        )
         if has_footer:
             commands += [
                 ("BACKGROUND", (0, -1), (-1, -1), accent_soft),
@@ -9758,12 +9743,10 @@ def build_shop_day_report_pdf(
 
     def _stocked_in_detail(title, groups, empty_note, section=""):
         stock_rows = []
-        stock_spans = []
-        stock_bgs = []
         qty_total = Decimal("0")
         value_total = Decimal("0")
         has_total = False
-        for index, group in enumerate(groups):
+        for group in groups:
             lines = group.get("lines") or []
             if not lines:
                 lines = [
@@ -9776,7 +9759,6 @@ def build_shop_day_report_pdf(
                         "supplier_phone": "",
                     }
                 ]
-            start = len(stock_rows) + 1  # +1 for the header row
             for i, stock_line in enumerate(lines):
                 if stock_line.get("qty") is not None:
                     qty_total += Decimal(stock_line["qty"])
@@ -9785,7 +9767,7 @@ def build_shop_day_report_pdf(
                     has_total = True
                 stock_rows.append(
                     [
-                        _p(_time(group["at"])) if i == 0 else "",
+                        _p(_time(group["at"])),
                         _stock_in_item_cell(stock_line, group),
                         _pr(
                             _qty_label(stock_line["qty"])
@@ -9809,14 +9791,6 @@ def build_shop_day_report_pdf(
                         _stock_in_paid_cell(group) if i == 0 else "",
                     ]
                 )
-            end = len(stock_rows)
-            if end > start:
-                stock_spans += [
-                    ((0, start), (0, end)),
-                    ((6, start), (6, end)),
-                ]
-            if index % 2 == 1:
-                stock_bgs.append((start, end))
         paid_total = sum(
             (g.get("paid") or Decimal("0")) for g in groups
         )
@@ -9843,8 +9817,6 @@ def build_shop_day_report_pdf(
                 "",
                 _fmt(paid_total),
             ],
-            spans=stock_spans,
-            group_backgrounds=stock_bgs,
             empty_note=empty_note,
             section=section,
         )

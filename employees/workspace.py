@@ -1386,8 +1386,22 @@ def render_cashier_session_blocked(request, profile, *, blocks=None):
     """Blocking page shown while a colleague's day session is still open."""
     from django.shortcuts import render
 
+    from .module_permissions import employee_may_any
+
     blocks = blocks if blocks is not None else cashier_session_blocks(profile)
     dashboard_url = reverse(role_home_url_name(EmployeeRole.SHOP_CASHIER))
+    footer = []
+    if employee_may_any(profile, "settings"):
+        footer.append(
+            _link(
+                "Cashier settings",
+                "sliders-horizontal",
+                href=cashier_settings_url(),
+            )
+        )
+    footer.append(
+        _link("Sign out", "log-out", url_name="employees:logout", danger=True)
+    )
     return render(
         request,
         "employees/cashier_session_blocked.html",
@@ -1418,14 +1432,7 @@ def render_cashier_session_blocked(request, profile, *, blocks=None):
                             active=True,
                         )
                     ],
-                    "footer": [
-                        _link(
-                            "Sign out",
-                            "log-out",
-                            url_name="employees:logout",
-                            danger=True,
-                        )
-                    ],
+                    "footer": footer,
                 }
             ),
         },
@@ -1458,13 +1465,18 @@ def cashier_settings_url():
     return reverse("employees:role_shop_cashier_settings")
 
 
-def cashier_sidebar_pref_enabled(profile, key: str) -> bool:
-    """True unless the employee hid this dashboard link in Cashier settings."""
-    if profile is None:
-        return True
+def _cashier_pref_value(profile, key: str, default: bool) -> bool:
+    """Employee pick → company default → built-in default."""
     prefs = getattr(profile, "sidebar_prefs", None) or {}
     value = prefs.get(key)
-    return True if value is None else bool(value)
+    if value is None:
+        value = cashier_default_pref(key)
+    return default if value is None else bool(value)
+
+
+def cashier_sidebar_pref_enabled(profile, key: str) -> bool:
+    """True unless the employee hid this dashboard link in Cashier settings."""
+    return _cashier_pref_value(profile, key, True)
 
 
 def cashier_sidebar_pref_field(key: str) -> str:
@@ -1517,11 +1529,7 @@ SELL_PAYMENT_LABELS = {
 
 def cashier_sell_pref_enabled(profile, key: str) -> bool:
     """True unless the employee disabled this Sell popup option."""
-    if profile is None:
-        return True
-    prefs = getattr(profile, "sidebar_prefs", None) or {}
-    value = prefs.get(key)
-    return True if value is None else bool(value)
+    return _cashier_pref_value(profile, key, True)
 
 
 def cashier_sell_pref_field(key: str) -> str:
@@ -1581,13 +1589,20 @@ def sell_kinds_allowed(profile) -> list:
 # dashboard day-summary filter (CASHIER_SALES_STATUSES); "all" when missing.
 DAY_REPORT_STATUS_PREF_KEY = "day_report_status"
 DAY_REPORT_STATUS_FIELD_PREFIX = "day_report_status_"
+DAY_REPORT_STATUS_MODES = (
+    ("all", "All receipts"),
+    ("pending", "Pending receipts only"),
+    ("confirmed", "Confirmed receipts only"),
+)
 
 
 def day_report_status_mode(profile) -> str:
     """The employee's day-report sales filter — all|pending|confirmed."""
     prefs = getattr(profile, "sidebar_prefs", None) or {}
-    mode = str(prefs.get(DAY_REPORT_STATUS_PREF_KEY) or "all").strip().lower()
-    return mode if mode in CASHIER_SALES_STATUSES else "all"
+    mode = str(prefs.get(DAY_REPORT_STATUS_PREF_KEY) or "").strip().lower()
+    if mode not in CASHIER_SALES_STATUSES:
+        mode = cashier_default_day_report_status()
+    return mode
 
 
 def day_report_status_pref_field(mode: str) -> str:
@@ -1661,11 +1676,9 @@ def day_report_section_enabled(profile, key: str) -> bool:
     Keys in ``DAY_REPORT_SECTIONS_OFF_BY_DEFAULT`` are opt-in: a missing
     pref means off instead of on.
     """
-    prefs = getattr(profile, "sidebar_prefs", None) or {}
-    value = prefs.get(key)
-    if value is None:
-        return key not in DAY_REPORT_SECTIONS_OFF_BY_DEFAULT
-    return bool(value)
+    return _cashier_pref_value(
+        profile, key, key not in DAY_REPORT_SECTIONS_OFF_BY_DEFAULT
+    )
 
 
 def cashier_day_report_section_key_from_field(field: str) -> str:
@@ -1681,6 +1694,68 @@ def set_cashier_day_report_section_pref(profile, key: str, enabled: bool):
     profile.sidebar_prefs = prefs
     profile.save(update_fields=["sidebar_prefs", "updated_at"])
     return profile
+
+
+# Company-wide defaults for the per-cashier picks above — edited from the
+# analytics Cashiers page (?mode=settings) under settings/company-pos and
+# stored on CompanyPosSettings.cashier_default_prefs. A cashier's own
+# sidebar_prefs entry still wins where they have set one; a missing entry
+# everywhere falls back to the built-in default (on, except
+# DAY_REPORT_SECTIONS_OFF_BY_DEFAULT and day_report_status = "all").
+CASHIER_DEFAULT_PREF_KEYS = frozenset(
+    CASHIER_SIDEBAR_PREF_KEYS
+    | SELL_POPUP_PREF_KEYS
+    | DAY_REPORT_SECTION_PREF_KEYS
+)
+
+
+def cashier_default_prefs() -> dict:
+    """Raw company-level cashier pref defaults (CompanyPosSettings JSON)."""
+    from shops.services import get_company_pos_settings
+
+    prefs = getattr(get_company_pos_settings(), "cashier_default_prefs", None)
+    return prefs if isinstance(prefs, dict) else {}
+
+
+def cashier_default_pref(key: str):
+    """The stored company default for one cashier pref key (None = unset)."""
+    return cashier_default_prefs().get(key)
+
+
+def _save_cashier_default_pref(key: str, value):
+    from shops.services import (
+        _invalidate_pos_settings_cache,
+        get_company_pos_settings,
+    )
+
+    _invalidate_pos_settings_cache()
+    row = get_company_pos_settings()
+    prefs = dict(getattr(row, "cashier_default_prefs", None) or {})
+    prefs[key] = value
+    row.cashier_default_prefs = prefs
+    row.save(update_fields=["cashier_default_prefs", "updated_at"])
+    _invalidate_pos_settings_cache()
+    return row
+
+
+def set_cashier_default_pref(key: str, enabled: bool):
+    if key not in CASHIER_DEFAULT_PREF_KEYS:
+        raise ValidationError("Unknown cashier setting.")
+    return _save_cashier_default_pref(key, bool(enabled))
+
+
+def cashier_default_day_report_status() -> str:
+    """The company day-report sales filter default — all|pending|confirmed."""
+    mode = str(
+        cashier_default_pref(DAY_REPORT_STATUS_PREF_KEY) or "all"
+    ).strip().lower()
+    return mode if mode in CASHIER_SALES_STATUSES else "all"
+
+
+def set_cashier_default_day_report_status(mode: str):
+    if mode not in CASHIER_SALES_STATUSES:
+        raise ValidationError("Unknown day report status.")
+    return _save_cashier_default_pref(DAY_REPORT_STATUS_PREF_KEY, mode)
 
 
 def buy_stock_action(profile):

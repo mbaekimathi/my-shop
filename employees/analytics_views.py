@@ -345,6 +345,17 @@ def _balances_settings_post(request, profile):
 
     from .analytics_services import BALANCES_CASHIER_SETTING_FIELDS
     from .module_permissions import require_module_permission
+    from .workspace import (
+        cashier_day_report_section_key_from_field,
+        cashier_default_day_report_status,
+        cashier_default_pref,
+        cashier_sell_key_from_field,
+        cashier_sidebar_key_from_field,
+        day_report_status_mode_from_field,
+        day_report_status_pref_field,
+        set_cashier_default_day_report_status,
+        set_cashier_default_pref,
+    )
 
     wants_json = (
         request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -378,14 +389,55 @@ def _balances_settings_post(request, profile):
     action = (request.POST.get("action") or "").strip()
     if action == "toggle_pos_setting":
         field = (request.POST.get("field") or "").strip()
-        if field not in BALANCES_CASHIER_SETTING_FIELDS:
-            return _fail("Unknown cashier setting.")
         enabled = (request.POST.get("enabled") or "").strip() in (
             "1",
             "true",
             "on",
             "yes",
         )
+        # Company defaults for the per-cashier picks (same fields the
+        # cashier settings page posts, stored on CompanyPosSettings).
+        pref_key = (
+            cashier_sidebar_key_from_field(field)
+            or cashier_sell_key_from_field(field)
+            or cashier_day_report_section_key_from_field(field)
+        )
+        if pref_key:
+            try:
+                set_cashier_default_pref(pref_key, enabled)
+            except ValidationError as exc:
+                return _fail("; ".join(exc.messages))
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "field": field,
+                        "enabled": bool(cashier_default_pref(pref_key)),
+                    }
+                )
+            return _saved("Cashier default updated.")
+        report_mode = day_report_status_mode_from_field(field)
+        if report_mode:
+            if not enabled:
+                return _fail("Pick one status for the day report.")
+            try:
+                set_cashier_default_day_report_status(report_mode)
+            except ValidationError as exc:
+                return _fail("; ".join(exc.messages))
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "field": field,
+                        "enabled": True,
+                        "stock_mode": day_report_status_pref_field(
+                            cashier_default_day_report_status()
+                        ),
+                    }
+                )
+            return _saved("Day report default updated.")
+        if field not in BALANCES_CASHIER_SETTING_FIELDS:
+            return _fail("Unknown cashier setting.")
         try:
             row = set_company_pos_setting(field=field, enabled=enabled)
         except ValidationError as exc:
