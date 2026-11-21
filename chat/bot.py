@@ -1677,8 +1677,7 @@ def reply_for(shop: Shop, text: str) -> str:
 
 
 BOT_SUGGESTIONS = [
-    "Sales",
-    "Items",
+    "Sales (+ items)",
     "Credits",
     "Expenses",
     "Stock movement",
