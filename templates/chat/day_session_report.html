@@ -1,0 +1,156 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}{{ page.headline|default:"Day report" }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
+{% block body_class %}page-chat page-day-report{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/chat-report.css' %}?v=1">
+{% endblock %}
+
+{% block body %}
+<div class="rpt">
+  <header class="rpt-bar">
+    <a class="rpt-bar__btn" href="{{ page.back_href|default:'#' }}" title="{{ page.back_label|default:'Back' }}" aria-label="{{ page.back_label|default:'Back' }}">
+      <i data-lucide="arrow-left" aria-hidden="true"></i>
+    </a>
+    <div class="rpt-bar__title">
+      <strong>Day report</strong>
+      <span>{{ session.shop.name }} · {{ company_name|default:"MY-SHOP" }}</span>
+    </div>
+    <div class="rpt-bar__actions">
+      <button type="button" class="rpt-bar__btn" data-modal-open="print-receipts" title="Print report" aria-label="Print report">
+        <i data-lucide="printer" aria-hidden="true"></i>
+      </button>
+      <a class="rpt-bar__btn" href="{{ page.download_href }}" title="Download A4 PDF" aria-label="Download A4 PDF">
+        <i data-lucide="download" aria-hidden="true"></i>
+      </a>
+      <button type="button" class="rpt-bar__btn" data-theme-toggle title="Toggle theme" aria-label="Toggle theme">
+        <i data-lucide="moon" data-icon-dark></i><i data-lucide="sun" data-icon-light></i>
+      </button>
+    </div>
+  </header>
+
+  <main class="rpt-main">
+    {% if page %}
+    <section class="rpt-hero">
+      <div class="rpt-hero__top">
+        <div class="rpt-hero__brand">
+          <p class="rpt-kicker">Day accounting report · {{ company_name|default:"MY-SHOP" }}</p>
+          <h1>{{ session.shop.name }}</h1>
+          {% if page.period_label %}<p class="rpt-hero__sub">{{ page.period_label }}</p>{% endif %}
+        </div>
+        {% if session.closed_at %}
+        <span class="rpt-status is-closed"><i data-lucide="circle-check" aria-hidden="true"></i> Closed</span>
+        {% else %}
+        <span class="rpt-status is-open"><i data-lucide="radio-tower" aria-hidden="true"></i> Open · live</span>
+        {% endif %}
+      </div>
+      {% if page.lead %}<p class="rpt-hero__lead">{{ page.lead }}</p>{% endif %}
+      <div class="rpt-hero__meta">
+        <span class="rpt-meta-chip"><i data-lucide="receipt" aria-hidden="true"></i> {{ page.sales_count }} sale{{ page.sales_count|pluralize }}</span>
+        <span class="rpt-meta-chip"><i data-lucide="clock-3" aria-hidden="true"></i> Generated {{ printed_at|date:"d M Y · H:i" }}</span>
+      </div>
+    </section>
+
+    {% for alert in page.alerts %}
+    <div class="rpt-alert rpt-alert--{{ alert.level|default:'info' }}" role="status">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <p><strong>{{ alert.title }}</strong>{% if alert.detail %} — {{ alert.detail }}{% endif %}</p>
+    </div>
+    {% endfor %}
+
+    {% if page.metrics %}
+    <section class="rpt-kpis" aria-label="Key figures">
+      {% for metric in page.metrics %}
+      <div class="rpt-kpi tone-{{ metric.tone|default:'neutral' }}">
+        <span class="rpt-kpi__label">{{ metric.label }}</span>
+        <strong class="rpt-kpi__value">{{ metric.value }}</strong>
+        {% if metric.hint %}<span class="rpt-kpi__hint">{{ metric.hint }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% for table in page.tables %}
+    <section class="rpt-card">
+      <header class="rpt-card__head">
+        <h2>{{ table.title }}</h2>
+      </header>
+      {% if table.zrows %}
+      <div class="rpt-table-wrap">
+        <table class="rpt-table">
+          <thead>
+            <tr>
+              {% for col in table.columns %}
+              <th{% if col.money %} class="num"{% endif %}>{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for zrow in table.zrows %}
+            {% if zrow.group_header %}
+            <tr class="rpt-group"><td colspan="{{ table.columns|length }}">{{ zrow.label }}</td></tr>
+            {% else %}
+            <tr{% if zrow.row.total_row %} class="rpt-total"{% endif %}>
+              {% for pair in zrow.zipped %}
+              {% with cell=pair.0 col=pair.1 %}
+              <td
+                data-label="{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}"
+                {% if cell.kind == "money" or cell.kind == "pct" or col.money %}class="num"{% endif %}
+              ><span class="cell-v">{% if cell.href %}<a class="rpt-link" href="{{ cell.href }}">{{ cell.label }}</a>{% elif cell.kind == "money" or cell.kind == "pct" %}<span class="rpt-amt{% if cell.tone %} tone-{{ cell.tone }}{% endif %}">{{ cell.label }}</span>{% elif cell.kind == "qty_amount" %}{{ cell.qty }} · {{ cell.amount }}{% elif cell.kind == "status" %}<span class="rpt-chip{% if cell.tone %} tone-{{ cell.tone }}{% endif %}">{{ cell.label }}</span>{% elif cell.kind == "empty" %}<span class="rpt-dash">&mdash;</span>{% elif cell.label and cell.sub %}<strong>{{ cell.label }}</strong><small class="cell-sub">{{ cell.sub }}</small>{% elif cell.label %}{{ cell.label }}{% else %}{{ cell }}{% endif %}</span></td>
+              {% endwith %}
+              {% endfor %}
+            </tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="rpt-empty">{{ table.empty|default:"Nothing recorded." }}</p>
+      {% endif %}
+      {% if table.footnote %}<p class="rpt-foot">{{ table.footnote }}</p>{% endif %}
+    </section>
+    {% endfor %}
+
+    <footer class="rpt-footer">
+      Generated {{ printed_at|date:"d M Y H:i" }} — {{ company_name|default:"MY-SHOP" }} · Day accounting report.
+    </footer>
+    {% else %}
+    <p class="rpt-error">Nothing to show for this day session.</p>
+    {% endif %}
+  </main>
+</div>
+
+{% include "employees/partials/receipts_print_modal.html" with receipts_print_modal=page.receipts_print_modal receipts_print_url=page.receipts_print_url receipts_print_title=page.receipts_print_title receipts_print_lead=page.receipts_print_lead receipts_print_default_paper=page.receipts_print_default_paper %}
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
+<script>
+  window.addEventListener("DOMContentLoaded", function () {
+    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+    var themeBtn = document.querySelector("[data-theme-toggle]");
+    function paintTheme() {
+      var dark = document.documentElement.getAttribute("data-theme") === "dark";
+      if (themeBtn) {
+        var darkIcon = themeBtn.querySelector("[data-icon-dark]");
+        var lightIcon = themeBtn.querySelector("[data-icon-light]");
+        if (darkIcon) darkIcon.hidden = dark;
+        if (lightIcon) lightIcon.hidden = !dark;
+      }
+    }
+    if (themeBtn) {
+      themeBtn.addEventListener("click", function () {
+        var dark = document.documentElement.getAttribute("data-theme") === "dark";
+        var next = dark ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        try { localStorage.setItem("myshop-theme", next); } catch (e) {}
+        paintTheme();
+      });
+    }
+    paintTheme();
+  });
+</script>
+{% endblock %}

@@ -946,22 +946,56 @@ def all_session_report(request, session_id):
     )
     page = context.get("page") or {}
 
+    if (request.GET.get("estimate") or "").strip() == "1":
+        tables = page.get("tables") or []
+        row_total = sum(len(t.get("rows") or []) for t in tables)
+        # Rough A4 estimate: header/KPIs ≈ a third page, each section
+        # title + footnote ≈ 3 rows, ~34 body rows per page.
+        a4_page_estimate = max(1, (row_total + len(tables) * 3 + 40) // 34)
+        return JsonResponse(
+            {
+                "ok": True,
+                "paper": "a4",
+                "receipt_count": page.get("sales_count") or 0,
+                "a4_page_estimate": a4_page_estimate,
+                "kind_label": "Day report",
+                "period_label": page.get("period_label") or "",
+            }
+        )
+
     paper = (request.GET.get("paper") or "").strip().lower()
     if paper == "50":
         paper = "58"
-    if paper not in ("80", "58"):
-        paper = "a4"
+    if paper in ("a4", "80", "58"):
+        return render(
+            request,
+            "employees/analytics_day_session_print.html",
+            {
+                "page": page,
+                "paper": paper,
+                "session": session,
+                "printed_at": timezone.localtime(),
+                "company_name": get_company_display_name(),
+                "auto_print": (request.GET.get("auto") or "").strip() == "1",
+                "ksh_prefix": "" if paper == "a4" else "KSh ",
+            },
+        )
+
+    from employees.analytics_services import hydrate_table_zrows
+
+    hydrate_table_zrows(page)
+    if "back" not in request.GET:
+        page["back_href"] = reverse("chat:all_shops")
+        page["back_label"] = "All shops"
     return render(
         request,
-        "employees/analytics_day_session_print.html",
+        "chat/day_session_report.html",
         {
             "page": page,
-            "paper": paper,
             "session": session,
+            "employee": employee,
             "printed_at": timezone.localtime(),
             "company_name": get_company_display_name(),
-            "auto_print": (request.GET.get("auto") or "").strip() == "1",
-            "ksh_prefix": "" if paper == "a4" else "KSh ",
         },
     )
 
