@@ -241,7 +241,7 @@
           <td class="num">{{ row.total }}</td>
           <td>{{ row.reference }}</td>
           <td class="col-when">{{ row.when }}</td>
-          <td class="col-when">{{ row.paid_when }}</td>
+          <td class="col-when">{{ row.paid_when }}{% if row.paid_via %}<br>{{ row.paid_via }}{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

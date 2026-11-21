@@ -13234,6 +13234,10 @@ def confirm_shop_receipt(
         raise ValidationError(
             "Enter the payment date and time before confirming this receipt."
         )
+    # No entered payment moment → treat the payment as happening now so the
+    # "Paid (entered)" stamp is never blank on a confirmed receipt.
+    if paid_at is None:
+        paid_at = timezone.now()
 
     cleared_credit = False
     partial_credit = False
@@ -13938,10 +13942,9 @@ def change_shop_receipt_kind(
             receipt.mpesa_receipt_number = ref
             if "mpesa_receipt_number" not in update_fields:
                 update_fields.append("mpesa_receipt_number")
-        if paid_at is not None:
-            receipt.confirmed_payment_at = paid_at
-            if "confirmed_payment_at" not in update_fields:
-                update_fields.append("confirmed_payment_at")
+        receipt.confirmed_payment_at = paid_at if paid_at is not None else now
+        if "confirmed_payment_at" not in update_fields:
+            update_fields.append("confirmed_payment_at")
         if client_fields_changed:
             receipt.client = client_obj
             receipt.client_name = new_client_name

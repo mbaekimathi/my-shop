@@ -858,6 +858,112 @@ def api_all_chat(request):
     )
 
 
+@require_GET
+def all_session_report(request, session_id):
+    """Full cashier report for one shop day session.
+
+    Opened from the report card's session rows — renders the same
+    day-accounting sheet the analytics Cashiers report prints (every
+    section: money flow, items sold, sellers, expenses, stock in/out).
+    """
+    employee = current_employee(request)
+    if employee is None:
+        return redirect("chat:login")
+    if not can_view_all_shops(employee["role"]):
+        return redirect(role_home_url(employee["role"]))
+
+    from django.core.exceptions import PermissionDenied
+    from django.utils.text import slugify
+
+    from employees.models import EmployeeProfile
+    from employees.module_permissions import employee_may
+    from employees.workspace import (
+        day_report_counted_statuses,
+        day_report_section_enabled,
+        day_report_status_mode,
+    )
+    from shops.models import ShopDaySession
+    from shops.services import (
+        build_shop_day_report_pdf,
+        get_company_display_name,
+    )
+
+    profile = (
+        EmployeeProfile.objects.select_related("user")
+        .filter(pk=employee["id"])
+        .first()
+    )
+    # Same gate as the portal's analytics_day_session view.
+    if profile is None or not employee_may(profile, "analytics", "balances"):
+        raise PermissionDenied()
+
+    session = (
+        ShopDaySession.objects.filter(pk=session_id)
+        .select_related("shop", "opened_by__user", "closed_by__user")
+        .first()
+    )
+    if session is None:
+        raise Http404("Day session not found.")
+
+    if (request.GET.get("download") or "").strip().lower() in (
+        "1",
+        "pdf",
+        "download",
+        "print",
+    ):
+        report_mode = day_report_status_mode(profile)
+        printed_by = profile.user.get_full_name() or profile.user.username
+        pdf_bytes = build_shop_day_report_pdf(
+            shop=session.shop,
+            session=session,
+            printed_by=printed_by,
+            company_name=get_company_display_name(),
+            counted_statuses=day_report_counted_statuses(profile),
+            section_visible=lambda key: day_report_section_enabled(
+                profile, key
+            ),
+            sales_scope_label=(
+                "Pending sales only"
+                if report_mode == "pending"
+                else "Confirmed sales only" if report_mode == "confirmed" else ""
+            ),
+        )
+        stamp = timezone.localtime(session.opened_at).strftime("%Y%m%d")
+        filename = (
+            f"day-report-{slugify(session.shop.name) or 'shop'}-{stamp}.pdf"
+        )
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        response["Content-Length"] = str(len(pdf_bytes))
+        return response
+
+    from employees.analytics_services import build_day_session_report_page
+
+    context = build_day_session_report_page(
+        profile=profile, request=request, session=session
+    )
+    page = context.get("page") or {}
+
+    paper = (request.GET.get("paper") or "").strip().lower()
+    if paper == "50":
+        paper = "58"
+    if paper not in ("80", "58"):
+        paper = "a4"
+    return render(
+        request,
+        "employees/analytics_day_session_print.html",
+        {
+            "page": page,
+            "paper": paper,
+            "session": session,
+            "printed_at": timezone.localtime(),
+            "company_name": get_company_display_name(),
+            "auto_print": (request.GET.get("auto") or "").strip() == "1",
+            "ksh_prefix": "" if paper == "a4" else "KSh ",
+        },
+    )
+
+
 @require_POST
 def logout_view(request):
     logout_shop(request)

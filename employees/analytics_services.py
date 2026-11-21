@@ -56,6 +56,7 @@ from shops.models import (
     ExpenseSupplier,
     ShopDaySession,
     ShopDelivery,
+    ShopPaymentMethod,
     ShopReceipt,
     ShopReceiptKind,
     ShopReceiptLine,
@@ -4393,6 +4394,7 @@ def _confirm_receipt_sale_rows(
             "client_phone",
             "mpesa_receipt_number",
             "confirmed_payment_at",
+            "payment_method",
             "total",
             "amount_paid",
             "kind",
@@ -4467,6 +4469,11 @@ def _confirm_receipt_sale_rows(
                 if paid_at and shows_paid
                 else "—"
             )
+            paid_via = ""
+            if shows_paid:
+                method = (row.payment_method or "").strip()
+                if method and method != ShopPaymentMethod.NONE:
+                    paid_via = row.get_payment_method_display()
             shop_pk = int(row.shop_id or 0)
             if shop_pk not in require_by_shop:
                 require_by_shop[shop_pk] = bool(
@@ -4533,6 +4540,7 @@ def _confirm_receipt_sale_rows(
                     "when": when_label,
                     "when_dt": printed_at,
                     "paid_when": paid_when_label,
+                    "paid_via": paid_via,
                     "can_confirm": can_confirm,
                     "can_cancel": can_cancel,
                     "can_set_pending": can_set_pending,
@@ -4557,6 +4565,7 @@ def _confirm_receipt_sale_rows(
                             status_label,
                             when_label,
                             paid_when_label if paid_when_label != "—" else "",
+                            paid_via,
                             kind_label,
                             sold_as_label,
                         ]
@@ -4940,6 +4949,7 @@ def serialize_confirm_receipt_rows(rows) -> list[dict]:
                 "status_label": row.get("status_label") or "",
                 "when": row.get("when") or "",
                 "paid_when": row.get("paid_when") or "—",
+                "paid_via": row.get("paid_via") or "",
                 "can_confirm": bool(row.get("can_confirm")),
                 "can_cancel": bool(row.get("can_cancel")),
                 "can_set_pending": bool(row.get("can_set_pending")),
@@ -5133,6 +5143,7 @@ def build_confirm_receipts_print_document(*, profile, request) -> dict:
                 "reference": (row.get("reference") or "").strip() or "—",
                 "when": row.get("when") or "—",
                 "paid_when": row.get("paid_when") or "—",
+                "paid_via": row.get("paid_via") or "",
             }
         )
     receipt_total = len(print_rows)

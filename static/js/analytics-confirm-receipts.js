@@ -117,13 +117,20 @@
     };
   };
 
-  // Default date to today; leave time empty for easy entry.
+  const nowTimeHM = () => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, "0")}:${String(
+      d.getMinutes()
+    ).padStart(2, "0")}`;
+  };
+
+  // Payment moment defaults to now — both date and time prefilled.
   const defaultConfirmPaymentParts = (receipt = {}) => {
     const saved = splitLocalDateTime(receipt.confirmed_payment_at_local);
     if (saved.date && saved.time) return saved;
     return {
       date: saved.date || todayIso(),
-      time: saved.time || "",
+      time: saved.time || nowTimeHM(),
     };
   };
 
@@ -412,6 +419,7 @@
     const statusLabel = escapeHtml(row.status_label || "");
     const when = escapeHtml(row.when || "");
     const paidWhen = escapeHtml(row.paid_when || "—");
+    const paidVia = escapeHtml(row.paid_via || "");
     const searchText = escapeHtml(row.search_text || row.number || "");
     const selectCell = actionable
       ? `<td class="ax-col-select" data-label="Select">
@@ -464,7 +472,12 @@
   <td class="ax-confirm-amount" data-label="Amount">${amount}</td>
   <td class="ax-confirm-reference" data-label="Reference">${reference}</td>
   <td class="ax-confirm-when" data-label="Printed">${when}</td>
-  <td class="ax-confirm-when ax-confirm-paid" data-label="Paid">${paidWhen}</td>
+  <td class="ax-confirm-when ax-confirm-paid" data-label="Paid">
+    <div class="ax-confirm-stack">
+      <span class="ax-confirm-stack-main">${paidWhen}</span>
+      ${paidVia ? `<span class="ax-confirm-stack-sub">${paidVia}</span>` : ""}
+    </div>
+  </td>
 </tr>`;
   };
 
@@ -815,8 +828,8 @@
     setConfirmStatus(
       creditNotice ||
         (receipt.require_mpesa_reference_on_confirm && confirmRefApplies()
-          ? "Date defaults to today. Enter time, reference number, and staff 6-digit ID."
-          : "Date defaults to today. Enter time and staff 6-digit ID to confirm.")
+          ? "Payment time defaults to now. Enter the reference number and staff 6-digit ID."
+          : "Payment time defaults to now. Enter staff 6-digit ID to confirm.")
     );
     syncSubmitConfirm();
     refreshIcons();
@@ -1321,7 +1334,7 @@
         : `aria-required="false"`;
     const confirmLead = isCredit
       ? "Enter the amount received. Full balance clears and confirms the credit; a smaller amount records a partial confirmation."
-      : "Confirm this sale. Date defaults to today; enter the payment time, then confirm.";
+      : "Confirm this sale. Payment date & time default to now — adjust them if the payment happened earlier, then confirm.";
     const confirmPanelHtml = `<div class="shop-receipt-return shop-receipt-confirm" data-confirm-panel hidden>
   <p class="shop-receipt-muted">
     ${confirmLead}

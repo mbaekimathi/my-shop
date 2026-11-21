@@ -443,6 +443,35 @@ class ConfirmSalesReceiptTests(TestCase):
         )
         self.assertEqual(confirmed_row["when"], "11 Nov 2026 · 13:49")
         self.assertEqual(confirmed_row["paid_when"], "12 Nov 2026 · 09:15")
+        self.assertEqual(confirmed_row["paid_via"], "Cash")
+
+    def test_confirm_without_payment_at_defaults_to_now(self):
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from employees.analytics_services import build_confirm_receipts_page
+        from shops.services import confirm_shop_receipt
+
+        sale = self._receipt(kind=ShopReceiptKind.SALE, number="SL-NOW")
+        before = timezone.now()
+        result = confirm_shop_receipt(
+            shop=self.shop, receipt_id=sale.pk, actor=self.staff
+        )
+        sale.refresh_from_db()
+        self.assertTrue(result["ok"])
+        self.assertIsNotNone(sale.confirmed_payment_at)
+        self.assertGreaterEqual(sale.confirmed_payment_at, before)
+        self.assertLessEqual(sale.confirmed_payment_at, timezone.now())
+
+        request = RequestFactory().get(
+            "/it-support/analytics/confirm-receipts/",
+            {"kind": "sale", "range": "all"},
+        )
+        request.user = self.user
+        page = build_confirm_receipts_page(profile=self.staff, request=request)
+        row = next(r for r in page["rows"] if r["number"] == "SL-NOW")
+        self.assertNotEqual(row["paid_when"], "—")
+        self.assertEqual(row["paid_via"], "Cash")
 
     def test_set_status_pending_confirmed_cancelled_round_trip(self):
         from shops.services import set_confirm_receipt_status

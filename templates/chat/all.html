@@ -118,7 +118,7 @@
         <button type="button" class="wa-sug" data-sug="Credits">Credits</button>
         <button type="button" class="wa-sug" data-sug="Expenses">Expenses</button>
         <button type="button" class="wa-sug" data-sug="Stock movement">Stock movement</button>
-        <button type="button" class="wa-sug" data-sug="Summary">Summary</button>
+        <button type="button" class="wa-sug" data-sug="Report">Report</button>
       </div>
 
       <div class="wa-period all-period" id="allPeriod" hidden>
@@ -175,7 +175,7 @@
             {% endfor %}
           </div>
         </section>
-        <div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>All-shops assistant</strong><br>Ask about every shop combined — sales, credits, expenses, stock movement, summary.</p></div></div>
+        <div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>All-shops assistant</strong><br>Ask about every shop combined — sales, credits, expenses, stock movement, report.</p></div></div>
       </main>
 
       <form class="wa-app__composer all-composer" id="allForm">
@@ -194,5 +194,5 @@
 
 {% block extra_js %}
 <script type="application/json" id="all-init-receipt-status">{{ receipt_status_default_json|safe }}</script>
-<script defer src="{% static 'js/all.js' %}?v=17"></script>
+<script defer src="{% static 'js/all.js' %}?v=19"></script>
 {% endblock %}

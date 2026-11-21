@@ -55,7 +55,9 @@
   var receiptStatusSel = document.getElementById("allReceiptStatus");
   var botTopic = "";
   var periodMode = "day";
-  var RECEIPT_STATUS_TOPICS = { sales: 1, items: 1, summary: 1 };
+  var RECEIPT_STATUS_TOPICS = {
+    sales: 1, items: 1, summary: 1, report: 1
+  };
   var receiptStatusDefault = "pending";
   try {
     var rsEl = document.getElementById("all-init-receipt-status");
@@ -250,21 +252,47 @@
       });
   }
 
+  function itemsSoldCard(it) {
+    var rows = (it.items || []).map(function (r, i) {
+      return (
+        '<tr><td class="n">' + (i + 1) + "</td>" +
+        "<td>" + esc(r.name) + "</td>" +
+        '<td class="n">' + esc(r.qty) + "</td>" +
+        '<td class="n">' + esc(r.total) + "</td></tr>"
+      );
+    }).join("");
+    return (
+      '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
+      '<i data-lucide="list"></i><span>Items sold — all shops · ' +
+      esc(it.label || "") + "</span></div>" +
+      '<div class="wa-card__tablewrap"><table class="wa-table">' +
+      '<thead><tr><th>#</th><th>Item</th><th class="n">Qty</th>' +
+      '<th class="n">Amount</th></tr></thead><tbody>' +
+      rows + "</tbody></table></div>" +
+      '<div class="wa-card__foot">' + (it.items || []).length +
+      " items</div></div>"
+    );
+  }
+
   function cardHtml(card) {
     if (card.sales) {
       var c = card.sales;
-      var itemsLink = c.start && c.end
+      // Items sold ships in the same card — the link only appears on
+      // payloads that don't carry it.
+      var itemsLink = !card.items_sold && c.start && c.end
         ? '<a class="wa-link" href="#" data-bitems="' +
           esc(c.start + ":" + c.end + ":" + (c.receipt_status || "")) +
           '">View items sold →</a>'
         : "";
-      return statCard("trending-up", "Sales — all shops · " + c.label, [
+      var html = statCard("trending-up", "Sales — all shops · " + c.label, [
         ["Total", c.total, 1],
         ["Receipts", c.receipts],
         ["Cash", c.cash],
         ["M-Pesa", c.mpesa],
         ["Credit issued", c.credit]
       ], itemsLink);
+      if (card.items_sold) html += itemsSoldCard(card.items_sold);
+      return html;
     }
     if (card.summary) {
       var u = card.summary;
@@ -275,6 +303,65 @@
         ["Expenses", u.expenses],
         ["Outstanding credit", u.credit]
       ]);
+    }
+    if (card.report) {
+      var rp = card.report;
+      var rstats = [
+        ["Sales", rp.sales, 1],
+        ["Receipts", rp.receipts],
+        ["Cash", rp.cash],
+        ["M-Pesa", rp.mpesa],
+        ["Card", rp.card],
+        ["Paid out", rp.paid_out]
+      ];
+      if (rp.credit && rp.credit !== "KSh 0.00") {
+        rstats.push(
+          ["Credit issued", rp.credit],
+          ["Still due", rp.credit_due]
+        );
+      }
+      var rbody = (rp.rows || []).map(function (r, i) {
+        var sess = r.href
+          ? '<a class="wa-link" href="' + esc(r.href) +
+            '" target="_blank" rel="noopener">' + esc(r.session) + "</a>"
+          : esc(r.session);
+        return (
+          '<tr><td class="n">' + (i + 1) + "</td><td>" + sess +
+          "</td><td>" + esc(r.shop) + "</td><td>" + esc(r.cashier) +
+          "</td><td>" + esc(r.status) + '</td><td class="n">' +
+          esc(r.in_time || "—") + '</td><td class="n">' +
+          esc(r.out_time || "—") + "</td></tr>"
+        );
+      }).join("");
+      var rcount = (rp.rows || []).length;
+      var rmore = rp.sessions_total > rcount
+        ? " · +" + (rp.sessions_total - rcount) + " more" : "";
+      var rhint = (rp.rows || []).some(function (r) { return r.href; })
+        ? " · tap a session to open its full report" : "";
+      return (
+        '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
+        '<i data-lucide="clipboard-list"></i><span>Report — all shops · ' +
+        esc(rp.label) + "</span></div>" +
+        '<div class="wa-stats">' +
+        rstats.map(function (r) {
+          return (
+            '<div class="wa-stats__row' + (r[2] ? " is-total" : "") + '">' +
+            "<span>" + esc(r[0]) + "</span><b>" + esc(String(r[1])) +
+            "</b></div>"
+          );
+        }).join("") +
+        "</div>" +
+        '<div class="wa-card__tablewrap"><table class="wa-table"><thead><tr>' +
+        "<th>#</th><th>Session</th><th>Shop</th><th>Cashier</th>" +
+        '<th>Status</th><th class="n">In</th><th class="n">Out</th>' +
+        "</tr></thead><tbody>" +
+        (rbody || '<tr><td colspan="7">No sessions in this period.</td></tr>') +
+        "</tbody></table></div>" +
+        '<div class="wa-card__foot">' + (rp.sessions_total || 0) +
+        " session" + (rp.sessions_total === 1 ? "" : "s") + rmore +
+        " · In/Out = session times" + rhint +
+        "</div></div>"
+      );
     }
     if (card.credits) {
       var cr = card.credits;
@@ -343,26 +430,7 @@
       );
     }
     if (card.items_sold) {
-      var it = card.items_sold;
-      var rows = (it.items || []).map(function (r, i) {
-        return (
-          '<tr><td class="n">' + (i + 1) + "</td>" +
-          "<td>" + esc(r.name) + "</td>" +
-          '<td class="n">' + esc(r.qty) + "</td>" +
-          '<td class="n">' + esc(r.total) + "</td></tr>"
-        );
-      }).join("");
-      return (
-        '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
-        '<i data-lucide="list"></i><span>Items sold — all shops · ' +
-        esc(it.label || "") + "</span></div>" +
-        '<div class="wa-card__tablewrap"><table class="wa-table">' +
-        '<thead><tr><th>#</th><th>Item</th><th class="n">Qty</th>' +
-        '<th class="n">Amount</th></tr></thead><tbody>' +
-        rows + "</tbody></table></div>" +
-        '<div class="wa-card__foot">' + (it.items || []).length +
-        " items</div></div>"
-      );
+      return itemsSoldCard(card.items_sold);
     }
     return "";
   }

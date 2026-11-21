@@ -635,6 +635,28 @@
       });
   }
 
+  function itemsSoldCardHtml(it) {
+    var rows = (it.items || []).map(function (r, i) {
+      return (
+        "<tr><td class=\"n\">" + (i + 1) + "</td>" +
+        "<td>" + escapeHtml(r.name) + "</td>" +
+        "<td class=\"n\">" + escapeHtml(r.qty) + "</td>" +
+        "<td class=\"n\">" + escapeHtml(r.total) + "</td></tr>"
+      );
+    }).join("");
+    return (
+      '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
+      '<i data-lucide="list"></i><span>Items sold — ' +
+      escapeHtml(it.label || "") + "</span></div>" +
+      '<div class="wa-card__tablewrap"><table class="wa-table">' +
+      "<thead><tr><th>#</th><th>Item</th><th class=\"n\">Qty</th>" +
+      "<th class=\"n\">Amount</th></tr></thead><tbody>" +
+      rows + "</tbody></table></div>" +
+      '<div class="wa-card__foot">' + (it.items || []).length +
+      " items</div></div>"
+    );
+  }
+
   function cardHtml(card, mine, msgId) {
     var t = card.transfer, s = card.stock_in, it = card.items_sold;
     if (card.sale) {
@@ -664,18 +686,21 @@
     }
     if (card.sales) {
       var c = card.sales;
-      var itemsLink = c.start && c.end
+      // Items sold ships in the same card — the link only appears on older
+      // payloads that don't carry it.
+      var itemsLink = !it && c.start && c.end
         ? '<a class="wa-link" href="#" data-bitems="' +
           escapeHtml(c.start + ":" + c.end + ":" + (c.receipt_status || "")) +
           '">View items sold →</a>'
         : "";
-      return statCard("trending-up", "Sales — " + c.label, [
+      var salesHtml = statCard("trending-up", "Sales — " + c.label, [
         ["Total", c.total, 1],
         ["Receipts", c.receipts],
         ["Cash", c.cash],
         ["M-Pesa", c.mpesa],
         ["Credit issued", c.credit]
       ], itemsLink);
+      return it ? salesHtml + itemsSoldCardHtml(it) : salesHtml;
     }
     if (card.summary) {
       var u = card.summary;
@@ -791,25 +816,7 @@
       ], mrows, (mv.rows || []).length + " lines");
     }
     if (it) {
-      var rows = (it.items || []).map(function (r, i) {
-        return (
-          "<tr><td class=\"n\">" + (i + 1) + "</td>" +
-          "<td>" + escapeHtml(r.name) + "</td>" +
-          "<td class=\"n\">" + escapeHtml(r.qty) + "</td>" +
-          "<td class=\"n\">" + escapeHtml(r.total) + "</td></tr>"
-        );
-      }).join("");
-      return (
-        '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
-        '<i data-lucide="list"></i><span>Items sold — ' +
-        escapeHtml(it.label || "") + "</span></div>" +
-        '<div class="wa-card__tablewrap"><table class="wa-table">' +
-        "<thead><tr><th>#</th><th>Item</th><th class=\"n\">Qty</th>" +
-        "<th class=\"n\">Amount</th></tr></thead><tbody>" +
-        rows + "</tbody></table></div>" +
-        '<div class="wa-card__foot">' + (it.items || []).length +
-        " items</div></div>"
-      );
+      return itemsSoldCardHtml(it);
     }
     if (t) {
       var pending = t.status === "pending";

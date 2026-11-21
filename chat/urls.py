@@ -46,6 +46,11 @@ urlpatterns = [
         name="api_rider_complete",
     ),
     path("api/all/chat/", views.api_all_chat, name="api_all_chat"),
+    path(
+        "all/report/<int:session_id>/",
+        views.all_session_report,
+        name="all_session_report",
+    ),
     path("chat/", views.app_view, name="app"),
     path("chat/receipts/", views.receipts_view, name="receipts"),
     path("api/receipts/", views.api_receipts_list, name="api_receipts_list"),

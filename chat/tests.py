@@ -3011,3 +3011,100 @@ class ChatPermissionGateTests(ChatTestCase):
         session.save()
         resp = self.client.get(reverse("chat:api_store_report"))
         self.assertEqual(resp.status_code, 403)
+
+
+class AllShopsSessionReportTests(ChatTestCase):
+    """The all-shops report card links each session row to the full
+    cashier day report (/chatbot/all/report/<id>/)."""
+
+    EMPLOYEE_DDL = PendingConfirmTests.EMPLOYEE_DDL
+
+    def setUp(self):
+        super().setUp()
+        from django.contrib.auth.models import User
+
+        self.prepare_employee_fixtures()
+        it_user = User.objects.create_user(
+            username="report-it", first_name="It", last_name="Support"
+        )
+        insert_employee_profile(
+            pk=11, employee_id="200002", user_id=it_user.pk,
+            role="it_support", status="active",
+        )
+        cashier_user = User.objects.create_user(username="report-cashier")
+        insert_employee_profile(
+            pk=12, employee_id="200003", user_id=cashier_user.pk,
+            role="shop_cashier", status="active",
+        )
+        self.day = ShopDaySession.objects.filter(
+            shop_id=self.shop_a.pk, closed_at__isnull=True
+        ).first()
+
+    def _sign_in(self, employee_pk):
+        session = self.client.session
+        session["chatbot_employee_id"] = employee_pk
+        session.save()
+
+    def _report_url(self, session=None):
+        return reverse(
+            "chat:all_session_report",
+            kwargs={"session_id": (session or self.day).pk},
+        )
+
+    def test_report_card_rows_link_to_session_report(self):
+        from .bot import card_for_all
+
+        card = card_for_all("report")
+        rows = card["report"]["rows"]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertTrue(row["href"], row)
+        self.assertIn(self._report_url(), [r["href"] for r in rows])
+
+    def test_session_report_requires_employee(self):
+        resp = self.client.get(self._report_url())
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse("chat:login"), resp["Location"])
+
+    def test_session_report_blocked_for_shop_roles(self):
+        self._sign_in(12)
+        resp = self.client.get(self._report_url())
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(
+            reverse("chat:role_home", args=["shop-cashier"]),
+            resp["Location"],
+        )
+
+    def test_session_report_404_for_unknown_session(self):
+        self._sign_in(11)
+        resp = self.client.get(
+            reverse("chat:all_session_report", kwargs={"session_id": 987654})
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_session_report_denied_when_balances_toggle_off(self):
+        from employees.models import EmployeeModulePermission, EmployeeProfile
+
+        EmployeeModulePermission.objects.create(
+            employee=EmployeeProfile.objects.get(pk=11),
+            module_slug="analytics",
+            submodule_slug="balances",
+            allowed=False,
+        )
+        self._sign_in(11)
+        resp = self.client.get(self._report_url())
+        self.assertEqual(resp.status_code, 403)
+
+    def test_session_report_renders_full_day_report(self):
+        self._sign_in(11)
+        resp = self.client.get(self._report_url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Day accounting report")
+        self.assertContains(resp, "Money flow")
+
+    def test_session_report_downloads_pdf(self):
+        self._sign_in(11)
+        resp = self.client.get(self._report_url() + "?download=1")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "application/pdf")
+        self.assertTrue(resp.content.startswith(b"%PDF"))

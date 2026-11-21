@@ -792,7 +792,7 @@ def card_meta(shop: Shop, text: str):
             ).aggregate(t=Sum("total"))["t"]
             or 0
         )
-        return {
+        card = {
             "sales": {
                 "label": _sales_label(label, status),
                 "total": money(agg["total"]),
@@ -806,6 +806,22 @@ def card_meta(shop: Shop, text: str):
                 "receipt_status": status,
             }
         }
+        # Sales and items ride in one reply — the client renders the items
+        # table under the sales stats instead of a second "items" message.
+        ilabel, irows = items_sold_rows(shop, t)
+        if irows:
+            card["items_sold"] = {
+                "label": ilabel,
+                "items": [
+                    {
+                        "name": r["item_name"],
+                        "qty": qty_fmt(r["q"]),
+                        "total": money(r["t"]),
+                    }
+                    for r in irows
+                ],
+            }
+        return card
 
     if re.search(r"\b(expense|expenses|spent|spending|costs?)\b", low):
         start, end, label = _date_range(t)
@@ -922,6 +938,307 @@ def _all_receipts(start, end, kinds=(SALE_KIND,), receipt_status=None):
     )
 
 
+def _dec(value) -> Decimal:
+    try:
+        return Decimal(str(value or 0))
+    except Exception:
+        return Decimal("0")
+
+
+def _employee_names(ids) -> dict:
+    """{profile pk: display name} — joins the shared employees/auth tables."""
+    ids = [pk for pk in set(ids) if pk]
+    if not ids:
+        return {}
+    from django.db import connection
+
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT ep.id, u.first_name, u.last_name, u.username "
+                "FROM employees_employeeprofile ep "
+                "JOIN auth_user u ON u.id = ep.user_id "
+                f"WHERE ep.id IN ({','.join(['%s'] * len(ids))})",
+                ids,
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return {}
+    return {
+        pk: f"{first or ''} {last or ''}".strip() or (username or "")
+        for pk, first, last, username in rows
+    }
+
+
+def _refund_events(shop_ids, start_dt, end_dt) -> list:
+    """(shop_id, at, amount) — till refunds paid inside the window."""
+    from django.utils.dateparse import parse_datetime
+
+    events = []
+    for row in (
+        ShopReceipt.objects.filter(shop_id__in=shop_ids)
+        .filter(return_payment_events__len__gt=0)
+        .values("shop_id", "return_payment_events")
+    ):
+        for event in row["return_payment_events"] or []:
+            if not isinstance(event, dict):
+                continue
+            raw = event.get("at")
+            when = (
+                raw if isinstance(raw, datetime)
+                else parse_datetime(str(raw or ""))
+            )
+            if when is None:
+                continue
+            if timezone.is_naive(when):
+                when = timezone.make_aware(when)
+            if not (start_dt <= when < end_dt):
+                continue
+            amount = (
+                _dec(event.get("cash"))
+                + _dec(event.get("mpesa"))
+                + _dec(event.get("card"))
+            )
+            if amount > 0:
+                events.append((row["shop_id"], when, amount))
+    return events
+
+
+REPORT_ROW_CAP = 40
+
+
+def _all_shops_report(start, end, status) -> dict:
+    """Simplified cashiers report — one row per shop day session.
+
+    Sessions overlapping the window carry their times, cashier and status;
+    sales/paid-out land in the session whose activity window owns them
+    (activity starts at the previous close — the till hand-over rule).
+    Period totals span every active shop regardless of sessions so the
+    report reconciles with the Sales/Expenses cards.
+    """
+    from bisect import bisect_right
+
+    start_dt, end_dt = _window(start, end)
+    shops = dict(
+        Shop.objects.filter(is_suspended=False, is_hidden=False).values_list(
+            "pk", "name"
+        )
+    )
+    shop_ids = list(shops)
+
+    sessions = list(
+        ShopDaySession.objects.filter(
+            shop_id__in=shop_ids, opened_at__lt=end_dt
+        )
+        .filter(Q(closed_at__isnull=True) | Q(closed_at__gte=start_dt))
+        .order_by("-opened_at")
+    )
+    # Activity starts at the previous close (till hand-over convention).
+    closes = {}
+    for sid, closed_at in ShopDaySession.objects.filter(
+        shop_id__in=shop_ids, closed_at__isnull=False
+    ).values_list("shop_id", "closed_at"):
+        closes.setdefault(sid, []).append(closed_at)
+    for stamps in closes.values():
+        stamps.sort()
+    now = timezone.now()
+    windows = []  # (session, activity_start, activity_end)
+    for s in sessions:
+        stamps = closes.get(s.shop_id) or []
+        idx = bisect_right(stamps, s.opened_at)
+        windows.append(
+            (s, stamps[idx - 1] if idx else s.opened_at, s.closed_at or now)
+        )
+
+    sales_rows = list(
+        _all_receipts(start, end, receipt_status=status)
+        .filter(shop_id__in=shop_ids)
+        .values(
+            "shop_id", "created_at", "total",
+            "cash_amount", "mpesa_amount", "card_amount",
+        )
+    )
+    expense_rows = list(
+        Expense.objects.filter(
+            shop_id__in=shop_ids,
+            created_at__gte=start_dt,
+            created_at__lt=end_dt,
+        ).values("shop_id", "created_at", "category", "amount", "amount_paid")
+    )
+    stock_rows = list(
+        StockMovement.objects.filter(
+            shop_id__in=shop_ids,
+            movement_type="in",
+            created_at__gte=start_dt,
+            created_at__lt=end_dt,
+            amount_paid__gt=0,
+        ).values("shop_id", "created_at", "amount_paid")
+    )
+    refund_rows = _refund_events(shop_ids, start_dt, end_dt)
+    credit = ShopReceipt.objects.filter(
+        shop_id__in=shop_ids,
+        kind=CREDIT_KIND,
+        status__in=COUNTED_STATUSES,
+        created_at__gte=start_dt,
+        created_at__lt=end_dt,
+    ).aggregate(t=Sum("total"), paid=Sum("amount_paid"))
+
+    buckets = [
+        {"sales": Decimal("0"), "receipts": 0, "out": Decimal("0")}
+        for _ in windows
+    ]
+    outside = {}  # shop_id -> same shape, for activity with no session
+
+    def _add(shop_id, when, amount, sale):
+        cell = None
+        for i, (s, wstart, wend) in enumerate(windows):
+            if s.shop_id == shop_id and wstart <= when < wend:
+                cell = buckets[i]
+                break
+        if cell is None:
+            cell = outside.setdefault(
+                shop_id,
+                {"sales": Decimal("0"), "receipts": 0, "out": Decimal("0")},
+            )
+        if sale:
+            cell["sales"] += amount
+            cell["receipts"] += 1
+        else:
+            cell["out"] += amount
+
+    tot = {
+        key: Decimal("0")
+        for key in ("sales", "cash", "mpesa", "card", "expenses",
+                    "drawings", "stock", "refunds")
+    }
+    tot["receipts"] = 0
+    for r in sales_rows:
+        amount = _dec(r["total"])
+        tot["sales"] += amount
+        tot["receipts"] += 1
+        tot["cash"] += _dec(r["cash_amount"])
+        tot["mpesa"] += _dec(r["mpesa_amount"])
+        tot["card"] += _dec(r["card_amount"])
+        _add(r["shop_id"], r["created_at"], amount, True)
+    for r in expense_rows:
+        paid = r["amount_paid"] if r["amount_paid"] is not None else r["amount"]
+        paid = _dec(paid)
+        is_drawings = str(r["category"] or "").strip().lower() == (
+            "owner_drawings"
+        )
+        tot["drawings" if is_drawings else "expenses"] += paid
+        _add(r["shop_id"], r["created_at"], paid, False)
+    for r in stock_rows:
+        paid = _dec(r["amount_paid"])
+        tot["stock"] += paid
+        _add(r["shop_id"], r["created_at"], paid, False)
+    for sid, when, amount in refund_rows:
+        tot["refunds"] += amount
+        _add(sid, when, amount, False)
+
+    names = _employee_names(
+        [s.opened_by_id for s, _, _ in windows]
+        + [s.closed_by_id for s, _, _ in windows if s.closed_by_id]
+    )
+    rows = []
+    for (s, _, _), bucket in zip(windows, buckets):
+        opened_local = timezone.localtime(s.opened_at)
+        if s.closed_at is None:
+            when = f"{opened_local:%d %b} · since {opened_local:%H:%M}"
+            state = "Open"
+            out_time = ""
+        else:
+            when = (
+                f"{opened_local:%d %b} · {opened_local:%H:%M}"
+                f"–{timezone.localtime(s.closed_at):%H:%M}"
+            )
+            state = "Closed"
+            closed_local = timezone.localtime(s.closed_at)
+            out_time = f"{closed_local:%H:%M}"
+            if closed_local.date() != opened_local.date():
+                out_time += f" · {closed_local:%d %b}"
+        rows.append(
+            {
+                "id": s.pk,
+                "shop": shops.get(s.shop_id, "?"),
+                "session": when,
+                "day": f"{opened_local:%d %b}",
+                "in_time": f"{opened_local:%H:%M}",
+                "out_time": out_time,
+                "status": state,
+                "cashier": names.get(s.opened_by_id) or "—",
+                "sales": bucket["sales"],
+                "receipts": bucket["receipts"],
+                "out": bucket["out"],
+            }
+        )
+    for sid, bucket in outside.items():
+        rows.append(
+            {
+                "id": None,
+                "shop": shops.get(sid, "?"),
+                "session": "Outside sessions",
+                "day": "Outside sessions",
+                "in_time": "",
+                "out_time": "",
+                "status": "—",
+                "cashier": "—",
+                "sales": bucket["sales"],
+                "receipts": bucket["receipts"],
+                "out": bucket["out"],
+            }
+        )
+
+    credit_total = _dec(credit["t"])
+    return {
+        "sales": tot["sales"],
+        "receipts": tot["receipts"],
+        "cash": tot["cash"],
+        "mpesa": tot["mpesa"],
+        "card": tot["card"],
+        "expenses": tot["expenses"],
+        "stock": tot["stock"],
+        "drawings": tot["drawings"],
+        "refunds": tot["refunds"],
+        "paid_out": (
+            tot["expenses"] + tot["stock"] + tot["drawings"] + tot["refunds"]
+        ),
+        "credit": credit_total,
+        "credit_due": max(Decimal("0"), credit_total - _dec(credit["paid"])),
+        "rows": rows[:REPORT_ROW_CAP],
+        "sessions_total": len(rows),
+    }
+
+
+def _all_items_sold_card(scope: str, start, end, status, cap: int = 120) -> dict:
+    """items_sold card payload aggregated across every shop."""
+    receipt_ids = _all_receipts(start, end, receipt_status=status).values("id")
+    rows = [
+        r
+        for r in (
+            ShopReceiptLine.objects.filter(receipt_id__in=receipt_ids)
+            .values("item_name")
+            .annotate(
+                q=Sum(F("quantity") - F("returned_quantity")),
+                t=Sum("line_total"),
+            )
+            .order_by("-q")
+        )
+        if (r["q"] or 0) > 0
+    ]
+    return {
+        "label": scope,
+        "items": [
+            {
+                "name": r["item_name"],
+                "qty": qty_fmt(r["q"]),
+                "total": money(r["t"]),
+            }
+            for r in rows[:cap]
+        ],
+    }
+
+
 def reply_for_all(text: str) -> str:
     """Assistant answers aggregated across every active shop."""
     t = (text or "").strip()
@@ -1000,33 +1317,36 @@ def reply_for_all(text: str) -> str:
         return "\n".join(lines)
 
     if re.search(r"\b(summary|report|overview|snapshot|performance)\b", low):
-        sales = _all_receipts(start, end, receipt_status=status).aggregate(
-            t=Sum("total"), c=Count("id")
+        rep = _all_shops_report(start, end, status)
+        out_bits = (
+            f"expenses {money(rep['expenses'])} · "
+            f"stock {money(rep['stock'])} · drawings {money(rep['drawings'])}"
         )
-        expenses = Expense.objects.filter(
-            created_at__gte=start_dt, created_at__lt=end_dt
-        ).aggregate(t=Sum("amount"))
-        credit = (
-            ShopReceipt.objects.filter(kind=CREDIT_KIND, status__in=COUNTED_STATUSES)
-            .annotate(balance=F("total") - F("amount_paid"))
-            .filter(balance__gt=0)
-            .aggregate(t=Sum("balance"))
-        )
-        per_shop = (
-            _all_receipts(start, end, receipt_status=status)
-            .values("shop_id")
-            .annotate(t=Sum("total"))
-            .order_by("-t")
-        )
+        if rep["refunds"]:
+            out_bits += f" · refunds {money(rep['refunds'])}"
         lines = [
-            f"*{scope.capitalize()} at ALL SHOPS*",
-            f"Sales: *{money(sales['t'])}* ({sales['c'] or 0} receipts)",
-            f"Expenses: {money(expenses['t'])}",
-            f"Outstanding credit: {money(credit['t'])}",
-            "",
+            f"*Report — ALL SHOPS ({scope})*",
+            f"Sales: *{money(rep['sales'])}* across {rep['receipts']} receipts",
+            f"Cash {money(rep['cash'])}  |  M-Pesa {money(rep['mpesa'])}"
+            f"  |  Card {money(rep['card'])}",
+            f"Paid out: {money(rep['paid_out'])} — {out_bits}",
         ]
-        for r in per_shop:
-            lines.append(f"- {shops.get(r['shop_id'], '?')}: {money(r['t'])}")
+        if rep["credit"]:
+            credit_line = f"Credit issued: {money(rep['credit'])}"
+            if rep["credit_due"]:
+                credit_line += f" ({money(rep['credit_due'])} still due)"
+            lines.append(credit_line)
+        if rep["rows"]:
+            lines += ["", "*Sessions*"]
+            for r in rep["rows"]:
+                lines.append(
+                    f"- {r['shop']} · {r['session']} · {r['cashier']} · "
+                    f"{r['status']} — in {money(r['sales'])}, "
+                    f"out {money(r['out'])}"
+                )
+            hidden = rep["sessions_total"] - len(rep["rows"])
+            if hidden > 0:
+                lines.append(f"...plus {hidden} more sessions.")
         lines.append(f"%%items|{start.isoformat()}|{end.isoformat()}|{status}%%")
         return "\n".join(lines)
 
@@ -1091,7 +1411,7 @@ def reply_for_all(text: str) -> str:
         "- credits — outstanding balances per shop\n"
         "- expenses today / this month\n"
         "- stock movement\n"
-        "- summary — company snapshot\n\n"
+        "- report — sessions & money per shop\n\n"
         "Pick a single shop from the picker for its chats and details."
     )
 
@@ -1222,57 +1542,50 @@ def card_for_all(text: str):
         return {"movement": {"label": label, "groups": groups}}
 
     if re.search(r"\b(summary|report|overview|snapshot|performance)\b", low):
-        sales = _all_receipts(start, end, receipt_status=status).aggregate(
-            t=Sum("total"), c=Count("id")
-        )
-        expenses = Expense.objects.filter(
-            created_at__gte=start_dt, created_at__lt=end_dt
-        ).aggregate(t=Sum("amount"))
-        credit = (
-            ShopReceipt.objects.filter(
-                kind=CREDIT_KIND, status__in=COUNTED_STATUSES
-            )
-            .annotate(balance=F("total") - F("amount_paid"))
-            .filter(balance__gt=0)
-            .aggregate(t=Sum("balance"))
-        )
+        from django.urls import reverse
+
+        rep = _all_shops_report(start, end, status)
         return {
-            "summary": {
+            "report": {
                 "label": scope,
-                "sales": money(sales["t"]),
-                "receipts": sales["c"] or 0,
-                "expenses": money(expenses["t"]),
-                "credit": money(credit["t"]),
+                "sales": money(rep["sales"]),
+                "receipts": rep["receipts"],
+                "cash": money(rep["cash"]),
+                "mpesa": money(rep["mpesa"]),
+                "card": money(rep["card"]),
+                "paid_out": money(rep["paid_out"]),
+                "expenses": money(rep["expenses"]),
+                "stock": money(rep["stock"]),
+                "drawings": money(rep["drawings"]),
+                "refunds": money(rep["refunds"]),
+                "credit": money(rep["credit"]),
+                "credit_due": money(rep["credit_due"]),
+                "sessions_total": rep["sessions_total"],
+                "rows": [
+                    {
+                        "shop": r["shop"],
+                        "session": r["day"],
+                        "status": r["status"],
+                        "cashier": r["cashier"],
+                        "in_time": r["in_time"] or "—",
+                        "out_time": r["out_time"] or "—",
+                        "href": (
+                            reverse(
+                                "chat:all_session_report",
+                                kwargs={"session_id": r["id"]},
+                            )
+                            if r.get("id")
+                            else ""
+                        ),
+                    }
+                    for r in rep["rows"]
+                ],
             }
         }
 
     if items_intent_matches(None, t):
-        receipt_ids = _all_receipts(start, end, receipt_status=status).values("id")
-        rows = [
-            r
-            for r in (
-                ShopReceiptLine.objects.filter(receipt_id__in=receipt_ids)
-                .values("item_name")
-                .annotate(
-                    q=Sum(F("quantity") - F("returned_quantity")),
-                    t=Sum("line_total"),
-                )
-                .order_by("-q")
-            )
-            if (r["q"] or 0) > 0
-        ]
         return {
-            "items_sold": {
-                "label": scope,
-                "items": [
-                    {
-                        "name": r["item_name"],
-                        "qty": qty_fmt(r["q"]),
-                        "total": money(r["t"]),
-                    }
-                    for r in rows[:120]
-                ],
-            }
+            "items_sold": _all_items_sold_card(scope, start, end, status)
         }
 
     if re.search(r"\b(sale|sales|sell|sold|revenue|income)\b", low):
@@ -1289,7 +1602,7 @@ def card_for_all(text: str):
             ).aggregate(t=Sum("total"))["t"]
             or 0
         )
-        return {
+        card = {
             "sales": {
                 "label": scope,
                 "total": money(agg["total"]),
@@ -1303,6 +1616,11 @@ def card_for_all(text: str):
                 "receipt_status": status,
             }
         }
+        # Sales and items ride in one reply — see `card_meta`.
+        items_card = _all_items_sold_card(scope, start, end, status)
+        if items_card["items"]:
+            card["items_sold"] = items_card
+        return card
     return None
 
 
@@ -1368,4 +1686,4 @@ BOT_SUGGESTIONS = [
 ]
 
 # Topics whose period picker shows pending/confirmed receipt scope.
-RECEIPT_STATUS_TOPICS = frozenset({"sales", "items", "summary"})
+RECEIPT_STATUS_TOPICS = frozenset({"sales", "items", "summary", "report"})
