@@ -35,7 +35,13 @@ def _myshop_apps_installed():
 # Prefer real MY-SHOP models for fixtures when embedded (full column defaults /
 # FKs). Chat runtime still reads via chat.myshop_models unmanaged mirrors.
 if _myshop_apps_installed():
-    from items.models import Item, ShopStock, StoreStock
+    from items.models import (
+        Item,
+        ShelfItem,
+        ShelfStockMovement,
+        ShopStock,
+        StoreStock,
+    )
     from shops.models import (
         CompanyPosSettings,
         CompanyProfile,
@@ -85,6 +91,8 @@ else:
     StockMovementLine = mm.StockMovementLine
     StoreStock = mm.StoreStock
     StoreStockMovement = mm.StoreStockMovement
+    ShelfItem = mm.ShelfItem
+    ShelfStockMovement = mm.ShelfStockMovement
     ShopDelivery = mm.ShopDelivery
     ShopDeliveryAssignedRider = mm.ShopDeliveryAssignedRider
     ClientModel = mm.Client
@@ -109,6 +117,8 @@ UNMANAGED = [
     StockMovementLine,
     StoreStock,
     StoreStockMovement,
+    ShelfItem,
+    ShelfStockMovement,
     ShopDelivery,
     ShopDeliveryAssignedRider,
     ClientModel,
@@ -3108,3 +3118,326 @@ class AllShopsSessionReportTests(ChatTestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp["Content-Type"], "application/pdf")
         self.assertTrue(resp.content.startswith(b"%PDF"))
+
+
+class AllShopsShelfMovementTests(ChatTestCase):
+    """The all-shops assistant routes "stock movement" to the item or shelf
+    ledger — a ``shelf`` keyword picks shelf, a bare query defaults to the
+    enabled ledger, and each ledger only answers while its stock mode is on
+    in CompanyPosSettings (Settings → POS → Stock)."""
+
+    def setUp(self):
+        super().setUp()
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": True,
+                "enable_shelf_mode": True,
+            },
+        )
+        self.shelf_item = self._shelf_item(
+            self.shop_a, name="Sugar", unit="kg", quantity=Decimal("10")
+        )
+
+    def _shelf_item(self, shop, **kw):
+        if _myshop_apps_installed():
+            return ShelfItem.objects.create(shop=shop, **kw)
+        return ShelfItem.objects.create(shop_id=shop.pk, **kw)
+
+    def _shelf_movement(self, **kw):
+        if _myshop_apps_installed():
+            return ShelfStockMovement.objects.create(
+                shelf_item=self.shelf_item, **kw
+            )
+        return ShelfStockMovement.objects.create(
+            shelf_item_id=self.shelf_item.pk, **kw
+        )
+
+    def _set_modes(self, items, shelf):
+        CompanyPosSettings.objects.filter(pk=1).update(
+            enable_stock_tracking=items, enable_shelf_mode=shelf
+        )
+
+    def test_shelf_movement_reply_lists_rows(self):
+        self._shelf_movement(movement_type="in", quantity=Decimal("5"))
+        self._shelf_movement(
+            movement_type="out", quantity=Decimal("2"), reason="waste"
+        )
+        from .bot import reply_for_all
+
+        reply = reply_for_all("shelf stock movement today")
+        self.assertIn("Shelf stock movement", reply)
+        self.assertIn("Alpha Store", reply)
+        self.assertIn("Sugar ×5", reply)
+        self.assertIn("Sugar ×2", reply)
+        self.assertIn("Waste", reply)
+
+    def test_shelf_movement_card_groups(self):
+        self._shelf_movement(movement_type="in", quantity=Decimal("5"))
+        from .bot import card_for_all
+
+        card = card_for_all("shelf stock movement")
+        mv = card["movement"]
+        self.assertEqual(mv["title"], "Shelf stock movement")
+        self.assertEqual(len(mv["groups"]), 1)
+        group = mv["groups"][0]
+        self.assertEqual(group["head"], "Alpha Store — Shelf in")
+        self.assertEqual(group["items"][0]["item"], "Sugar")
+        self.assertEqual(group["items"][0]["qty"], "5")
+
+    def test_bare_movement_defaults_to_item_ledger(self):
+        StockMovement.objects.create(
+            movement_type="in", shop_id=self.shop_a.pk
+        )
+        self._shelf_movement(movement_type="in", quantity=Decimal("5"))
+        from .bot import reply_for_all
+
+        reply = reply_for_all("stock movement")
+        self.assertIn("Stock movement", reply)
+        self.assertNotIn("Shelf stock movement", reply)
+
+    def test_bare_movement_uses_shelf_when_items_off(self):
+        self._set_modes(items=False, shelf=True)
+        self._shelf_movement(movement_type="in", quantity=Decimal("5"))
+        from .bot import reply_for_all
+
+        reply = reply_for_all("stock movement")
+        self.assertIn("Shelf stock movement", reply)
+        self.assertIn("Sugar ×5", reply)
+
+    def test_shelf_query_when_shelf_mode_off(self):
+        self._set_modes(items=True, shelf=False)
+        from .bot import card_for_all, reply_for_all
+
+        self.assertIn(
+            "Shelf stock is off", reply_for_all("shelf stock movement")
+        )
+        self.assertIsNone(card_for_all("shelf stock movement"))
+
+    def test_item_query_when_item_mode_off(self):
+        self._set_modes(items=False, shelf=True)
+        from .bot import reply_for_all
+
+        self.assertIn(
+            "Item stock tracking is off",
+            reply_for_all("item stock movement"),
+        )
+
+    def test_all_page_stock_scope_follows_enabled_modes(self):
+        insert_employee_profile(
+            pk=21, employee_id="300001", user_id=None,
+            role="it_support", status="active",
+        )
+        session = self.client.session
+        session["chatbot_employee_id"] = 21
+        session.save()
+
+        resp = self.client.get(reverse("chat:all_shops"))
+        self.assertContains(resp, 'id="allStockKind"')
+        self.assertContains(resp, "Shelf stock")
+        self.assertContains(resp, "Item stock")
+
+        self._set_modes(items=True, shelf=False)
+        resp = self.client.get(reverse("chat:all_shops"))
+        self.assertContains(resp, "Item stock")
+        self.assertNotContains(resp, "Shelf stock")
+
+
+class ShelfStockActionTests(ChatTestCase):
+    """Stock in / out / transfer on the shelf ledger, plus item stock-out."""
+
+    def setUp(self):
+        super().setUp()
+        self.prepare_employee_fixtures()
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": True,
+                "enable_shelf_mode": True,
+            },
+        )
+        CompanyStockSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "shelf_require_buying_price_on_in": False,
+                "shelf_require_supplier_on_in": False,
+                "shelf_require_payment_status_on_in": False,
+                "shelf_require_reason_on_out": False,
+                "shelf_require_refund_on_out": False,
+                "shelf_require_note_on_request": False,
+            },
+        )
+        self.shelf = ShelfItem.objects.create(
+            shop=self.shop_a, name="Milk 500ml", unit="pcs",
+            quantity=Decimal("5"),
+        )
+        self.item = Item.objects.create(
+            category="Grocery", name="Sugar 1kg",
+            minimum_selling_price=Decimal("100"),
+            shop_price=Decimal("150"), stock=Decimal("40"),
+            low_stock_notify=False, low_stock_threshold=0,
+            is_suspended=False,
+        )
+        self.stock = ShopStock.objects.create(
+            shop_id=self.shop_a.pk, item_id=self.item.pk,
+            quantity=Decimal("10"), low_stock_threshold=5,
+            average_cost=Decimal("80"),
+        )
+        self.login()
+
+    def _post(self, url, payload):
+        return self.client.post(
+            url, data=json.dumps(payload), content_type="application/json"
+        ).json()
+
+    def test_shelf_stock_in(self):
+        data = self._post(
+            reverse("chat:api_stock_in"),
+            {
+                "stock_kind": "shelf",
+                "staff_code": self.staff_employee_id,
+                "supplier_name": "ACME",
+                "lines": [
+                    {"shelf_item_id": self.shelf.pk, "quantity": "3"}
+                ],
+            },
+        )
+        self.assertTrue(data["ok"], data)
+        self.shelf.refresh_from_db()
+        self.assertEqual(self.shelf.quantity, Decimal("8"))
+        mv = ShelfStockMovement.objects.get()
+        self.assertEqual(mv.movement_type, "in")
+        self.assertIn("stock_out", data["message"]["meta"])
+
+    def test_shelf_stock_out(self):
+        data = self._post(
+            reverse("chat:api_stock_out"),
+            {
+                "stock_kind": "shelf",
+                "staff_code": self.staff_employee_id,
+                "reason": "waste",
+                "refund": "no",
+                "lines": [
+                    {"shelf_item_id": self.shelf.pk, "quantity": "2"}
+                ],
+            },
+        )
+        self.assertTrue(data["ok"], data)
+        self.shelf.refresh_from_db()
+        self.assertEqual(self.shelf.quantity, Decimal("3"))
+        mv = ShelfStockMovement.objects.get()
+        self.assertEqual(mv.movement_type, "out")
+        self.assertEqual(mv.reason, "waste")
+
+    def test_item_stock_out(self):
+        data = self._post(
+            reverse("chat:api_stock_out"),
+            {
+                "stock_kind": "items",
+                "staff_code": self.staff_employee_id,
+                "reason": "waste",
+                "refund": "no",
+                "lines": [
+                    {"item_id": self.item.pk, "quantity": "4", "serials": []}
+                ],
+            },
+        )
+        self.assertTrue(data["ok"], data)
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.quantity, Decimal("6"))
+        movement = StockMovement.objects.get()
+        self.assertEqual(movement.movement_type, "out")
+        line = StockMovementLine.objects.get()
+        self.assertEqual(line.reason, "waste")
+
+    def test_stock_out_rejects_insufficient(self):
+        data = self._post(
+            reverse("chat:api_stock_out"),
+            {
+                "staff_code": self.staff_employee_id,
+                "reason": "waste",
+                "lines": [
+                    {"item_id": self.item.pk, "quantity": "99", "serials": []}
+                ],
+            },
+        )
+        self.assertFalse(data["ok"])
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.quantity, Decimal("10"))
+
+    def test_shelf_transfer(self):
+        data = self._post(
+            reverse("chat:api_transfers"),
+            {
+                "stock_kind": "shelf",
+                "staff_code": self.staff_employee_id,
+                "destination_shop_id": self.shop_b.pk,
+                "lines": [
+                    {"shelf_item_id": self.shelf.pk, "quantity": "2"}
+                ],
+            },
+        )
+        self.assertTrue(data["ok"], data)
+        self.shelf.refresh_from_db()
+        self.assertEqual(self.shelf.quantity, Decimal("3"))
+        target = ShelfItem.objects.get(shop_id=self.shop_b.pk)
+        self.assertEqual(target.quantity, Decimal("2"))
+        # OUT leg at the source + REGISTER + IN leg at the destination.
+        kinds = {
+            m.movement_type for m in ShelfStockMovement.objects.all()
+        }
+        self.assertEqual(kinds, {"in", "out", "register"})
+        self.assertEqual(
+            ShelfStockMovement.objects.filter(shelf_item=target).count(),
+            2,
+        )
+
+    def test_shelf_item_search(self):
+        data = self.client.get(
+            reverse("chat:api_shelf_item_search") + "?q=milk"
+        ).json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["items"][0]["id"], self.shelf.pk)
+
+    def test_shelf_actions_rejected_when_mode_off(self):
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": True,
+                "enable_shelf_mode": False,
+            },
+        )
+        data = self._post(
+            reverse("chat:api_stock_in"),
+            {
+                "stock_kind": "shelf",
+                "staff_code": self.staff_employee_id,
+                "lines": [
+                    {"shelf_item_id": self.shelf.pk, "quantity": "1"}
+                ],
+            },
+        )
+        self.assertFalse(data["ok"])
+        self.assertIn("Shelf stock is off", data["error"])
+
+    def test_item_stock_out_rejected_when_mode_off(self):
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": False,
+                "enable_shelf_mode": True,
+            },
+        )
+        data = self._post(
+            reverse("chat:api_stock_out"),
+            {
+                "stock_kind": "items",
+                "staff_code": self.staff_employee_id,
+                "reason": "waste",
+                "lines": [
+                    {"item_id": self.item.pk, "quantity": "1", "serials": []}
+                ],
+            },
+        )
+        self.assertFalse(data["ok"])
+        self.assertIn("Item stock is off", data["error"])

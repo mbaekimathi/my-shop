@@ -23,6 +23,8 @@
   data-pending-base="{% url 'chat:api_pending_confirm' message_id=0 %}"
   data-quick-stockin-base="{% url 'chat:api_quick_stockin' conversation_id=0 %}"
   data-stockin-url="{% url 'chat:api_stock_in' %}"
+  data-stockout-url="{% url 'chat:api_stock_out' %}"
+  data-shelf-search-url="{% url 'chat:api_shelf_item_search' %}"
   data-sale-url="{% url 'chat:api_sale' %}"
   data-expense-url="{% url 'chat:api_expense' %}"
   data-item-search-url="{% url 'chat:api_item_search' %}"
@@ -38,7 +40,7 @@
   <script type="application/json" id="chat-init-contacts">{{ contacts_json|safe }}</script>
   <script type="application/json" id="chat-init-suggestions">{{ suggestions_json|safe }}</script>
   <script type="application/json" id="chat-init-receipt-status">{{ receipt_status_default_json|safe }}</script>
-  <script type="application/json" id="chat-init-me">{"id": {{ me.id }}, "name": "{{ me.name|escapejs }}", "code": "{{ me.code }}", "location": "{{ me.location|escapejs }}", "initials": "{{ me.initials }}", "tone": {{ me.tone }}, "needs_member_confirm": {{ me.needs_member_confirm|yesno:"true,false" }}, "staff_view": {{ me.staff_view|yesno:"true,false" }}, "trade_out": {{ me.trade_out|yesno:"true,false" }}, "trade_in": {{ me.trade_in|yesno:"true,false" }}, "stock_req": {{ stock_req_json|default:"{}" }}}</script>
+  <script type="application/json" id="chat-init-me">{"id": {{ me.id }}, "name": "{{ me.name|escapejs }}", "code": "{{ me.code }}", "location": "{{ me.location|escapejs }}", "initials": "{{ me.initials }}", "tone": {{ me.tone }}, "needs_member_confirm": {{ me.needs_member_confirm|yesno:"true,false" }}, "staff_view": {{ me.staff_view|yesno:"true,false" }}, "trade_out": {{ me.trade_out|yesno:"true,false" }}, "trade_in": {{ me.trade_in|yesno:"true,false" }}, "stock_modes": {"items": {{ me.stock_modes.items|yesno:"true,false" }}, "shelf": {{ me.stock_modes.shelf|yesno:"true,false" }}}, "stock_req": {{ stock_req_json|default:"{}" }}, "shelf_req": {{ shelf_req_json|default:"{}" }}}</script>
 
   <header class="wa-app__bar">
     <div class="wa-app__brand">
@@ -93,6 +95,9 @@
           <div class="wa-fab-more" data-fab-more hidden>
             <button type="button" data-fab="stockin">
               <i data-lucide="package-plus" aria-hidden="true"></i><span>Stock in</span>
+            </button>
+            <button type="button" data-fab="stockout">
+              <i data-lucide="package-minus" aria-hidden="true"></i><span>Stock out</span>
             </button>
             <button type="button" data-fab="transfer">
               <i data-lucide="arrow-right-left" aria-hidden="true"></i><span>Transfer</span>
@@ -266,10 +271,46 @@
       <strong data-stock-title>Transfer stock</strong>
     </div>
     <div class="wa-stock__body">
+      <div class="wa-stock__field" data-stock-typewrap hidden>
+        <span>Stock type</span>
+        <div class="wa-stock__seg" role="group" aria-label="Stock type">
+          <label class="wa-stock__segopt" data-stock-typeopt="items">
+            <input type="radio" name="wa_stock_type" value="items" data-stock-type checked>
+            <span>Item stock</span>
+          </label>
+          <label class="wa-stock__segopt" data-stock-typeopt="shelf">
+            <input type="radio" name="wa_stock_type" value="shelf" data-stock-type>
+            <span>Shelf stock</span>
+          </label>
+        </div>
+      </div>
       <label class="wa-stock__field" data-stock-dest-wrap>
         <span>Transfer to</span>
         <select data-stock-dest></select>
       </label>
+
+      <div class="wa-stock__fields" data-stock-outfields hidden>
+        <div class="wa-stock__expgrid">
+          <select data-stock-reason aria-label="Reason">
+            <option value="">Reason…</option>
+            <option value="waste">Waste</option>
+            <option value="display">Display</option>
+            <option value="return">Supplier return</option>
+            <option value="custom">Custom</option>
+          </select>
+          <select data-stock-refund aria-label="Refund">
+            <option value="">Refund?</option>
+            <option value="no">No refund</option>
+            <option value="yes">Refund</option>
+          </select>
+        </div>
+        <input type="number" placeholder="Refund amount" min="0" step="any"
+               inputmode="decimal" data-stock-refundamt hidden>
+      </div>
+      <div class="wa-stock__fields" data-stock-notewrap hidden>
+        <input type="text" placeholder="Note" maxlength="200" autocomplete="off"
+               data-stock-note aria-label="Note">
+      </div>
 
       {% if me.trade_enabled %}
       <div class="wa-stock__field" data-stock-tradekinds hidden>
@@ -460,5 +501,5 @@
 
 {% block extra_js %}
 <script defer src="{% static 'js/vendor/html5-qrcode.min.js' %}"></script>
-<script defer src="{% static 'js/chatbot.js' %}?v=61"></script>
+<script defer src="{% static 'js/chatbot.js' %}?v=62"></script>
 {% endblock %}

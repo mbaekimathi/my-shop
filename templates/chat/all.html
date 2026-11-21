@@ -74,6 +74,9 @@
             <button type="button" data-fab="stockin">
               <i data-lucide="package-plus" aria-hidden="true"></i><span>Stock in</span>
             </button>
+            <button type="button" data-fab="stockout">
+              <i data-lucide="package-minus" aria-hidden="true"></i><span>Stock out</span>
+            </button>
             <button type="button" data-fab="transfer">
               <i data-lucide="arrow-right-left" aria-hidden="true"></i><span>Transfer</span>
             </button>
@@ -116,7 +119,9 @@
         <button type="button" class="wa-sug" data-sug="Sales">Sales (+ items)</button>
         <button type="button" class="wa-sug" data-sug="Credits">Credits</button>
         <button type="button" class="wa-sug" data-sug="Expenses">Expenses</button>
+        {% if stock_modes.items or stock_modes.shelf %}
         <button type="button" class="wa-sug" data-sug="Stock movement">Stock movement</button>
+        {% endif %}
         <button type="button" class="wa-sug" data-sug="Report">Report</button>
       </div>
 
@@ -134,6 +139,13 @@
             <option value="all">All</option>
             <option value="pending">Pending</option>
             <option value="confirmed">Confirmed</option>
+          </select>
+        </label>
+        <label class="wa-period__scope" id="allStockScope" hidden>
+          <span class="wa-period__scope-label">Stock</span>
+          <select id="allStockKind" aria-label="Stock type" title="Item or shelf stock movements">
+            {% if stock_modes.items %}<option value="items">Item stock</option>{% endif %}
+            {% if stock_modes.shelf %}<option value="shelf">Shelf stock</option>{% endif %}
           </select>
         </label>
         <span class="wa-period__fields">
@@ -174,7 +186,7 @@
             {% endfor %}
           </div>
         </section>
-        <div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>All-shops assistant</strong><br>Ask about every shop combined — sales, credits, expenses, stock movement, report.</p></div></div>
+        <div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>All-shops assistant</strong><br>Ask about every shop combined — sales, credits, expenses, stock movement{% if stock_modes.items and stock_modes.shelf %} (item or shelf){% endif %}, report.</p></div></div>
       </main>
 
       <form class="wa-app__composer all-composer" id="allForm">
@@ -193,5 +205,5 @@
 
 {% block extra_js %}
 <script type="application/json" id="all-init-receipt-status">{{ receipt_status_default_json|safe }}</script>
-<script defer src="{% static 'js/all.js' %}?v=19"></script>
+<script defer src="{% static 'js/all.js' %}?v=22"></script>
 {% endblock %}

@@ -2705,6 +2705,66 @@ html[data-theme="dark"] .wa-card__head--out { color: #7be3c8; }
 .wa-card__tablewrap { overflow-x: auto; }
 .wa-table { min-width: 15rem; }
 
+/* Report-card sessions table — seven columns can't fit a chat bubble on
+   phones/tablets, so each session reflows into a compact stacked row:
+     20 Nov                                          CLOSED
+     RAYA HOTEL & RESTAURANT
+     SARAH WAIRIMU · In 07:57 · Out 00:39 · 21 Nov                      */
+@media (max-width: 1199px) {
+  .wa-table--report { min-width: 0; }
+  .wa-table--report thead { display: none; }
+  .wa-table--report,
+  .wa-table--report tbody { display: block; width: 100%; }
+  .wa-table--report tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.08rem 0.45rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--wa-line);
+  }
+  .wa-table--report tbody tr:last-child { border-bottom: 0; }
+  .wa-table--report td {
+    display: inline;
+    width: auto;
+    border: 0;
+    padding: 0;
+    background: transparent !important;
+    vertical-align: baseline;
+  }
+  .wa-table--report td:first-child { display: none; }          /* # */
+  .wa-table--report td:nth-child(2) { order: 0; font-weight: 700; }
+  .wa-table--report td:nth-child(5) {                          /* status */
+    order: 1;
+    margin-left: auto;
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--wa-muted);
+    white-space: nowrap;
+  }
+  .wa-table--report td:nth-child(3) {                          /* shop */
+    order: 2;
+    flex: 0 0 100%;
+    font-weight: 650;
+  }
+  .wa-table--report td:nth-child(4),                           /* cashier */
+  .wa-table--report td:nth-child(6),                           /* in */
+  .wa-table--report td:nth-child(7) {                          /* out */
+    color: var(--wa-muted);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .wa-table--report td:nth-child(4) { order: 3; }
+  .wa-table--report td:nth-child(6) { order: 4; }
+  .wa-table--report td:nth-child(7) { order: 5; }
+  .wa-table--report td[data-l]::before {
+    content: "· " attr(data-l) " ";
+  }
+}
+
 @media (max-width: 639px) {
   /* Prevent iOS auto-zoom: interactive inputs need >=16px */
   .wa-app__search input,

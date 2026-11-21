@@ -16,8 +16,11 @@ from django.utils import timezone
 
 from .myshop_models import (
     Client,
+    CompanyPosSettings,
     Expense,
     Item,
+    ShelfItem,
+    ShelfStockMovement,
     Shop,
     ShopDaySession,
     ShopItemPrice,
@@ -1239,6 +1242,120 @@ def _all_items_sold_card(scope: str, start, end, status, cap: int = 120) -> dict
     }
 
 
+def company_stock_modes() -> dict:
+    """Company stock modes — which movement ledgers exist.
+
+    ``items`` = item stock tracking, ``shelf`` = shelf mode (the Settings →
+    POS → Stock one-of toggles on ``CompanyPosSettings``).
+    """
+    row = CompanyPosSettings.objects.filter(pk=1).first()
+    return {
+        "items": bool(getattr(row, "enable_stock_tracking", True)),
+        "shelf": bool(getattr(row, "enable_shelf_mode", False)),
+    }
+
+
+def _movement_ledger(text: str, modes: dict) -> str:
+    """'items' | 'shelf' — which ledger a movement query reads.
+
+    A ``shelf``/``item`` keyword picks explicitly; a bare query defaults to
+    the enabled ledger (item stock first when both are on).
+    """
+    low = (text or "").lower()
+    if re.search(r"\bshelf\b", low):
+        return "shelf"
+    if re.search(r"\bitems?\b", low):
+        return "items"
+    if modes["items"]:
+        return "items"
+    if modes["shelf"]:
+        return "shelf"
+    return "items"
+
+
+SHELF_REASON_LABELS = {
+    "waste": "Waste",
+    "transfer": "Transfer",
+    "display": "Display",
+    "return": "Supplier return",
+    "trade_out": "Trade out",
+    "trade_in": "Trade in",
+    "gift": "Gift",
+    "custom": "Custom",
+}
+
+
+def _all_shelf_movement_groups(start_dt, end_dt) -> list:
+    """Card groups for shelf movements across every shop, newest first."""
+    moves = list(
+        ShelfStockMovement.objects.filter(
+            created_at__gte=start_dt, created_at__lt=end_dt
+        ).order_by("-created_at", "-id")[:40]
+    )
+    items = {
+        i.pk: i
+        for i in ShelfItem.objects.filter(
+            pk__in={m.shelf_item_id for m in moves}
+        )
+    }
+    names = dict(
+        Shop.objects.filter(
+            pk__in={i.shop_id for i in items.values()}
+        ).values_list("pk", "name")
+    )
+    groups = []
+    for mv in moves:
+        item = items.get(mv.shelf_item_id)
+        shop = names.get(item.shop_id if item else 0, "?")
+        if mv.movement_type == "out":
+            head, kind = f"{shop} — Shelf out", "tout"
+        elif mv.movement_type == "register":
+            head, kind = f"{shop} — Registered", "tin"
+        else:
+            head, kind = f"{shop} — Shelf in", "tin"
+        status = " · ".join(
+            bit
+            for bit in (
+                SHELF_REASON_LABELS.get(mv.reason, mv.reason),
+                (mv.note or "").strip(),
+            )
+            if bit
+        )
+        groups.append(
+            {
+                "kind": kind,
+                "head": head,
+                "status": status,
+                "when": timezone.localtime(mv.created_at).strftime(
+                    "%d %b, %H:%M"
+                ),
+                "items": [
+                    {
+                        "item": item.name if item else "?",
+                        "qty": qty_fmt(mv.quantity),
+                    }
+                ],
+            }
+        )
+    return groups
+
+
+def _movement_disabled_reply(ledger: str, modes: dict):
+    """Honest answer when the asked-for ledger's stock mode is off."""
+    if ledger == "shelf" and not modes["shelf"]:
+        if modes["items"]:
+            return (
+                "Shelf stock is off for this company — *stock movement* "
+                "covers item stock."
+            )
+        return "Stock tracking is off for this company."
+    if ledger == "items" and not modes["items"]:
+        if modes["shelf"]:
+            return "Item stock tracking is off — try *shelf stock movement*."
+        return "Stock tracking is off for this company."
+    return None
+
+
 def reply_for_all(text: str) -> str:
     """Assistant answers aggregated across every active shop."""
     t = (text or "").strip()
@@ -1299,6 +1416,26 @@ def reply_for_all(text: str) -> str:
         return "\n".join(lines)
 
     if re.search(r"\b(stock movements?|movements?|transfers?|moved)\b", low):
+        modes = company_stock_modes()
+        ledger = _movement_ledger(t, modes)
+        disabled = _movement_disabled_reply(ledger, modes)
+        if disabled is not None:
+            return disabled
+        if ledger == "shelf":
+            groups = _all_shelf_movement_groups(start_dt, end_dt)
+            if not groups:
+                return f"No shelf stock movements across all shops {label}."
+            lines = [
+                f"*Shelf stock movement — ALL SHOPS ({label})*",
+                "",
+            ]
+            for g in groups:
+                it = g["items"][0]
+                lines.append(
+                    f"{g['head']}: {it['item']} ×{it['qty']}"
+                    + (f" ({g['status']})" if g["status"] else "")
+                )
+            return "\n".join(lines)
         moves = (
             StockMovement.objects.filter(
                 created_at__range=(start_dt, end_dt)
@@ -1410,7 +1547,7 @@ def reply_for_all(text: str) -> str:
         f"- sales today pending / confirmed (default *{default}*)\n"
         "- credits — outstanding balances per shop\n"
         "- expenses today / this month\n"
-        "- stock movement\n"
+        "- stock movement — item stock; *shelf stock movement* for shelf\n"
         "- report — sessions & money per shop\n\n"
         "Pick a single shop from the picker for its chats and details."
     )
@@ -1498,6 +1635,21 @@ def card_for_all(text: str):
         }
 
     if re.search(r"\b(stock movements?|movements?|transfers?|moved)\b", low):
+        modes = company_stock_modes()
+        ledger = _movement_ledger(t, modes)
+        if _movement_disabled_reply(ledger, modes) is not None:
+            return None
+        if ledger == "shelf":
+            groups = _all_shelf_movement_groups(start_dt, end_dt)
+            if not groups:
+                return None
+            return {
+                "movement": {
+                    "title": "Shelf stock movement",
+                    "label": label,
+                    "groups": groups,
+                }
+            }
         moves = list(
             StockMovement.objects.filter(
                 created_at__range=(start_dt, end_dt)

@@ -99,6 +99,12 @@ urlpatterns = [
         name="api_serial_search",
     ),
     path("api/stock-in/", views.api_stock_in, name="api_stock_in"),
+    path("api/stock-out/", views.api_stock_out, name="api_stock_out"),
+    path(
+        "api/shelf-items/search/",
+        views.api_shelf_item_search,
+        name="api_shelf_item_search",
+    ),
     path("api/sales/", views.api_sale, name="api_sale"),
     path("api/expenses/", views.api_expense, name="api_expense"),
     path("api/clients/search/", views.api_client_search, name="api_client_search"),

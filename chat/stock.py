@@ -700,8 +700,504 @@ def create_stock_in(me, raw_lines, *, supplier_name: str, supplier_phone: str,
 
 
 # ---------------------------------------------------------------------------
-# Transfer response — mirrors items.services.respond_to_stock_request
+# Stock modes — mirrors shops.services.shop_stock_mode_flags
 # ---------------------------------------------------------------------------
+
+
+def shop_stock_modes(shop) -> dict:
+    """{"items": bool, "shelf": bool} — stock types this shop may transact.
+
+    Mirrors the MY-SHOP floor action pages (shelf stock page, buy stock):
+    driven by the *effective* POS settings — company merged with the shop's
+    custom fields — not the report-scope shop_stock_mode_flags, which ANDs
+    the shop row's raw flag while override_pos is on.
+    """
+    pos = effective_pos_settings(shop)
+    return {
+        "items": bool(pos["enable_stock_tracking"]),
+        "shelf": bool(pos["enable_shelf_mode"]),
+    }
+
+
+def assert_stock_mode(me, kind: str):
+    """kind ∈ items|shelf — raise when that stock type is off for the shop."""
+    modes = shop_stock_modes(me)
+    if kind == "shelf" and not modes["shelf"]:
+        raise StockError(
+            "Shelf stock is off for this shop — turn it on under "
+            "Settings → POS → Stock."
+        )
+    if kind == "items" and not modes["items"]:
+        raise StockError(
+            "Item stock is off for this shop — turn it on under "
+            "Settings → POS → Stock."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stock out (immediate — mirrors items.services apply_stock_movement "out")
+# ---------------------------------------------------------------------------
+
+MOVEMENT_OUT = "out"
+ENTRY_STOCK_MANAGEMENT = "stock_management"
+
+STOCK_OUT_REASONS = (
+    ("waste", "Waste"),
+    ("display", "Display"),
+    ("return", "Supplier return"),
+    ("custom", "Custom"),
+)
+REASON_LABELS = dict(STOCK_OUT_REASONS)
+
+
+def _parse_out_details(raw_reason, refund, refund_amount, note, stock_req,
+                       *, prefix=""):
+    """Shared reason/refund/note validation for item + shelf stock-outs."""
+    reason = (raw_reason or "").strip().lower()
+    if getattr(stock_req, f"{prefix}require_reason_on_out", False):
+        if reason not in REASON_LABELS:
+            raise StockError(
+                "Choose a reason (waste, display, supplier return, "
+                "or custom)."
+            )
+    elif reason not in REASON_LABELS:
+        reason = ""
+    note = (note or "").strip()
+    if reason == "custom":
+        if not note:
+            raise StockError("Enter a custom reason.")
+        if len(note) > 200:
+            raise StockError(
+                "Custom reason must be 200 characters or fewer."
+            )
+    elif reason:
+        # Preset reasons do not carry free-text notes (mirrors MY-SHOP).
+        note = ""
+    refund = (refund or "").strip().lower()
+    if getattr(stock_req, f"{prefix}require_refund_on_out", False):
+        if refund not in ("yes", "no"):
+            raise StockError(
+                "Choose whether a refund applies (yes or no)."
+            )
+    elif refund not in ("yes", "no"):
+        refund = ""
+    amount = None
+    if refund == "yes":
+        try:
+            amount = _money(refund_amount)
+        except (InvalidOperation, TypeError):
+            raise StockError("Enter a valid refund amount.")
+        if amount <= 0:
+            raise StockError("Refund amount must be greater than zero.")
+    return reason, refund, amount, note
+
+
+@transaction.atomic
+def create_stock_out(me, raw_lines, *, reason="", refund="",
+                     refund_amount=None, note="", staff_code="",
+                     require_member=False, employee_id=None):
+    """Manual item stock-out — returns (movement, parsed_lines)."""
+    assert_stock_mode(me, "items")
+    if employee_id is None:
+        employee_id = verify_employee_code(
+            staff_code, me, require_member=require_member
+        )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "buy_stock"),
+        ("stock-management", "out"),
+    )
+    stock_req = get_stock_requirements()
+    reason, refund, refund_amount, note = _parse_out_details(
+        reason, refund, refund_amount, note, stock_req
+    )
+    lines = _parse_lines(raw_lines, me, need_stock=True)
+
+    movement = StockMovement.objects.create(
+        movement_type=MOVEMENT_OUT,
+        entry_source=ENTRY_STOCK_MANAGEMENT,
+        shop_id=me.pk,
+        request_status="",
+        created_by_id=(employee_id or None),
+        notes=SOURCE_NOTE,
+    )
+    for line in lines:
+        item = line["item"]
+        qty = _quantize_qty(line["quantity"])
+        stock = line["shop_stock"]
+        if item.track_serial_number:
+            if not line["serials"]:
+                raise StockError(
+                    f'"{item.name}" requires serial numbers.'
+                )
+            available = {
+                s.serial_number: s
+                for s in ItemSerial.objects.select_for_update().filter(
+                    item_id=item.pk,
+                    shop_id=me.pk,
+                    serial_number__in=line["serials"],
+                    is_available=True,
+                )
+            }
+            missing = [s for s in line["serials"] if s not in available]
+            if missing:
+                raise StockError(
+                    f'"{item.name}": serial not in stock at {me.name} '
+                    f'({", ".join(missing[:5])}).'
+                )
+            for serial in available.values():
+                serial.is_available = False
+                serial.save(update_fields=["is_available", "updated_at"])
+        StockMovementLine.objects.create(
+            movement_id=movement.pk,
+            item_id=item.pk,
+            item_name=item.name,
+            quantity=qty,
+            buying_price=line["buying_price"],
+            unit_cost=getattr(stock, "average_cost", None) or Decimal("0"),
+            reason=reason,
+            refund=refund,
+            refund_amount=refund_amount,
+            note=note,
+            serial_numbers=line["serials"],
+        )
+        stock.quantity = _quantize_qty(stock.quantity) - qty
+        stock.save(update_fields=["quantity", "updated_at"])
+        item.stock = max(ZERO_QTY, _quantize_qty(item.stock) - qty)
+        item.save(update_fields=["stock"])
+    return movement, lines
+
+
+def stock_out_card(movement: StockMovement, shop, lines) -> dict:
+    """Confirmation card for an item stock-out (mirrors stock_in_card)."""
+    return {
+        "stock_out": {
+            "movement_id": movement.pk,
+            "title": "Stock out",
+            "direction": "out",
+            "shop": shop.name,
+            "detail": "",
+            "items": [
+                {
+                    "name": line["item"].name,
+                    "qty": str(line["quantity"]),
+                    "serials": line.get("serials") or [],
+                    "price": "",
+                }
+                for line in lines
+            ],
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# Shelf stock — delegates to items.shelf_stock_services (embedded mirror app)
+# ---------------------------------------------------------------------------
+
+
+def _managed_shop(shop):
+    """The managed shops.Shop row for a chat shop — shelf services need it."""
+    from shops.models import Shop as ManagedShop
+
+    row = ManagedShop.objects.filter(pk=shop.pk).first()
+    if row is None:
+        raise StockError("This shop could not be found.")
+    return row
+
+
+def _managed_employee(employee_id):
+    if not employee_id:
+        return None
+    from employees.models import EmployeeProfile
+
+    return EmployeeProfile.objects.filter(pk=employee_id).first()
+
+
+def _shelf_call(fn, **kwargs):
+    """Run a shelf service and translate ValidationError → StockError."""
+    from django.core.exceptions import ValidationError
+
+    try:
+        return fn(**kwargs)
+    except ValidationError as exc:
+        messages = getattr(exc, "messages", None) or [str(exc)]
+        raise StockError("; ".join(str(m) for m in messages))
+
+
+def shelf_item_search(shop, query: str, limit: int = 8) -> list:
+    """Active (unsuspended, unarchived) shelf items at this shop."""
+    from items.models import ShelfItem
+
+    qs = ShelfItem.objects.filter(
+        shop_id=shop.pk, is_archived=False, is_suspended=False
+    ).order_by("name")
+    q = (query or "").strip()
+    if q:
+        qs = qs.filter(name__icontains=q)
+    return [
+        {
+            "id": it.pk,
+            "name": it.name,
+            "stock": str(_quantize_qty(it.quantity)),
+            "unit": it.unit or "",
+        }
+        for it in qs[:limit]
+    ]
+
+
+def _parse_shelf_lines(raw_lines, shop):
+    """[{shelf_item_id, quantity, buying_price?}] → validated line dicts."""
+    from items.models import ShelfItem
+
+    if not isinstance(raw_lines, list) or not raw_lines:
+        raise StockError("Add at least one shelf item with a quantity.")
+    if len(raw_lines) > 20:
+        raise StockError("Too many lines — split it into smaller batches.")
+    parsed = []
+    for index, raw in enumerate(raw_lines, 1):
+        try:
+            sid = int((raw or {}).get("shelf_item_id"))
+        except (TypeError, ValueError):
+            raise StockError(
+                f"Line {index}: pick a shelf item from the suggestions."
+            )
+        try:
+            qty = Decimal(str((raw or {}).get("quantity") or ""))
+        except (InvalidOperation, TypeError):
+            raise StockError(f"Line {index}: enter a valid quantity.")
+        if qty <= 0:
+            raise StockError(
+                f"Line {index}: quantity must be greater than zero."
+            )
+        if qty != qty.quantize(QTY_QUANTUM):
+            raise StockError(f"Line {index}: up to 3 decimal places allowed.")
+        price_raw = (raw or {}).get("buying_price")
+        price = None
+        if price_raw not in (None, ""):
+            try:
+                price = _money(price_raw)
+            except (InvalidOperation, TypeError):
+                raise StockError(
+                    f"Line {index}: enter a valid buying price."
+                )
+        parsed.append(
+            {
+                "shelf_item_id": sid,
+                "quantity": qty,
+                "buying_price": price,
+            }
+        )
+    items = {
+        it.pk: it
+        for it in ShelfItem.objects.select_for_update().filter(
+            pk__in=[l["shelf_item_id"] for l in parsed],
+            shop_id=shop.pk,
+            is_archived=False,
+        )
+    }
+    for line in parsed:
+        item = items.get(line["shelf_item_id"])
+        if item is None:
+            raise StockError(
+                "One of the shelf items could not be found at this shop."
+            )
+        if item.is_suspended:
+            raise StockError(
+                f'"{item.name}" is suspended and cannot be moved.'
+            )
+        line["item"] = item
+    return parsed
+
+
+@transaction.atomic
+def create_shelf_stock_in(me, raw_lines, *, supplier_name="",
+                          supplier_phone="", payment_status="", note="",
+                          staff_code="", require_member=False,
+                          employee_id=None):
+    """Returns (movements, parsed_lines)."""
+    assert_stock_mode(me, "shelf")
+    if employee_id is None:
+        employee_id = verify_employee_code(
+            staff_code, me, require_member=require_member
+        )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "shelf_stock"),
+        ("stock-management", "in"),
+    )
+    stock_req = get_stock_requirements()
+    name = (supplier_name or "").strip()
+    phone = (supplier_phone or "").strip()
+    if getattr(stock_req, "shelf_require_supplier_on_in", False):
+        if not name:
+            raise StockError("Enter the supplier's name.")
+        if not phone:
+            raise StockError("Enter the supplier's phone number.")
+    status = (payment_status or "").strip().lower()
+    if getattr(stock_req, "shelf_require_payment_status_on_in", False):
+        if status not in STOCK_PAYMENT_STATUSES:
+            raise StockError(
+                "Choose a payment status (unpaid, paid, or partial)."
+            )
+    elif status not in STOCK_PAYMENT_STATUSES:
+        status = ""
+    lines = _parse_shelf_lines(raw_lines, me)
+    if getattr(stock_req, "shelf_require_buying_price_on_in", False):
+        for line in lines:
+            if line["buying_price"] is None:
+                raise StockError(
+                    f'Enter a buying price for "{line["item"].name}".'
+                )
+    from items.shelf_stock_services import record_shelf_movement
+
+    shop = _managed_shop(me)
+    actor = _managed_employee(employee_id)
+    movements = [
+        _shelf_call(
+            record_shelf_movement,
+            shop=shop,
+            shelf_item_id=line["item"].pk,
+            mode="in",
+            qty=line["quantity"],
+            actor=actor,
+            note=(note or "").strip(),
+            supplier_name=name,
+            supplier_phone=phone,
+            payment_status=status,
+            buying_price=line["buying_price"],
+        )
+        for line in lines
+    ]
+    return movements, lines
+
+
+@transaction.atomic
+def create_shelf_stock_out(me, raw_lines, *, reason="", refund="",
+                           refund_amount=None, note="", staff_code="",
+                           require_member=False, employee_id=None):
+    """Returns (movements, parsed_lines)."""
+    assert_stock_mode(me, "shelf")
+    if employee_id is None:
+        employee_id = verify_employee_code(
+            staff_code, me, require_member=require_member
+        )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "shelf_stock"),
+        ("stock-management", "out"),
+    )
+    stock_req = get_stock_requirements()
+    reason, refund, refund_amount, note = _parse_out_details(
+        reason, refund, refund_amount, note, stock_req, prefix="shelf_"
+    )
+    lines = _parse_shelf_lines(raw_lines, me)
+    from items.shelf_stock_services import record_shelf_movement
+
+    shop = _managed_shop(me)
+    actor = _managed_employee(employee_id)
+    movements = [
+        _shelf_call(
+            record_shelf_movement,
+            shop=shop,
+            shelf_item_id=line["item"].pk,
+            mode="out",
+            qty=line["quantity"],
+            actor=actor,
+            note=note,
+            reason=reason,
+            refund=refund,
+            refund_amount=refund_amount,
+        )
+        for line in lines
+    ]
+    return movements, lines
+
+
+@transaction.atomic
+def create_shelf_transfer(me, destination, raw_lines, *, note="",
+                          staff_code="", require_member=False,
+                          employee_id=None):
+    """Immediate shelf transfer — returns (destination, [(out_mv, in_mv)]).
+
+    Unlike item transfers the receiver does not confirm: the shelf service
+    writes the OUT leg at this shop and the IN leg at the destination
+    (auto-registering the item there) in one shot.
+    """
+    assert_stock_mode(me, "shelf")
+    if destination is None:
+        raise StockError("Select a shop to transfer to.")
+    if destination.pk == me.pk:
+        raise StockError("You cannot transfer stock to your own shop.")
+    if not shop_stock_modes(destination)["shelf"]:
+        raise StockError(
+            f'Shelf stock is off for "{destination.name}".'
+        )
+    if employee_id is None:
+        employee_id = verify_employee_code(
+            staff_code, me, require_member=require_member
+        )
+    assert_employee_may(
+        employee_id,
+        ("my-shop", "shelf_stock"),
+        ("stock-management", "request"),
+    )
+    note = (note or "").strip()
+    if (
+        getattr(
+            get_stock_requirements(),
+            "shelf_require_note_on_request",
+            False,
+        )
+        and not note
+    ):
+        raise StockError("Enter a note for this transfer request.")
+    lines = _parse_shelf_lines(raw_lines, me)
+    from items.shelf_stock_services import transfer_shelf_item
+
+    src, dst = _managed_shop(me), _managed_shop(destination)
+    actor = _managed_employee(employee_id)
+    legs = []
+    for line in lines:
+        _item, _target, out_mv, in_mv = _shelf_call(
+            transfer_shelf_item,
+            from_shop=src,
+            to_shop=dst,
+            shelf_item_id=line["item"].pk,
+            qty=line["quantity"],
+            actor=actor,
+            note=note,
+        )
+        legs.append({"out": out_mv, "in": in_mv, "line": line})
+    return destination, legs
+
+
+def shelf_movements_card(title, shop, lines, *, direction="in",
+                         supplier_name="", detail="") -> dict:
+    """Confirmation card for shelf stock in/out — reuses stock_out meta."""
+    return {
+        "stock_out": {
+            "movement_id": 0,
+            "title": title,
+            "direction": direction,
+            "shop": shop.name,
+            "detail": detail,
+            "supplier": supplier_name,
+            "items": [
+                {
+                    "name": line["item"].name,
+                    "qty": str(line["quantity"]),
+                    "serials": [],
+                    "price": (
+                        str(line["buying_price"])
+                        if line["buying_price"] is not None
+                        else ""
+                    ),
+                }
+                for line in lines
+            ],
+        }
+    }
+
 
 
 @transaction.atomic
@@ -3478,6 +3974,74 @@ def _run_action(action: str, me, payload: dict, employee_id):
             "lines": lines,
             "destination": destination,
         }
+    if action == "stockout":
+        movement, lines = create_stock_out(
+            me,
+            payload.get("lines") or [],
+            reason=payload.get("reason") or "",
+            refund=payload.get("refund") or "",
+            refund_amount=payload.get("refund_amount"),
+            note=payload.get("note") or "",
+            employee_id=employee_id,
+        )
+        return {
+            "action": action,
+            "movement": movement,
+            "lines": lines,
+            "reason": REASON_LABELS.get(
+                (payload.get("reason") or "").strip().lower(), ""
+            ),
+        }
+    if action == "shelf_in":
+        supplier_name = (payload.get("supplier_name") or "").strip().upper()
+        movements, lines = create_shelf_stock_in(
+            me,
+            payload.get("lines") or [],
+            supplier_name=supplier_name,
+            supplier_phone=payload.get("supplier_phone") or "",
+            payment_status=payload.get("payment_status") or "",
+            note=payload.get("note") or "",
+            employee_id=employee_id,
+        )
+        return {
+            "action": action,
+            "movements": movements,
+            "lines": lines,
+            "supplier_name": supplier_name,
+        }
+    if action == "shelf_out":
+        movements, lines = create_shelf_stock_out(
+            me,
+            payload.get("lines") or [],
+            reason=payload.get("reason") or "",
+            refund=payload.get("refund") or "",
+            refund_amount=payload.get("refund_amount"),
+            note=payload.get("note") or "",
+            employee_id=employee_id,
+        )
+        return {
+            "action": action,
+            "movements": movements,
+            "lines": lines,
+            "reason": REASON_LABELS.get(
+                (payload.get("reason") or "").strip().lower(), ""
+            ),
+        }
+    if action == "shelf_transfer":
+        destination = _destination_shop(payload.get("destination_shop_id"))
+        destination, legs = create_shelf_transfer(
+            me,
+            destination,
+            payload.get("lines") or [],
+            note=payload.get("note") or "",
+            employee_id=employee_id,
+        )
+        return {
+            "action": action,
+            "legs": legs,
+            "lines": [leg["line"] for leg in legs],
+            "destination": destination,
+        }
     if action == "stockin":
         supplier_name = (payload.get("supplier_name") or "").strip().upper()
         movement, lines = create_stock_in(
@@ -3596,6 +4160,89 @@ def _pending_display(result: dict) -> dict:
             "total": "",
             "body": (
                 "Pending member confirmation — transfer to "
+                f"{result['destination'].name}: "
+                + _line_summary(result["lines"])
+            ),
+        }
+    if action == "stockout":
+        return {
+            "title": "Stock out",
+            "detail": result["reason"],
+            "items": [
+                {
+                    "name": l["item"].name,
+                    "qty": str(_quantize_qty(l["quantity"])),
+                    "note": (
+                        f"{len(l['serials'])} SN" if l["serials"] else ""
+                    ),
+                    "serials": l.get("serials") or [],
+                }
+                for l in result["lines"]
+            ],
+            "total": "",
+            "body": (
+                "Pending member confirmation — stock out: "
+                + _line_summary(result["lines"])
+            ),
+        }
+    if action == "shelf_in":
+        return {
+            "title": "Shelf stock in",
+            "detail": f"From {result['supplier_name'] or 'supplier'}",
+            "items": [
+                {
+                    "name": l["item"].name,
+                    "qty": str(_quantize_qty(l["quantity"])),
+                    "note": (
+                        str(_money(l["buying_price"]))
+                        if l["buying_price"] is not None
+                        else ""
+                    ),
+                    "serials": [],
+                }
+                for l in result["lines"]
+            ],
+            "total": "",
+            "body": (
+                "Pending member confirmation — shelf stock in: "
+                + _line_summary(result["lines"])
+            ),
+        }
+    if action == "shelf_out":
+        return {
+            "title": "Shelf stock out",
+            "detail": result["reason"],
+            "items": [
+                {
+                    "name": l["item"].name,
+                    "qty": str(_quantize_qty(l["quantity"])),
+                    "note": "",
+                    "serials": [],
+                }
+                for l in result["lines"]
+            ],
+            "total": "",
+            "body": (
+                "Pending member confirmation — shelf stock out: "
+                + _line_summary(result["lines"])
+            ),
+        }
+    if action == "shelf_transfer":
+        return {
+            "title": "Shelf stock transfer",
+            "detail": f"To {result['destination'].name}",
+            "items": [
+                {
+                    "name": l["item"].name,
+                    "qty": str(_quantize_qty(l["quantity"])),
+                    "note": "",
+                    "serials": [],
+                }
+                for l in result["lines"]
+            ],
+            "total": "",
+            "body": (
+                "Pending member confirmation — shelf transfer to "
                 f"{result['destination'].name}: "
                 + _line_summary(result["lines"])
             ),
@@ -3755,6 +4402,53 @@ def execute_pending(me, pa: dict, employee_id):
         result["body"] = (
             "Stock received: " + _line_summary(result["lines"])
             + f" — {result['supplier_name']}"
+        )
+    elif action == "stockout":
+        result["meta"] = stock_out_card(
+            result["movement"], me, result["lines"]
+        )
+        result["body"] = "Stock removed: " + _line_summary(
+            result["lines"]
+        )
+    elif action == "shelf_in":
+        result["meta"] = shelf_movements_card(
+            "Shelf stock received",
+            me,
+            result["lines"],
+            direction="in",
+            supplier_name=result["supplier_name"],
+        )
+        result["body"] = (
+            "Shelf stock received: " + _line_summary(result["lines"])
+            + (
+                f" — {result['supplier_name']}"
+                if result["supplier_name"]
+                else ""
+            )
+        )
+    elif action == "shelf_out":
+        result["meta"] = shelf_movements_card(
+            "Shelf stock out",
+            me,
+            result["lines"],
+            direction="out",
+            detail=result["reason"],
+        )
+        result["body"] = "Shelf stock removed: " + _line_summary(
+            result["lines"]
+        )
+    elif action == "shelf_transfer":
+        destination = result["destination"]
+        result["meta"] = shelf_movements_card(
+            "Shelf transfer sent",
+            me,
+            result["lines"],
+            direction="out",
+            detail=f"To {destination.name}",
+        )
+        result["body"] = (
+            f"Shelf transfer → {destination.name}: "
+            + _line_summary(result["lines"])
         )
     elif action == "expense":
         expenses = result.get("expenses") or [result["expense"]]

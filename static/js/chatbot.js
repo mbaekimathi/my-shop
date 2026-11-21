@@ -27,6 +27,8 @@
     pendingConfirm: root.dataset.pendingBase,
     quickStockin: root.dataset.quickStockinBase,
     stockIn: root.dataset.stockinUrl,
+    stockOut: root.dataset.stockoutUrl,
+    shelfSearch: root.dataset.shelfSearchUrl,
     sale: root.dataset.saleUrl,
     expense: root.dataset.expenseUrl,
     itemSearch: root.dataset.itemSearchUrl,
@@ -206,6 +208,7 @@
     stockPanel: root.querySelector("[data-stock-panel]"),
     stockBody: root.querySelector(".wa-stock__body"),
     stockTitle: root.querySelector("[data-stock-title]"),
+    stockTypeWrap: root.querySelector("[data-stock-typewrap]"),
     stockDestWrap: root.querySelector("[data-stock-dest-wrap]"),
     stockDest: root.querySelector("[data-stock-dest]"),
     stockItems: root.querySelector("[data-stock-items]"),
@@ -263,6 +266,12 @@
     stockPhoneSuggest: root.querySelector("[data-stock-phone-suggest]"),
     stockSupname: root.querySelector("[data-stock-supname]"),
     stockInpaystatus: root.querySelector("[data-stock-inpaystatus]"),
+    stockOutFields: root.querySelector("[data-stock-outfields]"),
+    stockReason: root.querySelector("[data-stock-reason]"),
+    stockRefund: root.querySelector("[data-stock-refund]"),
+    stockRefundAmt: root.querySelector("[data-stock-refundamt]"),
+    stockNoteWrap: root.querySelector("[data-stock-notewrap]"),
+    stockNote: root.querySelector("[data-stock-note]"),
     stockNameSuggest: root.querySelector("[data-stock-name-suggest]"),
     stockError: root.querySelector("[data-stock-error]"),
     stockSubmit: root.querySelector("[data-stock-submit]"),
@@ -942,6 +951,35 @@
         escapeHtml(s.supplier || "supplier") + " · " +
         escapeHtml(s.shop || "") + "</div></div>";
     }
+    if (card.stock_out) {
+      var so = card.stock_out;
+      var sorows = (so.items || []).map(function (i, idx) {
+        var snHtml =
+          i.serials && i.serials.length
+            ? '<tr class="wa-tr--sn"><td></td><td colspan="3">' +
+              '<div class="wa-card__sns">' +
+              i.serials.map(escapeHtml).join(" · ") + "</div></td></tr>"
+            : "";
+        return '<tr><td class="n">' + (idx + 1) + "</td><td>" +
+          escapeHtml(i.name) + '</td><td class="n">' + escapeHtml(i.qty) +
+          '</td><td class="n">' + escapeHtml(i.price || "") + "</td></tr>" +
+          snHtml;
+      }).join("");
+      var inDir = so.direction === "in";
+      var foot = [
+        so.supplier ? "From " + escapeHtml(so.supplier) : "",
+        escapeHtml(so.detail || ""),
+        escapeHtml(so.shop || "")
+      ].filter(Boolean).join(" · ");
+      return '<div class="wa-card"><div class="wa-card__head wa-card__head--' +
+        (inDir ? "in" : "out") + '"><i data-lucide="' +
+        (inDir ? "package-plus" : "package-minus") + '"></i><span>' +
+        escapeHtml(so.title || "Stock out") + "</span></div>" +
+        '<div class="wa-card__tablewrap"><table class="wa-table"><thead><tr>' +
+        "<th>#</th><th>Item</th><th class=\"n\">Qty</th><th class=\"n\"></th>" +
+        "</tr></thead><tbody>" + sorows + "</tbody></table></div>" +
+        '<div class="wa-card__foot">' + foot + "</div></div>";
+    }
     if (card.pending_action) {
       // A request posted by non-member staff — a shop member's staff code
       // executes it. The confirmed card replaces this one on the server.
@@ -1008,6 +1046,7 @@
     if (m.meta && (m.meta.transfer || m.meta.stock_in || m.meta.items_sold ||
         m.meta.sales || m.meta.summary || m.meta.credits || m.meta.expenses ||
         m.meta.movement || m.meta.sale || m.meta.pending_action ||
+        m.meta.stock_out ||
         m.meta.expense)) {
       inner = cardHtml(m.meta, m.mine, m.id);
       if (m.meta.confirmed && m.meta.confirmed.by) {
@@ -1350,7 +1389,8 @@
 
   // Card meta keys that flag a business event rather than conversation.
   var ALERT_CARDS = {
-    transfer: 1, stock_in: 1, sale: 1, pending_action: 1, expense: 1
+    transfer: 1, stock_in: 1, stock_out: 1, sale: 1, pending_action: 1,
+    expense: 1
   };
   var audioCtx = null;
   var baseTitle = document.title;
@@ -1780,6 +1820,19 @@
 
   function stockMode() { return state.stock.mode; }
 
+  // "items" | "shelf" — which stock ledger the panel is acting on.
+  function stockKind() {
+    return state.stock && state.stock.kind === "shelf" ? "shelf" : "items";
+  }
+
+  function shelfMode() { return stockKind() === "shelf"; }
+
+  // Modes that can act on either stock ledger.
+  function kindledMode() {
+    var m = stockMode();
+    return m === "stockin" || m === "stockout" || m === "transfer";
+  }
+
   function pricedMode() {
     var m = stockMode();
     return m === "sale" || m === "stockin" || m === "trade" || m === "quickin";
@@ -1852,7 +1905,8 @@
           "Supplier · " + (sname || sphone);
       } else {
         var sreq = mode === "expense" ? true :
-          ((me.stock_req || {}).in || {}).supplier !== false;
+          ((shelfMode() ? (me.shelf_req || {}).in : (me.stock_req || {}).in) || {})
+            .supplier !== false;
         els.stockDetailsToggleLabel.textContent =
           sreq ? "Supplier (required)" : "Supplier (optional)";
       }
@@ -1894,17 +1948,61 @@
       showToast("Trade in is disabled for this shop.");
       return;
     }
-    state.stock = { mode: mode, lines: [], picked: null, serials: [], submitting: false };
+    var modes = me.stock_modes || { items: true, shelf: false };
+    var kindable =
+      mode === "stockin" || mode === "stockout" || mode === "transfer";
+    if (kindable && !modes.items && !modes.shelf) {
+      showToast("Stock tracking is off for this shop.");
+      return;
+    }
+    var kind =
+      kindable && modes.shelf && !modes.items ? "shelf" : "items";
+    state.stock = {
+      mode: mode, kind: kind, lines: [], picked: null, serials: [],
+      submitting: false
+    };
     els.stockSerialWrap.hidden = true;
     els.stockSerial.value = "";
     els.stockSerials.innerHTML = "";
     els.stockSerialCount.textContent = "0";
     hideSuggest(els.stockSerialSuggest);
     els.stockQty.hidden = false;
-    var titles = { transfer: "Transfer stock", stockin: "Stock in", sale: "New sale", trade: "Trade", expense: "Register expense", quickin: "Stock in" };
-    var labels = { transfer: "Send transfer", stockin: "Save stock in", sale: "Complete sale", trade: "Complete trade", expense: "Save expense", quickin: "Send to chat" };
+    var titles = { transfer: "Transfer stock", stockin: "Stock in", stockout: "Stock out", sale: "New sale", trade: "Trade", expense: "Register expense", quickin: "Stock in" };
+    var labels = { transfer: "Send transfer", stockin: "Save stock in", stockout: "Save stock out", sale: "Complete sale", trade: "Complete trade", expense: "Save expense", quickin: "Send to chat" };
     els.stockTitle.textContent = titles[mode] || "Stock";
     els.stockSubmitLabel.textContent = labels[mode] || "Send";
+    if (els.stockTypeWrap) {
+      els.stockTypeWrap.hidden = !kindable;
+      els.stockTypeWrap.querySelectorAll("[data-stock-type]").forEach(
+        function (radio) {
+          var opt = radio.closest("[data-stock-typeopt]");
+          var enabled = radio.value === "shelf" ? modes.shelf : modes.items;
+          if (opt) opt.hidden = !enabled;
+          radio.checked = radio.value === kind;
+        }
+      );
+    }
+    if (els.stockOutFields) {
+      els.stockOutFields.hidden = mode !== "stockout";
+      if (mode === "stockout") {
+        els.stockReason.value = "";
+        els.stockRefund.value = "";
+        els.stockRefundAmt.value = "";
+        els.stockRefundAmt.hidden = true;
+      }
+    }
+    if (els.stockNoteWrap) {
+      var reqNote =
+        mode === "transfer" &&
+        ((((kind === "shelf" ? me.shelf_req : me.stock_req) || {})
+          .request || {}).note || kind === "shelf");
+      els.stockNoteWrap.hidden = mode !== "stockout" && !reqNote;
+      els.stockNote.value = "";
+      if (els.stockNote) {
+        els.stockNote.placeholder =
+          mode === "stockout" ? "Note / custom reason" : "Transfer note";
+      }
+    }
     els.stockDestWrap.hidden = mode !== "transfer";
     els.stockSupplier.hidden = mode !== "stockin" && mode !== "expense";
     els.stockPayment.hidden = mode !== "sale";
@@ -1929,7 +2027,9 @@
       ? "Sell price (optional — defaults to shop price)"
       : mode === "quickin"
       ? "Buying price"
-      : mode === "stockin" && ((me.stock_req || {}).in || {}).buying_price
+      : mode === "stockin" &&
+        (((shelfMode() ? me.shelf_req : me.stock_req) || {}).in || {})
+          .buying_price
       ? "Buying price (required)"
       : "Buying price (optional — for average cost)";
     if (mode === "sale") {
@@ -1966,7 +2066,8 @@
         els.stockInpaystatus.hidden = mode !== "stockin";
       }
       if (mode === "stockin") {
-        var req = (me.stock_req || {}).in || {};
+        var req =
+          ((shelfMode() ? me.shelf_req : me.stock_req) || {}).in || {};
         els.stockPhone.placeholder = req.supplier === false
           ? "Supplier phone (optional)"
           : "Phone number e.g. 0712 345 678";
@@ -2017,6 +2118,7 @@
         "or enter a code to stock in now"
       : (mode === "transfer" ? "Transfer sends"
          : mode === "stockin" ? "Stock in saves"
+         : mode === "stockout" ? "Stock out saves"
          : mode === "trade" ? "Trade completes"
          : mode === "expense" ? "Expense saves"
          : "Sale completes") +
@@ -2024,6 +2126,8 @@
     els.stockEmpty.textContent =
       mode === "transfer"
         ? "Add the items you are sending."
+        : mode === "stockout"
+        ? "Add the items being removed."
         : mode === "sale"
         ? "Add the items being sold."
         : mode === "trade"
@@ -2045,6 +2149,9 @@
       }
     }
     els.stockItemInput.value = "";
+    els.stockItemInput.placeholder = shelfMode()
+      ? "Type shelf item name…"
+      : "Type item name…";
     els.stockQty.value = "";
     els.stockPrice.value = "";
     els.stockPhone.value = "";
@@ -2366,25 +2473,32 @@
       hideSuggest(box);
       return;
     }
+    var shelf = shelfMode();
     itemSearchTimer = setTimeout(function () {
-      fetch(URLS.itemSearch + "?q=" + encodeURIComponent(q.trim()),
+      var searchUrl = shelf ? URLS.shelfSearch : URLS.itemSearch;
+      fetch(searchUrl + "?q=" + encodeURIComponent(q.trim()),
         { credentials: "same-origin" })
         .then(function (r) { return r.json(); })
         .then(function (resp) {
           if (!resp.ok) return;
           var html = (resp.items || []).map(function (it) {
+            var meta = shelf
+              ? '<span class="s-meta">' + escapeHtml(it.unit || "") +
+                "</span>"
+              : '<span class="s-meta">' + escapeHtml(it.category) +
+                " · KSh " + escapeHtml(it.price) + "</span>";
             return (
               '<button type="button" data-item="' + it.id + '">' +
               '<span class="s-name">' + escapeHtml(it.name) + "</span>" +
               '<span class="s-meta s-have">' + escapeHtml(it.stock) +
-              " in stock</span>" +
-              '<span class="s-meta">' + escapeHtml(it.category) +
-              " · KSh " + escapeHtml(it.price) + "</span>" +
-              "</button>"
+              " in stock</span>" + meta + "</button>"
             );
           }).join("");
           if (!html) {
-            html = '<div class="s-empty">No items match — check the name.</div>';
+            html = '<div class="s-empty">' +
+              (shelf
+                ? "No shelf items match — check the name."
+                : "No items match — check the name.") + "</div>";
           }
           showSuggest(box, html);
           box.querySelectorAll("[data-item]").forEach(function (btn) {
@@ -2587,20 +2701,22 @@
           (stockMode() === "trade" && tradeKind() === "trade_in")
           ? "" : picked.price) || "")
       : null;
-    if (picked.track_serial) {
+    var idKey = shelfMode() ? "shelf_item_id" : "item_id";
+    if (picked.track_serial && !shelfMode()) {
       if (!state.stock.serials.length) {
         stockError('"' + picked.name + '" is serial-tracked — scan or type its serial numbers.');
         els.stockSerial.focus();
         return;
       }
-      state.stock.lines.push({
-        item_id: picked.id,
+      var snLine = {
         name: picked.name,
         stock: picked.stock,
         serials: state.stock.serials.slice(),
         quantity: String(state.stock.serials.length),
         buying_price: linePrice
-      });
+      };
+      snLine[idKey] = picked.id;
+      state.stock.lines.push(snLine);
       state.stock.serials = [];
       renderSerialChips();
     } else {
@@ -2610,13 +2726,14 @@
         els.stockQty.focus();
         return;
       }
-      state.stock.lines.push({
-        item_id: picked.id,
+      var line = {
         name: picked.name,
         stock: picked.stock,
         quantity: qty,
         buying_price: linePrice
-      });
+      };
+      line[idKey] = picked.id;
+      state.stock.lines.push(line);
     }
     state.stock.picked = null;
     els.stockItemInput.value = "";
@@ -2778,22 +2895,72 @@
           };
         })
       };
-    } else if (mode === "transfer") {
+    } else if (mode === "stockout") {
+      var outReq = shelfMode()
+        ? ((me.shelf_req || {}).out || {})
+        : ((me.stock_req || {}).out || {});
+      var oreason = (els.stockReason.value || "").trim();
+      var orefund = (els.stockRefund.value || "").trim();
+      if (outReq.reason && !oreason) {
+        stockError("Choose a reason for the stock out.");
+        els.stockReason.focus();
+        return;
+      }
+      if (oreason === "custom" && !(els.stockNote.value || "").trim()) {
+        stockError("Enter a custom reason.");
+        els.stockNote.focus();
+        return;
+      }
+      if (outReq.refund && !orefund) {
+        stockError("Choose whether a refund applies.");
+        els.stockRefund.focus();
+        return;
+      }
+      if (orefund === "yes" &&
+          !(parseFloat(els.stockRefundAmt.value) > 0)) {
+        stockError("Enter the refund amount.");
+        els.stockRefundAmt.hidden = false;
+        els.stockRefundAmt.focus();
+        return;
+      }
       payload = {
-        destination_shop_id: parseInt(els.stockDest.value, 10),
+        stock_kind: stockKind(),
+        reason: oreason,
+        refund: orefund,
+        refund_amount: orefund === "yes" ? els.stockRefundAmt.value : null,
+        note: els.stockNote.value,
         staff_code: els.stockStaffCode.value,
         lines: state.stock.lines.map(function (l) {
-          return {
-            item_id: l.item_id,
-            quantity: l.quantity,
-            serials: l.serials || []
-          };
+          return shelfMode()
+            ? { shelf_item_id: l.shelf_item_id, quantity: l.quantity }
+            : {
+                item_id: l.item_id,
+                quantity: l.quantity,
+                serials: l.serials || []
+              };
+        })
+      };
+    } else if (mode === "transfer") {
+      payload = {
+        stock_kind: stockKind(),
+        destination_shop_id: parseInt(els.stockDest.value, 10),
+        note: els.stockNote ? els.stockNote.value : "",
+        staff_code: els.stockStaffCode.value,
+        lines: state.stock.lines.map(function (l) {
+          return shelfMode()
+            ? { shelf_item_id: l.shelf_item_id, quantity: l.quantity }
+            : {
+                item_id: l.item_id,
+                quantity: l.quantity,
+                serials: l.serials || []
+              };
         })
       };
     } else {
       var phone = (els.stockPhone.value || "").trim();
       var sname = (els.stockSupname.value || "").trim();
-      var sreq = (me.stock_req || {}).in || {};
+      var sreq =
+        ((shelfMode() ? me.shelf_req : me.stock_req) || {}).in || {};
       if (sreq.supplier !== false) {
         if (!phone) {
           stockError("Enter the supplier's phone number.");
@@ -2826,13 +2993,20 @@
         return;
       }
       payload = {
+        stock_kind: stockKind(),
         lines: state.stock.lines.map(function (l) {
-          return {
-            item_id: l.item_id,
-            quantity: l.quantity,
-            serials: l.serials || [],
-            buying_price: l.buying_price
-          };
+          return shelfMode()
+            ? {
+                shelf_item_id: l.shelf_item_id,
+                quantity: l.quantity,
+                buying_price: l.buying_price
+              }
+            : {
+                item_id: l.item_id,
+                quantity: l.quantity,
+                serials: l.serials || [],
+                buying_price: l.buying_price
+              };
         }),
         supplier_phone: phone,
         supplier_name: sname,
@@ -2845,6 +3019,7 @@
     stockError("");
     var url = mode === "quickin" ? urlFor(URLS.quickStockin, state.activeId)
       : mode === "transfer" ? URLS.transfers
+      : mode === "stockout" ? URLS.stockOut
       : (mode === "sale" || mode === "trade") ? URLS.sale
       : mode === "expense" ? URLS.expense : URLS.stockIn;
     post(url, payload)
@@ -2870,7 +3045,11 @@
         } else if (mode === "quickin") {
           showToast("Stock received — posted to the chat.");
         } else if (mode === "transfer") {
-          showToast("Transfer sent — the shop is being notified.");
+          showToast(shelfMode()
+            ? "Shelf stock moved — see your Assistant chat."
+            : "Transfer sent — the shop is being notified.");
+        } else if (mode === "stockout") {
+          showToast("Stock out saved. See it in your Assistant chat.");
         } else if (mode === "sale") {
           showToast("Sale " + (resp.receipt || "") + " recorded — see your Assistant chat.");
         } else if (mode === "trade") {
@@ -3090,6 +3269,41 @@
 
     document.addEventListener("click", function (e) {
       if (!e.target.closest("[data-fab-others]")) setOthersOpen(false);
+    });
+  }
+
+  if (els.stockRefund) {
+    els.stockRefund.addEventListener("change", function () {
+      els.stockRefundAmt.hidden = els.stockRefund.value !== "yes";
+    });
+  }
+
+  if (els.stockTypeWrap) {
+    els.stockTypeWrap.addEventListener("change", function (e) {
+      var radio = e.target.closest("[data-stock-type]");
+      if (!radio || !state.stock || !kindledMode()) return;
+      state.stock.kind = radio.value === "shelf" ? "shelf" : "items";
+      state.stock.lines = [];
+      state.stock.picked = null;
+      state.stock.serials = [];
+      renderSerialChips();
+      els.stockItemInput.value = "";
+      els.stockItemInput.placeholder = shelfMode()
+        ? "Type shelf item name…"
+        : "Type item name…";
+      els.stockSerialWrap.hidden = true;
+      hideSuggest(els.stockItemSuggest);
+      if (els.stockNoteWrap) {
+        var reqNote =
+          stockMode() === "transfer" &&
+          ((((shelfMode() ? me.shelf_req : me.stock_req) || {})
+            .request || {}).note || shelfMode());
+        els.stockNoteWrap.hidden =
+          stockMode() !== "stockout" && !reqNote;
+      }
+      stockError("");
+      renderStockLines();
+      syncDetailsToggleLabel();
     });
   }
 
@@ -3989,6 +4203,7 @@
     fabParam = new URLSearchParams(window.location.search).get("fab") || "";
   } catch (e) {}
   if (fabParam === "sale" || fabParam === "stockin" ||
+      fabParam === "stockout" ||
       fabParam === "transfer" || fabParam === "trade" ||
       fabParam === "trade_in" || fabParam === "trade_out" ||
       fabParam === "expense") {

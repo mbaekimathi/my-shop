@@ -197,6 +197,7 @@ def delete_group(convo: Conversation) -> None:
 # staff member who ran the action.
 ACTIVITY_GROUPS = {
     "stockin": "Incoming stock",
+    "stockout": "Outgoing stock",
     "transfer": "Transfers",
     "trade": "Trades",
     "expense": "Expenses",

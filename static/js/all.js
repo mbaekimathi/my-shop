@@ -53,11 +53,14 @@
   var periodClose = document.getElementById("allPeriodClose");
   var receiptScope = document.getElementById("allReceiptScope");
   var receiptStatusSel = document.getElementById("allReceiptStatus");
+  var stockScope = document.getElementById("allStockScope");
+  var stockKindSel = document.getElementById("allStockKind");
   var botTopic = "";
   var periodMode = "day";
   var RECEIPT_STATUS_TOPICS = {
     sales: 1, items: 1, summary: 1, report: 1
   };
+  var STOCK_SCOPE_TOPICS = { "stock movement": 1 };
   var receiptStatusDefault = "pending";
   try {
     var rsEl = document.getElementById("all-init-receipt-status");
@@ -328,8 +331,9 @@
         return (
           '<tr><td class="n">' + (i + 1) + "</td><td>" + sess +
           "</td><td>" + esc(r.shop) + "</td><td>" + esc(r.cashier) +
-          "</td><td>" + esc(r.status) + '</td><td class="n">' +
-          esc(r.in_time || "—") + '</td><td class="n">' +
+          "</td><td>" + esc(r.status) +
+          '</td><td class="n" data-l="In">' +
+          esc(r.in_time || "—") + '</td><td class="n" data-l="Out">' +
           esc(r.out_time || "—") + "</td></tr>"
         );
       }).join("");
@@ -351,7 +355,7 @@
           );
         }).join("") +
         "</div>" +
-        '<div class="wa-card__tablewrap"><table class="wa-table"><thead><tr>' +
+        '<div class="wa-card__tablewrap"><table class="wa-table wa-table--report"><thead><tr>' +
         "<th>#</th><th>Session</th><th>Shop</th><th>Cashier</th>" +
         '<th>Status</th><th class="n">In</th><th class="n">Out</th>' +
         "</tr></thead><tbody>" +
@@ -422,7 +426,8 @@
       }).join("");
       return (
         '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
-        '<i data-lucide="arrow-right-left"></i><span>Stock movement — ' +
+        '<i data-lucide="arrow-right-left"></i><span>' +
+        esc(mv.title || "Stock movement") + " — " +
         esc(mv.label) + "</span></div>" +
         '<div class="wa-card__tablewrap">' + secs + "</div>" +
         '<div class="wa-card__foot">' + (mv.groups || []).length +
@@ -524,6 +529,11 @@
     return !!RECEIPT_STATUS_TOPICS[(topic || "").toLowerCase()];
   }
 
+  function topicNeedsStockKind(topic) {
+    return !!STOCK_SCOPE_TOPICS[(topic || "").toLowerCase()] &&
+      !!(stockKindSel && stockKindSel.options.length);
+  }
+
   function setReceiptStatus(status) {
     if (status !== "all" && status !== "pending" && status !== "confirmed") return;
     receiptStatus = status;
@@ -556,6 +566,7 @@
     yearSel.value = String(now.getFullYear());
     setPeriodMode("day");
     if (receiptScope) receiptScope.hidden = !topicNeedsReceiptStatus(topic);
+    if (stockScope) stockScope.hidden = !topicNeedsStockKind(topic);
     setReceiptStatus(receiptStatus);
     period.hidden = false;
     dateDay.focus();
@@ -564,24 +575,30 @@
 
   function sendPeriod() {
     var text = null;
+    // Stock movement asks which ledger — "shelf" routes the bot to the
+    // shelf ledger; item stock stays the plain topic.
+    var topic = botTopic;
+    if (topicNeedsStockKind(botTopic) && stockKindSel.value === "shelf") {
+      topic = "Shelf " + botTopic.charAt(0).toLowerCase() + botTopic.slice(1);
+    }
     if (periodMode === "day") {
       if (!dateDay.value) return;
-      text = botTopic + " " + isoToText(dateDay.value);
+      text = topic + " " + isoToText(dateDay.value);
     } else if (periodMode === "period") {
       var from = dateFrom.value, to = dateTo.value;
       if (!from && !to) return;
       if (from && to && to < from) { var tmp = from; from = to; to = tmp; }
-      text = botTopic + " " + isoToText(from || to);
+      text = topic + " " + isoToText(from || to);
       if (from && to && from !== to) text += " to " + isoToText(to);
     } else if (periodMode === "month") {
       if (!monthInput.value) return;
       var ym = monthInput.value.split("-");
       var y = parseInt(ym[0], 10), m = parseInt(ym[1], 10);
       var last = new Date(y, m, 0).getDate();
-      text = botTopic + " 1 " + MONTHS_SHORT[m - 1] + " " + y +
+      text = topic + " 1 " + MONTHS_SHORT[m - 1] + " " + y +
              " to " + last + " " + MONTHS_SHORT[m - 1] + " " + y;
     } else if (periodMode === "year") {
-      text = botTopic + " 1 Jan " + parseInt(yearSel.value, 10) +
+      text = topic + " 1 Jan " + parseInt(yearSel.value, 10) +
              " to 31 Dec " + parseInt(yearSel.value, 10);
     }
     if (!text) return;
@@ -620,9 +637,9 @@
   // Live send: picking a complete value for the active mode sends it —
   // day on date pick, month on month pick, year on year pick, and a
   // period once both from + to dates are chosen.
-  // Receipt status is choose-only — user taps the arrow to apply.
+  // Receipt status + stock type are choose-only — user taps the arrow to apply.
   period.addEventListener("change", function (e) {
-    if (e.target && e.target.matches && e.target.matches("#allReceiptStatus, [data-wa-receipt-status]")) {
+    if (e.target && e.target.matches && e.target.matches("#allReceiptStatus, [data-wa-receipt-status], #allStockKind")) {
       return;
     }
     if (periodMode === "day" && !dateDay.value) return;
@@ -648,7 +665,8 @@
   var fabShop = document.getElementById("allFabShop");
   var fabMode = document.getElementById("allFabMode");
   var FAB_LABELS = {
-    sale: "New sale", stockin: "Stock in", transfer: "Transfer stock",
+    sale: "New sale", stockin: "Stock in", stockout: "Stock out",
+    transfer: "Transfer stock",
     trade: "Trade", trade_out: "Trade out", trade_in: "Trade in",
     expense: "Register expense", receipts: "Receipts"
   };

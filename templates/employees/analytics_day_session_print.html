@@ -435,6 +435,20 @@
     body.paper-58 .sheet-foot,
     body.paper-58 .sheet-footer { font-size: 0.54rem; }
 
+    /* ===== Small screens — fluid A4 sheet, wide tables scroll ===== */
+    @media (max-width: 640px) {
+      body.paper-a4 { padding: 4px; font-size: 9pt; }
+      body.paper-a4 .sheet { max-width: 100%; padding: 4mm 3mm; }
+      .sheet-head { flex-direction: column; align-items: flex-start; }
+      .sheet-meta { text-align: left; }
+      .meta-chips { justify-content: flex-start; }
+      .sheet-section { overflow-x: auto; }
+      .sheet-section table.sheet-grid { min-width: 26rem; }
+      .sheet-kpis { grid-template-columns: repeat(2, 1fr); }
+      .kpi { border-left: 0; border-top: 1px solid var(--line-soft); }
+      .kpi:nth-child(-n + 2) { border-top: 0; }
+    }
+
     @media print {
       .print-toolbar { display: none !important; }
       thead { display: table-header-group; }

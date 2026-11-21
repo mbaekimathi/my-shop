@@ -433,7 +433,8 @@ def pick_shop(request):
     if fab == "receipts":
         return redirect("chat:receipts")
     if fab in {
-        "sale", "stockin", "transfer", "trade", "trade_in", "trade_out", "expense"
+        "sale", "stockin", "stockout", "transfer", "trade", "trade_in",
+        "trade_out", "expense"
     }:
         return redirect(f"{reverse('chat:app')}?fab={fab}")
     return redirect("chat:app")
@@ -834,6 +835,7 @@ def all_shops_view(request):
             "receipt_status_default_json": json.dumps(
                 bot_engine.analytics_receipt_default()
             ),
+            "stock_modes": bot_engine.company_stock_modes(),
         },
     )
 
@@ -999,8 +1001,13 @@ def app_view(request):
             "trade_out": trade["trade_out"],
             "trade_in": trade["trade_in"],
             "trade_enabled": trade["trade_out"] or trade["trade_in"],
+            "stock_modes": stock_ops.shop_stock_modes(me),
         },
         "stock_req_json": json.dumps(store_stock_ops.stock_req_dict()),
+        "shelf_req_json": json.dumps(
+            store_stock_ops.get_stock_requirements()
+            .as_shelf_requirements_dict()
+        ),
         "conversations_json": json.dumps(_conversations_payload(me)),
         "contacts_json": json.dumps(contacts),
         "suggestions_json": json.dumps(bot_engine.BOT_SUGGESTIONS),
@@ -1373,6 +1380,21 @@ def api_item_search(request):
 
 @api_shop_required
 @require_GET
+def api_shelf_item_search(request):
+    """Live shelf-item suggestions for the shelf stock pickers."""
+    me = request.chat_shop
+    return JsonResponse(
+        {
+            "ok": True,
+            "items": stock_ops.shelf_item_search(
+                me, request.GET.get("q") or ""
+            ),
+        }
+    )
+
+
+@api_shop_required
+@require_GET
 def api_serial_search(request):
     """Live serial-number suggestions (in-stock at the signed-in shop)."""
     me = request.chat_shop
@@ -1566,19 +1588,30 @@ def api_transfer(request, conversation_id):
     else:
         destination = services.shop_by_id(peer.shop_id) if peer else None
 
+    stock_kind = (data.get("stock_kind") or "items").strip().lower()
     if _needs_member_confirmation(request, me) and not (
         data.get("staff_code") or ""
     ).strip():
         if destination is not None:
             data = dict(data)
             data["destination_shop_id"] = destination.pk
-        return _post_pending(request, me, "transfer", data)
+        return _post_pending(
+            request, me,
+            "shelf_transfer" if stock_kind == "shelf" else "transfer",
+            data,
+        )
 
     try:
-        dest_convo, msg = _create_transfer(
-            me, destination, data,
-            require_member=_needs_member_confirmation(request, me),
-        )
+        if stock_kind == "shelf":
+            dest_convo, msg = _create_shelf_transfer(
+                me, destination, data,
+                require_member=_needs_member_confirmation(request, me),
+            )
+        else:
+            dest_convo, msg = _create_transfer(
+                me, destination, data,
+                require_member=_needs_member_confirmation(request, me),
+            )
     except stock_ops.StockError as exc:
         return _err(str(exc))
 
@@ -1631,24 +1664,77 @@ def _create_transfer(me, destination, data, require_member=False):
     return dest_convo, msg
 
 
+def _create_shelf_transfer(me, destination, data, require_member=False):
+    """Immediate shelf transfer — returns (dest_convo, card_message).
+
+    Shelf transfers move stock in one shot (OUT at source + IN at the
+    destination, auto-registering the item there); the card is a
+    read-only notice, not an accept/decline request.
+    """
+    destination, legs = stock_ops.create_shelf_transfer(
+        me,
+        destination,
+        data.get("lines") or [],
+        staff_code=data.get("staff_code") or "",
+        note=data.get("note") or "",
+        require_member=require_member,
+    )
+    lines = [leg["line"] for leg in legs]
+    summary = ", ".join(
+        f"{line['quantity']}× {line['item'].name}" for line in lines
+    )
+    body = f"Shelf transfer → {destination.name}: {summary}"
+    card = stock_ops.shelf_movements_card(
+        "Shelf transfer",
+        me,
+        lines,
+        direction="out",
+        detail=f"{me.name} → {destination.name}",
+    )
+    dest_convo = services.get_or_create_direct(me, destination)
+    msg = services.post_card(dest_convo, me, body, card)
+    dest_me_part, _ = _participants(dest_convo, me)
+    if dest_me_part:
+        services.mark_read(dest_me_part, msg.pk)
+        services.touch_presence(dest_me_part)
+    _activity_post(
+        "transfer", me, body, card,
+        by=stock_ops.employee_label(
+            legs[0]["out"].created_by_id if legs else None
+        ),
+    )
+    return dest_convo, msg
+
+
 @api_shop_required
 @require_POST
 def api_transfers(request):
     """Conversation-free transfer — used from the chat list page FAB."""
     me = request.chat_shop
     data = _json_body(request)
+    stock_kind = (data.get("stock_kind") or "items").strip().lower()
     destination = services.shop_by_id(data.get("destination_shop_id"))
     if destination is None:
         return _err("Select a shop to transfer to.")
     if _needs_member_confirmation(request, me) and not (
         data.get("staff_code") or ""
     ).strip():
-        return _post_pending(request, me, "transfer", data)
-    try:
-        dest_convo, msg = _create_transfer(
-            me, destination, data,
-            require_member=_needs_member_confirmation(request, me),
+        return _post_pending(
+            request, me,
+            "shelf_transfer" if stock_kind == "shelf" else "transfer",
+            data,
         )
+    try:
+        if stock_kind == "shelf":
+            dest_convo, msg = _create_shelf_transfer(
+                me, destination, data,
+                require_member=_needs_member_confirmation(request, me),
+            )
+        else:
+            dest_convo, msg = _create_transfer(
+                me, destination, data,
+                require_member=_needs_member_confirmation(request, me),
+            )
     except stock_ops.StockError as exc:
         return _err(str(exc))
     return JsonResponse(
@@ -1981,6 +2067,10 @@ def api_pending_confirm(request, message_id):
     # every shop can track the day's stock-in/transfers/trades/expenses.
     activity = {
         "stockin": "stockin",
+        "stockout": "stockout",
+        "shelf_in": "stockin",
+        "shelf_out": "stockout",
+        "shelf_transfer": "transfer",
         "transfer": "transfer",
         "expense": "expense",
         "trade": "trade",
@@ -2058,6 +2148,29 @@ def api_pending_confirm(request, message_id):
             card_msg, me, dest_peer
         )
         payload["card_conversation_id"] = dest_convo.pk
+    if result["action"] == "shelf_transfer":
+        # The shelf legs already moved — the destination card is a
+        # read-only notice, not an accept/decline request.
+        destination = result["destination"]
+        dest_convo = services.get_or_create_direct(action_shop, destination)
+        dest_meta = stock_ops.shelf_movements_card(
+            "Shelf transfer received",
+            destination,
+            result["lines"],
+            direction="in",
+            detail=f"From {action_shop.name}",
+        )
+        card_msg = services.post_card(
+            dest_convo, action_shop, result["body"], dest_meta
+        )
+        dest_me_part, dest_peer = _participants(dest_convo, action_shop)
+        if dest_me_part:
+            services.mark_read(dest_me_part, card_msg.pk)
+            services.touch_presence(dest_me_part)
+        payload["card"] = services.serialize_message(
+            card_msg, me, dest_peer
+        )
+        payload["card_conversation_id"] = dest_convo.pk
     return JsonResponse(payload)
 
 
@@ -2074,10 +2187,59 @@ def api_stock_in(request):
     data = _json_body(request)
     supplier_name = (data.get("supplier_name") or "").strip()
     supplier_phone = (data.get("supplier_phone") or "").strip()
+    stock_kind = (data.get("stock_kind") or "items").strip().lower()
     if _needs_member_confirmation(request, me) and not (
         data.get("staff_code") or ""
     ).strip():
-        return _post_pending(request, me, "stockin", data)
+        return _post_pending(
+            request, me, "shelf_in" if stock_kind == "shelf" else "stockin",
+            data,
+        )
+    if stock_kind == "shelf":
+        try:
+            movements, lines = stock_ops.create_shelf_stock_in(
+                me,
+                data.get("lines") or [],
+                supplier_name=supplier_name,
+                supplier_phone=supplier_phone,
+                payment_status=data.get("payment_status") or "",
+                note=data.get("note") or "",
+                staff_code=data.get("staff_code") or "",
+                require_member=_needs_member_confirmation(request, me),
+            )
+        except stock_ops.StockError as exc:
+            return _err(str(exc))
+        convo = services.get_or_create_bot(me)
+        summary = ", ".join(
+            f"{line['quantity']}× {line['item'].name}" for line in lines
+        )
+        body = f"Shelf stock received: {summary}"
+        if supplier_name:
+            body += f" — {supplier_name.upper()}"
+        card = stock_ops.shelf_movements_card(
+            "Shelf stock received",
+            me,
+            lines,
+            direction="in",
+            supplier_name=supplier_name.upper(),
+        )
+        msg = services.post_bot_reply(convo, body, card)
+        me_part, _peer = _participants(convo, me)
+        if me_part:
+            services.mark_read(me_part, msg.pk)
+        _activity_post(
+            "stockin", me, body, card,
+            by=stock_ops.employee_label(
+                movements[0].created_by_id if movements else None
+            ),
+        )
+        return JsonResponse(
+            {
+                "ok": True,
+                "message": services.serialize_message(msg, me, None, True),
+                "conversation_id": convo.pk,
+            }
+        )
     try:
         movement, lines = stock_ops.create_stock_in(
             me,
@@ -2104,6 +2266,91 @@ def api_stock_in(request):
     _activity_post(
         "stockin", me, body, card,
         by=stock_ops.employee_label(movement.created_by_id),
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "message": services.serialize_message(msg, me, None, True),
+            "conversation_id": convo.pk,
+        }
+    )
+
+
+@api_shop_required
+@require_POST
+def api_stock_out(request):
+    """Record stock leaving the shop — item stock or shelf stock.
+
+    Item stock-out mirrors MY-SHOP's stock-management OUT movement
+    (serials are consumed, weighted-avg cost stamped on each line).
+    Shelf stock-out delegates to record_shelf_movement(mode="out").
+    """
+    me = request.chat_shop
+    data = _json_body(request)
+    stock_kind = (data.get("stock_kind") or "items").strip().lower()
+    if _needs_member_confirmation(request, me) and not (
+        data.get("staff_code") or ""
+    ).strip():
+        return _post_pending(
+            request, me,
+            "shelf_out" if stock_kind == "shelf" else "stockout",
+            data,
+        )
+    try:
+        if stock_kind == "shelf":
+            movements, lines = stock_ops.create_shelf_stock_out(
+                me,
+                data.get("lines") or [],
+                reason=data.get("reason") or "",
+                refund=data.get("refund") or "",
+                refund_amount=data.get("refund_amount"),
+                note=data.get("note") or "",
+                staff_code=data.get("staff_code") or "",
+                require_member=_needs_member_confirmation(request, me),
+            )
+            card = stock_ops.shelf_movements_card(
+                "Shelf stock out",
+                me,
+                lines,
+                direction="out",
+                detail=stock_ops.REASON_LABELS.get(
+                    (data.get("reason") or "").strip().lower(), ""
+                ),
+            )
+            actor_id = (
+                movements[0].created_by_id if movements else None
+            )
+        else:
+            movement, lines = stock_ops.create_stock_out(
+                me,
+                data.get("lines") or [],
+                reason=data.get("reason") or "",
+                refund=data.get("refund") or "",
+                refund_amount=data.get("refund_amount"),
+                note=data.get("note") or "",
+                staff_code=data.get("staff_code") or "",
+                require_member=_needs_member_confirmation(request, me),
+            )
+            card = stock_ops.stock_out_card(movement, me, lines)
+            actor_id = movement.created_by_id
+    except stock_ops.StockError as exc:
+        return _err(str(exc))
+
+    convo = services.get_or_create_bot(me)
+    summary = ", ".join(
+        f"{line['quantity']}× {line['item'].name}" for line in lines
+    )
+    body = (
+        ("Shelf stock removed: " if stock_kind == "shelf" else "Stock removed: ")
+        + summary
+    )
+    msg = services.post_bot_reply(convo, body, card)
+    me_part, _peer = _participants(convo, me)
+    if me_part:
+        services.mark_read(me_part, msg.pk)
+    _activity_post(
+        "stockout", me, body, card,
+        by=stock_ops.employee_label(actor_id),
     )
     return JsonResponse(
         {

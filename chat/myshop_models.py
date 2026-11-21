@@ -390,6 +390,24 @@ class CompanyStockSettings(models.Model):
             },
         }
 
+    def as_shelf_requirements_dict(self) -> dict:
+        return {
+            "in": {
+                "buying_price": bool(self.shelf_require_buying_price_on_in),
+                "supplier": bool(self.shelf_require_supplier_on_in),
+                "payment_status": bool(
+                    self.shelf_require_payment_status_on_in
+                ),
+            },
+            "out": {
+                "reason": bool(self.shelf_require_reason_on_out),
+                "refund": bool(self.shelf_require_refund_on_out),
+            },
+            "request": {
+                "note": bool(self.shelf_require_note_on_request),
+            },
+        }
+
 
 class ItemSerial(models.Model):
     id = models.BigAutoField(primary_key=True)
@@ -516,6 +534,51 @@ class StoreStockMovement(models.Model):
     class Meta:
         managed = False
         db_table = "items_storestockmovement"
+        ordering = ["-created_at", "-id"]
+
+
+class ShelfItem(models.Model):
+    """Shelf-mode stock line for one shop (`items_shelfitem`).
+
+    Never sold at the POS — only the columns the assistant needs.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    shop_id = models.BigIntegerField()
+    name = models.CharField(max_length=200)
+    category = models.CharField(max_length=120, blank=True, default="")
+    unit = models.CharField(max_length=40, blank=True, default="")
+    quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    is_archived = models.BooleanField(default=False)
+    is_suspended = models.BooleanField(default=False)
+
+    class Meta:
+        managed = False
+        db_table = "items_shelfitem"
+
+
+class ShelfStockMovement(models.Model):
+    """Shelf ledger row (`items_shelfstockmovement`) — one row per move.
+
+    ``movement_type`` is register | in | out; transfers and trades keep the
+    leg's ``reason`` (``transfer`` / ``trade_in`` / ``trade_out``) and a
+    "Sent to" / "Received from" ``note``.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    shelf_item_id = models.BigIntegerField()
+    movement_type = models.CharField(max_length=10)
+    quantity = models.DecimalField(max_digits=12, decimal_places=3)
+    balance_after = models.DecimalField(
+        max_digits=12, decimal_places=3, default=0
+    )
+    reason = models.CharField(max_length=16, blank=True, default="")
+    note = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = "items_shelfstockmovement"
         ordering = ["-created_at", "-id"]
 
 
