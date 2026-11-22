@@ -194,6 +194,51 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `validate_item_payload` in `items/services.py`; tests in
   `ShopPriceIsolationTests`.
 
+## Combo items
+- A **combo** is a normal `Item` with `is_combo=True` plus
+  `ItemComboComponent` legs (`combo`/`component` FKs, `share` %, `position`;
+  `uniq_combo_component` blocks duplicate legs). Registered/edited from the
+  same Item Management form via the "Item type" radio — the combo panel
+  (`data-combo-*` in `items/partials/item_form_fields.html`,
+  `static/js/item-combo.js`) searches the management catalog API, lists
+  picked items, and splits 100% between them — new rows get an equal slot
+  while existing proportions squeeze into the remainder, and editing one
+  share rebalances the rest so the portions always total 100. Typing a
+  combo amount (`data-combo-amount`) re-solves the shares to hit it
+  (weights ∝ price^k, bisection on k; client-side only — the server still
+  derives the price from the posted shares).
+- Price: `ShopItemPrice`/`Item.shop_price` = Σ component resolved shop
+  price × share/100 per shop; `minimum_selling_price` = the same formula
+  over component floors (never above the list price). Manual price fields
+  and serial tracking don't apply — components can't be suspended, combos,
+  or serial-tracked, and a combo can't contain itself
+  (`_parse_combo_components`). Shares must total 100% (same convention as
+  shelf trade-out portions: ±0.05 tolerance, drift nudged onto the last
+  leg).
+- Resync: `_sync_combo_prices` recomputes stored prices; `update_item` and
+  `delete_item` call `_sync_dependent_combo_prices` so editing or deleting
+  a component reprices every combo containing it. Switching a combo back
+  to "single" deletes its legs.
+- Sale: `complete_shop_checkout` (`shops/services.py`) and the chat mirror
+  (`chat/stock.py`, mirror model `ItemComboComponent` in
+  `chat/myshop_models.py`) explode a combo cart line into one receipt line
+  per component — qty = combo qty × share/100, unit price = component list
+  scaled by charged-price/list-price, last leg absorbs rounding drift so
+  line totals equal the charged total. Stock, serial, sold-flag, cost, and
+  return logic then run on the components (`from_combo` skips the
+  sold-flag/min-price re-checks since the combo line already passed them);
+  a suspended component or a legless combo blocks the sale.
+- Combos hold no stock and are excluded from the stock-management matrix.
+  Tests: `shops/tests/test_combo_items.py`.
+- **Feature toggle**: `CompanyPosSettings.enable_combo_items` (default on,
+  company-only — "Combo items" section on the company POS settings page).
+  Off → the register form hides the item-type toggle, the "Register item
+  combo" sidebar link disappears, `item_type=combo` posts are rejected for
+  anything that isn't already a combo (existing combos stay editable and
+  can be converted back to single), combos drop out of the floor catalog
+  (`_catalog_base_qs`), and checkout + the chat mirror refuse combo lines.
+  Mirrored on `chat.myshop_models.CompanyPosSettings`.
+
 ## Cashiers report (Analytics → Cashiers, slug `balances`)
 - IT support and shop manager dashboards pin a "Cashiers" sidebar shortcut to
   it (`_dashboard_analytics_section_links` — their sidebars are kept in

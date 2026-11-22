@@ -72,6 +72,18 @@
         <a class="ax-apply ax-apply--ghost" href="{{ page.cashier_settings_href }}">Cashier settings</a>
       </div>
       {% endif %}
+      {% if page.edit_session %}
+      <div class="ax-top-actions">
+        <button
+          type="button"
+          class="ax-apply ax-apply--ghost"
+          data-modal-open="edit-day-session"
+        >
+          <i data-lucide="pencil" aria-hidden="true"></i>
+          Edit session
+        </button>
+      </div>
+      {% endif %}
       {% if page.receipts_print_modal %}
       <div class="ax-top-actions">
         <button
@@ -782,6 +794,7 @@
 {% block workspace_overlays %}
 {{ block.super }}
 {% include "employees/partials/receipts_print_modal.html" with receipts_print_modal=page.receipts_print_modal receipts_print_url=page.receipts_print_url receipts_print_title=page.receipts_print_title receipts_print_lead=page.receipts_print_lead receipts_print_default_paper=page.receipts_print_default_paper %}
+{% include "employees/partials/analytics_day_session_edit_modal.html" with edit_session=page.edit_session %}
 {% if page.receipt_modal %}
 <div class="workspace-modal shop-receipt-modal" data-receipt-modal hidden>
   <div class="workspace-modal-backdrop" data-receipt-modal-close></div>
@@ -875,6 +888,9 @@
 {% endif %}
 {% if page.receipts_print_modal %}
 <script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
+{% endif %}
+{% if page.edit_session %}
+<script defer src="{% static 'js/analytics-day-session-edit.js' %}?v=1"></script>
 {% endif %}
 {% if page.receipt_items_modal %}
 <script defer src="{% static 'js/analytics-receipt-items.js' %}?v=1"></script>

@@ -1,0 +1,159 @@
+{% comment %}
+"Edit session" modal for the Cashiers report day-session page
+(analytics-day-session-edit.js). Corrects the recorded opening float and —
+when the day is closed — the counted closing only; every other figure is
+recalculated from the day's records.
+Expects `edit_session` dict:
+  post_url, is_open, channels{cash,mpesa,card},
+  opening{cash,mpesa,card}, closing{cash,mpesa,card}
+{% endcomment %}
+{% if edit_session %}
+<div
+  class="workspace-modal ax-day-session-edit-modal"
+  data-modal="edit-day-session"
+  hidden
+  aria-hidden="true"
+>
+  <div class="workspace-modal-backdrop" data-modal-close></div>
+  <div
+    class="workspace-modal-dialog ax-day-session-edit-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="edit-day-session-title"
+  >
+    <div class="workspace-modal-head">
+      <div>
+        <p class="shop-receipt-modal-kicker">Cashiers report</p>
+        <h2 id="edit-day-session-title">Edit session balances</h2>
+        <p class="buy-stock-modal-lead">
+          Correct the {% if edit_session.is_open %}opening float{% else %}opening float and counted closing{% endif %}
+          — every other figure is recalculated from the day's records.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="workspace-icon-btn"
+        data-modal-close
+        aria-label="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <form method="post" action="{{ edit_session.post_url }}" class="workspace-modal-form ax-day-session-edit-form">
+      {% csrf_token %}
+      <fieldset class="ax-day-session-edit-group">
+        <legend class="ax-day-session-edit-legend">Opening float</legend>
+        <div class="ax-day-session-edit-fields">
+          {% if edit_session.channels.cash %}
+          <label class="shop-cart-input is-cash">
+            <span><i data-lucide="banknote" aria-hidden="true"></i> Cash</span>
+            <input
+              type="text"
+              name="opening_cash"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ edit_session.opening.cash }}"
+              placeholder="0"
+            >
+          </label>
+          {% endif %}
+          {% if edit_session.channels.mpesa %}
+          <label class="shop-cart-input is-mpesa">
+            <span><i data-lucide="smartphone" aria-hidden="true"></i> M-Pesa</span>
+            <input
+              type="text"
+              name="opening_mpesa"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ edit_session.opening.mpesa }}"
+              placeholder="0"
+            >
+          </label>
+          {% endif %}
+          {% if edit_session.channels.card %}
+          <label class="shop-cart-input is-card">
+            <span><i data-lucide="credit-card" aria-hidden="true"></i> Card</span>
+            <input
+              type="text"
+              name="opening_card"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ edit_session.opening.card }}"
+              placeholder="0"
+            >
+          </label>
+          {% endif %}
+        </div>
+      </fieldset>
+
+      {% if not edit_session.is_open %}
+      <fieldset class="ax-day-session-edit-group">
+        <legend class="ax-day-session-edit-legend">Counted closing</legend>
+        <div class="ax-day-session-edit-fields">
+          {% if edit_session.channels.cash %}
+          <label class="shop-cart-input is-cash">
+            <span><i data-lucide="banknote" aria-hidden="true"></i> Cash</span>
+            <input
+              type="text"
+              name="closing_cash"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ edit_session.closing.cash }}"
+              placeholder="0"
+            >
+          </label>
+          {% endif %}
+          {% if edit_session.channels.mpesa %}
+          <label class="shop-cart-input is-mpesa">
+            <span><i data-lucide="smartphone" aria-hidden="true"></i> M-Pesa</span>
+            <input
+              type="text"
+              name="closing_mpesa"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ edit_session.closing.mpesa }}"
+              placeholder="0"
+            >
+          </label>
+          {% endif %}
+          {% if edit_session.channels.card %}
+          <label class="shop-cart-input is-card">
+            <span><i data-lucide="credit-card" aria-hidden="true"></i> Card</span>
+            <input
+              type="text"
+              name="closing_card"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              required
+              value="{{ edit_session.closing.card }}"
+              placeholder="0"
+            >
+          </label>
+          {% endif %}
+        </div>
+      </fieldset>
+      {% endif %}
+
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="submit" class="btn btn--primary">
+          <i data-lucide="save" aria-hidden="true"></i>
+          Save balances
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}

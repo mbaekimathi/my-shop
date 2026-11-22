@@ -10765,6 +10765,59 @@ def close_shop_day(*, shop: Shop, payload: dict):
     }
 
 
+@transaction.atomic
+def update_shop_day_balances(*, session, payload: dict):
+    """Correct a day session's recorded opening / closing balances.
+
+    Used by the Cashiers report "Edit session" action — only the till
+    floats move; every report figure is recalculated from the day's
+    records. Till channels follow the shop's active POS methods (same
+    rules as open/close): a channel that is off is not editable and keeps
+    its stored value, including a NULL closing count.
+    """
+    from .models import ShopDaySession
+
+    locked = (
+        ShopDaySession.objects.select_for_update().filter(pk=session.pk).first()
+    )
+    if locked is None:
+        raise ValidationError("Day session not found.")
+
+    channels = shop_day_balance_channels(shop=locked.shop)
+    opening = _parse_balance_fields(
+        {
+            "cash_amount": payload.get("opening_cash"),
+            "mpesa_amount": payload.get("opening_mpesa"),
+            "card_amount": payload.get("opening_card"),
+        },
+        shop=locked.shop,
+    )
+    update_fields = []
+    for key in ("cash", "mpesa", "card"):
+        if not channels[key]:
+            continue
+        setattr(locked, f"opening_{key}", opening[key])
+        update_fields.append(f"opening_{key}")
+
+    if not locked.is_open:
+        closing = _parse_balance_fields(
+            {
+                "cash_amount": payload.get("closing_cash"),
+                "mpesa_amount": payload.get("closing_mpesa"),
+                "card_amount": payload.get("closing_card"),
+            },
+            shop=locked.shop,
+        )
+        for key in ("cash", "mpesa", "card"):
+            if not channels[key]:
+                continue
+            setattr(locked, f"closing_{key}", closing[key])
+            update_fields.append(f"closing_{key}")
+
+    locked.save(update_fields=update_fields)
+    return locked
+
+
 # ---------------------------------------------------------------------------
 # Shop expenses (outside purchases / operating costs)
 # ---------------------------------------------------------------------------

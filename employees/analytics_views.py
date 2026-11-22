@@ -584,7 +584,7 @@ def analytics_section(request, role_segment, section):
 
 
 @active_employee_required
-@require_GET
+@require_http_methods(["GET", "POST"])
 def analytics_day_session(request, role_segment, session_id):
     """One shop day session — every report for that day (/…/analytics/balances/<id>/)."""
     profile = get_profile_for_request(request)
@@ -626,6 +626,33 @@ def analytics_day_session(request, role_segment, session_id):
     shop_ids = {shop.pk for shop in actionable_shops_for_profile(profile)}
     if session is None or session.shop_id not in shop_ids:
         raise Http404("Day session not found.")
+
+    if request.method == "POST":
+        denied = require_module_permission(
+            request, profile, "analytics", "edit-balances"
+        )
+        if denied is not None:
+            return denied
+        from django.contrib import messages
+
+        from shops.services import update_shop_day_balances
+
+        try:
+            update_shop_day_balances(session=session, payload=request.POST)
+        except ValidationError as exc:
+            detail = (
+                "; ".join(exc.messages)
+                if getattr(exc, "messages", None)
+                else str(exc)
+            )
+            messages.error(
+                request, detail or "Could not update the session balances."
+            )
+        else:
+            messages.success(
+                request, "Session opening / closing balances updated."
+            )
+        return redirect(request.get_full_path())
 
     if (request.GET.get("download") or "").strip().lower() in (
         "1",
@@ -677,7 +704,7 @@ def analytics_day_session(request, role_segment, session_id):
     from .analytics_services import build_day_session_report_page
 
     context = build_day_session_report_page(
-        profile=profile, request=request, session=session
+        profile=profile, request=request, session=session, allow_edit=True
     )
     page = context.get("page") or {}
 

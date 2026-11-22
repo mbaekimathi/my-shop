@@ -11048,12 +11048,19 @@ def _build_balances(filters):
     }
 
 
-def build_day_session_report_page(*, profile, request, session) -> dict:
+def build_day_session_report_page(
+    *, profile, request, session, allow_edit: bool = False
+) -> dict:
     """Every report for one shop day session — opened from the Cashiers list.
 
     Mirrors the day accounting PDF (money flow + items sold + flagged sales +
     drawings + expenses + stock in/out) so the whole day can be reviewed on
     screen; ``?download=1`` on the view streams the same PDF.
+
+    ``allow_edit`` is set by the analytics day-session view (the only place
+    the POST endpoint exists) — when the profile may ``analytics/edit-balances``
+    the page gains an "Edit session" action that corrects the recorded
+    opening float and counted closing only.
     """
     from urllib.parse import urlencode
 
@@ -12186,6 +12193,34 @@ def build_day_session_report_page(*, profile, request, session) -> dict:
         "insights": [],
         "tables": tables,
     }
+    if allow_edit:
+        from .module_permissions import employee_may
+
+        if employee_may(profile, "analytics", "edit-balances"):
+
+            def _amt(value):
+                if value is None:
+                    return ""
+                try:
+                    return str(int(Decimal(value).quantize(Decimal("1"))))
+                except Exception:
+                    return ""
+
+            page["edit_session"] = {
+                "post_url": request.get_full_path(),
+                "is_open": is_open,
+                "channels": channels,
+                "opening": {
+                    "cash": _amt(session.opening_cash),
+                    "mpesa": _amt(session.opening_mpesa),
+                    "card": _amt(session.opening_card),
+                },
+                "closing": {
+                    "cash": _amt(session.closing_cash),
+                    "mpesa": _amt(session.closing_mpesa),
+                    "card": _amt(session.closing_card),
+                },
+            }
     flags = _pos_feature_flags(pos)
     for key, _label in channel_cols:
         # A channel the money flow shows (activated or carrying figures)

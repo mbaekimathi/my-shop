@@ -1720,6 +1720,122 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertNotIn("Stocked out", titles)
         self.assertIn("Items sold", titles)
 
+    def test_edit_session_context_only_when_allowed(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+        from employees.models import EmployeeModulePermission
+
+        session = self._close(self._session())
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        request.user = self.user
+
+        # Off by default — the shop floor day report has no edit POST.
+        page = build_day_session_report_page(
+            profile=self.staff, request=request, session=session
+        )["page"]
+        self.assertIsNone(page.get("edit_session"))
+
+        page = build_day_session_report_page(
+            profile=self.staff,
+            request=request,
+            session=session,
+            allow_edit=True,
+        )["page"]
+        edit = page["edit_session"]
+        self.assertFalse(edit["is_open"])
+        self.assertTrue(edit["channels"]["cash"])
+        self.assertEqual(edit["opening"]["cash"], "1000")
+        self.assertEqual(edit["closing"]["cash"], "1250")
+
+        # An explicit deny hides the action.
+        EmployeeModulePermission.objects.create(
+            employee=self.staff,
+            module_slug="analytics",
+            submodule_slug="edit-balances",
+            allowed=False,
+        )
+        delattr(self.staff, "_employee_module_perm_cache")
+        page = build_day_session_report_page(
+            profile=self.staff,
+            request=request,
+            session=session,
+            allow_edit=True,
+        )["page"]
+        self.assertIsNone(page.get("edit_session"))
+
+    def test_edit_session_post_updates_opening_and_closing(self):
+        from decimal import Decimal
+
+        session = self._close(self._session())
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "opening_cash": "900",
+                "opening_mpesa": "150",
+                "closing_cash": "1150",
+                "closing_mpesa": "150",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        session.refresh_from_db()
+        self.assertEqual(session.opening_cash, Decimal("900"))
+        self.assertEqual(session.opening_mpesa, Decimal("150"))
+        self.assertEqual(session.closing_cash, Decimal("1150"))
+        self.assertEqual(session.closing_mpesa, Decimal("150"))
+        # The audit fields stay untouched.
+        self.assertEqual(session.opened_by_id, self.staff.pk)
+        self.assertEqual(session.closed_by_id, self.staff.pk)
+
+    def test_edit_session_post_open_session_keeps_closing_null(self):
+        session = self._session()
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "opening_cash": "800",
+                "opening_mpesa": "100",
+                "closing_cash": "999",
+                "closing_mpesa": "999",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        session.refresh_from_db()
+        self.assertEqual(session.opening_cash, 800)
+        self.assertEqual(session.opening_mpesa, 100)
+        self.assertIsNone(session.closing_cash)
+        self.assertIsNone(session.closing_mpesa)
+
+    def test_edit_session_post_requires_permission(self):
+        from employees.models import EmployeeModulePermission
+
+        session = self._close(self._session())
+        EmployeeModulePermission.objects.create(
+            employee=self.staff,
+            module_slug="analytics",
+            submodule_slug="edit-balances",
+            allowed=False,
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "opening_cash": "1",
+                "opening_mpesa": "1",
+                "closing_cash": "1",
+                "closing_mpesa": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        session.refresh_from_db()
+        self.assertEqual(session.opening_cash, 1000)
+        self.assertEqual(session.closing_cash, 1250)
+
 
 class DashboardSidebarLinkTests(TestCase):
     def test_role_dashboard_omits_dashboard_link(self):

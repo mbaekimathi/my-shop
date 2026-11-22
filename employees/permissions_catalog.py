@@ -37,6 +37,7 @@ PERMISSION_MODULES = (
             {"slug": "view", "label": "View analytics"},
             {"slug": "revenue", "label": "Revenue"},
             {"slug": "balances", "label": "Cashiers report"},
+            {"slug": "edit-balances", "label": "Edit session balances"},
             {"slug": "sales", "label": "Sales"},
             {"slug": "credits", "label": "Credits"},
             {"slug": "items", "label": "Items"},
