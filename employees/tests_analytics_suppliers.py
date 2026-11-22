@@ -163,6 +163,157 @@ class SuppliersAnalyticsShelfTests(TestCase):
         self.assertIn("KENAFRIC", self._labels(shelf_table))
         self.assertNotIn("BROOKSIDE", self._labels(shelf_table))
 
+    def test_supplied_mode_lists_items_not_suppliers(self):
+        page = self._page(view="items", mode="supplied")
+        self.assertEqual(len(page["tables"]), 1)
+        table = page["tables"][0]
+        self.assertEqual(table["title"], "Items supplied by shop")
+        labels = self._labels(table)
+        self.assertIn("Milk 500ml", labels)
+        self.assertNotIn("BROOKSIDE", labels)
+        self.assertNotIn("KENAFRIC", labels)
+        milk = [
+            row
+            for row in table["rows"]
+            for cells in [row["cells"] if isinstance(row, dict) else row]
+            if isinstance(cells[0], dict)
+            and cells[0].get("label") == "Milk 500ml"
+        ][0]
+        cell = (milk["cells"] if isinstance(milk, dict) else milk)[0]
+        self.assertIn(
+            f"/analytics/suppliers/items/{self.item.pk}/", cell["href"]
+        )
+
+    def test_supplied_mode_respects_status_filter(self):
+        page = self._page(view="items", mode="supplied", status="paid")
+        self.assertNotIn("Milk 500ml", self._labels(page["tables"][0]))
+        unpaid = self._page(
+            view="items", mode="supplied", status="not_paid"
+        )
+        self.assertIn("Milk 500ml", self._labels(unpaid["tables"][0]))
+
+    def test_legacy_supplied_view_normalizes_to_items_mode(self):
+        page = self._page(view="supplied")
+        self.assertEqual(page["view"], "items")
+        self.assertEqual(page["list_mode"], "supplied")
+        self.assertEqual(
+            page["tables"][0]["title"], "Items supplied by shop"
+        )
+
+    def test_items_and_shelf_views_show_mode_tabs(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        for view in ("items", "shelf"):
+            page = self._page(view=view)
+            tabs = {tab["label"]: tab for tab in page["view_tabs"]}
+            self.assertTrue(tabs["Suppliers"]["active"])
+            self.assertFalse(tabs["Items supplied"]["active"])
+            self.assertIn(f"view={view}", tabs["Suppliers"]["href"])
+            self.assertIn("mode=supplied", tabs["Items supplied"]["href"])
+
+            supplied = self._page(view=view, mode="supplied")
+            tabs = {tab["label"]: tab for tab in supplied["view_tabs"]}
+            self.assertTrue(tabs["Items supplied"]["active"])
+            self.assertNotIn("mode=", tabs["Suppliers"]["href"])
+
+    def test_shelf_supplied_mode_lists_shelf_items(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        page = self._page(view="shelf", mode="supplied")
+        self.assertEqual(len(page["tables"]), 1)
+        table = page["tables"][0]
+        self.assertEqual(table["title"], "Shelf items supplied by shop")
+        labels = self._labels(table)
+        self.assertIn("Gunny bags", labels)
+        self.assertNotIn("Milk 500ml", labels)
+        gunny = [
+            row
+            for row in table["rows"]
+            for cells in [row["cells"] if isinstance(row, dict) else row]
+            if isinstance(cells[0], dict)
+            and cells[0].get("label") == "Gunny bags"
+        ][0]
+        cell = (gunny["cells"] if isinstance(gunny, dict) else gunny)[0]
+        self.assertIn(
+            f"/analytics/suppliers/shelf-items/{self.shelf.pk}/",
+            cell["href"],
+        )
+
+    def test_shelf_item_suppliers_page_lists_supplier_to_pay(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/shop-manager/analytics/suppliers/shelf-items/{self.shelf.pk}/",
+            {"range": "all"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Gunny bags")
+        self.assertContains(response, "KENAFRIC")
+        # 7 x 14 supplied, unpaid.
+        self.assertContains(response, "98.00")
+        self.assertContains(response, "data-ax-pay-open")
+        self.assertContains(response, 'data-pay-kind="shelf"')
+        # BROOKSIDE only supplied catalog stock — not this shelf item.
+        self.assertNotContains(response, "BROOKSIDE")
+
+    def test_shelf_item_suppliers_page_404_for_unknown_item(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/shop-manager/analytics/suppliers/shelf-items/999999/"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_item_suppliers_page_lists_supplier_to_pay(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/shop-manager/analytics/suppliers/items/{self.item.pk}/",
+            {"range": "all"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Milk 500ml")
+        self.assertContains(response, "BROOKSIDE")
+        # 10 x 30 supplied, unpaid.
+        self.assertContains(response, "300.00")
+        self.assertContains(response, "data-ax-pay-open")
+        self.assertContains(response, 'data-pay-kind="stock"')
+        self.assertContains(response, 'name="kind" value="stock"')
+        # KENAFRIC only supplied shelf stock — not this item.
+        self.assertNotContains(response, "KENAFRIC")
+
+    def test_item_suppliers_page_404_for_unknown_item(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/shop-manager/analytics/suppliers/items/999999/"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_suppliers_view_restores_last_tab(self):
+        self.client.force_login(self.user)
+        base = "/shop-manager/analytics/suppliers/"
+        response = self.client.get(
+            base, {"view": "shelf", "mode": "supplied"}
+        )
+        self.assertEqual(response.status_code, 200)
+        # Next visit without ?view= restores the last-picked tab and mode.
+        response = self.client.get(base)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("view=shelf", response["Location"])
+        self.assertIn("mode=supplied", response["Location"])
+        # Picking "All suppliers" explicitly stops the restore.
+        response = self.client.get(base, {"view": "all"})
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get(base)
+        self.assertEqual(response.status_code, 200)
+
+    def test_legacy_supplied_view_redirects_to_items_mode(self):
+        self.client.force_login(self.user)
+        base = "/shop-manager/analytics/suppliers/"
+        response = self.client.get(base, {"view": "supplied"})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("view=items", response["Location"])
+        self.assertIn("mode=supplied", response["Location"])
+
     def test_same_identity_merges_into_one_supplier_row(self):
         from shops.services import set_company_pos_setting
 

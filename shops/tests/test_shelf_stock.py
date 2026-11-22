@@ -801,6 +801,204 @@ class ShelfStockTests(TestCase):
 
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
+class ShelfRequestFlowTests(TestCase):
+    """The stock-management Shelf transfer page (mode=request&tab=shelf)
+    picks a flow per post: transfer to the To shop, or a one-way trade
+    out / trade in with a person."""
+
+    def setUp(self):
+        user = User.objects.create_user(
+            username="800998", password="admin-pass", is_active=True
+        )
+        self.admin = EmployeeProfile.objects.create(
+            user=user,
+            employee_id="800998",
+            phone_country_code="+254",
+            phone_number="700000998",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SUPER_ADMIN,
+        )
+        self.client.force_login(user)
+        self.shop = Shop.objects.create(
+            name="SHELF SHOP A",
+            location="NAIROBI",
+            email="shelf-a@test.local",
+            phone_number="0700000001",
+            login_code="800341",
+            password_hash=make_password("pass-a"),
+            created_by=self.admin,
+        )
+        self.shop_b = Shop.objects.create(
+            name="SHELF SHOP B",
+            location="NAKURU",
+            email="shelf-b@test.local",
+            phone_number="0700000002",
+            login_code="800342",
+            password_hash=make_password("pass-b"),
+            created_by=self.admin,
+        )
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        _invalidate_pos_settings_cache()
+        self.addCleanup(_invalidate_pos_settings_cache)
+        from shops.services import _invalidate_stock_settings_cache
+
+        _invalidate_stock_settings_cache()
+        self.addCleanup(_invalidate_stock_settings_cache)
+        self.item = ShelfItem.objects.create(
+            shop=self.shop,
+            name="MAIZE FLOUR 2KG",
+            unit="PACKETS",
+            quantity=Decimal("5"),
+            created_by=self.admin,
+        )
+        from employees.workspace import stock_management_url
+
+        self.url = (
+            f"{stock_management_url(self.admin.role, 'request', shop_id=self.shop.pk)}"
+            "&tab=shelf"
+        )
+
+    def _post(self, **extra):
+        data = {
+            "shelf_action": "request_bulk",
+            "shop_id": str(self.shop.pk),
+        }
+        data.update(extra)
+        return self.client.post(self.url, data)
+
+    def test_request_page_offers_the_flow_picker(self):
+        page = self.client.get(self.url)
+        self.assertContains(page, 'value="request_bulk"')
+        self.assertContains(page, 'name="shelf_flow" value="transfer"')
+        self.assertContains(page, 'name="shelf_flow" value="trade_out"')
+        self.assertContains(page, 'name="shelf_flow" value="trade_in"')
+        self.assertContains(page, f'name="shelf_qty_{self.item.pk}"')
+        # The To shop picker offers other shelf shops, not the sender.
+        self.assertContains(page, "SHELF SHOP B")
+
+    def test_transfer_sends_qty_to_the_to_shop(self):
+        response = self._post(
+            shelf_flow="transfer",
+            requested_from_shop_id=str(self.shop_b.pk),
+            **{f"shelf_qty_{self.item.pk}": "2", "note": "top up"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("print=shelf:", response["Location"])
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("3"))
+        target = ShelfItem.objects.get(shop=self.shop_b, name="MAIZE FLOUR 2KG")
+        self.assertEqual(target.quantity, Decimal("2"))
+        out_leg = ShelfStockMovement.objects.get(
+            shelf_item=self.item, movement_type="out"
+        )
+        self.assertEqual(out_leg.reason, "transfer")
+
+    def test_trade_out_removes_qty_and_keeps_the_person(self):
+        response = self._post(
+            shelf_flow="trade_out",
+            person_name="Jane Trader",
+            person_phone="0722000000",
+            **{f"shelf_qty_{self.item.pk}": "2"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("3"))
+        movement = ShelfStockMovement.objects.get(
+            shelf_item=self.item, movement_type="out"
+        )
+        self.assertEqual(movement.reason, "trade_out")
+        self.assertEqual(movement.supplier_name, "JANE TRADER")
+        self.assertEqual(movement.supplier_phone, "0722000000")
+
+    def test_trade_in_adds_qty_with_a_unit_value(self):
+        response = self._post(
+            shelf_flow="trade_in",
+            person_name="Jane Trader",
+            person_phone="0722000000",
+            **{
+                f"shelf_qty_{self.item.pk}": "3",
+                f"shelf_price_{self.item.pk}": "150",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("8"))
+        movement = ShelfStockMovement.objects.get(
+            shelf_item=self.item, movement_type="in"
+        )
+        self.assertEqual(movement.reason, "trade_in")
+        self.assertEqual(movement.buying_price, Decimal("150.00"))
+        self.assertEqual(movement.supplier_name, "JANE TRADER")
+
+    def test_transfer_needs_a_shelf_to_shop(self):
+        # No To shop picked — nothing moves.
+        response = self._post(
+            shelf_flow="transfer",
+            **{f"shelf_qty_{self.item.pk}": "2"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("5"))
+        self.assertFalse(
+            ShelfItem.objects.filter(shop=self.shop_b).exists()
+        )
+        # The sending shop can't be its own target.
+        self._post(
+            shelf_flow="transfer",
+            requested_from_shop_id=str(self.shop.pk),
+            **{f"shelf_qty_{self.item.pk}": "2"},
+        )
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("5"))
+
+    def test_bad_flow_and_empty_lines_are_rejected(self):
+        self._post(**{f"shelf_qty_{self.item.pk}": "2"})
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("5"))
+        self._post(shelf_flow="trade_out")
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("5"))
+
+    def test_trade_in_respects_required_person_and_value(self):
+        from shops.services import set_company_stock_setting
+
+        set_company_stock_setting(
+            field="shelf_require_supplier_on_in", enabled=True
+        )
+        set_company_stock_setting(
+            field="shelf_require_buying_price_on_in", enabled=True
+        )
+        # Missing person details and unit value — nothing moves.
+        self._post(
+            shelf_flow="trade_in",
+            **{f"shelf_qty_{self.item.pk}": "2"},
+        )
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("5"))
+        # Person supplied but the unit value is still missing.
+        self._post(
+            shelf_flow="trade_in",
+            person_name="Jane Trader",
+            person_phone="0722000000",
+            **{f"shelf_qty_{self.item.pk}": "2"},
+        )
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("5"))
+        # Fully supplied — the trade lands.
+        self._post(
+            shelf_flow="trade_in",
+            person_name="Jane Trader",
+            person_phone="0722000000",
+            **{
+                f"shelf_qty_{self.item.pk}": "2",
+                f"shelf_price_{self.item.pk}": "100",
+            },
+        )
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("7"))
+
+
+@override_settings(ALLOWED_HOSTS=["testserver", "localhost"])
 class StoreManagerShelfStockTests(TestCase):
     def setUp(self):
         user = User.objects.create_user(
@@ -1429,6 +1627,466 @@ class StoreManagerShelfStockTests(TestCase):
                 shelf_item=shelf, reason__in=("trade_out", "trade_in")
             ).count(),
             2,
+        )
+
+    def test_shelf_trade_out_stocks_portions_into_linked_item(self):
+        from items.models import StoreStockMovement
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        item = Item.objects.create(
+            name="CABBAGE PORTION",
+            category="GROCERIES",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("15"),
+        )
+
+        # Register with a portions link: each unit gives 50 portions.
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, 'name="portion_links"')
+        self.assertContains(page, "data-portion-picker")
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "opening_qty": "10",
+                "shop": self.shop.pk,
+                "portion_item_id": [str(item.pk)],
+                "portion_qty": ["50"],
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(shelf.portion_targets.get().item_id, item.pk)
+        self.assertEqual(shelf.portion_targets.get().portions, Decimal("50"))
+        self.assertEqual(shelf.portions_per_unit, Decimal("50"))
+
+        # The linked item shows on the row and inside the trade page.
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, "Trade out → +50 CABBAGE PORTION")
+        self.assertContains(
+            self.client.get(f"{self.url}?shop={self.shop.pk}&mode=trade"),
+            "Trade out → +50 CABBAGE PORTION",
+        )
+
+        # Trade out 2 units → 100 portions stocked into the item's store stock.
+        resp = self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "2",
+                "person_name": "Jane Trader",
+                "person_phone": "0722000000",
+            },
+        )
+        self.assertRedirectsWithPrint(resp, f"{self.url}?shop={self.shop.pk}")
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("8"))
+        self.assertEqual(
+            StoreStock.objects.get(item=item).quantity, Decimal("100")
+        )
+        portion_movement = StoreStockMovement.objects.get(
+            item=item, movement_type="in", reason="trade_in"
+        )
+        self.assertEqual(portion_movement.quantity, Decimal("100"))
+        self.assertEqual(portion_movement.balance_after, Decimal("100"))
+        self.assertEqual(portion_movement.supplier_name, "JANE TRADER")
+        self.assertEqual(portion_movement.created_by, self.manager)
+        self.assertEqual(portion_movement.buying_price, Decimal("15"))
+        self.assertIn("CABBAGES", portion_movement.note)
+
+        # Trade in does not move portions back.
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_in",
+                f"qty_{shelf.pk}": "1",
+            },
+        )
+        self.assertEqual(
+            StoreStockMovement.objects.filter(item=item).count(), 1
+        )
+
+        # Editing clears the links — trade out then moves the shelf only.
+        self.client.post(
+            self.url,
+            {
+                "action": "edit",
+                "shelf_item_id": shelf.pk,
+                "shop": self.shop.pk,
+                "name": "Cabbages",
+                "portion_links": "1",
+                "portion_item_id": "",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertFalse(shelf.portion_targets.exists())
+        self.assertEqual(shelf.portions_per_unit, Decimal("0"))
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "1",
+            },
+        )
+        self.assertEqual(
+            StoreStockMovement.objects.filter(item=item).count(), 1
+        )
+
+    def test_shelf_portion_link_requires_item_and_count(self):
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        item = Item.objects.create(
+            name="CABBAGE PORTION",
+            category="GROCERIES",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("15"),
+        )
+
+        # Portions without a picked item is rejected.
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "shop": self.shop.pk,
+                "portion_qty": ["50"],
+            },
+        )
+        self.assertFalse(ShelfItem.objects.exists())
+
+        # A picked item without the portion count is rejected too.
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "shop": self.shop.pk,
+                "portion_item_id": str(item.pk),
+            },
+        )
+        self.assertFalse(ShelfItem.objects.exists())
+
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "opening_qty": "10",
+                "shop": self.shop.pk,
+                "portion_item_id": [str(item.pk)],
+                "portion_qty": ["50"],
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+
+        # The edit modal can retarget the links.
+        other = Item.objects.create(
+            name="SPINACH PORTION",
+            category="GROCERIES",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("15"),
+        )
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, "data-portion-targets")
+        self.assertContains(page, "data-portion-picker")
+        self.client.post(
+            self.url,
+            {
+                "action": "edit",
+                "shelf_item_id": shelf.pk,
+                "shop": self.shop.pk,
+                "name": "Cabbages",
+                "portion_item_id": [str(other.pk)],
+                "portion_qty": ["25"],
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.portion_targets.get().item_id, other.pk)
+        self.assertEqual(shelf.portions_per_unit, Decimal("25"))
+
+        # Suspended items are skipped on trade out instead of failing it.
+        other.is_suspended = True
+        other.save(update_fields=["is_suspended"])
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "1",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("9"))
+        self.assertFalse(
+            StoreStock.objects.filter(item=other).exists()
+        )
+
+    def test_shelf_portions_split_across_multiple_items(self):
+        from items.models import StoreStockMovement
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        item_a = Item.objects.create(
+            name="CABBAGE PORTION",
+            category="GROCERIES",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("15"),
+        )
+        item_b = Item.objects.create(
+            name="SPINACH PORTION",
+            category="GROCERIES",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("15"),
+        )
+        item_c = Item.objects.create(
+            name="KALE PORTION",
+            category="GROCERIES",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("15"),
+        )
+
+        # A missing portion count is rejected; duplicate items too.
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "shop": self.shop.pk,
+                "portion_item_id": [str(item_a.pk), str(item_b.pk)],
+                "portion_qty": ["30", ""],
+            },
+        )
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "shop": self.shop.pk,
+                "portion_item_id": [str(item_a.pk), str(item_a.pk)],
+                "portion_qty": ["25", "25"],
+            },
+        )
+        self.assertFalse(ShelfItem.objects.exists())
+
+        # A two-way link registers: 30 + 20 portions per unit.
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "opening_qty": "10",
+                "shop": self.shop.pk,
+                "portion_item_id": [str(item_a.pk), str(item_b.pk)],
+                "portion_qty": ["30", "20"],
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(
+            {
+                target.item_id: target.portions
+                for target in shelf.portion_targets.all()
+            },
+            {item_a.pk: Decimal("30"), item_b.pk: Decimal("20")},
+        )
+        self.assertContains(
+            self.client.get(f"{self.url}?shop={self.shop.pk}"),
+            "Trade out → +30 CABBAGE PORTION · +20 SPINACH PORTION",
+        )
+
+        # Trade out 2 units → 60 / 40 portions to the two items.
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "2",
+                "person_name": "Jane Trader",
+            },
+        )
+        self.assertEqual(
+            StoreStock.objects.get(item=item_a).quantity, Decimal("60")
+        )
+        self.assertEqual(
+            StoreStock.objects.get(item=item_b).quantity, Decimal("40")
+        )
+        legs = StoreStockMovement.objects.filter(
+            reason="trade_in"
+        ).order_by("item__name")
+        self.assertEqual(legs.count(), 2)
+        self.assertEqual(legs[0].quantity, Decimal("60"))
+        self.assertIn("30 per unit", legs[0].note)
+        self.assertEqual(legs[0].buying_price, Decimal("15"))
+        self.assertEqual(legs[1].quantity, Decimal("40"))
+
+        # A suspended target's leg is skipped — not moved to the others.
+        item_a.is_suspended = True
+        item_a.save(update_fields=["is_suspended"])
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "1",
+            },
+        )
+        self.assertEqual(
+            StoreStock.objects.get(item=item_a).quantity, Decimal("60")
+        )
+        self.assertEqual(
+            StoreStock.objects.get(item=item_b).quantity, Decimal("60")
+        )
+
+        # Three-way link with fractional portions: the shelf's total is
+        # just the sum of the legs — no shared count to keep in step.
+        self.client.post(
+            self.url,
+            {
+                "action": "edit",
+                "shelf_item_id": shelf.pk,
+                "shop": self.shop.pk,
+                "name": "Cabbages",
+                "portion_item_id": [
+                    str(item_a.pk),
+                    str(item_b.pk),
+                    str(item_c.pk),
+                ],
+                "portion_qty": ["2.333", "2.333", "2.334"],
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(
+            sum(
+                target.portions for target in shelf.portion_targets.all()
+            ),
+            Decimal("7"),
+        )
+        self.assertEqual(shelf.portions_per_unit, Decimal("7"))
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "1",
+            },
+        )
+        # Cabbage's leg is suspended (skipped); spinach and kale get
+        # their exact portions.
+        self.assertEqual(
+            StoreStock.objects.get(item=item_b).quantity,
+            Decimal("60") + Decimal("2.333"),
+        )
+        self.assertEqual(
+            StoreStock.objects.get(item=item_c).quantity, Decimal("2.334")
+        )
+
+    def test_shelf_portion_link_only_toggles_in_both_mode(self):
+        from items.models import StoreStockMovement
+
+        item = Item.objects.create(
+            name="CABBAGE PORTION",
+            category="GROCERIES",
+            minimum_selling_price=Decimal("10"),
+            shop_price=Decimal("15"),
+        )
+
+        # Shelf-only: the pickers are hidden and a crafted link is rejected.
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertNotContains(page, 'name="portion_links"')
+        self.assertNotContains(page, "data-portion-picker")
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "shop": self.shop.pk,
+                "portion_item_id": [str(item.pk)],
+                "portion_qty": ["50"],
+            },
+        )
+        self.assertFalse(ShelfItem.objects.exists())
+
+        # Items-only: no shelf page at all, and registering keeps no link.
+        set_company_pos_setting(field="stock_mode_items", enabled=True)
+        self.assertNotContains(
+            self.client.get(self.url), 'name="portion_links"'
+        )
+
+        # Both: the pickers show and the link registers.
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertContains(page, 'name="portion_links"')
+        self.assertContains(page, "data-portion-picker")
+        self.client.post(
+            self.url,
+            {
+                "action": "register",
+                "name": "Cabbages",
+                "opening_qty": "10",
+                "shop": self.shop.pk,
+                "portion_item_id": [str(item.pk)],
+                "portion_qty": ["50"],
+            },
+        )
+        shelf = ShelfItem.objects.get(shop=self.shop)
+        self.assertEqual(shelf.portion_targets.get().item_id, item.pk)
+
+        # Flip back to shelf-only: the link can't be enabled/disabled any
+        # more — the edit pickers disappear and a posted clear is refused.
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        page = self.client.get(f"{self.url}?shop={self.shop.pk}")
+        self.assertNotContains(page, "data-portion-picker")
+        self.client.post(
+            self.url,
+            {
+                "action": "edit",
+                "shelf_item_id": shelf.pk,
+                "shop": self.shop.pk,
+                "name": "Cabbages",
+                "portion_item_id": "",
+                "portion_qty": "",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.portion_targets.get().item_id, item.pk)
+
+        # Trade out in shelf-only moves the shelf but stocks no portions.
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "2",
+            },
+        )
+        shelf.refresh_from_db()
+        self.assertEqual(shelf.quantity, Decimal("8"))
+        self.assertFalse(
+            StoreStockMovement.objects.filter(item=item).exists()
+        )
+
+        # Flip back to Both: the same link stocks portions again.
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self.client.post(
+            self.url,
+            {
+                "mode": "trade",
+                "shop": self.shop.pk,
+                "trade_kind": "trade_out",
+                f"qty_{shelf.pk}": "2",
+            },
+        )
+        self.assertEqual(
+            StoreStock.objects.get(item=item).quantity, Decimal("100")
         )
 
     def test_both_mode_adds_item_and_shelf_tabs_to_item_management(self):

@@ -46,10 +46,16 @@ class SupplierSidebarTests(TestCase):
         labels = [item["label"] for item in sidebar["primary"]]
         self.assertEqual(
             labels,
-            ["Dashboard", "All suppliers", "Item suppliers", "Shelf suppliers"],
+            [
+                "Dashboard",
+                "All suppliers",
+                "Item suppliers",
+                "Shelf suppliers",
+            ],
         )
         self.assertTrue(sidebar["primary"][1]["active"])
         self.assertIn("/analytics/suppliers/", sidebar["primary"][1]["href"])
+        self.assertIn("view=all", sidebar["primary"][1]["href"])
         self.assertIn("view=items", sidebar["primary"][2]["href"])
         self.assertIn("view=shelf", sidebar["primary"][3]["href"])
         self.assertEqual(sidebar["primary"][0]["href"], sidebar["dashboard_url"])
@@ -4004,7 +4010,7 @@ class StoreManagerRoleTests(TestCase):
             EmployeeRole.COMPANY_STORE_MANAGER, profile=self.manager
         )
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertEqual(labels, ["Item stock", "Suppliers"])
+        self.assertEqual(labels, ["Item stock", "Suppliers", "Clock in / out"])
         self.assertNotIn("Item Management", labels)
         self.assertNotIn("Stock Management", labels)
         self.assertNotIn("Analytics", labels)
@@ -4013,6 +4019,24 @@ class StoreManagerRoleTests(TestCase):
         self.assertNotIn("Communications", labels)
         self.assertNotIn("Credits", labels)
         self.assertNotIn("Clients", labels)
+
+    def test_dashboard_footer_links_to_store_settings(self):
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.COMPANY_STORE_MANAGER, profile=self.manager
+        )
+        settings_link = next(
+            item
+            for item in sidebar["footer"]
+            if item["label"] == "Store settings"
+        )
+        self.assertEqual(
+            settings_link["href"],
+            "/company-store-manager/stock-management/?mode=settings",
+        )
+
+        self.client.login(username="830031", password=self.password)
+        response = self.client.get(settings_link["href"])
+        self.assertEqual(response.status_code, 200)
 
     def test_store_stock_in_out_separate_from_shop_stock(self):
         from decimal import Decimal
@@ -4356,7 +4380,7 @@ class StoreManagerRoleTests(TestCase):
         self.assertFalse(may(self.manager, "shop-management", "view"))
         self.assertFalse(may(self.manager, "shop-management", "edit"))
         self.assertTrue(may(self.manager, "stock-management", "in"))
-        self.assertFalse(may(self.manager, "stock-management", "settings"))
+        self.assertTrue(may(self.manager, "stock-management", "settings"))
         self.assertTrue(may(self.manager, "my-shop", "workspace"))
         self.assertTrue(may(self.manager, "my-shop", "shop_settings"))
         self.assertFalse(may(self.manager, "settings", "home"))
@@ -4501,6 +4525,9 @@ class ShopStoreManagerRoleTests(TestCase):
         from employees.workspace import get_dashboard_modules, sidebar_for_role_dashboard
         from items.services import actionable_shops_for_profile
         from shops.models import Shop
+        from shops.services import _invalidate_pos_settings_cache
+
+        self.addCleanup(_invalidate_pos_settings_cache)
 
         self.employee_may = employee_may
         self.profile_has_shop_allocation = profile_has_shop_allocation
@@ -4561,6 +4588,31 @@ class ShopStoreManagerRoleTests(TestCase):
             self.actionable_shops_for_profile(self.manager), [self.shop_a]
         )
 
+    def test_store_settings_link_and_page_work_without_allocation(self):
+        """Store settings is company-wide — linked and open even before a
+        shop is allocated; shop-scoped stock modes stay gated."""
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
+        )
+        settings_link = next(
+            item
+            for item in sidebar["footer"]
+            if item["label"] == "Store settings"
+        )
+        self.assertEqual(
+            settings_link["href"],
+            "/shop-store-manager/stock-management/?mode=settings",
+        )
+
+        self.client.login(username="840031", password=self.password)
+        response = self.client.get(settings_link["href"])
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client.get(
+            "/shop-store-manager/stock-management/?mode=view"
+        )
+        self.assertEqual(response.status_code, 302)
+
     def test_default_permissions_match_company_store_manager(self):
         may = self.employee_may
         self.assertTrue(may(self.manager, "item-management", "view"))
@@ -4580,13 +4632,89 @@ class ShopStoreManagerRoleTests(TestCase):
             EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
         )
         labels = [item["label"] for item in sidebar["primary"]]
-        self.assertIn("Item Management", labels)
+        self.assertNotIn("Item Management", labels)
         self.assertIn("Stock Management", labels)
-        self.assertIn("Analytics", labels)
+        # The Analytics module link is hidden on the dashboard only —
+        # analytics lives under the stock pages (Shop store analytics).
+        self.assertNotIn("Analytics", labels)
         self.assertIn("Suppliers", labels)
-        # No central-store entry links.
-        self.assertNotIn("Item stock", labels)
+        # Item stock entry exists but stays shop-scoped — it points at the
+        # stock-management page, never the central store.
+        hrefs = {
+            item["label"]: item.get("href", "")
+            for item in sidebar["primary"]
+        }
+        self.assertIn("Item stock", labels)
+        self.assertIn("stock-management", hrefs["Item stock"])
+        self.assertNotIn("company-store-manager", hrefs["Item stock"])
+        # Shelf mode is off — no Shelf stock entry.
         self.assertNotIn("Shelf stock", labels)
+
+    def test_analytics_link_stays_on_other_pages(self):
+        """The Analytics module link is only skipped on the dashboard itself —
+        pages that reuse the role sidebar keep it."""
+        self.manager.assigned_shops.add(self.shop_a)
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER,
+            profile=self.manager,
+            active_slug="suppliers",
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertIn("Analytics", labels)
+
+    def test_dashboard_shelf_stock_link_follows_shelf_mode(self):
+        from shops.services import set_company_pos_setting
+
+        self.manager.assigned_shops.add(self.shop_a)
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Shelf stock", labels)
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
+        )
+        hrefs = {
+            item["label"]: item.get("href", "")
+            for item in sidebar["primary"]
+        }
+        self.assertIn("Shelf stock", hrefs)
+        self.assertIn("tab=shelf", hrefs["Shelf stock"])
+        self.assertNotIn("company-store-manager", hrefs["Shelf stock"])
+
+    def test_dashboard_item_stock_link_hidden_in_shelf_only_mode(self):
+        from shops.services import set_company_pos_setting
+
+        self.manager.assigned_shops.add(self.shop_a)
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertNotIn("Item stock", labels)
+        self.assertIn("Shelf stock", labels)
+
+    def test_dashboard_stock_links_cover_all_shops_when_unallocated(self):
+        """Unallocated managers can still pick any shop on the role picker,
+        so the stock links consider every active shop, not just assigned."""
+        from shops.services import set_company_pos_setting
+
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertIn("Item stock", labels)
+        self.assertNotIn("Shelf stock", labels)
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        sidebar = self.sidebar_for_role_dashboard(
+            EmployeeRole.SHOP_STORE_MANAGER, profile=self.manager
+        )
+        labels = [item["label"] for item in sidebar["primary"]]
+        self.assertIn("Item stock", labels)
+        self.assertIn("Shelf stock", labels)
 
     def test_central_store_pages_are_company_only(self):
         self.client.login(username="840031", password=self.password)

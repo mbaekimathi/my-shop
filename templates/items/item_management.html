@@ -237,7 +237,7 @@
     <form class="workspace-modal-form" method="post" enctype="multipart/form-data" novalidate>
       {% csrf_token %}
       <input type="hidden" name="action" value="register">
-      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="" pricing_shops_empty_message="No shops are allocated to your account." %}
+      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="" pricing_shops_empty_message="No shops are allocated to your account." allow_combo=combo_items_enabled %}
       <div class="workspace-modal-actions">
         <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
         <button class="btn btn--primary" type="submit">
@@ -298,7 +298,7 @@
           </label>
         </div>
       </div>
-      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="edit-" pricing_shops=edit_pricing_shops pricing_shops_empty_message="No shops are allocated to your account." hide_image_upload=True %}
+      {% include "items/partials/item_form_fields.html" with form_data=form_data prefix="edit-" pricing_shops=edit_pricing_shops pricing_shops_empty_message="No shops are allocated to your account." hide_image_upload=True allow_combo=True %}
       <div class="workspace-modal-actions">
         <button class="btn btn--ghost" type="button" data-modal-close>Cancel</button>
         <button class="btn btn--primary" type="submit">
@@ -315,7 +315,8 @@
 {% block extra_js %}
 {{ block.super }}
 <script defer src="{% static 'js/input-uppercase.js' %}"></script>
-<script defer src="{% static 'js/item-catalog.js' %}?v=23"></script>
-<script defer src="{% static 'js/item-management.js' %}?v=19"></script>
+<script defer src="{% static 'js/item-catalog.js' %}?v=26"></script>
+<script defer src="{% static 'js/item-management.js' %}?v=20"></script>
+<script defer src="{% static 'js/item-combo.js' %}?v=5"></script>
 <script defer src="{% static 'js/item-search.js' %}?v=7"></script>
 {% endblock %}

@@ -48,6 +48,8 @@ class Item(models.Model):
     low_stock_notify = models.BooleanField()
     low_stock_threshold = models.PositiveIntegerField()
     track_serial_number = models.BooleanField(default=False)
+    use_individual_shop_prices = models.BooleanField(default=False)
+    is_combo = models.BooleanField(default=False)
     is_suspended = models.BooleanField()
 
     class Meta:
@@ -56,6 +58,18 @@ class Item(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ItemComboComponent(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    combo_id = models.BigIntegerField()
+    component_id = models.BigIntegerField()
+    qty = models.DecimalField(max_digits=12, decimal_places=4)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = "items_itemcombocomponent"
 
 
 class ShopItemPrice(models.Model):
@@ -324,6 +338,8 @@ class CompanyPosSettings(models.Model):
     enable_discount = models.BooleanField(default=True)
     enable_stock_tracking = models.BooleanField(default=True)
     enable_shelf_mode = models.BooleanField(default=False)
+    block_negative_stock = models.BooleanField(default=True)
+    enable_combo_items = models.BooleanField(default=True)
     enable_open_close = models.BooleanField(default=True)
     enable_client_data = models.BooleanField(default=True)
     require_client_phone = models.BooleanField(default=False)
@@ -613,9 +629,20 @@ class ShelfStockMovement(models.Model):
     balance_after = models.DecimalField(
         max_digits=12, decimal_places=3, default=0
     )
+    supplier_name = models.CharField(max_length=160, blank=True, default="")
+    supplier_phone = models.CharField(max_length=40, blank=True, default="")
+    payment_status = models.CharField(max_length=16, blank=True, default="")
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    buying_price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
     reason = models.CharField(max_length=16, blank=True, default="")
+    refund = models.CharField(max_length=8, blank=True, default="")
+    refund_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
     note = models.CharField(max_length=255, blank=True, default="")
+    created_by_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

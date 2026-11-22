@@ -785,10 +785,22 @@
             g.kind === "in" ? "+IN" : g.kind === "out" ? "−OUT" :
             (g.kind === "tout" ? "→ " : "← ") + g.head;
           var meta = [g.status, g.when].filter(Boolean).join(" · ");
+          var hasValue = (g.items || []).some(function (r) {
+            return r.value;
+          });
+          var gtotal = hasValue
+            ? (g.items || []).reduce(function (acc, r) {
+                return acc + (parseFloat(String(r.value || "")
+                  .replace(/[^0-9.\-]/g, "")) || 0);
+              }, 0)
+            : 0;
           var lines = (g.items || []).map(function (r, i) {
             return "<tr><td class=\"n\">" + (i + 1) + "</td><td>" +
               escapeHtml(r.item) + "</td><td class=\"n\">" +
-              escapeHtml(r.qty) + "</td></tr>";
+              escapeHtml(r.qty) +
+              (hasValue ? "</td><td class=\"n\">" +
+                escapeHtml(r.value || "—") : "") +
+              "</td></tr>";
           }).join("");
           return (
             '<div class="wa-mvg"><div class="wa-mvg__head">' +
@@ -798,17 +810,39 @@
               "</span>" : "") +
             "</div>" +
             '<table class="wa-table"><thead><tr><th>#</th><th>Item</th>' +
-            '<th class="n">Qty</th></tr></thead><tbody>' + lines +
+            '<th class="n">Qty</th>' +
+            (hasValue ? '<th class="n">Value</th>' : "") +
+            '</tr></thead><tbody>' + lines +
+            (hasValue
+              ? '<tr class="wa-table__tot"><td></td><td>Total</td>' +
+                '<td class="n"></td><td class="n">KSh ' +
+                gtotal.toLocaleString(undefined,
+                  { minimumFractionDigits: 2,
+                    maximumFractionDigits: 2 }) +
+                "</td></tr>"
+              : "") +
             "</tbody></table></div>"
           );
         }).join("");
+        var statsHtml = mv.stats
+          ? '<div class="wa-stats">' + mv.stats.map(function (r) {
+              return '<div class="wa-stats__row' +
+                (r[2] ? " is-total" : "") + '"><span>' +
+                escapeHtml(String(r[0])) + "</span><b>" +
+                escapeHtml(String(r[1])) + "</b></div>";
+            }).join("") + "</div>"
+          : "";
         return (
           '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
-          '<i data-lucide="arrow-right-left"></i><span>Stock movement — ' +
+          '<i data-lucide="arrow-right-left"></i><span>' +
+          escapeHtml(mv.title || "Stock movement") + " — " +
           escapeHtml(mv.label) + "</span></div>" +
+          statsHtml +
           '<div class="wa-card__tablewrap">' + secs + "</div>" +
           '<div class="wa-card__foot">' + mv.groups.length +
-          " movements · " + nlines + " lines</div></div>"
+          " movements · " + nlines + " lines" +
+          (mv.more ? " · +" + mv.more + " more" : "") +
+          "</div></div>"
         );
       }
       var mrows = (mv.rows || []).map(function (r) {
@@ -823,6 +857,104 @@
       return tableCard("arrow-right-left", "Stock movement — " + mv.label, [
         ["Type"], ["Item"], ["Qty", 1], ["Status", 1]
       ], mrows, (mv.rows || []).length + " lines");
+    }
+    if (card.stock_list) {
+      var sl = card.stock_list;
+      var hasType = !!sl.typed;
+      var sstats = sl.stats
+        ? '<div class="wa-stats">' + sl.stats.map(function (r) {
+            return '<div class="wa-stats__row' + (r[2] ? " is-total" : "") +
+              '"><span>' + escapeHtml(String(r[0])) + "</span><b>" +
+              escapeHtml(String(r[1])) + "</b></div>";
+          }).join("") + "</div>"
+        : "";
+      var srows = (sl.rows || []).map(function (r, i) {
+        return (
+          '<tr><td class="n wa-sl-idx">' + (i + 1) + "</td>" +
+          (hasType
+            ? '<td class="wa-sl-type"><span class="wa-mv--' + r.kind + '">' +
+              escapeHtml(r.badge || (r.kind === "out" ? "−OUT" : "+IN")) +
+              "</span></td>"
+            : "") +
+          '<td class="n wa-sl-time">' + escapeHtml(r.when || "") + "</td>" +
+          '<td class="wa-sl-shop">' + escapeHtml(r.head || "") +
+          (r.status
+            ? ' <small class="wa-cellmeta">' + escapeHtml(r.status) + "</small>"
+            : "") +
+          "</td>" +
+          '<td class="wa-sl-item">' + escapeHtml(r.item) +
+          '</td><td class="n wa-sl-qty">' + escapeHtml(r.qty) +
+          '</td><td class="n wa-sl-unit">' + escapeHtml(r.unit) +
+          '</td><td class="n wa-sl-value">' +
+          escapeHtml(r.value) + "</td></tr>"
+        );
+      }).join("");
+      var scols = 6 + (hasType ? 1 : 0);
+      return (
+        '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
+        '<i data-lucide="package-search"></i><span>' +
+        escapeHtml(sl.title || "Stock") + " — " + escapeHtml(sl.label || "") +
+        "</span></div>" +
+        sstats +
+        '<div class="wa-card__tablewrap"><table class="wa-table ' +
+        'wa-table--stocklist"><thead><tr><th>#</th>' +
+        (hasType ? "<th>Type</th>" : "") +
+        '<th class="n">Time</th><th>Shop</th><th>Item</th>' +
+        '<th class="n">Qty</th><th class="n">Unit</th>' +
+        '<th class="n">Value</th></tr></thead><tbody>' +
+        (srows ||
+          '<tr><td colspan="' + scols + '">No items in this period.</td></tr>') +
+        "</tbody></table></div>" +
+        '<div class="wa-card__foot">' + (sl.rows || []).length +
+        " item" + ((sl.rows || []).length === 1 ? "" : "s") +
+        (sl.more ? " · +" + sl.more + " more" : "") +
+        "</div></div>"
+      );
+    }
+    if (card.table) {
+      var tb = card.table;
+      var tstats = tb.stats
+        ? '<div class="wa-stats">' + tb.stats.map(function (r) {
+            return '<div class="wa-stats__row' + (r[2] ? " is-total" : "") +
+              '"><span>' + escapeHtml(String(r[0])) + "</span><b>" +
+              escapeHtml(String(r[1])) + "</b></div>";
+          }).join("") + "</div>"
+        : "";
+      var thead = (tb.cols || []).map(function (c) {
+        return "<th" + (c[1] ? ' class="n"' : "") + ">" +
+          escapeHtml(c[0]) + "</th>";
+      }).join("");
+      var trows = (tb.rows || []).map(function (row) {
+        return "<tr>" + row.map(function (cell, j) {
+          var numeric = tb.cols && tb.cols[j] && tb.cols[j][1];
+          return "<td" + (j === 0 || numeric ? ' class="n"' : "") + ">" +
+            escapeHtml(String(cell == null ? "" : cell)) + "</td>";
+        }).join("") + "</tr>";
+      }).join("");
+      var tfoot = "";
+      if (tb.foot || (tb.link && tb.link.ask)) {
+        tfoot = '<div class="wa-card__foot">' + escapeHtml(tb.foot || "") +
+          (tb.link && tb.link.ask
+            ? (tb.foot ? " · " : "") +
+              '<a class="wa-link" href="#" data-ask="' +
+              escapeHtml(tb.link.ask) + '">' +
+              escapeHtml(tb.link.label || tb.link.ask) + "</a>"
+            : "") +
+          "</div>";
+      }
+      return (
+        '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
+        '<i data-lucide="' + escapeHtml(tb.icon || "table") +
+        '"></i><span>' + escapeHtml(tb.title || "Data") +
+        (tb.label ? " — " + escapeHtml(tb.label) : "") + "</span></div>" +
+        tstats +
+        '<div class="wa-card__tablewrap"><table class="wa-table">' +
+        "<thead><tr>" + thead + "</tr></thead><tbody>" +
+        (trows || '<tr><td>Nothing in this period.</td></tr>') +
+        "</tbody></table></div>" +
+        tfoot +
+        "</div>"
+      );
     }
     if (it) {
       return itemsSoldCardHtml(it);
@@ -1151,6 +1283,7 @@
     els.stage.appendChild(els.loadMore);
     els.loadMore.hidden = true;
     els.suggestionsBar.hidden = convo.kind !== "bot";
+    if (convo.kind === "bot") buildSuggestions(convo.suggestions);
     els.period.hidden = true;
     // Re-use the contacts history entry when opening a chat from the
     // picker so Back returns to the list in one step.
@@ -1276,6 +1409,9 @@
     var incremental = state.lastMsgId > 0;
     if (state.activeId) {
       params = "?conversation_id=" + state.activeId + "&after_id=" + state.lastMsgId;
+      if (incremental && state.changedSince) {
+        params += "&changed_since=" + encodeURIComponent(state.changedSince);
+      }
     }
     return fetch(URLS.poll + params, { credentials: "same-origin" })
       .then(function (r) { return r.json(); })
@@ -1300,6 +1436,7 @@
           return;
         }
         state.pollDelay = 2500;
+        if (resp.now) state.changedSince = resp.now;
         var wasUnread = {};
         state.conversations.forEach(function (c) { wasUnread[c.id] = c.unread; });
         state.conversations = resp.conversations || [];
@@ -1329,8 +1466,24 @@
               }
             }
           });
+          // Rewrites of already-loaded messages (transfer outcome, pending
+          // confirmation, late attachment) — swap in the server's copy and
+          // repaint when the serialized form actually differs.
+          var changedDirty = false;
+          (resp.active.changed || []).forEach(function (m) {
+            for (var i = 0; i < state.messages.length; i++) {
+              if (state.messages[i].id === m.id) {
+                if (JSON.stringify(state.messages[i]) !== JSON.stringify(m)) {
+                  state.messages[i] = m;
+                  changedDirty = true;
+                }
+                break;
+              }
+            }
+          });
           // Peer read-state can advance even without new messages.
           updatePeerReadStates();
+          if (changedDirty) renderStage();
           if (added) {
             var stick = nearBottom();
             renderStage();
@@ -1765,8 +1918,9 @@
     }).join("");
   }
 
-  function buildSuggestions() {
-    els.suggestionsBar.innerHTML = suggestions.map(function (s) {
+  function buildSuggestions(list) {
+    var chips = list && list.length ? list : suggestions;
+    els.suggestionsBar.innerHTML = chips.map(function (s) {
       return '<button type="button" class="wa-chip" data-suggest="' +
         escapeHtml(s) + '">' + escapeHtml(s) + "</button>";
     }).join("");
@@ -4031,6 +4185,13 @@
       return;
     }
 
+    var ask = e.target.closest("[data-ask]");
+    if (ask) {
+      e.preventDefault();
+      sendText(ask.dataset.ask);
+      return;
+    }
+
     var img = e.target.closest(".wa-bubble__photo");
     if (img && img.src) window.open(img.src, "_blank");
 
@@ -4127,6 +4288,20 @@
     if (!document.hidden) pollNow();
   });
 
+  // Installed PWAs restore from the bfcache and browsers suspend timers in
+  // the background — poll immediately on every resume signal so no change
+  // is ever missed waiting for the next scheduled beat.
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted || !document.hidden) pollNow();
+  });
+  window.addEventListener("focus", function () {
+    if (!document.hidden) pollNow();
+  });
+  window.addEventListener("online", function () {
+    state.pollDelay = 2500;
+    pollNow();
+  });
+
   // Keep the app locked to the *visible* viewport. Android Chrome often
   // pans the layout when the keyboard opens (offsetTop > 0) while we also
   // shrink --wa-vvh — that combination leaves a black strip under the
@@ -4208,6 +4383,31 @@
       fabParam === "trade_in" || fabParam === "trade_out" ||
       fabParam === "expense") {
     openStock(fabParam);
+    try {
+      window.history.replaceState(null, "", window.location.pathname);
+    } catch (e) {}
+  }
+
+  // Deep links: /chat/?open=assistant|stock|expenses opens that bot thread.
+  var openParam = "";
+  try {
+    openParam = new URLSearchParams(window.location.search).get("open") || "";
+  } catch (e) {}
+  if (["assistant", "stock", "expenses"].indexOf(openParam) >= 0) {
+    var openTries = 0;
+    var findBot = setInterval(function () {
+      var target = state.conversations.find(function (c) {
+        if (openParam === "stock") return c.stock_bot;
+        if (openParam === "expenses") return c.expense_bot;
+        return c.bot && !c.stock_bot && !c.expense_bot;
+      });
+      if (target) {
+        clearInterval(findBot);
+        openConversation(target.id);
+      } else if (++openTries > 30) {
+        clearInterval(findBot);
+      }
+    }, 250);
     try {
       window.history.replaceState(null, "", window.location.pathname);
     } catch (e) {}

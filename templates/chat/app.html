@@ -56,6 +56,11 @@
         <i data-lucide="layers" aria-hidden="true"></i>
       </a>
       {% endif %}
+      {% if me.stock_modes.items or me.stock_modes.shelf %}
+      <a class="comms-icon-btn" href="{% url 'chat:app' %}?open=stock" title="Stock chat" aria-label="Stock chat">
+        <i data-lucide="package-search" aria-hidden="true"></i>
+      </a>
+      {% endif %}
       <button type="button" class="comms-icon-btn" data-wa-mute title="Mute notification sounds" aria-label="Toggle notification sounds" aria-pressed="false">
         <i data-lucide="bell" aria-hidden="true" data-bell-on></i>
         <i data-lucide="bell-off" aria-hidden="true" data-bell-off hidden></i>
@@ -85,6 +90,64 @@
           <input type="search" placeholder="Search chats" autocomplete="off" data-wa-search aria-label="Search chats">
         </label>
       </div>
+      <div class="wa-app__links">
+        <a class="wa-chat" href="{% url 'chat:app' %}?open=assistant">
+          <span class="comms-avatar" data-tone="1" aria-hidden="true"><i data-lucide="layers"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Shop accounts</strong></span>
+            <span class="wa-chat__preview">Sales · credits · report</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+        {% if me.stock_modes.items or me.stock_modes.shelf %}
+        <a class="wa-chat" href="{% url 'chat:app' %}?open=stock">
+          <span class="comms-avatar" data-tone="3" aria-hidden="true"><i data-lucide="package-search"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Shop stock movement</strong></span>
+            <span class="wa-chat__preview">Stock in · out · trades · report</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+        {% endif %}
+        <a class="wa-chat" href="{% url 'chat:app' %}?open=expenses">
+          <span class="comms-avatar" data-tone="4" aria-hidden="true"><i data-lucide="receipt"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Shop expenses</strong></span>
+            <span class="wa-chat__preview">Paid · unpaid · categories</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+      </div>
+      {% if me.staff_view %}
+      <div class="wa-app__links">
+        <a class="wa-chat" href="{% url 'chat:all_shops' %}">
+          <span class="comms-avatar" data-tone="1" aria-hidden="true"><i data-lucide="layers"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Company accounts</strong></span>
+            <span class="wa-chat__preview">Combined view</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+        {% if me.stock_modes.items or me.stock_modes.shelf %}
+        <a class="wa-chat" href="{% url 'chat:all_shops' %}?open=stock">
+          <span class="comms-avatar" data-tone="3" aria-hidden="true"><i data-lucide="package-search"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Company stock movements</strong></span>
+            <span class="wa-chat__preview">Stock in · out · trades · report</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+        {% endif %}
+        <a class="wa-chat" href="{% url 'chat:all_shops' %}?open=expenses">
+          <span class="comms-avatar" data-tone="4" aria-hidden="true"><i data-lucide="receipt"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Company expenses</strong></span>
+            <span class="wa-chat__preview">Paid · unpaid · categories</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+      </div>
+      {% endif %}
       <div class="wa-app__chats" data-wa-chats role="list"></div>
 
       <div class="wa-fabs" data-wa-fabs>
@@ -501,5 +564,5 @@
 
 {% block extra_js %}
 <script defer src="{% static 'js/vendor/html5-qrcode.min.js' %}"></script>
-<script defer src="{% static 'js/chatbot.js' %}?v=62"></script>
+<script defer src="{% static 'js/chatbot.js' %}?v=68"></script>
 {% endblock %}

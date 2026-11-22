@@ -398,6 +398,22 @@
           </span>`
               : ""
           }
+          ${
+            item.is_combo
+              ? `<span
+            class="item-status-icon item-status-icon--combo"
+            role="listitem"
+            title="Combo — ${escapeHtml(
+              (item.combo_components || [])
+                .map((comp) => `${comp.name} ×${comp.qty}`)
+                .join(", ") || "bundled items"
+            )}"
+            aria-label="Combo item"
+          >
+            <i data-lucide="layers" aria-hidden="true"></i>
+          </span>`
+              : ""
+          }
         </div>
       </td>
       <td class="item-cell--actions" data-label="Actions">
@@ -420,6 +436,8 @@
             data-shop-prices="${escapeHtml(shopPrices)}"
             data-sold-shops="${escapeHtml(JSON.stringify(item.sold_shops || {}))}"
             data-track-serial-number="${item.track_serial ? "1" : "0"}"
+            data-is-combo="${item.is_combo ? "1" : "0"}"
+            data-combo-components="${escapeHtml(JSON.stringify(item.combo_components || []))}"
             data-image-url="${escapeHtml(imageUrl)}"
           >
             <i data-lucide="pencil" aria-hidden="true"></i>

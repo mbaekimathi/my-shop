@@ -20,7 +20,7 @@
   <input type="hidden" name="mode" value="{{ stock_mode }}" data-stock-float-mode-input>
   {% if stock_mode == 'request' %}
   <input type="hidden" name="shop_id" value="{{ selected_shop.pk|default:'' }}" data-stock-requesting-shop>
-  <input type="hidden" name="requested_from_shop_id" value="{{ requested_from_shop.pk|default:'' }}" data-stock-from-shop-input>
+  <input type="hidden" name="requested_from_shop_id" value="{% if stock_tab == 'shelf' or shelf_only %}{{ shelf_to_shop.pk|default:'' }}{% else %}{{ requested_from_shop.pk|default:'' }}{% endif %}" data-stock-from-shop-input>
   {% endif %}
 
   <section
@@ -84,7 +84,7 @@
             {% if stock_mode == 'out' %}
             {% if stock_tab == 'shelf' %}Enter a quantity, then Remove shelf stock from this shop.{% else %}Enter quantity{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set reason and refund in the submit panel.{% endif %}
             {% elif stock_mode == 'request' %}
-            {% if stock_tab == 'shelf' %}Enter a quantity, then Send shelf stock to another shelf shop.{% else %}Choose the sending shop and the receiving shop. Enter quantities under the sending shop. Serial items open a picker — quantity follows the serials you select.{% endif %}
+            {% if stock_tab == 'shelf' %}Enter a quantity, then pick the flow in the submit panel — Transfer sends to another shelf shop, Trade out / Trade in records a trade with a person.{% else %}Choose the sending shop and the receiving shop. Enter quantities under the sending shop. Serial items open a picker — quantity follows the serials you select.{% endif %}
             {% elif stock_mode == 'in' %}
             {% if stock_tab == 'shelf' %}Enter quantity and buying price, then Add to the shelf.{% else %}Enter quantity and buying price{% if shop_filter_active %} for {{ shop_filter_label }}{% else %} per shop{% endif %}. Serial items open a popup. Set supplier details in the submit panel.{% endif %}
             {% else %}
@@ -285,6 +285,14 @@
             <span>To shop</span>
             <select data-stock-from-nav aria-label="Shop receiving the transfer">
               <option value="">Choose shop…</option>
+              {% if stock_tab == 'shelf' or shelf_only %}
+              {% for shop in shelf_to_options %}
+              <option
+                value="{{ shop.pk }}"
+                {% if shelf_to_shop and shelf_to_shop.pk == shop.pk %}selected{% endif %}
+              >{{ shop.name }}</option>
+              {% endfor %}
+              {% else %}
               {% for shop in request_from_shops %}
               <option
                 value="{{ shop.pk }}"
@@ -292,10 +300,22 @@
                 {% if selected_shop and selected_shop.pk == shop.pk %}disabled{% endif %}
               >{{ shop.name }}</option>
               {% endfor %}
+              {% endif %}
             </select>
           </label>
         </div>
-        {% if request_pair_ready %}
+        {% if stock_tab == 'shelf' or shelf_only %}
+        <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix" data-shelf-request-hint>
+          <i data-lucide="repeat" aria-hidden="true"></i>
+          <span>
+            {% if shelf_to_shop %}
+            Transfer sends shelf stock to <strong>{{ shelf_to_shop.name }}</strong> — pick Trade out / Trade in in the submit panel to trade with a person instead.
+            {% else %}
+            Enter a qty, then pick a flow — Transfer needs the To shop; trades record the person instead.
+            {% endif %}
+          </span>
+        </p>
+        {% elif request_pair_ready %}
         <p class="stock-shop-bar-hint stock-shop-bar-hint--matrix">
           <i data-lucide="package" aria-hidden="true"></i>
           <span>
@@ -479,6 +499,7 @@
                     </span>
                   </th>
                   {% endif %}
+                  <th scope="col" class="stock-matrix-health-col" title="Low-stock alert status">Health</th>
                 </tr>
               </thead>
               <tbody>
@@ -512,6 +533,9 @@
                     <span class="stock-matrix-qty stock-matrix-qty--total{% if row.total_empty %} is-empty{% endif %}">{{ row.total_display }}</span>
                   </td>
                   {% endif %}
+                  <td class="stock-matrix-health-col">
+                    <span class="low-stock-badge is-{{ row.health }}" title="{{ row.health_title }}">{{ row.health_label }}</span>
+                  </td>
                 </tr>
                 {% endfor %}
               </tbody>
@@ -527,6 +551,7 @@
                   <td class="stock-matrix-total-col">
                     <span class="stock-matrix-qty stock-matrix-qty--subtotal stock-matrix-qty--total">{{ group.grand_total_display }}</span>
                   </td>
+                  <td class="stock-matrix-health-col"></td>
                 </tr>
               </tfoot>
               {% endif %}
@@ -1086,9 +1111,9 @@
     </div>
     {% endif %}
     {% if shelf_shop and not shelf_only and not shelf_tabs_enabled and stock_tab != 'shelf' %}
-    {# Both-mode shops keep the catalog matrix; the shelf list follows it.
+    {% comment %}Both-mode shops keep the catalog matrix; the shelf list follows it.
        With tabbed stock lists the shelf list lives on the Shelf stock tab,
-       where it is already rendered as the main panel above. #}
+       where it is already rendered as the main panel above.{% endcomment %}
     {% include "items/partials/stock_shelf_panel.html" %}
     {% endif %}
   </section>
@@ -1116,7 +1141,7 @@
               {% if stock_mode == 'in' %}Stock in{% elif stock_mode == 'out' %}Stock out{% else %}Request{% endif %}
             </span>
             <span class="stock-float-title">
-              {% if stock_mode == 'in' %}Submit stock in{% elif stock_mode == 'out' %}Submit stock out{% else %}Submit request{% endif %}
+              {% if stock_mode == 'in' %}Submit stock in{% elif stock_mode == 'out' %}Submit stock out{% elif stock_tab == 'shelf' or shelf_only %}Send or trade{% else %}Submit request{% endif %}
             </span>
           </span>
           <i class="stock-float-collapse-icon" data-lucide="chevron-up" aria-hidden="true"></i>
@@ -1136,9 +1161,15 @@
         <div class="stock-float-shops">
           {% if stock_tab == 'shelf' or shelf_only %}
           <p class="stock-float-shop-readout">
-            <span>Shop</span>
+            <span>{% if stock_mode == 'request' %}Sending{% else %}Shop{% endif %}</span>
             <strong>{% if shelf_shop %}{{ shelf_shop.name }}{% else %}All shelf shops{% endif %}</strong>
           </p>
+          {% if stock_mode == 'request' %}
+          <p class="stock-float-shop-readout">
+            <span>To</span>
+            <strong data-shelf-to-label>{% if shelf_to_shop %}{{ shelf_to_shop.name }}{% else %}Person or To shop{% endif %}</strong>
+          </p>
+          {% endif %}
           {% elif stock_mode == 'request' %}
           <p class="stock-float-shop-readout">
             <span>Sending</span>
@@ -1164,7 +1195,7 @@
             {% elif stock_mode == 'out' %}
             Expand a shelf item and enter the qty to remove.
             {% else %}
-            Expand a shelf item, pick the receiving shop, then Send.
+            Enter a qty on the shelf items, pick a flow below, then send or record.
             {% endif %}
           </p>
         </div>
@@ -1173,20 +1204,72 @@
           <span data-shelf-float-total-caption></span>
           <strong data-shelf-float-total-value></strong>
         </p>
-        {% if stock_mode == 'in' or stock_mode == 'out' %}
+        {% if stock_mode == 'request' %}
+        <div class="stock-float-apply" data-shelf-request-meta>
+          <div class="stock-float-field">
+            <span>Flow</span>
+            <div class="shop-cart-seg stock-trade-seg" role="group" aria-label="Shelf flow">
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="shelf_flow" value="transfer" data-shelf-flow checked>
+                <span>Transfer</span>
+              </label>
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="shelf_flow" value="trade_out" data-shelf-flow>
+                <span>Trade out</span>
+              </label>
+              <label class="shop-cart-seg-option">
+                <input type="radio" name="shelf_flow" value="trade_in" data-shelf-flow>
+                <span>Trade in</span>
+              </label>
+            </div>
+          </div>
+          <p class="shop-cart-client-note stock-trade-note" data-shelf-flow-hint>
+            Transfer sends the entered qty to the To shop.
+          </p>
+          <div data-shelf-trade-fields hidden>
+            <label class="stock-float-field">
+              <span>Other person's name{% if stock_req.shelf_require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+              <input
+                type="text"
+                name="person_name"
+                maxlength="160"
+                placeholder="Full name"
+                data-uppercase
+              >
+            </label>
+            <label class="stock-float-field">
+              <span>Other person's phone{% if stock_req.shelf_require_supplier_on_in %} <em>required for trade in</em>{% else %} <em>optional</em>{% endif %}</span>
+              <input
+                type="tel"
+                name="person_phone"
+                maxlength="40"
+                placeholder="e.g. 0722 000 000"
+              >
+            </label>
+          </div>
+          <label class="stock-float-field">
+            <span>Note{% if stock_req.shelf_require_note_on_request %} <em>required for transfers</em>{% else %} <em>optional</em>{% endif %}</span>
+            <input
+              type="text"
+              name="note"
+              maxlength="255"
+              placeholder="Transfer reference, trade note…"
+            >
+          </label>
+        </div>
+        {% endif %}
         <button
           class="stock-float-submit"
           type="submit"
           name="shelf_action"
-          value="{% if stock_mode == 'in' %}in_bulk{% else %}out_bulk{% endif %}"
+          value="{% if stock_mode == 'in' %}in_bulk{% elif stock_mode == 'out' %}out_bulk{% else %}request_bulk{% endif %}"
           data-shelf-float-submit
         >
           <i data-lucide="check" aria-hidden="true"></i>
-          <span>
-            {% if stock_mode == 'in' %}Submit stock in{% else %}Submit stock out{% endif %}
+          <span data-shelf-submit-label>
+            {% if stock_mode == 'in' %}Submit stock in{% elif stock_mode == 'out' %}Submit stock out{% else %}Send transfer{% endif %}
           </span>
         </button>
-        {% endif %}
         {% else %}
         <div class="stock-float-empty" data-stock-float-empty>
           <p>
@@ -1441,7 +1524,6 @@
             data-shelf-category-input
           >
         </div>
-        <ul class="shelf-cat-suggest" id="shelf-category-suggest" role="listbox" data-shelf-category-list hidden></ul>
         <datalist data-shelf-category-source>
           {% for cat in shelf_categories %}<option value="{{ cat }}">{% endfor %}
         </datalist>
@@ -1454,6 +1536,7 @@
           {% endfor %}
         </div>
         {% endif %}
+        <ul class="shelf-cat-suggest" id="shelf-category-suggest" role="listbox" data-shelf-category-list hidden></ul>
       </div>
       <label class="store-stock-field">
         <span>Name</span>
@@ -1473,6 +1556,9 @@
           </select>
         </div>
       </label>
+      {% if shelf_portions_enabled %}
+      {% include "items/partials/shelf_portion_picker.html" %}
+      {% endif %}
       <div class="store-stock-field store-stock-field--full shelf-file-field">
         <span>Upload image <em>optional</em></span>
         <div class="shelf-file-drop" data-shelf-file-drop>
@@ -1821,6 +1907,6 @@
 {% if stock_mode == 'view' %}
 <script defer src="{% static 'js/stock-print.js' %}?v=13"></script>
 {% endif %}
-<script defer src="{% static 'js/stock-shelf.js' %}?v=12"></script>
+<script defer src="{% static 'js/stock-shelf.js' %}?v=15"></script>
 {% include "employees/partials/movement_print_root.html" %}
 {% endblock %}

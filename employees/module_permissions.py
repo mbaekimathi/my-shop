@@ -41,6 +41,15 @@ NO_SHOP_ALLOCATION_MESSAGE = (
     "You must be allocated to at least one shop to use this module."
 )
 
+# Submodule keys exempt from the shop-allocation gate — company-wide pages
+# with no shop-scoped data (the compulsory-stock-fields "Store settings"
+# surface), so unallocated shop-scoped staff can still open them.
+ALLOCATION_EXEMPT_KEYS = frozenset(
+    {
+        ("stock-management", "settings"),
+    }
+)
+
 # Store managers (company + shop): only store / floor ops.
 # Explicit HR rows still override.
 STORE_MANAGER_ALLOWED_KEYS = frozenset(
@@ -51,7 +60,8 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
         ("item-management", "edit"),
         ("item-management", "toggle_suspend"),
         ("item-management", "delete"),
-        # Stock ops across all shops (not company stock settings).
+        # Stock ops across all shops plus the company stock settings page
+        # (the store manager's "Store settings" sidebar link points there).
         ("stock-management", "view"),
         ("stock-management", "in"),
         ("stock-management", "out"),
@@ -60,6 +70,7 @@ STORE_MANAGER_ALLOWED_KEYS = frozenset(
         ("stock-management", "movements"),
         ("stock-management", "report"),
         ("stock-management", "print"),
+        ("stock-management", "settings"),
         # Analytics — Items, Stock, Trading, and Suppliers (no overview hub).
         ("analytics", "items"),
         ("analytics", "stock"),
@@ -147,11 +158,16 @@ def normalize_submodule(module_slug: str, submodule_slug: str) -> str:
         "return-clients",
         "request-audits",
         "activity-audits",
+        "shop-analytics",
         "online-stock-take",
         "sale-tracking",
     }:
         if slug == "request-audits":
             return "request"
+        if slug == "shop-analytics":
+            # Shop store analytics is a read-only report — shares the stock
+            # report permission.
+            return "report"
         if slug == "activity-audits":
             return "view"
         if slug == "online-stock-take":
@@ -353,11 +369,31 @@ def require_module_permission(
             message=message or f"You do not have permission for {label}.",
             as_json=as_json,
         )
-    if module_slug in SHOP_ALLOCATION_GATED_MODULES:
+    if (
+        module_slug in SHOP_ALLOCATION_GATED_MODULES
+        and (module_slug, normalize_submodule(module_slug, submodule_slug))
+        not in ALLOCATION_EXEMPT_KEYS
+    ):
         denied = require_shop_allocation(request, profile, as_json=as_json)
         if denied is not None:
             return denied
     return None
+
+
+def module_entry_allowed(request, profile, module_slug: str) -> bool:
+    """Module-level gate for the workspace dispatch view.
+
+    Same as employee_may_any, except allocation-exempt modes keep working for
+    shop-scoped staff with no allocated shop — checked against the request's
+    ?mode so only the exempt page itself opens.
+    """
+    if employee_may_any(profile, module_slug):
+        return True
+    mode = (
+        request.GET.get("mode") or request.POST.get("mode") or ""
+    ).strip().lower()
+    key = (module_slug, normalize_submodule(module_slug, mode))
+    return key in ALLOCATION_EXEMPT_KEYS and employee_may(profile, *key)
 
 
 def ensure_employee_may(profile, module_slug: str, submodule_slug: str, *, message=None):
@@ -369,6 +405,8 @@ def ensure_employee_may(profile, module_slug: str, submodule_slug: str, *, messa
         raise ValidationError(message or f"You do not have permission for {label}.")
     if (
         module_slug in SHOP_ALLOCATION_GATED_MODULES
+        and (module_slug, normalize_submodule(module_slug, submodule_slug))
+        not in ALLOCATION_EXEMPT_KEYS
         and not profile_has_shop_allocation(profile)
     ):
         raise ValidationError(message or NO_SHOP_ALLOCATION_MESSAGE)

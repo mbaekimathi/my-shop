@@ -41,6 +41,41 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `list_suspended_shelf_items` live in `items/shelf_stock_services.py`;
   `apply_shelf_action` handles `edit` / `suspend` / `unsuspend`. Re-registering
   the same name or a stock-in-by-name unsuspends the item.
+- **Trade-out portions** (`ShelfItem.portions_per_unit` +
+  `ShelfItemPortionTarget` legs): register/edit can link a shelf item to
+  one or more catalog `Item`s and give each a per-unit `portions` count —
+  the shelf item's `portions_per_unit` is the derived sum of its targets'
+  portions (validated/written by `_resolve_portion_targets` /
+  `_write_portion_targets`; a suspended item stays pickable only while it
+  is a current target). The modals render the shared
+  `items/partials/shelf_portion_picker.html` (type-to-search or open-list
+  picker, posts repeated `portion_item_id` / `portion_qty` + an
+  always-posted `portion_links` marker, options from
+  `portion_item_options`); `stock-shelf.js` owns the picker JS (rows +
+  live total, `window.shelfPortionPicker.fill/reset` for the edit-modal
+  prefill via `data-portion-targets`) — posts that omit all three keys
+  leave the links untouched, while a posted-but-empty picker clears
+  them. **Company Both mode only**: `shelf_portions_enabled()` gates the
+  pickers (`shelf_portions_enabled` template flag hides the modal
+  fields), rejects any register/edit link change, and skips the auto
+  stock-in — links survive a mode flip but can't be toggled until Both
+  is back on. A shelf **trade out** then auto-stocks each target into
+  the central store: `record_shelf_movement` fires `record_store_stock_in`
+  per leg with `qty × target.portions`, valued at the item's list price
+  (`target.item.resolve_list_price()` → `buying_price`; a suspended
+  target's leg is skipped, not moved) tagged `reason='trade_in'`
+  ("Portions stocked in" is appended to the trade success message;
+  movements are exposed as `movement.portion_movements`).
+  `transfer_shelf_item` copies the targets verbatim to the
+  auto-registered target. Rows carry `portion_targets` /
+  `portion_targets_json` / `portion_hint` ("Trade out → +N ITEM · +M
+  ITEM2"). Migration `0072_portion_targets_per_item` converted `share`
+  % to `portions` (`portions = portions_per_unit × share / 100`).
+  Tests: `shops/tests/test_shelf_stock.py::StoreManagerShelfStockTests`
+  (`test_shelf_trade_out_stocks_portions_into_linked_item`,
+  `test_shelf_portions_split_across_multiple_items`,
+  `test_shelf_portion_link_requires_item_and_count`,
+  `test_shelf_portion_link_only_toggles_in_both_mode`).
 - **Shelf stock audits** live on their own Store Manager page — `?mode=audits`
   on `store_shelf_stock` (sidebar "Shelf stock audits",
   `shops/partials/shelf_stock_audits.html`, `shelf_audits` +
@@ -56,6 +91,8 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   Transfers / Trades / Out / Close — start and close are each item's
   `balance_after` at the period bounds, registers count as "in", and
   transfers/trades show net signed qty (received−sent, trade-in−trade-out).
+  Only items that moved inside the filtered period are listed — rows whose
+  whole content is a carried start/close balance are hidden.
   Same range filters as audits plus an `?item=<pk>` picker; `?download=1`
   streams a branded PDF via `build_stock_report_pdf` (`_shelf_report_download`
   in `employees/store_stock_views.py`). `transfer_shelf_item` stamps
@@ -67,7 +104,8 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `_stock_shelf_report` → `items/stock_shelf_report.html`) is a different,
   lighter report built by `_build_shelf_report` — per shelf item it shows
   On shelf / Registered / In / Out for the period across the in-scope
-  shelf shops. It reuses the shared print popup
+  shelf shops, listing only shelf items that moved in the period. It
+  reuses the shared print popup
   (`employees/partials/receipts_print_modal.html` +
   `analytics-receipts-print.js`): `?paper=a4|80|58` renders
   `items/movement_report_print.html` from `_shelf_report_document`
@@ -77,8 +115,33 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   right-aligned numeric cells start; `report_table_title`/
   `report_table_subtitle`/`report_numeric_from` document keys let
   `_movement_print_tables` title non-movements tables).
+- The **stock-management item report** (`?mode=report` item tab,
+  `_build_item_report_rows` in `items/views.py`) follows the same rule:
+  a row appears only when the item had period activity (in / out /
+  transfer in / transfer out / sale / return / trade) — carried
+  start/close balances with no in-period movement are hidden, and in
+  multi-shop grouping only shops with period activity are listed under
+  each item. The daily view (`_build_item_report_daily_rows`) already
+  emits only days with activity. The movements page's TYPE=All item
+  summary is the exception — it still lists idle stock as a
+  current-stock board (`extra_items` → `_group_movement_events_by_item`).
 - The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
   sellable items only; shelf-only mode returns an empty catalog.
+- **Block negative stock** (`CompanyPosSettings.block_negative_stock`, default
+  on, company-only — not a shop override) is the Stock group's fourth toggle,
+  hidden unless an items mode is on (`data-stock-items-dependent`). On: the
+  `complete_shop_checkout` insufficient-stock check blocks sale/credit/
+  trade-out/gift lines that would take `ShopStock` below zero (trade-in adds
+  stock, quotations never move it). Off: tracked items can sell into negative
+  `ShopStock` (`Item.stock` still floors at 0). Floor JS reads
+  `data-pos-block-negative` → `stockLimited` (`my-shop.js`, `shop-catalog.js`)
+  which replaces `stockTrackingEnabled` at the sell gates only (out-of-stock
+  card state, qty clamps, serial caps, trade-out limits) — stock numbers still
+  display. Chat sale/trade flows pass `allow_negative` into `_parse_lines`
+  (`chat/stock.py`); serial-tracked items still need real serials either way.
+  The standalone `pos:sale_create` API has its own Product model and always
+  blocks — it does not read this flag. Tests:
+  `shops/tests/test_pos_toggle_enforcement.py::PosToggleEnforcementTests::test_block_negative_stock_toggle_gates_overselling`.
 - Per-item sale deduction: `Item.deduct_stock_on_sale` — when off,
   sales/credit/trade-out don't decrement `ShopStock`/`Item.stock`, returns and
   trade-ins don't move them either, insufficient-stock checks are skipped, and
@@ -104,6 +167,49 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   on cards) — untracked items show no stock number on the floor card, product
   popup, serial modal, or trade search. Tests:
   `shops/tests/test_sale_stock_tracking.py`.
+
+## Stock health column (store manager pages)
+- Both Company Store Manager stock lists carry a **Health** column rendering
+  the shared `.low-stock-badge` pill — `is-low` "Low now" (animated pulse on
+  the dot), `is-ok` "Watching", `is-off` "Off".
+- `/company-store-manager/item-stock/`: rows come from
+  `list_store_stock_items` (`items/store_stock_services.py`). There is no
+  central-store threshold, so health is the item's low-stock alert status
+  across shops: `Item.low_stock_notify` + each `ShopStock` alert level
+  (manual `low_stock_threshold`, else the weekly-average auto threshold —
+  same rules as `list_shop_low_stock_alerts`, rolled up by
+  `_low_stock_shop_names` / `_item_health`). `StoreStock` qty itself is not
+  part of the check.
+- `/company-store-manager/shelf-stock/`: `ShelfItem.low_stock_threshold > 0`
+  is the alert toggle (no notify flag); `_shelf_item_rows` stamps
+  `health`/`health_label`/`health_title` off the same `is_low` logic.
+- The shelf "On the shelf" table is the shared
+  `shops/partials/shelf_stock_body.html` — the column only renders when the
+  include passes `shelf_health=True` (the company page does; the shop's own
+  shelf page does not). Cat-row colspan is computed from the
+  readonly/manage/health flags.
+- Pulse CSS: `.low-stock-badge.is-low::before` in `stock.css`
+  (`low-stock-badge-pulse`, suppressed by prefers-reduced-motion). Tests:
+  `shops/tests/test_stock_health_column.py`.
+- `/shop-store-manager/stock-management/` (any role hitting the same view)
+  shows the same Health column on **both** stock surfaces:
+  - Item matrix: the view matrix is JS-rendered by `stock-catalog.js`, so
+    `build_stock_catalog_page` (`items/services.py`) stamps `health`/
+    `health_label`/`health_title` plus a per-shop `shop_health` array
+    (aligned with `shop_quantities`/`shops`) on each `mode="view"` row —
+    same alert rules as `list_shop_low_stock_alerts` (manual
+    `low_stock_threshold` or weekly-average auto; a shop with no
+    `ShopStock` row can't be low). Hidden-qty cells stay `null` in
+    `shop_health` and out of the rollup. The JS adds a trailing Health
+    `<th>`/`<td>` in the readOnlyMatrix path only and marks low qty cells
+    `data-shelf-low`; the server-rendered `items_by_category` matrix is
+    dead code (never populated). Action modes (in/out/request) carry no
+    health fields.
+  - Shelf matrix: `_shelf_view_matrix` (`items/views.py`) stamps the same
+    row health off each cell's `is_low`/`has_alert`
+    (`low_stock_threshold > 0` is the alert toggle) — feeds both the view
+    Shelf stock tab and `items/partials/stock_shelf_panel.html` (in/out
+    editable panel), which both render a trailing Health column.
 
 ## Stock take score report
 - `?mode=stock-take&view=scores` on the stock-management page shows the item
@@ -196,38 +302,46 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 
 ## Combo items
 - A **combo** is a normal `Item` with `is_combo=True` plus
-  `ItemComboComponent` legs (`combo`/`component` FKs, `share` %, `position`;
-  `uniq_combo_component` blocks duplicate legs). Registered/edited from the
-  same Item Management form via the "Item type" radio — the combo panel
-  (`data-combo-*` in `items/partials/item_form_fields.html`,
+  `ItemComboComponent` legs (`combo`/`component` FKs, `qty` portions,
+  `position`; `uniq_combo_component` blocks duplicate legs). Each leg's
+  `qty` is how many units of that item one combo uses (1 plate, 0.5 kg,
+  2 pieces — any positive amount, no shared total). Registered/edited
+  from the same Item Management form via the "Item type" radio — the
+  combo panel (`data-combo-*` in `items/partials/item_form_fields.html`,
   `static/js/item-combo.js`) searches the management catalog API, lists
-  picked items, and splits 100% between them — new rows get an equal slot
-  while existing proportions squeeze into the remainder, and editing one
-  share rebalances the rest so the portions always total 100. Typing a
-  combo amount (`data-combo-amount`) re-solves the shares to hit it
-  (weights ∝ price^k, bisection on k; client-side only — the server still
-  derives the price from the posted shares).
-- Price: `ShopItemPrice`/`Item.shop_price` = Σ component resolved shop
-  price × share/100 per shop; `minimum_selling_price` = the same formula
-  over component floors (never above the list price). Manual price fields
-  and serial tracking don't apply — components can't be suspended, combos,
-  or serial-tracked, and a combo can't contain itself
-  (`_parse_combo_components`). Shares must total 100% (same convention as
-  shelf trade-out portions: ±0.05 tolerance, drift nudged onto the last
-  leg).
-- Resync: `_sync_combo_prices` recomputes stored prices; `update_item` and
-  `delete_item` call `_sync_dependent_combo_prices` so editing or deleting
-  a component reprices every combo containing it. Switching a combo back
-  to "single" deletes its legs.
+  picked items each with a `combo_qty` input (default 1), and shows the
+  computed combo price (Σ price × portion). Typing a leg's KSh value
+  (`data-combo-contrib`) back-solves that leg's qty. Migration
+  `items.0073_combo_component_qty` converted `share` % → `qty`
+  (qty = share/100, lossless at 4dp).
+- Price: the **minimum** is each shop's items total (Σ component resolved
+  shop price × qty) — `Item.minimum_selling_price` stores the lowest
+  computed shop sum. The shop-pricing block stays visible for combos and
+  sets the **selling** price (`_parse_combo_shop_prices`): a single price
+  or per-shop prices via the usual `shop_price`/`shop_price_<id>` fields,
+  each floored at that shop's computed total, while a blank field sells at
+  the total. `Item.shop_price`/`ShopItemPrice` keep the entered selling
+  prices (`shop_price` = the lowest). Serial tracking doesn't apply —
+  components can't be suspended, combos, or serial-tracked, and a combo
+  can't contain itself (`_parse_combo_components`; qty must be in
+  (0, 9999.9999]).
+- Resync: `_sync_combo_prices` recomputes the floor and writes selling
+  prices — with posted prices it stores them, without them (component
+  price/leg change via `update_item`/`delete_item` →
+  `_sync_dependent_combo_prices`) it keeps each shop's stored price and
+  only raises it where the new items total moved above it. Switching a
+  combo back to "single" deletes its legs.
 - Sale: `complete_shop_checkout` (`shops/services.py`) and the chat mirror
   (`chat/stock.py`, mirror model `ItemComboComponent` in
   `chat/myshop_models.py`) explode a combo cart line into one receipt line
-  per component — qty = combo qty × share/100, unit price = component list
-  scaled by charged-price/list-price, last leg absorbs rounding drift so
-  line totals equal the charged total. Stock, serial, sold-flag, cost, and
-  return logic then run on the components (`from_combo` skips the
-  sold-flag/min-price re-checks since the combo line already passed them);
-  a suspended component or a legless combo blocks the sale.
+  per component — leg qty = combo qty × leg.qty, unit price = component
+  list scaled by charged-price/items-total, last leg absorbs rounding
+  drift so line totals equal the charged total. The floor check rejects a
+  combo charged below its shop's items total (`combo_min`; chat clamps
+  instead). Stock, serial, sold-flag,
+  cost, and return logic then run on the components (`from_combo` skips
+  the sold-flag/min-price re-checks since the combo line already passed
+  them); a suspended component or a legless combo blocks the sale.
 - Combos hold no stock and are excluded from the stock-management matrix.
   Tests: `shops/tests/test_combo_items.py`.
 - **Feature toggle**: `CompanyPosSettings.enable_combo_items` (default on,
@@ -377,6 +491,25 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   Report / PDF (`&download=1`) / 80 mm / 58 mm. Narrow thermal is keyed
   `58` everywhere now (`analytics_receipts_print` maps legacy `50` →
   `58`; the receipts sheet uses `body.paper-58`, `@page 58mm auto`).
+- The session report page also carries an **"Edit session"** action
+  (header button → `data-modal-open="edit-day-session"`, partial
+  `employees/partials/analytics_day_session_edit_modal.html`, JS
+  `analytics-day-session-edit.js`) gated by the `analytics/edit-balances`
+  permission key. It corrects only the session's recorded **opening float
+  and counted closing** per till channel (`opening_cash`/`mpesa`/`card`
+  + `closing_*` fields; closing inputs render only when the day is
+  closed) — every report figure recalculates off the saved values.
+  `build_day_session_report_page` emits `page.edit_session` only when its
+  `allow_edit=True` kwarg is passed (just the `analytics_day_session`
+  view — the shop-floor `my_shop_day_report` has no POST endpoint and
+  stays view-only) and `employee_may(profile, "analytics",
+  "edit-balances")` holds. POSTs hit the same URL:
+  `update_shop_day_balances` (`shops/services.py`) re-parses the shown
+  till channels via `_parse_balance_fields` (same open/close rules —
+  shown channels are required, hidden channels keep their stored value),
+  then `messages` + redirect back to `request.get_full_path()` so the
+  `?back=` link survives. Tests:
+  `AnalyticsDaySessionReportTests::test_edit_session_*`.
 
 ## Employees report (Analytics → Employees, slug `employees`)
 - `_build_employees` lists cashier sales by shop; each Staff cell links to
@@ -404,6 +537,44 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `account_id` is the `ExpenseSupplier` pk; `0`/empty pays expenses with no
   linked supplier (matched by pk + shop scope). Tests:
   `employees/tests_analytics_suppliers.py::ExpenseReceiptPayTests`.
+
+## Suppliers workspace (Analytics → Suppliers, slug `suppliers`)
+- Sidebar tabs (`sidebar_for_suppliers`, `?view=`): `all` (merged item+shelf
+  suppliers), `items` (Supplier-registry stock-ins), `shelf` (free-text
+  shelf stock-in suppliers).
+- The `items` and `shelf` tabs carry an **in-page switch**
+  (`?mode=supplied`, `page.view_tabs` → the shared `.ax-tabs` nav):
+  *Suppliers* (supplier rows → their accounts) vs **Items supplied**
+  (per-item Qty/Amt matrix from supplier-linked stock-in lines → that
+  item's suppliers). `?mode=` only applies to `items`/`shelf`; `all`
+  ignores it. Legacy `?view=supplied` redirects to
+  `?view=items&mode=supplied` (also normalized inside `_build_suppliers`).
+- The picked tab **and mode stick in the session**: `analytics_section`
+  saves `suppliers_view` + `suppliers_mode` whenever `?view=` is present
+  and redirects a bare `/suppliers/` visit to the saved pair
+  (`?view=all` opts back out). `page.view` + `page.list_mode` drive hidden
+  `view`/`mode` inputs in the shared filter form so Apply keeps both.
+- **Items supplied** rows link to `/…/analytics/suppliers/items/<item_id>/`
+  (`analytics_item_suppliers` → `build_item_suppliers_page`); shelf rows
+  link to `/…/analytics/suppliers/shelf-items/<item_id>/`
+  (`analytics_shelf_item_suppliers` → `build_shelf_item_suppliers_page`,
+  sourced from `ShelfStockMovement` free-text supplier fields). Both pages
+  show per supplier — receipts, item qty/value, their whole-account
+  balance for the period, and a per-row **Pay** button (pay-all FIFO on
+  their account; kind `stock` for registry suppliers, `shelf` + name/phone
+  for free-text). Registered suppliers resolve by normalized identity
+  (name + national phone digits) so `0722…` vs `+254 722…` merge; the cell
+  links to the stock or shelf supplier ledger.
+  `analytics-receipt-ledger.js` sets the pay form's `kind` input from the
+  button's `data-pay-kind` and shows the button's due for pay-all.
+  `_shelf_supplied_data` mirrors `_item_supplied_data` (each
+  `ShelfStockMovement` is its own receipt); `_item_supplied_rows` takes
+  `url_for`/`sub_of` hooks so the shelf matrix reuses it. Tests:
+  `employees/tests_analytics_suppliers.py` (`test_supplied_mode_*`,
+  `test_*_supplied_mode_*`, `test_item_suppliers_page_*`,
+  `test_shelf_item_suppliers_page_*`,
+  `test_suppliers_view_restores_last_tab`,
+  `test_legacy_supplied_view_redirects_to_items_mode`).
 
 ## Analytics time filter (Settings → POS → Analytics)
 - `CompanyPosSettings.enable_analytics_time_filter` (off by default) adds
@@ -433,6 +604,61 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   and do not affect employee surfaces (e.g. the cashier role dashboard) —
   employees keep access per the permission matrix. Tests:
   `shops/tests/test_pos_toggle_enforcement.py`.
+
+## POS settings tabs + linked settings (`/<role>/settings/company-pos/`)
+- `POS_SETTING_GROUPS` entries carry a `"tab"` (`POS_SETTING_TABS` in
+  `employees/workspace.py`: all / checkout / stock / staff / floor). The tabs
+  are **sidebar nav links**: on the company-pos page `sidebar_for_settings`
+  renders the "POS settings" entry as an open nav group (`group=True` +
+  `group_open=True`, children `child=True` + `child_open=True` — flags the
+  sidebar template/`data-nav-group` collapse JS understand) whose child links
+  are `<page>#tab-<slug>` anchors tagged `data-nav-key="pos-tab-<slug>"`.
+  `pos-settings.js` intercepts those clicks (same-page, no reload), marks the
+  active link `is-active`, and hides other tabs' groups via
+  `data-pos-tab-section` + `.is-tab-hidden`. `#tab-<slug>` deep-links a tab;
+  `#pos-group-<slug>` opens the tab holding that group. Typing in the
+  settings search auto-switches to the All tab; a tab link dims
+  (`.is-empty`) when no group in it matches. The STK Push section lives
+  under Payment methods in the checkout tab (`show_stk_push` group flag →
+  `employees/partials/pos_stk_push_group.html`).
+- **Linked settings** hide while their parent toggle is off:
+  `data-pos-requires="field_a|field_b"` on a row/section → `syncPosRequires()`
+  in `pos-settings.js` shows it only while one of those toggles is on (e.g.
+  STK Push needs an M-Pesa method, sidebar Trade needs a trade type, sidebar
+  Shelf stock needs shelf mode, cart payment options needs a payment method).
+  Server-side `hidden` mirrors the same rule on first render. Older linked
+  pairs keep their dedicated attrs: `data-client-data-dependent`,
+  `data-stock-items-dependent` (items/both mode — also gates Combo items),
+  `data-open-close-dependent`, `data-tax-percent-row`,
+  `data-delivery-amount-row`, `data-employee/shop-timeout-row`. Sidebar
+  "Connect to printer" hides when `pos.enabled_print_channels()` is empty
+  (`data-print-channels-dependent`, server-side only — print channels are set
+  on the Receipt settings page).
+
+## Receipt settings tabs + linked settings (`/<role>/settings/company-receipt/`)
+- Same sidebar-tab pattern as the POS page: `RECEIPT_SETTING_TABS` in
+  `employees/workspace.py` (all / printing / content / confirm) — on
+  company-receipt the "Receipt settings" entry becomes the open nav group
+  (children `data-nav-key="pos-tab-<slug>"` driven by the shared
+  `pos-settings.js` machinery). `RECEIPT_SETTING_GROUPS` entries carry `"tab"`
+  plus `"requires_channels"` (group only shows while a print channel is on)
+  and `"hide_when_no_mpesa"` (server-side hide while
+  `stk_shop.mpesa_checkout_enabled` is off).
+- **Linked settings**: every print-only section requires at least one enabled
+  print channel (`data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"`,
+  mirrored server-side off `pos_settings.enabled_print_channels`) — paper
+  size, receipts-to-print copies, copy preview, M-Pesa payment details, text
+  style, QR, return policy, maintainer, compulsory printing, and the
+  on-receipt content toggles. `syncPosRequires()` in `pos-settings.js` also
+  understands `data-pos-requires-all="a|b"` (every listed toggle must be on —
+  the Payment details section needs a channel AND `enable_receipt_payment_methods`,
+  the same flag that gates `payment_details` on printed receipts) and
+  `data-pos-locked-hidden` (pins hidden because the parent toggle lives on
+  another page: "Show activated payment methods" needs any POS payment
+  method, "Show client phone number" needs `enable_client_data`, the copies
+  group + preview need sale or credit enabled). Per-kind receipt-number-format
+  rows stay server-hidden while that transaction kind is disabled
+  (`data-receipt-kind-row`, `pos_settings.enable_*`).
 
 ## Cashier settings (`/shop-cashier/settings/`)
 - Replaces "System settings" for `SHOP_CASHIER` profiles: footer sidebars
@@ -913,10 +1139,29 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   the shop-linked variant: in `SHOP_ASSIGNABLE_ROLES`, so it works only inside
   allocated `assigned_shops` — `actionable_shops_for_profile`, floor access, and
   the allocation-gated stock-management / analytics modules all scope to the
-  delegated shops. No central-store access.
+  delegated shops. No central-store access. Exception: the Stock Management
+  `?mode=settings` page (compulsory stock fields — company-wide, no shop data)
+  is exempt from the shop-allocation gate via `ALLOCATION_EXEMPT_KEYS` in
+  `employees/module_permissions.py` (`require_module_permission`,
+  `ensure_employee_may`, and `module_entry_allowed` — the `workspace_module`
+  dispatcher checks the request `?mode`); the "Store settings" footer link on
+  store-manager sidebars therefore stays visible and open before any shop is
+  allocated.
 - Both share the `STORE_MANAGER_ALLOWED_KEYS` default allow-list via
   `STORE_MANAGER_ROLES` (`employees/module_permissions.py`); explicit HR
   permission rows still override.
+- The shop store manager dashboard (`sidebar_for_role_dashboard`) carries
+  **Item stock** / **Shelf stock** sidebar links + Quick-actions cards like
+  the company dashboard, but shop-scoped: `_shop_item_stock_link` →
+  `stock-management/?mode=view` (item view) shown while item stock tracking
+  is on company-wide AND at least one in-scope shop tracks items
+  (`_shop_stock_tracking_enabled`, requires `stock-management/view`);
+  `_shop_shelf_stock_link` → `?mode=view&tab=shelf` shown while at least one
+  in-scope shop runs Shelf mode (`_shop_shelf_mode_enabled`, requires
+  `my-shop/shelf_stock`). `_shop_stock_scope_shops` defines "in scope" as
+  the manager's allocated shops — or every active shop while unallocated,
+  since they can still pick one on the role picker / Switch shop menu.
+  Tests: `employees/tests.py::ShopStoreManagerRoleTests`.
 - The company store manager dashboard (`role_home.html`, `store_report`
   context from `_render_role_page`) carries a **Stock report** card — the
   shared `analytics_date_range_fields.html` period picker plus the item
@@ -925,7 +1170,8 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   only renders while item stock tracking is on and the profile has
   `stock-management/report`. `store_stock_report` streams a branded
   per-item PDF (Start / In / Transfers / Trades / Out / Close over the
-  filtered period, `build_store_item_stock_report` in
+  filtered period — like the other stock reports, only items that moved
+  in the period are listed, `build_store_item_stock_report` in
   `items/store_stock_services.py` — the store-side mirror of
   `build_shelf_stock_report`) via `_store_report_download` →
   `build_stock_report_pdf`; the report page's own "Download PDF" button
@@ -1117,6 +1363,18 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `renderDetail` payloads (confirm/set-status responses don't resend it),
   hides payment fields for non-sale targets, and restricts "Paid by" to
   single-channel methods when a credit converts to a sale.
+- The list keeps compact merged columns: **Sold** stacks `sold_by` over
+  `sold_as_label`, **Ref · Paid** stacks `reference` over
+  `paid_when` (+ `paid_via`), rendered the same in the template and in
+  `renderRowHtml` (`data-ax-confirm-rows`). "Print list" reuses the shared
+  receipts print popup (`receipts_print_modal.html` +
+  `analytics-receipts-print.js`): `?paper=a4|80|58` renders
+  `analytics_confirm_receipts_print.html` (thermal gets
+  `table.sheet-grid.stack` — one bold receipt line then wrapped
+  "Label: value" pairs), `?estimate=1` returns the A4 page-count JSON, and
+  `?download=1` streams `confirm_receipts_report_pdf_response`
+  (`build_confirm_receipts_report_pdf` → `_analytics_report_pdf`, flat
+  ledger with the same merged columns and a totals row).
 - `sw.js` serves every `/static/` asset **cache-first keyed on the `?v=`
   URL** — bump the template `?v=` whenever the JS changes, or browsers
   keep running the stale file (a feature can look "missing" while the
@@ -1239,7 +1497,72 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - Tests: `shops/tests/test_shop_switch.py` (`ShopSwitchTests`,
   `EmployeeShopSwitchTests`).
 
+## Shop store analytics (`?mode=shop-analytics` on stock-management)
+- Sidebar link "Shop store analytics" in `sidebar_for_stock_management`
+  (next to Activity analytics), gated by the normalized `report`
+  permission — `normalize_submodule` maps `shop-analytics` → `report` in
+  `employees/module_permissions.py`, so every role that can see the stock
+  report sees it (store managers included).
+- `stock_shop_analytics` (`items/views.py`, dispatched from
+  `stock_management`) renders `items/stock_shop_analytics.html` with the
+  usual shop select + `_report_range_bounds` period filters; full stock
+  workflow roles only, scoped to `actionable_shops_for_profile` ∩
+  item-stock-tracking shops.
+- `_build_shop_store_analytics` groups shop trade-outs — `StockMovementLine`
+  on OUT movements with `reason=trade_out` (POS trade receipts and manual
+  stock outs alike) — per item: qty, weighted buying price, and value
+  (`unit_cost`, falling back to `buying_price`). Per-supplier rollup =
+  the amount supposed to be given to suppliers: each item is attributed
+  to the supplier on its most recent stock-in line (in-scope shop first,
+  then any shop); items never supplied with a supplier land in
+  "Supplier not recorded". Matched `Supplier` registry rows link to the
+  stock supplier account (`supplier_account_url(role, "stock", pk)`).
+- **Shelf trade outs are folded into the same tables** —
+  `ShelfStockMovement` OUT rows with `reason=trade_out` (the shelf
+  request panel's trade flow), keyed `shelf:<pk>` so they never merge
+  with a catalog item. The OUT row carries no price (`buying_price` is
+  nulled on outs), so shelf trade outs are valued **FIFO**: each item's
+  movement history is replayed and outbound qty draws down the oldest
+  priced batch (a price-less in inherits the last batch price). Supplier
+  attribution is the name/phone on the item's latest **stock-in** row —
+  the person recorded on the trade out (`supplier_name`/
+  `supplier_phone` via `keep_person`) is the *receiver*, not the
+  supplier; items with no stock-in supplier land in "Supplier not
+  recorded". Rows render with a "(shelf)" tag (`row.is_shelf`).
+- The stock-management shelf sidebar links "Shelf stock trade" →
+  `?mode=request&tab=shelf&flow=trade_out` (`shelf_scope` only, gated by
+  the `request` permission); `stock-shelf.js` pre-checks the `?flow=`
+  radio, and the view passes `active_mode="shelf-trade"` so the trade
+  link highlights instead of "Shelf stock transfer".
+- The shelf flow panel shows a **Cost** column — `cell.unit_cost` /
+  `unit_cost_display` from `_shelf_view_matrix`, computed FIFO by
+  `_fifo_unit_cost` (oldest surviving batch's price; a price-less in
+  inherits the last batch price). The same `data-shelf-cost` feeds the
+  floating submit panel's "@ cost" line and `≈` amount estimate.
+- Tests: `items/tests.py::ShopStoreAnalyticsTests`.
+
 ## Chatbot (`chat` app)
+- **Live updates on installed devices** are all polling — no websockets.
+  `chatbot.js` beats `api_poll` every 2.5s (8s hidden, backoff to 15s on
+  errors) and also fires immediately on `visibilitychange`/`pageshow`
+  (bfcache)/`focus`/`online`. The heartbeat returns the conversation list
+  + new messages (`after_id`) + a **change feed**: `Message.updated_at`
+  (`auto_now`, migration `0015`) drives `active.changed` — already-held
+  messages whose stored copy was rewritten since the client's last `now`
+  watermark (`changed_since`, −3s overlap for in-flight commits, capped
+  200). The client swaps in any serialized message that differs and
+  repaints — this is how transfer outcomes (`card_msg`/`feed_msg` meta)
+  and pending-confirmation rewrites (`msg.meta`/`body`) reach other
+  devices. IMPORTANT: `update_fields` saves must list `"updated_at"`
+  (Django's `auto_now` does not fire on partial saves); all three
+  in-place mutation sites in `views.py` do. `client_tag` retag saves
+  don't stamp it — tags never serialize. `pwa-update.js` + the
+  pass-through `sw-chatbot.js` (`SW_VERSION` bump forces the reload that
+  pulls new code on installed PWAs) keep the app shell current; bump the
+  `?v=` on the changed script tags too. The receipts page (`receipts.js`,
+  8s quiet refresh of list + open detail, scroll-preserving) and the
+  store-manager feed (`store-manager.js`, 8s while the feed panel is
+  open) live-update the same way.
 - Rule-based assistant, no external AI: `chat/bot.py` `reply_for(shop,
   text)` drives the per-shop chat (sales / expenses / credit / stock /
   movements / top sellers / receipts / day status / prepayments);
@@ -1263,6 +1586,111 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   default): item vs shelf ledgers are only searched when that mode is
   on, and shelf items appear in stock / low-stock replies only in
   shelf / both mode.
+- The **stock assistant thread** (`ConversationKind.STOCK_BOT`) is a
+  second per-shop bot conversation — `services.get_or_create_stock_bot`
+  (pair_key `stockbot:<id>`, subtitle `STOCK_BOT_SUBTITLE` "Stock data
+  helper", title `<shop> - Movements`) auto-created in
+  `_conversations_payload` when the shop has any stock mode on. It
+  answers stock questions only via `bot.reply_for_stock` /
+  `card_meta_stock` — section queries (stock in / out, stock trade
+  combined or traded in / out singly, transfers, suppliers, stock
+  report) are built by merging
+  `all_stock.build_stock_day` across the parsed date range
+  (`_merge_stock_days`, ≤62 days); low stock, item lookups and the
+  movement card reuse the main engine's helpers; anything else gets a
+  "stock only" hint. Serialized as `kind: "bot"` (plus `stock_bot:
+  true` and per-thread `suggestions` = `STOCK_SUGGESTIONS`) so the
+  client reuses assistant UX; `chatbot.js` rebuilds the chips from
+  `convo.suggestions` on open and `/chat/?open=stock` deep-links the
+  thread. `is_bot_thread(convo)` covers both bot kinds for
+  typing/transfer guards and message serialization. The chat header's
+  package-search icon (`templates/chat/app.html`) links `?open=stock`.
+- The **expenses assistant thread** (`ConversationKind.EXPENSE_BOT`,
+  migration `0016_alter_conversation_kind`) is a third per-shop bot —
+  `services.get_or_create_expense_bot` (pair_key `expensebot:<id>`,
+  subtitle `EXPENSE_BOT_SUBTITLE` "Expense data helper", title
+  `<shop> - Expenses`) auto-created unconditionally in
+  `_conversations_payload`. `api_send` routes its messages to
+  `bot.reply_for_expenses` / `card_meta_expenses` — the shop-scoped
+  expense engine (`expenses`/`paid`/`unpaid`/`by category`/`suppliers`/
+  `expense report`); anything else gets an "expense questions only"
+  hint. Serialized like the stock bot — `kind: "bot"`,
+  `expense_bot: true`, per-thread `suggestions` = `EXPENSE_SUGGESTIONS` —
+  and `is_bot_thread` covers all three kinds. `/chat/?open=expenses`
+  deep-links it (`chatbot.js` matches `expense_bot` on the convo list;
+  `?open=assistant`/`?open=stock` pick the other bots). The shop chat
+  sidebar pins **Shop accounts / Shop stock movement / Shop expenses**
+  rows (`.wa-app__links` in `app.html`, stock row gated on
+  `me.stock_modes`) to the three `?open=` links; staff see a second
+  block — **Company accounts / Company stock movements / Company
+  expenses** — linking `/chatbot/all/` + `?open=stock|expenses`.
+  Tests: `chat/tests.py::ExpenseBotTests`.
+- `/chatbot/all/?open=stock` renders the all-shops page in **stock
+  mode** (`stock_mode` context): stock-only suggestion chips
+  (stock in/out/trade/transfers/suppliers/movement/report/low stock),
+  a stock welcome bubble, `data-stock-mode` on `.wa-app` so `all.js`
+  posts `mode:"stock"`, and `api_all_chat` routes those to
+  `bot.reply_for_all_stock` — the same section engine as the per-shop
+  stock thread but `shop_id=None` / company stock modes (replies say
+  "ALL SHOPS" and row heads name the shop). The sidebar "Stock
+  movement" row links there and is `is-active` in stock mode;
+  `/all/?open=stock` also auto-opens the Stock movement period picker.
+  A **shop scope `<select>`** in the suggestion row (`allShopId`,
+  stock + expenses modes) posts `shop=<pk>`; `api_all_chat` resolves
+  it via `services.shop_by_id` and the reply/card engines delegate to
+  the per-shop path so heads drop the repeated shop name.
+  The **suppliers card** (`_stock_suppliers_card`, same in the per-shop
+  stock thread) lists **unpaid suppliers only** — each supplier's Due
+  is `Σ max(0, their value in a movement − the movement's
+  `amount_paid`)` tracked per move in `all_stock._add_supplier`
+  (shelf movements pay per row; `StoreStockMovement` has no
+  `amount_paid` so `payment_status="paid"` counts fully settled), the
+  same convention as `_registered_supplier_balance`. The card foot
+  carries a `link` (`{"label", "ask"}` on the `table` payload, rendered
+  by `chatbot.js` as a `data-ask` `.wa-link` that re-sends the query —
+  same pattern as `data-bitems`) — "View N paid suppliers →" re-asks
+  `<query> paid`; `suppliers paid …` (`_suppliers_paid_flag`) returns
+  the settled list with a Paid column and a link back to the unpaid
+  ones. `_stock_suppliers_reply` mirrors the split in text.
+- `/chatbot/all/?open=expenses` renders the same page in **expenses
+  mode** (`expenses_mode` context, `data-expense-mode` on `.wa-app`,
+  sidebar "Expenses" row). Expense-only chips — expenses, paid,
+  unpaid, by category, by shop, suppliers, expense report — routed by
+  `api_all_chat` to `bot.reply_for_all_expenses` /
+  `card_for_all_expenses` (`Expense` mirror: amount/amount_paid/
+  payment_status/category/supplier). Replies and `table` cards honor
+  the same shop scope + sticky topic as stock mode; today's expense
+  totals come from `views._expenses_overview`.
+- `/chatbot/all/stock/` (`chat:all_stock`, `all_stock_view`) is the
+  all-shops stock movement **page** — reachable directly by URL (the
+  "Stock movement" chip on `/chatbot/all/` is a `data-sug` chat query
+  again).
+  `/chatbot/chat/stock/` (`chat:shop_stock`, `shop_stock_view`,
+  `@shop_required`) is the same page scoped to the signed-in shop —
+  still reachable by URL though the chat header icon now opens the
+  stock chat instead; a shop sees its own movements plus
+  transfers where it is sender or receiver. Three ledgers via
+  `chat/all_stock.py::build_stock_day(day, shop_id=, kind=, scope=)`:
+  `scope=shops`+`kind=items` → shop-floor `StockMovement`,
+  `kind=shelf` → per-shop `ShelfStockMovement` (registers count as
+  in; transfers/trades ride on `reason`), `scope=store` → central
+  `StoreStockMovement` (item stock only; POS mirror rows group by
+  note/minute into one card). Hero chips pick scope (all page) and
+  item-vs-shelf kind (only when both modes are on — company modes on
+  `/all/stock/`, the shop's effective modes on `/chat/stock/`).
+  Bucketing: `entry_source` wins on the shop ledger, legacy rows fall
+  back to per-line `reason` (same trade filters as
+  `items/views.py::_trade_qty_by_item_shop`); trade-tagged customer
+  returns count as traded in, trade-in returns as traded out. Values:
+  in/trade-in lines at `buying_price` (fallback `unit_cost`), out/
+  trade-out/transfer lines at `unit_cost` (fallback `buying_price`).
+  `?date=` picks the day, `?view=in|out|trade_in|trade_out|transfers|
+  suppliers|report` drills into per-movement detail (`report` stacks
+  all five sections). Suppliers rollup comes from `supplier_name` on
+  in-lines (item + shelf + store ledgers). Renders
+  `chat/all_stock.html` on the `chat-report.css` `.rpt-*` chrome;
+  same `can_view_all_shops` gate as the assistant page. Tests:
+  `chat/tests.py::AllShopsStockPageTests`.
 - Tests: `chat/tests.py` (`BotMoneySemanticsTests`,
   `ShopShelfAssistantTests`, `AllShopsReportSectionTests`,
   `AllShopsShelfMovementTests`). The suite takes ~8 min:

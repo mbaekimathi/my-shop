@@ -34,12 +34,15 @@ all filled cells in one in_bulk/out_bulk submission.
                   <span class="stock-th-pair-name">{{ shop.name }}</span>
                   {% if stock_mode == 'in' %}
                   <span class="stock-th-pair-cols" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Buy</span></span>
+                  {% elif shelf_flow_panel %}
+                  <span class="stock-th-pair-cols stock-th-pair-cols--flow" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Cost</span><span>Value</span></span>
                   {% else %}
                   <span class="stock-th-pair-cols stock-th-pair-cols--out" aria-hidden="true"><span>Stock</span><span>Qty</span><span>Balance</span></span>
                   {% endif %}
                 </span>
               </th>
               {% endfor %}
+              <th scope="col" class="stock-matrix-health-col" title="Low-stock alert status">Health</th>
             </tr>
           </thead>
           <tbody>
@@ -58,11 +61,11 @@ all filled cells in one in_bulk/out_bulk submission.
               </th>
               {% for cell in row.cells %}
               {% with shop=shelf_matrix_shops|index_at:forloop.counter0 %}
-              <td class="stock-matrix-shop-col{% if stock_mode == 'in' or stock_mode == 'out' %} stock-matrix-shop-col--edit{% endif %}">
+              <td class="stock-matrix-shop-col{% if stock_mode == 'in' or stock_mode == 'out' or shelf_flow_panel %} stock-matrix-shop-col--edit{% endif %}">
                 {% if cell %}
-                {% if stock_mode == 'in' or stock_mode == 'out' %}
+                {% if stock_mode == 'in' or stock_mode == 'out' or shelf_flow_panel %}
                 <div
-                  class="stock-shop-cell stock-list-pair {% if stock_mode == 'in' %}stock-list-pair--in{% else %}stock-list-pair--out{% endif %}"
+                  class="stock-shop-cell stock-list-pair {% if stock_mode == 'in' %}stock-list-pair--in{% elif shelf_flow_panel %}stock-list-pair--flow{% else %}stock-list-pair--out{% endif %}"
                   data-shelf-cell
                   data-shelf-id="{{ cell.id }}"
                   data-shelf-stock="{{ cell.qty }}"
@@ -96,6 +99,23 @@ all filled cells in one in_bulk/out_bulk submission.
                     aria-label="Unit buying price for {{ row.name }} at {{ shop.name }}"
                     title="{% if cell.last_buying_price %}Previous unit {{ cell.last_buying_price_display }}{% else %}Unit buying price{% endif %}"
                   >
+                  {% elif shelf_flow_panel %}
+                  <span
+                    class="stock-list-cost"
+                    title="Buying price of the current stock (FIFO)"
+                  >{{ cell.unit_cost_display|default:"—" }}</span>
+                  <input
+                    type="text"
+                    class="stock-list-input stock-list-input--price"
+                    name="shelf_price_{{ cell.id }}"
+                    min="0"
+                    step="0.01"
+                    placeholder="0"
+                    inputmode="decimal"
+                    aria-label="Unit value for {{ row.name }} at {{ shop.name }}"
+                    title="Unit value — only used on a trade in"
+                    data-shelf-trade-price
+                  >
                   {% else %}
                   <span class="stock-list-balance" data-shelf-balance hidden aria-hidden="true">—</span>
                   {% endif %}
@@ -112,6 +132,9 @@ all filled cells in one in_bulk/out_bulk submission.
               </td>
               {% endwith %}
               {% endfor %}
+              <td class="stock-matrix-health-col">
+                <span class="low-stock-badge is-{{ row.health }}" title="{{ row.health_title }}">{{ row.health_label }}</span>
+              </td>
             </tr>
             {% endfor %}
           </tbody>
@@ -122,8 +145,8 @@ all filled cells in one in_bulk/out_bulk submission.
   </div>
   {% if stock_mode == 'in' or stock_mode == 'out' %}
   {% if stock_tab != 'shelf' and not shelf_only %}
-  {# Both-mode shops append this panel under the items matrix, where the
-     floating submit panel stays on the item flow — keep an in-panel submit. #}
+  {% comment %}Both-mode shops append this panel under the items matrix, where the
+     floating submit panel stays on the item flow — keep an in-panel submit.{% endcomment %}
   <div class="store-stock-footer shelf-bulk-footer">
     <p class="store-stock-footer-summary">
       Type quantities in the cells, then

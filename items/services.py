@@ -10,6 +10,7 @@ from employees.countries import COUNTRY_DIAL_CODES
 
 from .models import (
     Item,
+    ItemComboComponent,
     ItemSerial,
     ItemSerialStatus,
     ShopItemPrice,
@@ -452,17 +453,22 @@ def build_stock_catalog_page(
     if mode not in ("in", "out", "request", "view"):
         mode = "in"
 
-    qs = Item.objects.only(
-        "id",
-        "category",
-        "name",
-        "description",
-        "track_serial_number",
-        "is_suspended",
-        "shop_price",
-        "minimum_selling_price",
-        "use_individual_shop_prices",
-    ).order_by("category", "name")
+    qs = (
+        Item.objects.filter(is_combo=False)
+        .only(
+            "id",
+            "category",
+            "name",
+            "description",
+            "track_serial_number",
+            "is_suspended",
+            "shop_price",
+            "minimum_selling_price",
+            "use_individual_shop_prices",
+            "low_stock_notify",
+        )
+        .order_by("category", "name")
+    )
     if not include_suspended:
         qs = qs.filter(is_suspended=False)
 
@@ -498,12 +504,24 @@ def build_stock_catalog_page(
     multi_qty_map = {}
     multi_cost_map = {}
     unit_cost_map = {}
+    alert_map: dict[int, dict] = {}
     if item_ids and shop_id and not use_multi_shop:
-        for item_id, qty, avg_cost in ShopStock.objects.filter(
-            shop_id=shop_id, item_id__in=item_ids
-        ).values_list("item_id", "quantity", "average_cost"):
+        for item_id, qty, avg_cost, alert_at, alert_manual in (
+            ShopStock.objects.filter(
+                shop_id=shop_id, item_id__in=item_ids
+            ).values_list(
+                "item_id",
+                "quantity",
+                "average_cost",
+                "low_stock_threshold",
+                "low_stock_manual",
+            )
+        ):
             shop_qty_map[item_id] = qty
             unit_cost_map[item_id] = avg_cost
+            alert_map[item_id] = {
+                int(shop_id): {"threshold": alert_at, "manual": alert_manual}
+            }
     if item_ids and requested_from_shop_id:
         from_qty_map = {
             item_id: qty
@@ -512,11 +530,48 @@ def build_stock_catalog_page(
             ).values_list("item_id", "quantity")
         }
     if item_ids and view_shop_ids:
-        for item_id, sid, qty, avg_cost in ShopStock.objects.filter(
-            shop_id__in=view_shop_ids, item_id__in=item_ids
-        ).values_list("item_id", "shop_id", "quantity", "average_cost"):
+        for item_id, sid, qty, avg_cost, alert_at, alert_manual in (
+            ShopStock.objects.filter(
+                shop_id__in=view_shop_ids, item_id__in=item_ids
+            ).values_list(
+                "item_id",
+                "shop_id",
+                "quantity",
+                "average_cost",
+                "low_stock_threshold",
+                "low_stock_manual",
+            )
+        ):
             multi_qty_map.setdefault(item_id, {})[sid] = _quantize_qty(qty)
             multi_cost_map.setdefault(item_id, {})[sid] = avg_cost
+            alert_map.setdefault(item_id, {})[sid] = {
+                "threshold": alert_at,
+                "manual": alert_manual,
+            }
+
+    # Health column (view mode): per-shop alert state per row. A notified item
+    # is low where qty sits at/below that shop's Alert at — manual thresholds
+    # directly, unset rows use the weekly-average (same rules as the
+    # low-stock alerts / settings table). Cells with hidden quantities stay
+    # out of the rollup so the badge never leaks a hidden count.
+    health_shop_ids = (
+        list(view_shop_ids)
+        if use_multi_shop
+        else ([int(shop_id)] if shop_id else [])
+    )
+    health_shop_names = {}
+    health_usage = {}
+    if mode == "view" and item_ids and health_shop_ids:
+        health_shop_names = {
+            shop.pk: shop.name
+            for shop in Shop.objects.filter(pk__in=health_shop_ids).only(
+                "id", "name"
+            )
+        }
+        if any(item.low_stock_notify for item in items):
+            health_usage = weekly_usage_avg_by_item_shop(
+                item_ids, health_shop_ids
+            )
 
     last_buying = {}
     if mode == "in" and item_ids:
@@ -622,6 +677,63 @@ def build_stock_catalog_page(
             row["stock_hidden_by_shop"] = [hidden] if shop_id else []
         row["stock_hidden"] = hidden
         if mode == "view":
+            notify = bool(item.low_stock_notify)
+            states = []
+            low_names = []
+            item_alerts = alert_map.get(item.pk) or {}
+            for index, sid in enumerate(health_shop_ids):
+                if not notify:
+                    states.append("off")
+                    continue
+                hidden_cell = (
+                    hidden_by_shop[index] if use_multi_shop else hidden
+                )
+                if hidden_cell:
+                    states.append(None)
+                    continue
+                stored = item_alerts.get(sid)
+                if stored is None:
+                    # No ShopStock row — the alert system only iterates
+                    # existing stock rows, so a shop without one can't be low.
+                    states.append("ok")
+                    continue
+                if stored["manual"]:
+                    threshold = int(stored["threshold"] or 0)
+                else:
+                    threshold = threshold_from_weekly_avg(
+                        health_usage.get((item.pk, sid), 0)
+                    )
+                qty = (
+                    multi_qty_map.get(item.pk, {}).get(sid)
+                    if use_multi_shop
+                    else shop_qty_map.get(item.pk)
+                ) or _ZERO_QTY
+                if _quantize_qty(qty) <= threshold:
+                    states.append("low")
+                    low_names.append(
+                        health_shop_names.get(sid) or "Shop"
+                    )
+                else:
+                    states.append("ok")
+            if not notify:
+                row["health"] = "off"
+                row["health_label"] = "Off"
+                row["health_title"] = "Low stock alerts off for this item."
+            elif low_names:
+                row["health"] = "low"
+                row["health_label"] = "Low now"
+                row["health_title"] = (
+                    f"Low at {', '.join(low_names)} — at or below the "
+                    "low-stock alert."
+                )
+            else:
+                row["health"] = "ok"
+                row["health_label"] = "Watching"
+                row["health_title"] = (
+                    "Low stock alerts on — above the alert level at every "
+                    "shop shown."
+                )
+            row["shop_health"] = states
             if use_multi_shop and row.get("shop_quantities") is not None:
                 quantities = row["shop_quantities"]
                 row["shop_quantities"] = [
@@ -680,8 +792,37 @@ def build_stock_catalog_page(
     }
 
 
+def _combo_component_rows(item, legs=None):
+    """Edit-modal payload for a combo: each leg's item, qty, and list price."""
+    if not getattr(item, "is_combo", False):
+        return []
+    if legs is None:
+        legs = item.combo_components.select_related("component")
+    rows = []
+    for leg in legs:
+        component = leg.component
+        if component is None:
+            continue
+        rows.append(
+            {
+                "id": component.pk,
+                "name": component.name,
+                "qty": format(leg.qty.normalize(), "f"),
+                "price": f"{component.resolve_list_price(None):.2f}",
+            }
+        )
+    return rows
+
+
 def _item_management_row(
-    item, *, active_shops, prices_list, item_shop_map, item_sold_map, stock_rows
+    item,
+    *,
+    active_shops,
+    prices_list,
+    item_shop_map,
+    item_sold_map,
+    stock_rows,
+    combo_components=None,
 ):
     description = (item.description or "").strip()
     if not item.use_individual_shop_prices or not prices_list:
@@ -751,6 +892,8 @@ def _item_management_row(
         "shop_price_rows": shop_price_rows,
         "sold_shops": sold_shops,
         "track_serial": bool(item.track_serial_number),
+        "is_combo": bool(getattr(item, "is_combo", False)),
+        "combo_components": _combo_component_rows(item, legs=combo_components),
         "is_suspended": bool(item.is_suspended),
         "image_url": image_url,
         "stock_rows": stock_rows,
@@ -832,6 +975,7 @@ def build_item_management_catalog_page(
             "shop_price",
             "use_individual_shop_prices",
             "track_serial_number",
+            "is_combo",
             "is_suspended",
             "image",
         )
@@ -883,6 +1027,13 @@ def build_item_management_catalog_page(
                 }
             )
 
+    combo_legs_by_item = {}
+    if item_ids:
+        for leg in ItemComboComponent.objects.filter(
+            combo_id__in=item_ids
+        ).select_related("component"):
+            combo_legs_by_item.setdefault(leg.combo_id, []).append(leg)
+
     rows = [
         _item_management_row(
             item,
@@ -891,6 +1042,7 @@ def build_item_management_catalog_page(
             item_shop_map=prices_map_by_item.get(item.pk) or {},
             item_sold_map=sold_map_by_item.get(item.pk) or {},
             stock_rows=stock_rows_by_item.get(item.pk) or [],
+            combo_components=combo_legs_by_item.get(item.pk),
         )
         for item in items
     ]
@@ -1867,6 +2019,286 @@ def _sync_shop_item_prices(item: Item, prices_by_shop: dict, sold_by_shop=None) 
         )
 
 
+COMBO_QTY_MAX = Decimal("9999.9999")
+
+
+def _post_list(data, name) -> list:
+    """Read a repeated POST field from a QueryDict or a plain dict."""
+    if hasattr(data, "getlist"):
+        return list(data.getlist(name))
+    value = data.get(name)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _parse_combo_components(data, *, existing_item=None):
+    """Validate ``combo_item_id[]`` / ``combo_qty[]`` pairs.
+
+    Returns ``(components, errors)`` — components is a list of
+    ``{"item": Item, "qty": Decimal}`` in posted order.
+    """
+    raw_ids = _post_list(data, "combo_item_id")
+    raw_qtys = _post_list(data, "combo_qty")
+    errors = []
+    parsed = []
+    seen = set()
+    for index, raw_id in enumerate(raw_ids):
+        try:
+            item_id = int(str(raw_id or "").strip())
+        except (TypeError, ValueError):
+            continue
+        if item_id <= 0:
+            continue
+        raw_qty = raw_qtys[index] if index < len(raw_qtys) else ""
+        try:
+            qty = Decimal(str(raw_qty).strip())
+        except (InvalidOperation, TypeError, ValueError):
+            errors.append("Every combo item needs a valid portion quantity.")
+            continue
+        if qty <= 0 or qty > COMBO_QTY_MAX:
+            errors.append("Combo item portions must be between 0 and 9999.")
+            continue
+        if item_id in seen:
+            errors.append("Each item can only appear once in a combo.")
+            continue
+        seen.add(item_id)
+        parsed.append({"item_id": item_id, "qty": qty})
+    if not parsed and not errors:
+        errors.append("Pick at least one registered item for the combo.")
+        return [], errors
+
+    items_by_id = Item.objects.filter(
+        pk__in=[row["item_id"] for row in parsed]
+    ).in_bulk()
+    components = []
+    for row in parsed:
+        item = items_by_id.get(row["item_id"])
+        if item is None:
+            errors.append("One of the combo items no longer exists.")
+            continue
+        if existing_item is not None and item.pk == existing_item.pk:
+            errors.append("A combo cannot include itself.")
+            continue
+        if getattr(item, "is_combo", False):
+            errors.append(
+                f"“{item.name}” is a combo — combos cannot contain combos."
+            )
+            continue
+        if item.is_suspended:
+            errors.append(
+                f"“{item.name}” is suspended and cannot join a combo."
+            )
+            continue
+        if item.track_serial_number:
+            errors.append(
+                f"“{item.name}” tracks serial numbers and cannot join a combo."
+            )
+            continue
+        components.append({"item": item, "qty": row["qty"]})
+    if not components and not errors:
+        errors.append("Pick at least one registered item for the combo.")
+    return components, errors
+
+
+def _combo_price_map(components, shops) -> dict:
+    """``{shop_id: combo price}`` = Σ component price-for-shop × qty."""
+    prices = {}
+    for shop in shops:
+        total = Decimal("0.00")
+        for row in components:
+            component = row["item"]
+            unit = component.price_for_shop(shop) or Decimal("0")
+            total += unit * row["qty"]
+        prices[shop.pk] = total.quantize(Decimal("0.01"))
+    return prices
+
+
+def _combo_fallback_price(components) -> Decimal:
+    """Global combo price when no shops exist — Σ global list price × qty."""
+    total = Decimal("0.00")
+    for row in components:
+        component = row["item"]
+        unit = component.resolve_list_price(None) or Decimal("0")
+        total += unit * row["qty"]
+    return total.quantize(Decimal("0.01"))
+
+
+def _combo_base_price(components, prices_by_shop) -> Decimal:
+    """Lowest computed shop price (global fallback when shops are absent)."""
+    if prices_by_shop:
+        return min(prices_by_shop.values())
+    return _combo_fallback_price(components)
+
+
+def _parse_combo_shop_prices(
+    data,
+    shops,
+    floor_by_shop,
+    *,
+    pricing_mode,
+    existing_item=None,
+    editable_shop_ids=None,
+):
+    """Per-shop selling prices for a combo.
+
+    Each shop's floor is the combo's computed price there — the sum of its
+    components' prices × portions. Blank entries use that floor (the combo
+    sells at its items' total unless a selling price is set); shops the
+    editor may not touch keep their stored price raised to the floor when
+    it moved up. A combo therefore always sells at or above its items'
+    total.
+    """
+    errors = []
+    prices_by_shop = {}
+    existing_prices = (
+        _materialized_shop_prices(existing_item, shops)
+        if existing_item is not None
+        else {}
+    )
+    raw_single = data.get("shop_price")
+    raw_single = str(raw_single).strip() if raw_single is not None else ""
+
+    single_price = None
+    if pricing_mode == "single" and raw_single:
+        try:
+            single_price = _parse_price(raw_single, "Shop price")
+        except ValidationError as exc:
+            errors.append(exc.message)
+
+    for shop in shops:
+        floor = floor_by_shop.get(shop.pk, Decimal("0.00"))
+        current = existing_prices.get(shop.pk)
+
+        if not _can_edit_shop_price(shop.pk, editable_shop_ids):
+            keep = max(
+                current if current is not None else floor, floor
+            ).quantize(Decimal("0.01"))
+            prices_by_shop[shop.pk] = keep
+            continue
+
+        if pricing_mode == "individual":
+            raw = data.get(f"shop_price_{shop.pk}")
+            raw = str(raw).strip() if raw is not None else ""
+            below_msg = (
+                f"Shop price for “{shop.name}” cannot be below the "
+                f"combo's minimum (KSh {floor:.2f})."
+            )
+        else:
+            raw = raw_single
+            below_msg = (
+                f"Shop price cannot be below the combo's minimum at "
+                f"“{shop.name}” (KSh {floor:.2f})."
+            )
+
+        if raw == "":
+            # Blank sells at the items' total — the shop's floor.
+            prices_by_shop[shop.pk] = floor
+            continue
+
+        if _is_free_price(raw):
+            entered = Decimal("0.00")
+        elif pricing_mode == "individual":
+            try:
+                entered = _parse_price(raw, f"Shop price for {shop.name}")
+            except ValidationError as exc:
+                errors.append(exc.message)
+                continue
+        else:
+            entered = single_price
+            if entered is None:
+                continue  # the parse error was already reported
+
+        if entered < floor:
+            errors.append(below_msg)
+            continue
+        prices_by_shop[shop.pk] = entered
+
+    return prices_by_shop, errors
+
+
+def _sync_combo_prices(
+    combo: Item,
+    *,
+    shops=None,
+    sold_by_shop=None,
+    prices_by_shop=None,
+) -> dict:
+    """Recompute and store a combo's prices.
+
+    Each shop's floor is the computed combo price there — the sum of its
+    components' resolved prices × their portions. ``prices_by_shop`` carries
+    the selling prices picked on the form (already floored at the sums);
+    when omitted — e.g. a component's price or legs changed — the stored
+    per-shop prices are kept and only raised where the new sum moved above
+    them. ``Item.minimum_selling_price`` stores the lowest computed sum;
+    ``Item.shop_price`` the lowest selling price.
+    """
+    shops = list(shops) if shops is not None else _active_shops()
+    components = [
+        {"item": leg.component, "qty": leg.qty}
+        for leg in combo.combo_components.select_related("component")
+    ]
+    sums_by_shop = _combo_price_map(components, shops)
+    floor_price = _combo_base_price(components, sums_by_shop)
+    updates = []
+    if combo.minimum_selling_price != floor_price:
+        combo.minimum_selling_price = floor_price
+        updates.append("minimum_selling_price")
+    if prices_by_shop is None:
+        existing = _materialized_shop_prices(combo, shops)
+        prices_by_shop = {
+            shop.pk: max(
+                existing.get(shop.pk, Decimal("0.00")),
+                sums_by_shop.get(shop.pk, Decimal("0.00")),
+            ).quantize(Decimal("0.01"))
+            for shop in shops
+        }
+    base_price = (
+        min(prices_by_shop.values()) if prices_by_shop else floor_price
+    )
+    if combo.shop_price != base_price:
+        combo.shop_price = base_price
+        updates.append("shop_price")
+    if updates:
+        updates.append("updated_at")
+        combo.save(update_fields=updates)
+    _sync_shop_item_prices(combo, prices_by_shop, sold_by_shop)
+    return prices_by_shop
+
+
+def _sync_dependent_combo_prices(item: Item) -> None:
+    """Recompute stored prices of every combo containing *item*."""
+    combos = list(
+        Item.objects.filter(is_combo=True, combo_components__component=item)
+        .distinct()
+        .prefetch_related("combo_components__component__shop_prices")
+    )
+    if not combos:
+        return
+    shops = _active_shops()
+    for combo in combos:
+        _sync_combo_prices(combo, shops=shops)
+
+
+def _write_combo_components(combo: Item, components) -> None:
+    """Replace a combo's component legs with the validated set."""
+    combo.combo_components.all().delete()
+    ItemComboComponent.objects.bulk_create(
+        [
+            ItemComboComponent(
+                combo=combo,
+                component=row["item"],
+                qty=row["qty"],
+                position=index,
+            )
+            for index, row in enumerate(components)
+        ]
+    )
+
+
 def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=None) -> dict:
     category = (data.get("category") or "").strip()
     name = (data.get("name") or "").strip()
@@ -1874,6 +2306,7 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
     image = files.get("image")
     remove_image = (data.get("remove_image") or "").strip() in ("1", "true", "on", "yes")
     pricing_mode = _pricing_mode_from_data(data)
+    is_combo = (data.get("item_type") or "").strip().lower() == "combo"
 
     errors = []
     cleaned = {}
@@ -1898,55 +2331,93 @@ def validate_item_payload(data, files, *, existing_item=None, editable_shop_ids=
     cleaned["pricing_mode"] = pricing_mode
     # Prices are always stored per shop so one shop's edit cannot change others.
     cleaned["use_individual_shop_prices"] = True
-
-    raw_min_price = data.get("minimum_selling_price")
-    if _is_free_price(raw_min_price):
-        # Dash / 0 / negative = no price floor.
-        minimum_price = Decimal("0.00")
-    else:
-        try:
-            minimum_price = _parse_price(raw_min_price, "Minimum selling price")
-        except ValidationError as exc:
-            errors.append(exc.message)
-            minimum_price = None
+    cleaned["is_combo"] = is_combo
 
     shops = _active_shops()
     shop_price = None
     shop_prices = {}
 
-    if pricing_mode == "individual":
-        shop_prices, price_errors = _parse_individual_shop_prices(
+    if is_combo:
+        # A combo's minimum is the components' price × portion total; the
+        # shop prices are the selling prices on top of it (serial tracking
+        # does not apply).
+        from shops.services import get_company_pos_settings
+
+        combo_feature_on = getattr(
+            get_company_pos_settings(), "enable_combo_items", True
+        )
+        if not combo_feature_on and not getattr(
+            existing_item, "is_combo", False
+        ):
+            errors.append(
+                "Combo items are turned off in Settings → POS — "
+                "enable them to register a combo."
+            )
+        cleaned["track_serial_number"] = False
+        combo_components, combo_errors = _parse_combo_components(
+            data, existing_item=existing_item
+        )
+        errors.extend(combo_errors)
+        cleaned["combo_components"] = combo_components
+        combo_sums = _combo_price_map(combo_components, shops)
+        minimum_price = _combo_base_price(combo_components, combo_sums)
+        shop_prices, price_errors = _parse_combo_shop_prices(
             data,
             shops,
-            minimum_price,
+            combo_sums,
+            pricing_mode=pricing_mode,
             existing_item=existing_item,
             editable_shop_ids=editable_shop_ids,
         )
         errors.extend(price_errors)
-        seed = min(shop_prices.values()) if shop_prices else None
-        shop_prices = _seed_missing_shop_prices(
-            shop_prices, shops, seed, minimum_price
+        shop_price = (
+            min(shop_prices.values()) if shop_prices else minimum_price
         )
-        if shop_prices:
-            shop_price = min(shop_prices.values())
     else:
-        shop_price, price_errors = _parse_single_shop_price(
-            data,
-            existing_item=existing_item,
-            minimum_price=minimum_price,
-        )
-        errors.extend(price_errors)
-        if shop_price is not None:
-            shop_prices = _expand_single_price_to_shops(
-                shop_price,
+        raw_min_price = data.get("minimum_selling_price")
+        if _is_free_price(raw_min_price):
+            # Dash / 0 / negative = no price floor.
+            minimum_price = Decimal("0.00")
+        else:
+            try:
+                minimum_price = _parse_price(raw_min_price, "Minimum selling price")
+            except ValidationError as exc:
+                errors.append(exc.message)
+                minimum_price = None
+
+        if pricing_mode == "individual":
+            shop_prices, price_errors = _parse_individual_shop_prices(
+                data,
                 shops,
+                minimum_price,
                 existing_item=existing_item,
                 editable_shop_ids=editable_shop_ids,
-                minimum_price=minimum_price,
             )
-            # Keep Item.shop_price as the lowest per-shop list price (display/fallback).
+            errors.extend(price_errors)
+            seed = min(shop_prices.values()) if shop_prices else None
+            shop_prices = _seed_missing_shop_prices(
+                shop_prices, shops, seed, minimum_price
+            )
             if shop_prices:
                 shop_price = min(shop_prices.values())
+        else:
+            shop_price, price_errors = _parse_single_shop_price(
+                data,
+                existing_item=existing_item,
+                minimum_price=minimum_price,
+            )
+            errors.extend(price_errors)
+            if shop_price is not None:
+                shop_prices = _expand_single_price_to_shops(
+                    shop_price,
+                    shops,
+                    existing_item=existing_item,
+                    editable_shop_ids=editable_shop_ids,
+                    minimum_price=minimum_price,
+                )
+                # Keep Item.shop_price as the lowest per-shop list price (display/fallback).
+                if shop_prices:
+                    shop_price = min(shop_prices.values())
 
     if image:
         if image.content_type not in ALLOWED_IMAGE_TYPES:
@@ -1987,6 +2458,7 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
             minimum_selling_price=cleaned["minimum_selling_price"],
             shop_price=cleaned["shop_price"],
             use_individual_shop_prices=True,
+            is_combo=cleaned["is_combo"],
             image=cleaned.get("image"),
             track_serial_number=cleaned["track_serial_number"],
             deduct_stock_on_sale=False,
@@ -1994,9 +2466,17 @@ def create_item(profile, data, files, *, editable_shop_ids=None) -> Item:
             sale_tracking_custom=True,
             created_by=profile,
         )
-        _sync_shop_item_prices(
-            item, cleaned["shop_prices"], cleaned["sold_by_shop"]
-        )
+        if cleaned["is_combo"]:
+            _write_combo_components(item, cleaned["combo_components"])
+            _sync_combo_prices(
+                item,
+                sold_by_shop=cleaned["sold_by_shop"],
+                prices_by_shop=cleaned["shop_prices"],
+            )
+        else:
+            _sync_shop_item_prices(
+                item, cleaned["shop_prices"], cleaned["sold_by_shop"]
+            )
         from items.activity_audit import log_item_registered
 
         log_item_registered(
@@ -2057,6 +2537,7 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None, actor=None) 
         item.minimum_selling_price = cleaned["minimum_selling_price"]
         item.shop_price = cleaned["shop_price"]
         item.use_individual_shop_prices = True
+        item.is_combo = cleaned["is_combo"]
         item.track_serial_number = cleaned["track_serial_number"]
 
         old_image_name = (item.image.name if item.image else "") or ""
@@ -2083,9 +2564,20 @@ def update_item(item: Item, data, files, *, editable_shop_ids=None, actor=None) 
                 pass
         if old_name and old_name != new_name:
             _sync_item_name_history(item, old_name=old_name, new_name=new_name)
-        _sync_shop_item_prices(
-            item, cleaned["shop_prices"], cleaned["sold_by_shop"]
-        )
+        if cleaned["is_combo"]:
+            _write_combo_components(item, cleaned["combo_components"])
+            _sync_combo_prices(
+                item,
+                sold_by_shop=cleaned["sold_by_shop"],
+                prices_by_shop=cleaned["shop_prices"],
+            )
+        else:
+            item.combo_components.all().delete()
+            _sync_shop_item_prices(
+                item, cleaned["shop_prices"], cleaned["sold_by_shop"]
+            )
+        # A component price change reprices every combo that uses it.
+        _sync_dependent_combo_prices(item)
         log_item_edited(
             item,
             actor=actor or item.created_by,
@@ -2240,6 +2732,12 @@ def delete_item(item: Item, *, actor=None, force: bool = False) -> Decimal:
     item_category = item.category or ""
     item_id = item.pk
     shop_ids = list(item.shop_prices.values_list("shop_id", flat=True))
+    # Combos containing this item lose the leg on cascade — capture them now
+    # so their stored prices can be recomputed after the delete.
+    dependent_combos = list(
+        Item.objects.filter(is_combo=True, combo_components__component=item)
+        .distinct()
+    )
     # Keep the name on stock movement history after the item row is gone.
     item.stock_movement_lines.filter(item_name="").update(item_name=item_name)
     with transaction.atomic():
@@ -2253,6 +2751,8 @@ def delete_item(item: Item, *, actor=None, force: bool = False) -> Decimal:
                 f"“{item_name}” cannot be deleted because related records still reference it. "
                 "Suspend it instead to hide it from sales."
             ) from exc
+        for combo in dependent_combos:
+            _sync_combo_prices(combo)
     log_item_activity(
         kind=ItemActivityKind.DELETED,
         actor=actor,

@@ -10,6 +10,8 @@
   var csrf = form.querySelector("[name=csrfmiddlewaretoken]").value;
   var sugs = document.getElementById("allSugs");
   var allChatUrl = (appShell && appShell.dataset.allChatUrl) || "/chatbot/api/all/chat/";
+  var stockMode = !!(appShell && appShell.dataset.stockMode);
+  var expenseMode = !!(appShell && appShell.dataset.expenseMode);
   var receiptItemsBase =
     (appShell && appShell.dataset.receiptItemsBase) ||
     "/chatbot/api/receipts/0/items/";
@@ -55,12 +57,29 @@
   var receiptStatusSel = document.getElementById("allReceiptStatus");
   var stockScope = document.getElementById("allStockScope");
   var stockKindSel = document.getElementById("allStockKind");
+  var shopScopeSel = document.getElementById("allShopId");
   var botTopic = "";
   var periodMode = "day";
+  var activeTopic = "";
+
+  function markActiveSug(topic) {
+    if (!sugs) return;
+    sugs.querySelectorAll(".wa-sug").forEach(function (b) {
+      b.classList.toggle(
+        "is-on",
+        (b.dataset.sug || "").toLowerCase() ===
+          (topic || "").toLowerCase()
+      );
+    });
+  }
   var RECEIPT_STATUS_TOPICS = {
     sales: 1, items: 1, summary: 1, report: 1
   };
-  var STOCK_SCOPE_TOPICS = { "stock movement": 1 };
+  var STOCK_SCOPE_TOPICS = {
+    "stock movement": 1, "stock in": 1, "stock out": 1,
+    "stock trade": 1, "traded in": 1, "traded out": 1,
+    "transfers": 1, "suppliers": 1, "stock report": 1
+  };
   var receiptStatusDefault = "pending";
   try {
     var rsEl = document.getElementById("all-init-receipt-status");
@@ -423,9 +442,19 @@
           g.kind === "in" ? "+IN" : g.kind === "out" ? "−OUT" :
           (g.kind === "tout" ? "→ " : "← ") + g.head;
         var meta = [g.status, g.when].filter(Boolean).join(" · ");
+        var hasValue = (g.items || []).some(function (r) {
+          return r.value;
+        });
+        var gtotal = hasValue
+          ? (g.items || []).reduce(function (acc, r) {
+              return acc + (parseFloat(String(r.value || "")
+                .replace(/[^0-9.\-]/g, "")) || 0);
+            }, 0)
+          : 0;
         var lines = (g.items || []).map(function (r, i) {
           return '<tr><td class="n">' + (i + 1) + "</td><td>" +
             esc(r.item) + '</td><td class="n">' + esc(r.qty) +
+            (hasValue ? '</td><td class="n">' + esc(r.value || "—") : "") +
             "</td></tr>";
         }).join("");
         return (
@@ -436,18 +465,125 @@
             "</span>" : "") +
           "</div>" +
           '<table class="wa-table"><thead><tr><th>#</th><th>Item</th>' +
-          '<th class="n">Qty</th></tr></thead><tbody>' + lines +
+          '<th class="n">Qty</th>' +
+          (hasValue ? '<th class="n">Value</th>' : "") +
+          '</tr></thead><tbody>' + lines +
+          (hasValue
+            ? '<tr class="wa-table__tot"><td></td><td>Total</td>' +
+              '<td class="n"></td><td class="n">KSh ' +
+              gtotal.toLocaleString(undefined,
+                { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
+              "</td></tr>"
+            : "") +
           "</tbody></table></div>"
         );
       }).join("");
+      var statsHtml = mv.stats
+        ? '<div class="wa-stats">' + mv.stats.map(function (r) {
+            return '<div class="wa-stats__row' + (r[2] ? " is-total" : "") +
+              '"><span>' + esc(String(r[0])) + "</span><b>" +
+              esc(String(r[1])) + "</b></div>";
+          }).join("") + "</div>"
+        : "";
       return (
         '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
         '<i data-lucide="arrow-right-left"></i><span>' +
         esc(mv.title || "Stock movement") + " — " +
         esc(mv.label) + "</span></div>" +
+        statsHtml +
         '<div class="wa-card__tablewrap">' + secs + "</div>" +
         '<div class="wa-card__foot">' + (mv.groups || []).length +
-        " movements · " + nlines + " lines</div></div>"
+        " movements · " + nlines + " lines" +
+        (mv.more ? " · +" + mv.more + " more" : "") +
+        "</div></div>"
+      );
+    }
+    if (card.stock_list) {
+      var sl = card.stock_list;
+      var hasType = !!sl.typed;
+      var sstats = sl.stats
+        ? '<div class="wa-stats">' + sl.stats.map(function (r) {
+            return '<div class="wa-stats__row' + (r[2] ? " is-total" : "") +
+              '"><span>' + esc(String(r[0])) + "</span><b>" +
+              esc(String(r[1])) + "</b></div>";
+          }).join("") + "</div>"
+        : "";
+      var srows = (sl.rows || []).map(function (r, i) {
+        return (
+          '<tr><td class="n wa-sl-idx">' + (i + 1) + "</td>" +
+          (hasType
+            ? '<td class="wa-sl-type"><span class="wa-mv--' + r.kind + '">' +
+              esc(r.badge || (r.kind === "out" ? "−OUT" : "+IN")) +
+              "</span></td>"
+            : "") +
+          '<td class="n wa-sl-time">' + esc(r.when || "") + "</td>" +
+          '<td class="wa-sl-shop">' + esc(r.head || "") +
+          (r.status
+            ? ' <small class="wa-cellmeta">' + esc(r.status) + "</small>"
+            : "") +
+          "</td>" +
+          '<td class="wa-sl-item">' + esc(r.item) +
+          '</td><td class="n wa-sl-qty">' + esc(r.qty) +
+          '</td><td class="n wa-sl-unit">' + esc(r.unit) +
+          '</td><td class="n wa-sl-value">' +
+          esc(r.value) + "</td></tr>"
+        );
+      }).join("");
+      var scols = 6 + (hasType ? 1 : 0);
+      return (
+        '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
+        '<i data-lucide="package-search"></i><span>' +
+        esc(sl.title || "Stock") + " — " + esc(sl.label || "") +
+        "</span></div>" +
+        sstats +
+        '<div class="wa-card__tablewrap"><table class="wa-table ' +
+        'wa-table--stocklist"><thead><tr><th>#</th>' +
+        (hasType ? "<th>Type</th>" : "") +
+        '<th class="n">Time</th><th>Shop</th><th>Item</th>' +
+        '<th class="n">Qty</th><th class="n">Unit</th>' +
+        '<th class="n">Value</th></tr></thead><tbody>' +
+        (srows ||
+          '<tr><td colspan="' + scols + '">No items in this period.</td></tr>') +
+        "</tbody></table></div>" +
+        '<div class="wa-card__foot">' + (sl.rows || []).length +
+        " item" + ((sl.rows || []).length === 1 ? "" : "s") +
+        (sl.more ? " · +" + sl.more + " more" : "") +
+        "</div></div>"
+      );
+    }
+    if (card.table) {
+      var tb = card.table;
+      var tstats = tb.stats
+        ? '<div class="wa-stats">' + tb.stats.map(function (r) {
+            return '<div class="wa-stats__row' + (r[2] ? " is-total" : "") +
+              '"><span>' + esc(String(r[0])) + "</span><b>" +
+              esc(String(r[1])) + "</b></div>";
+          }).join("") + "</div>"
+        : "";
+      var thead = (tb.cols || []).map(function (c) {
+        return "<th" + (c[1] ? ' class="n"' : "") + ">" + esc(c[0]) +
+          "</th>";
+      }).join("");
+      var trows = (tb.rows || []).map(function (row, i) {
+        return "<tr>" + row.map(function (cell, j) {
+          var numeric = tb.cols && tb.cols[j] && tb.cols[j][1];
+          return "<td" + (j === 0 || numeric ? ' class="n"' : "") + ">" +
+            esc(String(cell == null ? "" : cell)) + "</td>";
+        }).join("") + "</tr>";
+      }).join("");
+      return (
+        '<div class="wa-card"><div class="wa-card__head wa-card__head--in">' +
+        '<i data-lucide="' + esc(tb.icon || "table") + '"></i><span>' +
+        esc(tb.title || "Data") +
+        (tb.label ? " — " + esc(tb.label) : "") + "</span></div>" +
+        tstats +
+        '<div class="wa-card__tablewrap"><table class="wa-table">' +
+        "<thead><tr>" + thead + "</tr></thead><tbody>" +
+        (trows || '<tr><td>Nothing in this period.</td></tr>') +
+        "</tbody></table></div>" +
+        (tb.foot ? '<div class="wa-card__foot">' + esc(tb.foot) +
+          "</div>" : "") +
+        "</div>"
       );
     }
     if (card.items_sold) {
@@ -468,16 +604,26 @@
     refreshIcons();
   }
 
+  var lastSentText = "";
+
   function send(text) {
     text = (text || "").trim();
     if (!text) return;
+    lastSentText = text;
     bubble(text, true);
     input.value = "";
     fetch(allChatUrl, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-      body: JSON.stringify({ text: text })
+      body: JSON.stringify({
+        text: text,
+        mode: stockMode ? "stock" : expenseMode ? "expenses" : "",
+        topic: stockMode || expenseMode ? activeTopic : "",
+        shop: (stockMode || expenseMode) && shopScopeSel
+          ? shopScopeSel.value
+          : ""
+      })
     })
       .then(function (r) { return r.json(); })
       .then(function (resp) {
@@ -496,6 +642,14 @@
     e.preventDefault();
     send(input.value);
   });
+
+  // Shop scope — switching shops re-runs the current stock filter so the
+  // answer re-renders scoped to (or back across) that shop.
+  if (shopScopeSel) {
+    shopScopeSel.addEventListener("change", function () {
+      if (lastSentText) send(lastSentText);
+    });
+  }
 
   stage.addEventListener("click", function (e) {
     var linkrow = e.target.closest("tr.wa-linkrow");
@@ -561,7 +715,8 @@
   }
 
   function topicNeedsStockKind(topic) {
-    return !!STOCK_SCOPE_TOPICS[(topic || "").toLowerCase()] &&
+    return stockMode &&
+      !!STOCK_SCOPE_TOPICS[(topic || "").toLowerCase()] &&
       !!(stockKindSel && stockKindSel.options.length);
   }
 
@@ -588,15 +743,17 @@
   function openPeriodPicker(topic) {
     var now = new Date();
     botTopic = topic;
+    activeTopic = topic;
     periodTopic.textContent = topic;
-    dateDay.value = todayISO();
-    dateFrom.value = "";
-    dateTo.value = "";
-    monthInput.value = now.getFullYear() + "-" +
-      (now.getMonth() + 1 < 10 ? "0" : "") + (now.getMonth() + 1);
-    yearSel.value = String(now.getFullYear());
-    // Reports are usually read month-to-date; everything else stays on day.
-    setPeriodMode(topic.toLowerCase() === "report" ? "month" : "day");
+    markActiveSug(topic);
+    // Keep the previous selection — first open falls back to defaults.
+    if (!dateDay.value) dateDay.value = todayISO();
+    if (!monthInput.value) {
+      monthInput.value = now.getFullYear() + "-" +
+        (now.getMonth() + 1 < 10 ? "0" : "") + (now.getMonth() + 1);
+    }
+    if (!yearSel.value) yearSel.value = String(now.getFullYear());
+    setPeriodMode(periodMode);
     if (receiptScope) receiptScope.hidden = !topicNeedsReceiptStatus(topic);
     if (stockScope) stockScope.hidden = !topicNeedsStockKind(topic);
     setReceiptStatus(receiptStatus);
@@ -807,6 +964,19 @@
     });
   }
   paint();
+
+  // Deep link from the sidebar: /all/?open=stock opens the stock
+  // movement period picker so the user selects what to view in chat.
+  try {
+    var openMode = new URLSearchParams(window.location.search).get("open");
+    if (openMode === "stock") {
+      openPeriodPicker("Stock movement");
+      window.history.replaceState(null, "", window.location.pathname);
+    } else if (openMode === "expenses") {
+      openPeriodPicker("Expenses");
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  } catch (e) {}
 
   if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
 })();

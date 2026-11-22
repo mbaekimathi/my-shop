@@ -6,6 +6,7 @@ import logging
 import mimetypes
 import os
 import re
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.core.cache import cache
@@ -118,7 +119,12 @@ def _participants(convo: Conversation, me: Shop):
     return me_part, peer
 
 
-def _serialize_active(convo: Conversation, me: Shop, after_id: int = 0) -> dict:
+def _serialize_active(
+    convo: Conversation,
+    me: Shop,
+    after_id: int = 0,
+    changed_since=None,
+) -> dict:
     me_part, peer = _participants(convo, me)
     group = convo.kind == ConversationKind.GROUP
     peers = (
@@ -135,7 +141,7 @@ def _serialize_active(convo: Conversation, me: Shop, after_id: int = 0) -> dict:
         {sid: s.name for sid, s in shops_map.items()} if group else None
     )
     peer_shop = services.shop_by_id(peer.shop_id) if peer else None
-    bot_thread = convo.kind == ConversationKind.BOT
+    bot_thread = services.is_bot_thread(convo)
     data = {
         "id": convo.pk,
         "kind": convo.kind,
@@ -153,6 +159,10 @@ def _serialize_active(convo: Conversation, me: Shop, after_id: int = 0) -> dict:
         ),
         "suggestions": bot_engine.BOT_SUGGESTIONS
         if convo.kind == ConversationKind.BOT
+        else bot_engine.STOCK_SUGGESTIONS
+        if services.is_stock_bot(convo)
+        else bot_engine.EXPENSE_SUGGESTIONS
+        if services.is_expense_bot(convo)
         else [],
     }
     if convo.kind == ConversationKind.BOT:
@@ -160,15 +170,53 @@ def _serialize_active(convo: Conversation, me: Shop, after_id: int = 0) -> dict:
             "online": True,
             "typing": False,
             "last_seen": "",
-            "name": services.bot_name(),
+            "name": services.bot_name(me.name),
             "location": services.BOT_SUBTITLE,
             "read_up_to": 0,
         }
+    elif services.is_stock_bot(convo):
+        data["peer"] = {
+            "online": True,
+            "typing": False,
+            "last_seen": "",
+            "name": services.stock_bot_name(me.name),
+            "location": services.STOCK_BOT_SUBTITLE,
+            "read_up_to": 0,
+        }
+    elif services.is_expense_bot(convo):
+        data["peer"] = {
+            "online": True,
+            "typing": False,
+            "last_seen": "",
+            "name": services.expense_bot_name(me.name),
+            "location": services.EXPENSE_BOT_SUBTITLE,
+            "read_up_to": 0,
+        }
+    if after_id and changed_since is not None:
+        # Change feed: messages already held by the client whose stored copy
+        # was rewritten since its last heartbeat (transfer outcome, pending
+        # confirmation). The small overlap absorbs commits that landed while
+        # the previous poll was still in flight.
+        horizon = changed_since - timedelta(seconds=3)
+        changed_qs = convo.messages.filter(
+            id__lte=after_id, updated_at__gt=horizon
+        ).order_by("id")
+        data["changed"] = [
+            services.serialize_message(
+                m, me, peer, bot_thread,
+                peers=peers, sender_names=sender_names,
+            )
+            for m in changed_qs[:200]
+        ]
     return data
 
 
 def _conversations_payload(me: Shop) -> list:
     services.get_or_create_bot(me)  # assistant thread always exists
+    modes = bot_engine.shop_stock_modes(me)
+    if modes["items"] or modes["shelf"]:
+        services.get_or_create_stock_bot(me)  # stock assistant thread
+    services.get_or_create_expense_bot(me)  # expenses assistant thread
     convos = list(services.my_conversations(me))
     shops_map = services.shops_map_for(convos)
     return [services.serialize_conversation(c, me, shops_map) for c in convos]
@@ -404,6 +452,95 @@ def _shop_overview():
         totals["credit"] += row["credit"]
         rows.append(row)
     return rows, totals
+
+
+def _stock_overview():
+    """Today's stock-movement totals per shop for the stock-mode dashboard."""
+    from decimal import Decimal
+
+    from . import all_stock
+
+    today = timezone.localdate()
+    rows = []
+    totals = {"in": Decimal("0"), "out": Decimal("0"),
+              "traded": Decimal("0"), "transfers": 0}
+    for shop in services.active_shops():
+        shop_modes = bot_engine.shop_stock_modes(shop)
+        shop_kind = "items" if shop_modes["items"] else "shelf"
+        data = all_stock.build_stock_day(
+            today, shop_id=shop.pk, kind=shop_kind
+        )
+        by_key = {s["key"]: s for s in data["sections"]}
+        traded = (
+            by_key["trade_in"]["value"] + by_key["trade_out"]["value"]
+        )
+        row = {
+            "shop": shop,
+            "in_value": by_key["in"]["value"],
+            "out_value": by_key["out"]["value"],
+            "traded": traded,
+            "transfers": by_key["transfers"]["moves"],
+            "moves": sum(s["moves"] for s in data["sections"]),
+            "in_fmt": bot_engine.money(by_key["in"]["value"]),
+            "out_fmt": bot_engine.money(by_key["out"]["value"]),
+            "traded_fmt": bot_engine.money(traded),
+        }
+        totals["in"] += row["in_value"]
+        totals["out"] += row["out_value"]
+        totals["traded"] += row["traded"]
+        totals["transfers"] += row["transfers"]
+        rows.append(row)
+    totals_fmt = {
+        "in": bot_engine.money(totals["in"]),
+        "out": bot_engine.money(totals["out"]),
+        "traded": bot_engine.money(totals["traded"]),
+        "transfers": totals["transfers"],
+    }
+    return rows, totals_fmt
+
+
+def _expenses_overview():
+    """Today's expense totals per shop for the expenses-mode dashboard."""
+    from datetime import datetime, time, timedelta
+    from decimal import Decimal
+
+    from django.db.models import Count, Sum
+
+    from .myshop_models import Expense
+
+    today = timezone.localdate()
+    start_dt = timezone.make_aware(datetime.combine(today, time.min))
+    end_dt = start_dt + timedelta(days=1)
+    shops = list(services.active_shops())
+    rows = []
+    totals = {"total": Decimal("0"), "unpaid": Decimal("0"), "count": 0}
+    for shop in shops:
+        agg = Expense.objects.filter(
+            shop_id=shop.pk,
+            created_at__gte=start_dt,
+            created_at__lt=end_dt,
+        ).aggregate(
+            t=Sum("amount"), u=Sum("amount_paid"), c=Count("id")
+        )
+        total = agg["t"] or Decimal("0")
+        unpaid = total - (agg["u"] or Decimal("0"))
+        rows.append(
+            {
+                "shop": shop,
+                "count": agg["c"] or 0,
+                "total_fmt": bot_engine.money(total),
+                "unpaid_fmt": bot_engine.money(unpaid),
+            }
+        )
+        totals["total"] += total
+        totals["unpaid"] += unpaid
+        totals["count"] += agg["c"] or 0
+    totals_fmt = {
+        "total": bot_engine.money(totals["total"]),
+        "unpaid": bot_engine.money(totals["unpaid"]),
+        "count": totals["count"],
+    }
+    return rows, totals_fmt
 
 
 @require_POST
@@ -803,6 +940,14 @@ def all_shops_view(request):
     # Landing here means combined view — drop any single-shop session.
     request.session["chatbot_all_shops"] = True
     request.session.pop("chatbot_shop_id", None)
+    open_mode = (request.GET.get("open") or "")
+    stock_mode = open_mode == "stock"
+    expenses_mode = open_mode == "expenses"
+    stock_rows = stock_totals = exp_rows = exp_totals = None
+    if stock_mode:
+        stock_rows, stock_totals = _stock_overview()
+    if expenses_mode:
+        exp_rows, exp_totals = _expenses_overview()
     rows, totals = _shop_overview()
     for row in rows:
         row["sales_fmt"] = bot_engine.money(row["sales"])
@@ -836,8 +981,232 @@ def all_shops_view(request):
                 bot_engine.analytics_receipt_default()
             ),
             "stock_modes": bot_engine.company_stock_modes(),
+            "stock_mode": stock_mode,
+            "expenses_mode": expenses_mode,
+            "stock_rows": stock_rows,
+            "stock_totals": stock_totals,
+            "exp_rows": exp_rows,
+            "exp_totals": exp_totals,
         },
     )
+
+
+def _stock_page_day(request):
+    """Parse ``?date=YYYY-MM-DD`` (default today)."""
+    from datetime import datetime
+
+    raw = (request.GET.get("date") or "").strip()
+    try:
+        return (
+            datetime.strptime(raw, "%Y-%m-%d").date()
+            if raw
+            else timezone.localdate()
+        )
+    except ValueError:
+        return timezone.localdate()
+
+
+def _stock_page_kind(request, modes, scope):
+    """Effective stock-type filter for the day page.
+
+    ``kind=items|shelf`` picks only while that mode is enabled; the central
+    store scope is item-ledger only. Bare/invalid picks fall back to the
+    enabled ledger (items first).
+    """
+    from . import all_stock
+
+    if scope == "store":
+        return "items"
+    asked = (request.GET.get("kind") or "").strip().lower()
+    if asked in all_stock.KIND_KEYS and modes.get(asked):
+        return asked
+    if modes.get("items"):
+        return "items"
+    if modes.get("shelf"):
+        return "shelf"
+    return asked if asked in all_stock.KIND_KEYS else "items"
+
+
+def _stock_page_context(request, *, day, view, scope, kind, modes, data):
+    """Shared context: money/qty formatting + summary/detail context."""
+    from . import all_stock
+
+    sections = data["sections"]
+    for section in sections:
+        section["units_fmt"] = bot_engine.qty_fmt(section["units"])
+        section["value_fmt"] = bot_engine.money(section["value"])
+        for row in section["rows"]:
+            row["qty_fmt"] = bot_engine.qty_fmt(row["qty"])
+            row["value_fmt"] = bot_engine.money(row["value"])
+            for line in row["lines"]:
+                line["qty_fmt"] = bot_engine.qty_fmt(line["qty"])
+                line["unit_fmt"] = bot_engine.money(line["unit"])
+                line["value_fmt"] = bot_engine.money(line["value"])
+    suppliers = data["suppliers"]
+    for sup in suppliers:
+        sup["units_fmt"] = bot_engine.qty_fmt(sup["units"])
+        sup["value_fmt"] = bot_engine.money(sup["value"])
+        for line in sup["lines"]:
+            line["qty_fmt"] = bot_engine.qty_fmt(line["qty"])
+            line["unit_fmt"] = bot_engine.money(line["unit"])
+            line["value_fmt"] = bot_engine.money(line["value"])
+
+    view_section = next(
+        (s for s in sections if s["key"] == view), None
+    )
+    if view == "report":
+        cards = sections
+    elif view_section is not None:
+        cards = [view_section]
+    else:
+        cards = []
+
+    day_iso = day.isoformat()
+
+    def href(*, scope_v=None, kind_v=None, view_v=None):
+        s = scope if scope_v is None else scope_v
+        k = kind if kind_v is None else kind_v
+        url = f"?date={day_iso}&scope={s}&kind={k}"
+        if view_v is not None:
+            url += f"&view={view_v}"
+        return url
+
+    total_value = sum(s["value"] for s in sections)
+    return {
+        "day_iso": day_iso,
+        "day_label": day.strftime("%d %b %Y"),
+        "is_today": day == timezone.localdate(),
+        "view": view,
+        "view_section": view_section,
+        "cards": cards,
+        "sections": sections,
+        "suppliers": suppliers,
+        "suppliers_units_fmt": bot_engine.qty_fmt(
+            sum(s["units"] for s in suppliers)
+        ),
+        "suppliers_value_fmt": bot_engine.money(
+            sum(s["value"] for s in suppliers)
+        ),
+        "scope": scope,
+        "kind": kind,
+        "kind_options": [
+            {
+                "key": k,
+                "label": all_stock.KIND_LABELS[k],
+                "active": k == kind,
+                "href": href(kind_v=k, view_v=""),
+            }
+            for k in all_stock.KIND_KEYS
+        ]
+        if scope != "store" and modes.get("items") and modes.get("shelf")
+        else [],
+        "items_mode_on": bool(modes.get("items")),
+        "show_mode_alert": kind == "items" and not modes.get("items"),
+        "total_moves": sum(s["moves"] for s in sections),
+        "total_value_fmt": bot_engine.money(total_value),
+        "base_qs": f"date={day_iso}&scope={scope}&kind={kind}",
+    }
+
+
+@require_GET
+def all_stock_view(request):
+    """All-shops stock movement page — day sections with drill-down.
+
+    Sections: stock in, stock out, traded in, traded out, transfers,
+    suppliers and the combined day report (``?view=report``).
+    ``?scope=shops|store`` picks the shops ledger vs the central store
+    ledger; ``?kind=items|shelf`` filters the stock type when both modes
+    are on.
+    """
+    employee = current_employee(request)
+    if employee is None:
+        return redirect("chat:login")
+    if not can_view_all_shops(employee["role"]):
+        return redirect(role_home_url(employee["role"]))
+
+    from . import all_stock
+
+    day = _stock_page_day(request)
+    modes = bot_engine.company_stock_modes()
+    scope = (request.GET.get("scope") or "").strip().lower()
+    if scope not in all_stock.SCOPE_KEYS:
+        scope = "shops"
+    kind = _stock_page_kind(request, modes, scope)
+    view = (request.GET.get("view") or "").strip().lower()
+    if view not in all_stock.VIEW_KEYS:
+        view = ""
+
+    data = all_stock.build_stock_day(day, kind=kind, scope=scope)
+    context = _stock_page_context(
+        request,
+        day=day,
+        view=view,
+        scope=scope,
+        kind=kind,
+        modes=modes,
+        data=data,
+    )
+    context.update(
+        {
+            "employee": employee,
+            "company_name": _company_name(),
+            "page_label": "All shops",
+            "back_href": reverse("chat:all_shops"),
+            "back_label": "All shops",
+            "scope_options": [
+                {
+                    "key": s,
+                    "label": all_stock.SCOPE_LABELS[s],
+                    "active": s == scope,
+                    "href": f"?date={context['day_iso']}&scope={s}",
+                }
+                for s in all_stock.SCOPE_KEYS
+            ],
+        }
+    )
+    return render(request, "chat/all_stock.html", context)
+
+
+@shop_required
+@require_GET
+def shop_stock_view(request):
+    """This shop's stock movement page — same sections, shop-scoped.
+
+    ``?kind=items|shelf`` filters the stock type when the shop runs both
+    modes; there is no scope picker — a shop only sees its own ledger
+    (transfers where it sends or receives stock included).
+    """
+    me = request.chat_shop
+    from . import all_stock
+
+    day = _stock_page_day(request)
+    modes = stock_ops.shop_stock_modes(me)
+    kind = _stock_page_kind(request, modes, "shops")
+    view = (request.GET.get("view") or "").strip().lower()
+    if view not in all_stock.VIEW_KEYS:
+        view = ""
+
+    data = all_stock.build_stock_day(day, shop_id=me.pk, kind=kind)
+    context = _stock_page_context(
+        request,
+        day=day,
+        view=view,
+        scope="shops",
+        kind=kind,
+        modes=modes,
+        data=data,
+    )
+    context.update(
+        {
+            "employee": current_employee(request),
+            "company_name": _company_name(),
+            "page_label": me.name,
+            "back_href": reverse("chat:app"),
+            "back_label": "Chats",
+            "scope_options": [],
+        }
+    )
+    return render(request, "chat/all_stock.html", context)
 
 
 @require_POST
@@ -858,17 +1227,43 @@ def api_all_chat(request):
 
     profile = EmployeeProfile.objects.filter(pk=employee["id"]).first()
     section_visible = lambda key: day_report_section_enabled(profile, key)
-    return JsonResponse(
-        {
-            "ok": True,
-            "reply": bot_engine.reply_for_all(
+    mode = (data.get("mode") or "")
+    if mode == "stock":
+        scope_shop = services.shop_by_id(data.get("shop"))
+        reply = bot_engine.reply_for_all_stock(
+            text,
+            section_visible=section_visible,
+            fallback_topic=(data.get("topic") or ""),
+            shop=scope_shop,
+        )
+        card = bot_engine.card_for_all_stock(
+            text, fallback_topic=(data.get("topic") or ""),
+            shop=scope_shop,
+        )
+        if card is None and scope_shop is None:
+            card = bot_engine.card_for_all(
                 text, section_visible=section_visible
-            ),
-            "card": bot_engine.card_for_all(
-                text, section_visible=section_visible
-            ),
-        }
-    )
+            )
+    elif mode == "expenses":
+        scope_shop = services.shop_by_id(data.get("shop"))
+        reply = bot_engine.reply_for_all_expenses(
+            text,
+            section_visible=section_visible,
+            fallback_topic=(data.get("topic") or ""),
+            shop=scope_shop,
+        )
+        card = bot_engine.card_for_all_expenses(
+            text, fallback_topic=(data.get("topic") or ""),
+            shop=scope_shop,
+        )
+    else:
+        reply = bot_engine.reply_for_all(
+            text, section_visible=section_visible
+        )
+        card = bot_engine.card_for_all(
+            text, section_visible=section_visible
+        )
+    return JsonResponse({"ok": True, "reply": reply, "card": card})
 
 
 @require_GET
@@ -1120,19 +1515,33 @@ def receipts_view(request):
 def api_poll(request):
     """Combined heartbeat: presence touch + conversation list + active thread."""
     me = request.chat_shop
+    # Stamp `now` before any reads so the client's next `changed_since`
+    # watermark can never skip an update committed mid-request.
+    now = timezone.now()
     convo_id = request.GET.get("conversation_id") or ""
     after_id = request.GET.get("after_id") or "0"
     try:
         after_id = int(after_id)
     except (TypeError, ValueError):
         after_id = 0
+    changed_since = None
+    raw_since = (request.GET.get("changed_since") or "").strip()
+    if raw_since:
+        try:
+            changed_since = datetime.fromisoformat(raw_since)
+            if changed_since.tzinfo is None:
+                changed_since = timezone.make_aware(changed_since)
+        except ValueError:
+            changed_since = None
 
     active = None
     if convo_id:
         convo = services.get_member_conversation(convo_id, me)
         if convo is None:
             return _err("Conversation not found.", 404)
-        active = _serialize_active(convo, me, after_id=after_id)
+        active = _serialize_active(
+            convo, me, after_id=after_id, changed_since=changed_since
+        )
 
     # One small UPDATE marks this device online in every thread we share.
     Participant.objects.filter(shop_id=me.pk).update(
@@ -1142,7 +1551,7 @@ def api_poll(request):
     return JsonResponse(
         {
             "ok": True,
-            "now": timezone.now().isoformat(),
+            "now": now.isoformat(),
             "conversations": _conversations_payload(me),
             "active": active,
         }
@@ -1185,7 +1594,7 @@ def api_history(request, conversation_id):
             "has_more": has_more,
             "messages": [
                 services.serialize_message(
-                    m, me, peer, convo.kind == ConversationKind.BOT,
+                    m, me, peer, services.is_bot_thread(convo),
                     peers=peers, sender_names=sender_names,
                 )
                 for m in msgs
@@ -1349,8 +1758,32 @@ def api_send(request, conversation_id):
             "I can only read text for now — ask me things like *sales today* "
             "or *low stock*.",
         )
+    elif services.is_stock_bot(convo) and upload is None:
+        reply_msg = services.post_bot_reply(
+            convo,
+            bot_engine.reply_for_stock(me, msg.body),
+            bot_engine.card_meta_stock(me, msg.body),
+        )
+    elif services.is_stock_bot(convo):
+        reply_msg = services.post_bot_reply(
+            convo,
+            "I can only read text for now — ask me things like *stock in* "
+            "or *stock report*.",
+        )
+    elif services.is_expense_bot(convo) and upload is None:
+        reply_msg = services.post_bot_reply(
+            convo,
+            bot_engine.reply_for_expenses(me, msg.body),
+            bot_engine.card_meta_expenses(me, msg.body),
+        )
+    elif services.is_expense_bot(convo):
+        reply_msg = services.post_bot_reply(
+            convo,
+            "I can only read text for now — ask me things like "
+            "*expenses* or *expense report*.",
+        )
 
-    bot_thread = convo.kind == ConversationKind.BOT
+    bot_thread = services.is_bot_thread(convo)
     group = convo.kind == ConversationKind.GROUP
     peers = (
         [p for p in convo.participants.all() if p.shop_id != me.pk]
@@ -1404,7 +1837,7 @@ def api_typing(request, conversation_id):
     convo = services.get_member_conversation(conversation_id, me)
     if convo is None:
         return _err("Conversation not found.", 404)
-    if convo.kind == ConversationKind.BOT:
+    if services.is_bot_thread(convo):
         return JsonResponse({"ok": True})
     me_part, _peer = _participants(convo, me)
     if me_part is None:
@@ -1622,7 +2055,7 @@ def api_transfer(request, conversation_id):
     convo = services.get_member_conversation(conversation_id, me)
     if convo is None:
         return _err("Conversation not found.", 404)
-    if convo.kind == ConversationKind.BOT:
+    if services.is_bot_thread(convo):
         return _err("Transfers can only be sent in a shop chat.")
     me_part, peer = _participants(convo, me)
 
@@ -1835,7 +2268,7 @@ def api_transfer_respond(request, movement_id):
             transfer["responded_by"] = responder
         meta["transfer"] = transfer
         card_msg.meta = meta
-        card_msg.save(update_fields=["meta"])
+        card_msg.save(update_fields=["meta", "updated_at"])
 
     # The read-only copy in the shared Transfers feed tracks the outcome
     # too — update its status so the feed stays accurate on reload.
@@ -1852,7 +2285,7 @@ def api_transfer_respond(request, movement_id):
             transfer["responded_by"] = responder
         meta["transfer"] = transfer
         feed_msg.meta = meta
-        feed_msg.save(update_fields=["meta"])
+        feed_msg.save(update_fields=["meta", "updated_at"])
 
     # Post a follow-up note both sides can see.
     note = None
@@ -2050,7 +2483,7 @@ def api_quick_stockin(request, conversation_id):
             "ok": True,
             "pending": not code,
             "message": services.serialize_message(
-                msg, me, peer, convo.kind == ConversationKind.BOT,
+                msg, me, peer, services.is_bot_thread(convo),
                 peers=peers, sender_names=sender_names,
             ),
             "conversation_id": convo.pk,
@@ -2106,7 +2539,7 @@ def api_pending_confirm(request, message_id):
     meta["confirmed"] = {"by": member_label}
     msg.meta = meta
     msg.body = result["body"]
-    msg.save(update_fields=["meta", "body"])
+    msg.save(update_fields=["meta", "body", "updated_at"])
 
     # Mirror the completed action into its shared activity-feed group so
     # every shop can track the day's stock-in/transfers/trades/expenses.
@@ -2150,7 +2583,7 @@ def api_pending_confirm(request, message_id):
     payload = {
         "ok": True,
         "message": services.serialize_message(
-            msg, me, peer, convo.kind == ConversationKind.BOT,
+            msg, me, peer, services.is_bot_thread(convo),
             peers=peers, sender_names=sender_names,
         ),
         "whatsapp_url": result.get("whatsapp_url") or "",
@@ -2168,7 +2601,7 @@ def api_pending_confirm(request, message_id):
         if me_part:
             services.mark_read(me_part, note.pk)
         payload["note"] = services.serialize_message(
-            note, me, peer, convo.kind == ConversationKind.BOT,
+            note, me, peer, services.is_bot_thread(convo),
             peers=peers, sender_names=sender_names,
         )
     if result["action"] == "transfer":

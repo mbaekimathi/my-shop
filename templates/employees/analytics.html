@@ -122,8 +122,11 @@
         {% if page.expense_category %}
         <input type="hidden" name="category" value="{{ page.expense_category }}">
         {% endif %}
-        {% if page.view == "items" %}
-        <input type="hidden" name="view" value="items">
+        {% if page.view %}
+        <input type="hidden" name="view" value="{{ page.view }}">
+        {% endif %}
+        {% if page.list_mode %}
+        <input type="hidden" name="mode" value="{{ page.list_mode }}">
         {% endif %}
         {% if section_slug == "clients" %}
         <select name="receipt_kind" aria-label="Client activity">
@@ -878,13 +881,15 @@
 {% include "shops/partials/register_expense_modal.html" %}
 {% if page.expense_pay %}
 {% include "employees/partials/analytics_account_pay_modal.html" with pay_url=page.expense_pay_url account_kind="expense" account_id="" balance=page.expense_balance balance_raw=page.expense_balance_raw %}
+{% elif page.supplier_pay %}
+{% include "employees/partials/analytics_account_pay_modal.html" with pay_url=page.pay_url account_kind="stock" account_id="" balance=page.pay_balance balance_raw=page.pay_balance_raw %}
 {% endif %}
 {% endblock %}
 
 {% block extra_js %}
 {{ block.super }}
 {% if page.cashier_settings_mode %}
-<script defer src="{% static 'js/pos-settings.js' %}?v=15"></script>
+<script defer src="{% static 'js/pos-settings.js' %}?v=18"></script>
 {% endif %}
 {% if page.receipts_print_modal %}
 <script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
@@ -904,8 +909,8 @@
 {% if register_expense_modal %}
 <script defer src="{% static 'js/my-shop-expense.js' %}?v=20261116-supplier-autofill"></script>
 {% endif %}
-{% if page.expense_pay %}
-<script defer src="{% static 'js/analytics-receipt-ledger.js' %}?v=21"></script>
+{% if page.expense_pay or page.supplier_pay %}
+<script defer src="{% static 'js/analytics-receipt-ledger.js' %}?v=22"></script>
 {% endif %}
 <script>
   (() => {

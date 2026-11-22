@@ -8,6 +8,11 @@
 
   const modal = document.querySelector("[data-modal='shelf-stock']");
 
+  // Hang the fixed overlay off <body>: stock pages wrap content in
+  // data-animate/transformed sections, which trap position:fixed and let
+  // the popup scroll with the page.
+  if (modal) document.body.appendChild(modal);
+
   // No modal on this page: sidebar action carries a data-href to navigate.
   if (!modal) {
     document.querySelectorAll('[data-modal-open="shelf-stock"]').forEach((trigger) => {
@@ -378,10 +383,11 @@
           ?.querySelector(".stock-matrix-item strong")
           ?.textContent.trim() || `Item ${id}`;
       const shopName = cell.getAttribute("data-shop-name") || "";
+      const priceField = cell.querySelector('[name^="shelf_price_"]');
       const price =
-        cell
-          .querySelector('[name^="shelf_price_"]')
-          ?.value.trim() || "";
+        priceField && !priceField.disabled
+          ? priceField.value.trim()
+          : "";
       const cost = cell.getAttribute("data-shelf-cost") || "";
       lines.push({ id, name, shopName, qty, price, cost });
     });
@@ -563,4 +569,330 @@
     });
     renderShelfFloat();
   }
+
+  /* --- Shelf request page: the flow picker switches the submit between a
+   * transfer to the To shop and a one-way trade with a person. Trade picks
+   * show the person fields and free the To-shop select; trade in enables
+   * the per-cell unit value input. */
+  const flowInputs = Array.from(
+    document.querySelectorAll("[data-shelf-flow]")
+  );
+  if (flowInputs.length) {
+    const tradeFields = document.querySelector(
+      "[data-shelf-trade-fields]"
+    );
+    const submitLabel = document.querySelector(
+      "[data-shelf-submit-label]"
+    );
+    const flowHint = document.querySelector("[data-shelf-flow-hint]");
+    const fromNav = document.querySelector("[data-stock-from-nav]");
+    const toLabel = document.querySelector("[data-shelf-to-label]");
+    const personInput = document.querySelector(
+      '[data-shelf-trade-fields] [name="person_name"]'
+    );
+    const transferTo = toLabel ? toLabel.textContent : "";
+    const priceFields = () =>
+      Array.from(document.querySelectorAll("[data-shelf-trade-price]"));
+    const flowMeta = {
+      transfer: {
+        label: "Send transfer",
+        hint: "Transfer sends the entered qty to the To shop.",
+      },
+      trade_out: {
+        label: "Record trade out",
+        hint: "Trade out — the person takes items off the shelf.",
+      },
+      trade_in: {
+        label: "Record trade in",
+        hint: "Trade in — the person brings items; the Value column is their unit value.",
+      },
+    };
+    const syncFlow = () => {
+      const flow =
+        (flowInputs.find((input) => input.checked) || {}).value ||
+        "transfer";
+      const isTrade = flow !== "transfer";
+      const meta = flowMeta[flow] || flowMeta.transfer;
+      if (tradeFields) tradeFields.hidden = !isTrade;
+      if (submitLabel) submitLabel.textContent = meta.label;
+      if (flowHint) flowHint.textContent = meta.hint;
+      if (fromNav) fromNav.disabled = isTrade;
+      if (toLabel) {
+        toLabel.textContent = isTrade
+          ? personInput?.value.trim() || "Person"
+          : transferTo;
+      }
+      priceFields().forEach((input) => {
+        const off = flow !== "trade_in";
+        input.hidden = off;
+        input.disabled = off;
+      });
+      renderShelfFloat();
+    };
+    /* Pre-pick the flow from ?flow= so sidebar links can land on a trade. */
+    const flowParam = new URLSearchParams(window.location.search).get(
+      "flow"
+    );
+    if (flowParam) {
+      const match = flowInputs.find((input) => input.value === flowParam);
+      if (match) match.checked = true;
+    }
+    flowInputs.forEach((input) =>
+      input.addEventListener("change", syncFlow)
+    );
+    personInput?.addEventListener("input", syncFlow);
+    syncFlow();
+  }
+
+  /* --- Trade-out portion targets: search/browse picker -----------------
+   * Each [data-portion-picker] lists the registered items from a hidden
+   * datalist. Typing filters the suggestions; focusing the empty input
+   * opens the whole list. Picked items become rows with a portions-per-
+   * unit input — each portion is valued at the item's list price. */
+  const portionEscape = (value) =>
+    String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const portionRead = (input) => {
+    const num = Number.parseFloat(input.value);
+    return Number.isFinite(num) && num > 0 ? num : 0;
+  };
+
+  const bindPortionPicker = (root) => {
+    if (!root || root.dataset.portionBound === "1") return;
+    root.dataset.portionBound = "1";
+    const search = root.querySelector("[data-portion-search]");
+    const results = root.querySelector("[data-portion-results]");
+    const rows = root.querySelector("[data-portion-rows]");
+    const totalEl = root.querySelector("[data-portion-total]");
+    const emptyEl = root.querySelector("[data-portion-empty]");
+    const source = Array.from(
+      root.querySelectorAll("[data-portion-source] option")
+    ).map((opt) => ({
+      id: opt.getAttribute("data-id") || "",
+      name: opt.value || "",
+      category: opt.getAttribute("data-category") || "",
+    }));
+    if (!rows) return;
+
+    const qtyInputs = () =>
+      Array.from(rows.querySelectorAll("[data-portion-qty]"));
+
+    const pickedIds = () =>
+      new Set(
+        Array.from(rows.querySelectorAll('[name="portion_item_id"]')).map(
+          (input) => String(input.value || "")
+        )
+      );
+
+    const syncTotal = () => {
+      const inputs = qtyInputs();
+      const sum = inputs.reduce((acc, input) => acc + portionRead(input), 0);
+      if (totalEl) {
+        totalEl.textContent = String(
+          Math.round(sum * 1000) / 1000
+        ).replace(/\.?0+$/, "");
+      }
+      const complete =
+        inputs.length > 0 && inputs.every((input) => portionRead(input) > 0);
+      root.classList.toggle("is-complete", complete);
+      root.classList.toggle("has-rows", inputs.length > 0);
+      if (emptyEl) emptyEl.hidden = inputs.length > 0;
+    };
+
+    const addRow = ({ id, name, category, portions }) => {
+      if (!id || pickedIds().has(String(id))) return;
+      const row = document.createElement("div");
+      row.className = "item-combo-row";
+      row.setAttribute("data-portion-row", "");
+      row.innerHTML = `
+        <input type="hidden" name="portion_item_id" value="${portionEscape(id)}">
+        <div class="item-combo-row-main">
+          <span class="item-combo-row-name">${portionEscape(name)}</span>
+          <span class="item-combo-row-price">${portionEscape(category)}</span>
+        </div>
+        <label class="item-combo-row-qty">
+          <input
+            type="number"
+            name="portion_qty"
+            min="0.001"
+            step="any"
+            inputmode="decimal"
+            placeholder="0"
+            data-portion-qty
+            required
+            aria-label="Portions per unit of ${portionEscape(name)}"
+          >
+          <span aria-hidden="true">×</span>
+        </label>
+        <button
+          type="button"
+          class="item-combo-row-remove"
+          data-portion-remove
+          aria-label="Remove ${portionEscape(name)}"
+        >
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>`;
+      rows.appendChild(row);
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+      const input = row.querySelector("[data-portion-qty]");
+      if (portions !== undefined && portions !== null && portions !== "") {
+        input.value = portions;
+      }
+      syncTotal();
+    };
+
+    const renderResults = () => {
+      if (!results || !search) return;
+      const needle = search.value.trim().toLowerCase();
+      const picked = pickedIds();
+      const matches = source
+        .filter(
+          (entry) =>
+            !needle ||
+            entry.name.toLowerCase().includes(needle) ||
+            entry.category.toLowerCase().includes(needle)
+        )
+        .slice(0, 8);
+      results.replaceChildren();
+      if (!matches.length) {
+        const empty = document.createElement("p");
+        empty.className = "item-combo-result-empty";
+        empty.textContent = "No matching items.";
+        results.appendChild(empty);
+      } else {
+        matches.forEach((entry) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "item-combo-result";
+          const taken = picked.has(String(entry.id));
+          btn.disabled = taken;
+          btn.innerHTML = `
+            <span class="item-combo-result-name">${portionEscape(
+              entry.name
+            )}</span>
+            <span class="item-combo-result-meta">
+              ${entry.category ? `<small>${portionEscape(entry.category)}</small>` : ""}
+              <small>${taken ? "Added" : "Pick for portions"}</small>
+            </span>`;
+          btn.addEventListener("click", () => {
+            addRow({ id: entry.id, name: entry.name, category: entry.category });
+            search.value = "";
+            renderResults();
+            search.focus();
+          });
+          results.appendChild(btn);
+        });
+      }
+      results.hidden = false;
+      search.setAttribute("aria-expanded", "true");
+    };
+
+    const hideResults = () => {
+      if (!results) return;
+      results.hidden = true;
+      search?.setAttribute("aria-expanded", "false");
+    };
+
+    if (search && results) {
+      search.addEventListener("focus", renderResults);
+      search.addEventListener("input", renderResults);
+      search.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          hideResults();
+        } else if (event.key === "ArrowDown" && !results.hidden) {
+          event.preventDefault();
+          results.querySelector("button:not(:disabled)")?.focus();
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          results
+            .querySelector("button:not(:disabled)")
+            ?.dispatchEvent(new Event("click", { bubbles: false }));
+        }
+      });
+      results.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          hideResults();
+          search.focus();
+        }
+      });
+      document.addEventListener("click", (event) => {
+        if (!root.contains(event.target)) hideResults();
+      });
+    }
+
+    root.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-portion-remove]");
+      if (!btn) return;
+      btn.closest("[data-portion-row]")?.remove();
+      syncTotal();
+    });
+    root.addEventListener("input", (event) => {
+      if (event.target.matches("[data-portion-qty]")) syncTotal();
+    });
+
+    root.__portionFill = (targets) => {
+      rows.replaceChildren();
+      (targets || []).forEach((target) =>
+        addRow({
+          id: target.id,
+          name: target.name,
+          category: target.suspended
+            ? "Suspended"
+            : target.category || "",
+          portions: target.portions,
+        })
+      );
+      syncTotal();
+    };
+    root.__portionReset = () => {
+      root.__portionFill([]);
+      if (search) search.value = "";
+      hideResults();
+    };
+    syncTotal();
+  };
+
+  document
+    .querySelectorAll("[data-portion-picker]")
+    .forEach(bindPortionPicker);
+
+  // Edit-modal prefill + register reset hook for the inline scripts.
+  window.shelfPortionPicker = {
+    fill(scope, targets) {
+      const root =
+        scope?.querySelector?.("[data-portion-picker]") ||
+        (scope?.matches?.("[data-portion-picker]") ? scope : null);
+      if (!root) return;
+      bindPortionPicker(root);
+      root.__portionFill?.(targets);
+    },
+    reset(scope) {
+      const root =
+        scope?.querySelector?.("[data-portion-picker]") ||
+        (scope?.matches?.("[data-portion-picker]") ? scope : null);
+      if (!root) return;
+      bindPortionPicker(root);
+      root.__portionReset?.();
+    },
+  };
+
+  // A fresh register intent clears previously picked portion items.
+  document.addEventListener("click", (event) => {
+    const trigger = event.target.closest?.(
+      '[data-modal-open="shelf-stock"]'
+    );
+    if (!trigger) return;
+    window.shelfPortionPicker.reset(
+      document.querySelector(
+        '[data-modal="shelf-stock"] [data-shelf-register-form]'
+      )
+    );
+  });
 })();

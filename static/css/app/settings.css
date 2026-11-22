@@ -1050,21 +1050,13 @@
   max-width: 26rem;
 }
 
-.pos-settings-jump.perm-module-nav {
-  padding: 0;
-  border-bottom: 0;
-  background: transparent;
-  gap: 0.4rem;
-}
-
-.pos-settings-jump .perm-module-nav-link {
-  min-height: 2rem;
-  padding: 0.28rem 0.7rem;
-  font-size: 0.78rem;
-}
-
-.pos-settings-jump .perm-module-nav-link.is-empty {
+/* POS settings sidebar tabs dim when the settings search leaves a tab empty. */
+.workspace-nav-link.is-empty {
   opacity: 0.45;
+}
+
+[data-pos-group].is-tab-hidden {
+  display: none;
 }
 
 .pos-settings-filter-empty {
@@ -1074,7 +1066,8 @@
 }
 
 @media (min-width: 960px) {
-  .item-panel--pos-settings .pos-settings-groups--list {
+  .item-panel--pos-settings .pos-settings-groups--list,
+  .item-panel--receipt-settings .pos-settings-groups--list {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -1097,7 +1090,7 @@
 }
 
 .pos-settings-groups--list .pos-settings-row.is-filtered-out,
-.pos-settings-groups--list .pos-settings-group.is-filtered-empty {
+[data-pos-group].is-filtered-empty {
   display: none;
 }
 

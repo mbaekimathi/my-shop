@@ -1,7 +1,7 @@
 {% extends "chat/base.html" %}
 {% load static %}
 
-{% block title %}All shops — {{ company_name|default:"MY-SHOP" }} Chat{% endblock %}
+{% block title %}{% if stock_mode %}Stock movement{% elif expenses_mode %}Expenses{% else %}All shops{% endif %} — {{ company_name|default:"MY-SHOP" }} Chat{% endblock %}
 {% block body_class %}page-chat{% endblock %}
 
 {% block body %}
@@ -9,16 +9,17 @@
   class="comms wa-app all-app"
   data-all-chat-url="{% url 'chat:api_all_chat' %}"
   data-receipt-items-base="{% url 'chat:api_receipt_items' receipt_id=0 %}"
+  {% if stock_mode %}data-stock-mode="1"{% endif %}{% if expenses_mode %} data-expense-mode="1"{% endif %}
 >
   <header class="wa-app__bar">
     <div class="wa-app__brand">
       <button type="button" class="comms-icon-btn" data-all-back data-fallback="{% url 'chat:app' %}" aria-label="Back" title="Back">
         <i data-lucide="arrow-left" aria-hidden="true"></i>
       </button>
-      <span class="comms-avatar wa-app__logo" data-tone="1" aria-hidden="true"><i data-lucide="layers"></i></span>
+      <span class="comms-avatar wa-app__logo" data-tone="{% if stock_mode %}3{% elif expenses_mode %}4{% else %}1{% endif %}" aria-hidden="true"><i data-lucide="{% if stock_mode %}package-search{% elif expenses_mode %}receipt{% else %}layers{% endif %}"></i></span>
       <div>
-        <strong>All shops</strong>
-        <span>Combined view · staff ({{ employee.role|default:"employee" }})</span>
+        <strong>{% if stock_mode %}Stock movement{% elif expenses_mode %}Expenses{% else %}All shops{% endif %}</strong>
+        <span>{% if stock_mode %}Stock data{% elif expenses_mode %}Expense data{% else %}Combined view{% endif %} · staff ({{ employee.role|default:"employee" }})</span>
       </div>
     </div>
     <div class="wa-app__bar-actions">
@@ -40,12 +41,30 @@
         <span class="all-shops-title"><i data-lucide="store" aria-hidden="true"></i> Shops</span>
       </div>
       <div class="wa-app__chats all-shops" role="list">
-        <a class="wa-chat is-active" href="{% url 'chat:all_shops' %}">
+        <a class="wa-chat{% if not stock_mode and not expenses_mode %} is-active{% endif %}" href="{% url 'chat:all_shops' %}">
           <span class="comms-avatar" data-tone="1" aria-hidden="true"><i data-lucide="layers"></i></span>
           <span class="wa-chat__main">
-            <span class="wa-chat__top"><strong>All shops</strong></span>
+            <span class="wa-chat__top"><strong>Company accounts</strong></span>
             <span class="wa-chat__preview">Combined view</span>
           </span>
+        </a>
+        {% if stock_modes.items or stock_modes.shelf %}
+        <a class="wa-chat{% if stock_mode %} is-active{% endif %}" href="{% url 'chat:all_shops' %}?open=stock">
+          <span class="comms-avatar" data-tone="3" aria-hidden="true"><i data-lucide="package-search"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Company stock movements</strong></span>
+            <span class="wa-chat__preview">Stock in · out · trades · report</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+        {% endif %}
+        <a class="wa-chat{% if expenses_mode %} is-active{% endif %}" href="{% url 'chat:all_shops' %}?open=expenses">
+          <span class="comms-avatar" data-tone="4" aria-hidden="true"><i data-lucide="receipt"></i></span>
+          <span class="wa-chat__main">
+            <span class="wa-chat__top"><strong>Company expenses</strong></span>
+            <span class="wa-chat__preview">Paid · unpaid · categories</span>
+          </span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
         </a>
         {% for shop in shops %}
         <form method="post" action="{% url 'chat:pick_shop' %}">
@@ -115,7 +134,95 @@
     </aside>
 
     <section class="wa-app__chat">
+      <main class="all-stage" id="allStage" aria-live="polite">
+        <section class="all-overview" aria-label="All shops — today">
+          <div class="all-overview__head">
+            <i data-lucide="{% if stock_mode %}package-search{% elif expenses_mode %}receipt{% else %}layout-dashboard{% endif %}" aria-hidden="true"></i>
+            <span>{% if stock_mode %}Today — stock movement{% elif expenses_mode %}Today — expenses{% else %}Today — all shops{% endif %}</span>
+          </div>
+          {% if stock_mode %}
+          <div class="pick-totals">
+            <div class="pick-total"><small>Stock in</small><b>{{ stock_totals.in }}</b></div>
+            <div class="pick-total"><small>Stock out</small><b>{{ stock_totals.out }}</b></div>
+            <div class="pick-total"><small>Traded</small><b>{{ stock_totals.traded }}</b></div>
+            <div class="pick-total"><small>Transfers</small><b>{{ stock_totals.transfers }}</b></div>
+          </div>
+          <div class="wa-stats">
+            {% for row in stock_rows %}
+            <div class="wa-stats__row">
+              <span>{{ row.shop.name }} <small class="all-overview__meta">· {{ row.shop.location }} · {{ row.moves }} move{{ row.moves|pluralize }} · out {{ row.out_fmt }} · traded {{ row.traded_fmt }}</small></span>
+              <b>{{ row.in_fmt }}</b>
+            </div>
+            {% empty %}
+            <p class="wa-app__none">No active shops found.</p>
+            {% endfor %}
+          </div>
+          {% elif expenses_mode %}
+          <div class="pick-totals">
+            <div class="pick-total"><small>Expenses</small><b>{{ exp_totals.total }}</b></div>
+            <div class="pick-total"><small>Entries</small><b>{{ exp_totals.count }}</b></div>
+            <div class="pick-total"><small>Unpaid</small><b>{{ exp_totals.unpaid }}</b></div>
+          </div>
+          <div class="wa-stats">
+            {% for row in exp_rows %}
+            <div class="wa-stats__row">
+              <span>{{ row.shop.name }} <small class="all-overview__meta">· {{ row.shop.location }} · {{ row.count }} entr{{ row.count|pluralize:"y,ies" }} · unpaid {{ row.unpaid_fmt }}</small></span>
+              <b>{{ row.total_fmt }}</b>
+            </div>
+            {% empty %}
+            <p class="wa-app__none">No active shops found.</p>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="pick-totals">
+            <div class="pick-total"><small>Sales</small><b>{{ totals.sales }}</b></div>
+            <div class="pick-total"><small>Receipts</small><b>{{ totals.receipts }}</b></div>
+            <div class="pick-total"><small>Expenses</small><b>{{ totals.expenses }}</b></div>
+            <div class="pick-total"><small>Credit owed</small><b>{{ totals.credit }}</b></div>
+          </div>
+          <div class="wa-stats">
+            {% for row in shop_rows %}
+            <div class="wa-stats__row">
+              <span>{{ row.shop.name }} <small class="all-overview__meta">· {{ row.shop.location }} · {{ row.receipts }} sale{{ row.receipts|pluralize }} · exp {{ row.expenses_fmt }} · cr {{ row.credit_fmt }}</small></span>
+              <b>{{ row.sales_fmt }}</b>
+            </div>
+            {% empty %}
+            <p class="wa-app__none">No active shops found.</p>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </section>
+        {% if stock_mode %}<div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>Stock movement — all shops</strong><br>Pick a stock filter below, choose a period, or type a query — stock in, stock out, stock trade, transfers, suppliers, stock movement, stock report, low stock{% if stock_modes.items and stock_modes.shelf %} (item or shelf){% endif %}.</p></div></div>{% elif expenses_mode %}<div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>Expenses — all shops</strong><br>Pick an expense filter below, choose a period, or type a query — expenses, paid, unpaid, by category, by shop, suppliers, expense report.</p></div></div>{% else %}<div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>All-shops assistant</strong><br>Ask about every shop combined — sales, credits, expenses, stock movement{% if stock_modes.items and stock_modes.shelf %} (item or shelf){% endif %}, report.</p></div></div>{% endif %}
+      </main>
+
       <div class="all-sugs" id="allSugs">
+        {% if stock_mode or expenses_mode %}
+        <label class="wa-period__scope all-sugs__shop" id="allShopScope" title="Filter by shop">
+          <i data-lucide="store" aria-hidden="true"></i>
+          <select id="allShopId" aria-label="Shop scope" title="All shops or one shop">
+            <option value="">All shops</option>
+            {% for shop in shops %}<option value="{{ shop.id }}">{{ shop.name }}</option>{% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        {% if stock_mode %}
+        <button type="button" class="wa-sug" data-sug="Stock in">Stock in</button>
+        <button type="button" class="wa-sug" data-sug="Stock out">Stock out</button>
+        <button type="button" class="wa-sug" data-sug="Stock trade">Stock trade</button>
+        <button type="button" class="wa-sug" data-sug="Transfers">Transfers</button>
+        <button type="button" class="wa-sug" data-sug="Suppliers">Suppliers</button>
+        <button type="button" class="wa-sug" data-sug="Stock movement">Stock movement</button>
+        <button type="button" class="wa-sug" data-sug="Stock report">Stock report</button>
+        <button type="button" class="wa-sug" data-sug="Low stock">Low stock</button>
+        {% elif expenses_mode %}
+        <button type="button" class="wa-sug" data-sug="Expenses">Expenses</button>
+        <button type="button" class="wa-sug" data-sug="Paid">Paid</button>
+        <button type="button" class="wa-sug" data-sug="Unpaid">Unpaid</button>
+        <button type="button" class="wa-sug" data-sug="By category">By category</button>
+        <button type="button" class="wa-sug" data-sug="By shop">By shop</button>
+        <button type="button" class="wa-sug" data-sug="Suppliers">Suppliers</button>
+        <button type="button" class="wa-sug" data-sug="Expense report">Expense report</button>
+        {% else %}
         <button type="button" class="wa-sug" data-sug="Sales">Sales (+ items)</button>
         <button type="button" class="wa-sug" data-sug="Credits">Credits</button>
         <button type="button" class="wa-sug" data-sug="Expenses">Expenses</button>
@@ -123,6 +230,7 @@
         <button type="button" class="wa-sug" data-sug="Stock movement">Stock movement</button>
         {% endif %}
         <button type="button" class="wa-sug" data-sug="Report">Report</button>
+        {% endif %}
       </div>
 
       <div class="wa-period all-period" id="allPeriod" hidden>
@@ -148,6 +256,7 @@
             {% if stock_modes.shelf %}<option value="shelf">Shelf stock</option>{% endif %}
           </select>
         </label>
+
         <span class="wa-period__fields">
           <input type="date" id="allDateDay" aria-label="Pick a day" title="Day">
           <input type="date" id="allDateFrom" aria-label="From date" title="From" hidden>
@@ -162,32 +271,6 @@
           <i data-lucide="x" aria-hidden="true"></i>
         </button>
       </div>
-
-      <main class="all-stage" id="allStage" aria-live="polite">
-        <section class="all-overview" aria-label="All shops — today">
-          <div class="all-overview__head">
-            <i data-lucide="layout-dashboard" aria-hidden="true"></i>
-            <span>Today — all shops</span>
-          </div>
-          <div class="pick-totals">
-            <div class="pick-total"><small>Sales</small><b>{{ totals.sales }}</b></div>
-            <div class="pick-total"><small>Receipts</small><b>{{ totals.receipts }}</b></div>
-            <div class="pick-total"><small>Expenses</small><b>{{ totals.expenses }}</b></div>
-            <div class="pick-total"><small>Credit owed</small><b>{{ totals.credit }}</b></div>
-          </div>
-          <div class="wa-stats">
-            {% for row in shop_rows %}
-            <div class="wa-stats__row">
-              <span>{{ row.shop.name }} <small class="all-overview__meta">· {{ row.shop.location }} · {{ row.receipts }} sale{{ row.receipts|pluralize }} · exp {{ row.expenses_fmt }} · cr {{ row.credit_fmt }}</small></span>
-              <b>{{ row.sales_fmt }}</b>
-            </div>
-            {% empty %}
-            <p class="wa-app__none">No active shops found.</p>
-            {% endfor %}
-          </div>
-        </section>
-        <div class="wa-bubble-row is-in"><div class="wa-bubble is-in"><p><strong>All-shops assistant</strong><br>Ask about every shop combined — sales, credits, expenses, stock movement{% if stock_modes.items and stock_modes.shelf %} (item or shelf){% endif %}, report.</p></div></div>
-      </main>
 
       <form class="wa-app__composer all-composer" id="allForm">
         {% csrf_token %}
@@ -205,5 +288,5 @@
 
 {% block extra_js %}
 <script type="application/json" id="all-init-receipt-status">{{ receipt_status_default_json|safe }}</script>
-<script defer src="{% static 'js/all.js' %}?v=24"></script>
+<script defer src="{% static 'js/all.js' %}?v=32"></script>
 {% endblock %}

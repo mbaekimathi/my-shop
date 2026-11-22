@@ -1,0 +1,42 @@
+<section
+  class="pos-settings-group"
+  id="pos-group-stk-push"
+  data-pos-group
+  data-group-title="STK Push M-Pesa"
+  data-pos-tab-section="checkout"
+  data-pos-requires="enable_mpesa|enable_cash_mpesa|enable_mpesa_card|enable_cash_mpesa_card"
+  data-stk-shop-group
+  {% if not stk_shop.mpesa_checkout_enabled %}hidden{% endif %}
+>
+  <div class="pos-settings-group-head">
+    <div>
+      <h3>STK Push</h3>
+      <p>Safaricom STK Push prompt on the shop cart. Needs an M-Pesa payment method.</p>
+    </div>
+    <p class="staff-count">1 setting</p>
+  </div>
+  <ul class="pos-settings-list">
+    <li class="pos-settings-row">
+      <div class="pos-settings-copy">
+        <strong>STK Push on shop</strong>
+        <p data-stk-shop-hint>
+          {% if stk_shop.stk_ready_for_shop %}Active on cart.{% elif not stk_shop.mpesa_checkout_enabled %}Enable M-Pesa below.{% elif not stk_shop.stk_credentials_ready %}Set up <a href="{{ daraja_settings_url }}">Daraja</a> first.{% else %}Ready to enable.{% endif %}
+        </p>
+        <p class="daraja-form-message" data-stk-shop-message hidden></p>
+      </div>
+      <label class="perm-switch{% if not stk_shop.enable_stk_push %} is-denied{% endif %}">
+        <input
+          type="checkbox"
+          class="perm-switch-input"
+          {% if stk_shop.enable_stk_push %}checked{% endif %}
+          data-stk-shop-toggle
+          aria-label="Enable STK Push on shop"
+        >
+        <span class="perm-switch-ui" aria-hidden="true"></span>
+        <span class="perm-switch-state" data-stk-shop-state>
+          {% if stk_shop.enable_stk_push %}On{% else %}Off{% endif %}
+        </span>
+      </label>
+    </li>
+  </ul>
+</section>

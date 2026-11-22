@@ -74,6 +74,7 @@ FIELDS = (
     "enable_sidebar_printer",
     "enable_sidebar_receipts",
     "enable_sidebar_website",
+    "block_negative_stock",
     "compulsory_print_on_sale",
     "enable_print_bluetooth",
     "enable_print_usb",
@@ -117,6 +118,7 @@ DEFAULTS = {
     "enable_sidebar_printer": True,
     "enable_sidebar_receipts": True,
     "enable_sidebar_website": True,
+    "block_negative_stock": True,
     "compulsory_print_on_sale": False,
     "enable_print_bluetooth": True,
     "enable_print_usb": True,
@@ -372,6 +374,29 @@ class PosToggleEnforcementTests(TestCase):
         self._blocked(
             "Insufficient stock",
             lines=[{"id": self.item.pk, "qty": 999, "price": "100"}],
+        )
+
+    def test_block_negative_stock_toggle_gates_overselling(self):
+        # On (default): a sale cannot take shop stock below zero.
+        self._blocked(
+            "Insufficient stock",
+            lines=[{"id": self.item.pk, "qty": 999, "price": "100"}],
+        )
+
+        # Off: the sale goes through and shop stock counts down into negative.
+        set_company_pos_setting(field="block_negative_stock", enabled=False)
+        result = self._checkout(
+            lines=[{"id": self.item.pk, "qty": 999, "price": "100"}]
+        )
+        self.assertEqual(result["kind"], ShopReceiptKind.SALE)
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.quantity, Decimal("-989"))
+
+        # Back on: overselling is blocked again.
+        set_company_pos_setting(field="block_negative_stock", enabled=True)
+        self._blocked(
+            "Insufficient stock",
+            lines=[{"id": self.item.pk, "qty": 1, "price": "100"}],
         )
 
     # -- company POS page: open & close --------------------------------------

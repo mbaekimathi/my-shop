@@ -75,6 +75,17 @@ class Item(models.Model):
     )
     image = models.ImageField(upload_to=item_image_path, blank=True, null=True)
     track_serial_number = models.BooleanField(default=False, db_index=True)
+    is_combo = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            "Combo items bundle other registered items. The sum of each "
+            "component's price × its portions is the combo's minimum "
+            "price — shops sell it at their own selling price on top, and "
+            "selling one tallies each component item by those portions "
+            "instead of the combo."
+        ),
+    )
     is_suspended = models.BooleanField(default=False, db_index=True)
     created_by = models.ForeignKey(
         "employees.EmployeeProfile",
@@ -159,6 +170,45 @@ class Item(models.Model):
         if discounted < floor:
             return floor
         return discounted
+
+
+class ItemComboComponent(models.Model):
+    """One leg of a combo item.
+
+    ``qty`` is how many units of the component item one combo uses: the
+    sum of each component's price × qty is the combo's minimum price, and
+    a combo sale tallies each component item's stock and sales by qty ×
+    the combo quantity (1 → one unit, 0.5 → half a unit, 2 → two units).
+    """
+
+    combo = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="combo_components",
+    )
+    component = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="combo_memberships",
+    )
+    qty = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        help_text="Units of this component in one combo.",
+    )
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["combo", "component"],
+                name="uniq_combo_component",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.component} × {self.qty} in {self.combo}"
 
 
 class ShopItemPrice(models.Model):
@@ -1013,6 +1063,16 @@ class ShelfItem(models.Model):
     low_stock_threshold = models.DecimalField(
         max_digits=12, decimal_places=3, default=0
     )
+    portions_per_unit = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        default=0,
+        help_text=(
+            "Total portions each shelf unit gives on a trade out — the "
+            "sum of the linked portion targets' portions. 0 or no "
+            "targets = trade out only moves the shelf."
+        ),
+    )
     image = models.ImageField(
         upload_to=shelf_item_image_path, blank=True, null=True
     )
@@ -1062,6 +1122,44 @@ class ShelfItem(models.Model):
             return f"{url}?v={quote(token, safe='')}"
         except (ValueError, OSError, AttributeError):
             return ""
+
+
+class ShelfItemPortionTarget(models.Model):
+    """One catalog item a shelf trade out stocks portions into.
+
+    ``portions`` is how many of this item each shelf unit gives on a
+    trade out — every leg is valued at the item's list price.
+    """
+
+    shelf_item = models.ForeignKey(
+        ShelfItem,
+        on_delete=models.CASCADE,
+        related_name="portion_targets",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="shelf_portion_targets",
+    )
+    portions = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        default=0,
+        help_text="Portions of this item each shelf unit gives.",
+    )
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shelf_item", "item"],
+                name="uniq_shelf_portion_target",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.item} × {self.portions} of {self.shelf_item_id}"
 
 
 class ShelfStockMovement(models.Model):

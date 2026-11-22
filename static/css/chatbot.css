@@ -786,6 +786,9 @@ html[data-theme="dark"] .comms {
 /* Keep the last chat tappable — clears the floating action buttons */
 .wa-app__chats { padding-bottom: calc(9.5rem + env(safe-area-inset-bottom)); }
 
+/* Company navigation links pinned above the chat list (per-shop app) */
+.wa-app__links { flex: 0 0 auto; border-bottom: 2px solid var(--wa-line); }
+
 .wa-chat {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -2472,9 +2475,8 @@ html[data-theme="dark"] .wa-card__head--out { color: #7be3c8; }
   outline-offset: 1px;
 }
 
-/* Same picker under the all-shops chips — chips already draw the top rule */
+/* Picker sits between the chips and the composer — rules on both sides */
 .all-period {
-  border-top: 0;
   border-bottom: 1px solid var(--wa-line);
 }
 
@@ -2532,6 +2534,17 @@ html[data-theme="dark"] .wa-card__head--out { color: #7be3c8; }
 }
 
 .wa-table tbody tr:last-child td { border-bottom: 0; }
+
+.wa-table .wa-table__tot td {
+  border-top: 2px solid var(--wa-line);
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.wa-cellmeta {
+  color: var(--wa-muted);
+  font-size: 0.68rem;
+}
 
 .wa-table .n {
   text-align: right;
@@ -3489,7 +3502,7 @@ html[data-theme="dark"] .pick-total small { color: #8696a0; }
   gap: 0.4rem;
   padding: 0.55rem 0.9rem;
   overflow-x: auto;
-  border-bottom: 1px solid var(--wa-line);
+  border-top: 1px solid var(--wa-line);
   background: var(--wa-panel-2);
 }
 
@@ -3639,12 +3652,19 @@ html[data-theme="dark"] .pick-total small { color: #8696a0; }
   font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
+  text-decoration: none;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .wa-sug:hover {
   border-color: var(--wa-send);
   background: color-mix(in srgb, var(--wa-send) 12%, transparent);
+}
+
+.wa-sug.is-on {
+  background: var(--wa-send);
+  border-color: var(--wa-send);
+  color: #fff;
 }
 
 /* ==========================================================================
@@ -5652,4 +5672,124 @@ html[data-theme="dark"] .wa-card__head--active { color: #f0a57a; }
     flex: 0 0 auto;
     padding-bottom: max(1.35rem, calc(1.1rem + env(safe-area-inset-bottom)));
   }
+}
+
+/* ==========================================================================
+   Responsive polish — stock list card + chat chrome across screens
+   ========================================================================== */
+
+.wa-card__tablewrap { -webkit-overflow-scrolling: touch; }
+
+/* Stock item list: full table on desktop, stacked rows ≤1199px (like
+   the report card) — item + value on line 1, shop on line 2,
+   time · qty × unit on line 3. */
+
+@media (max-width: 1199px) {
+  .wa-table--stocklist { min-width: 0; }
+  .wa-table--stocklist thead { display: none; }
+  .wa-table--stocklist,
+  .wa-table--stocklist tbody { display: block; width: 100%; }
+  .wa-table--stocklist tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.1rem 0.45rem;
+    padding: 0.42rem 0.5rem;
+    border-bottom: 1px solid var(--wa-line);
+  }
+  .wa-table--stocklist tbody tr:last-child { border-bottom: 0; }
+  .wa-table--stocklist td {
+    display: inline;
+    width: auto;
+    border: 0;
+    padding: 0;
+    background: transparent !important;
+    vertical-align: baseline;
+  }
+  .wa-table--stocklist .wa-sl-idx { display: none; }
+  .wa-table--stocklist .wa-sl-type { order: 0; }
+  .wa-table--stocklist .wa-sl-item { order: 1; font-weight: 700; }
+  .wa-table--stocklist .wa-sl-value {
+    order: 2;
+    margin-left: auto;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .wa-table--stocklist .wa-sl-shop {
+    order: 3;
+    flex: 0 0 100%;
+    font-weight: 650;
+    font-size: 0.74rem;
+  }
+  .wa-table--stocklist .wa-sl-time {
+    order: 4;
+    color: var(--wa-muted);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .wa-table--stocklist .wa-sl-time::after { content: " ·"; }
+  .wa-table--stocklist .wa-sl-qty {
+    order: 5;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .wa-table--stocklist .wa-sl-qty::after { content: " ×"; }
+  .wa-table--stocklist .wa-sl-unit {
+    order: 6;
+    color: var(--wa-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 639px) {
+  /* Overview stats + card chrome shrink to fit phones */
+  .pick-totals {
+    grid-template-columns: repeat(auto-fit, minmax(6.4rem, 1fr));
+    gap: 0.4rem;
+    margin-bottom: 0.65rem;
+  }
+  .pick-total { padding: 0.5rem 0.6rem; }
+  .pick-total b { font-size: 0.92rem; }
+
+  .all-overview { padding: 0.6rem 0.65rem; gap: 0.45rem; }
+
+  .all-stage { padding: 0.6rem 0.55rem 0.35rem; }
+  .all-sugs { padding: 0.45rem 0.55rem; gap: 0.3rem; }
+  .all-sugs .wa-sug { padding: 0.32rem 0.6rem; font-size: 0.74rem; }
+
+  /* Cards inside bubbles use the full row width */
+  .wa-bubble .wa-card { width: 100%; }
+  .wa-bubble-row:has(.wa-card) { max-width: 96%; }
+
+  /* Stats rows inside cards stay one-line */
+  .wa-card .wa-stats__row small,
+  .wa-card .wa-stats__row span { font-size: 0.72rem; }
+
+  /* Stock list stacked rows a touch tighter */
+  .wa-table--stocklist tbody tr { padding: 0.38rem 0.45rem; }
+}
+
+@media (min-width: 640px) and (max-width: 1199px) {
+  /* Tablet: keep bubbles + cards roomy but bounded */
+  .wa-bubble-row:has(.wa-card) { max-width: min(34rem, 92%); }
+}
+
+/* Shop scope select inside the stock page's suggestion row */
+.all-sugs__shop {
+  flex: 0 0 auto;
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+.all-sugs__shop .lucide {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--wa-muted);
+}
+.all-sugs__shop select { max-width: 10.5rem; }
+@media (max-width: 639px) {
+  .all-sugs__shop select { max-width: 8rem; }
 }

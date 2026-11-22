@@ -274,7 +274,7 @@
     syncActions();
   }
 
-  function loadList() {
+  function loadList(quiet) {
     var params = new URLSearchParams();
     params.set("mode", state.mode);
     if (state.mode === "day") params.set("day", els.day.value || todayISO());
@@ -293,7 +293,12 @@
     var q = (els.q.value || "").trim();
     if (q) params.set("q", q);
 
-    els.list.innerHTML = '<p class="rcpt-empty">Loading…</p>';
+    if (!quiet) {
+      els.list.innerHTML = '<p class="rcpt-empty">Loading…</p>';
+    }
+    // Quiet refreshes keep the user's place — a status change shouldn't
+    // bounce the list back to the top.
+    var prevScroll = quiet ? els.list.scrollTop : 0;
     fetch(urls.list + "?" + params.toString(), {
       headers: { Accept: "application/json" },
       credentials: "same-origin",
@@ -310,15 +315,36 @@
         });
         state.selected = keep;
         renderList();
+        if (quiet) els.list.scrollTop = prevScroll;
       })
       .catch(function (err) {
+        if (quiet) return; // keep the last good list on transient errors
         els.list.innerHTML =
           '<p class="rcpt-empty">' + escapeHtml(err.message) + "</p>";
         showToast(err.message);
       });
   }
 
-  function openDetail(id) {
+  // Live refresh: head office can confirm/cancel/return and other devices
+  // can record sales while this page sits open — reload the list (and the
+  // open detail pane) quietly every few seconds.
+  function refreshLive() {
+    loadList(true);
+    if (els.detail && !els.detail.hidden && state.activeId) {
+      openDetail(state.activeId, true);
+    }
+  }
+
+  var liveTimer = null;
+  function scheduleLive() {
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(function () {
+      if (!document.hidden) refreshLive();
+      scheduleLive();
+    }, 8000);
+  }
+
+  function openDetail(id, quiet) {
     fetch(detailUrl(id), {
       headers: { Accept: "application/json" },
       credentials: "same-origin",
@@ -379,12 +405,14 @@
           '<ul class="rcpt-lines">' +
           (lines || "<li><span>No lines</span><span></span></li>") +
           "</ul>";
-        els.detail.hidden = false;
+        // A quiet refresh must not resurrect the pane if the user closed
+        // it while the fetch was in flight.
+        if (!quiet || !els.detail.hidden) els.detail.hidden = false;
         renderList();
         refreshIcons();
       })
       .catch(function (err) {
-        showToast(err.message);
+        if (!quiet) showToast(err.message);
       });
   }
 
@@ -706,7 +734,9 @@
       syncPeriodFields();
     });
   });
-  els.go.addEventListener("click", loadList);
+  els.go.addEventListener("click", function () {
+    loadList();
+  });
   els.q.addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -801,6 +831,17 @@
     });
   }
 
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refreshLive();
+  });
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted || !document.hidden) refreshLive();
+  });
+  window.addEventListener("focus", function () {
+    if (!document.hidden) refreshLive();
+  });
+  window.addEventListener("online", refreshLive);
+
   // Boot
   els.day.value = todayISO();
   els.from.value = todayISO();
@@ -810,4 +851,5 @@
   syncPeriodFields();
   refreshIcons();
   loadList();
+  scheduleLive();
 })();

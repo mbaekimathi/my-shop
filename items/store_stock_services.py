@@ -11,6 +11,7 @@ from django.db.models import Q
 from employees.models import EmployeeProfile, EmployeeStatus
 from items.models import (
     Item,
+    ShopStock,
     StockOutReason,
     StockPaymentStatus,
     StoreStock,
@@ -37,13 +38,87 @@ def store_qty_for_item(item_id) -> Decimal:
     return row.quantity if row is not None else Decimal("0")
 
 
+def _low_stock_shop_names(item_ids) -> dict:
+    """item_id -> shop names at or below that shop's low-stock alert.
+
+    Same rules as list_shop_low_stock_alerts: a manual Alert at compares
+    directly; unset rows use the weekly-average threshold. Only notified
+    items alert, so item__low_stock_notify filters the scan.
+    """
+    stocks = list(
+        ShopStock.objects.filter(
+            item_id__in=item_ids,
+            item__low_stock_notify=True,
+        )
+        .select_related("shop")
+        .only(
+            "quantity",
+            "low_stock_threshold",
+            "low_stock_manual",
+            "item_id",
+            "shop__name",
+        )
+        .order_by("shop__name", "shop_id")
+    )
+    low: dict[int, list[str]] = {}
+    auto = []
+    for stock in stocks:
+        if stock.low_stock_manual:
+            if stock.quantity <= stock.low_stock_threshold:
+                low.setdefault(stock.item_id, []).append(stock.shop.name)
+        else:
+            auto.append(stock)
+    if not auto:
+        return low
+    from items.services import (
+        threshold_from_weekly_avg,
+        weekly_usage_avg_by_item_shop,
+    )
+
+    usage = weekly_usage_avg_by_item_shop(
+        [stock.item_id for stock in auto],
+        [stock.shop_id for stock in auto],
+    )
+    for stock in auto:
+        threshold = threshold_from_weekly_avg(
+            usage.get((stock.item_id, stock.shop_id), 0)
+        )
+        if stock.quantity <= threshold:
+            low.setdefault(stock.item_id, []).append(stock.shop.name)
+    return low
+
+
+def _item_health(item, low_shops) -> tuple:
+    """(health, label, title) for the Health column on the item-stock page."""
+    if not item.low_stock_notify:
+        return ("off", "Off", "Low stock alerts off for this item.")
+    shops = low_shops.get(item.pk) or []
+    if shops:
+        return (
+            "low",
+            "Low now",
+            f"Low at {', '.join(shops)} — at or below the low-stock alert.",
+        )
+    return (
+        "ok",
+        "Watching",
+        "Low stock alerts on — every shop is above the alert level.",
+    )
+
+
 def list_store_stock_items(*, query: str = "") -> list[dict]:
     """Active catalog items with current central-store qty for the list UI."""
     q = (query or "").strip()
     items = (
-        Item.objects.filter(is_suspended=False)
+        Item.objects.filter(is_suspended=False, is_combo=False)
         .order_by("category", "name")
-        .only("id", "name", "category", "stock_count_enabled")
+        .only(
+            "id",
+            "name",
+            "category",
+            "stock_count_enabled",
+            "low_stock_notify",
+        )
     )
     if q:
         filt = Q(name__icontains=q) | Q(category__icontains=q)
@@ -65,10 +140,12 @@ def list_store_stock_items(*, query: str = "") -> list[dict]:
         .values_list("item_id", "buying_price")
     ):
         last_price.setdefault(move_item_id, price)
+    low_shops = _low_stock_shop_names(item_ids)
     rows = []
     for item in items:
         qty = qty_by_item.get(item.pk) or Decimal("0")
         price = last_price.get(item.pk)
+        health, health_label, health_title = _item_health(item, low_shops)
         rows.append(
             {
                 "id": item.pk,
@@ -82,6 +159,9 @@ def list_store_stock_items(*, query: str = "") -> list[dict]:
                     str(price) if price is not None else ""
                 ),
                 "stock_count_enabled": bool(item.stock_count_enabled),
+                "health": health,
+                "health_label": health_label,
+                "health_title": health_title,
                 "search_text": f"{item.name} {item.category} {item.pk}".lower(),
             }
         )
@@ -810,7 +890,9 @@ def build_store_item_stock_report(*, day_start, day_end, item_id=None) -> dict:
     - ``trades`` — ``trade_in`` − ``trade_out``, shown net.
     - ``out`` — stock outs that are neither trades nor transfers.
 
-    ``item_id`` narrows the rows to one catalog item.
+    ``item_id`` narrows the rows to one catalog item. Only items that
+    moved inside the period are listed — a row whose whole content is a
+    carried start/close balance is hidden.
     """
     from items.shelf_stock_services import _qty_display, _signed_qty
 
@@ -889,10 +971,10 @@ def build_store_item_stock_report(*, day_start, day_end, item_id=None) -> dict:
         for key in ("start", "in", "transfers", "trades", "out", "close")
     }
     for item in report_items:
-        slot = bounds.get(item.pk)
         bucket = buckets.get(item.pk)
-        if slot is None and bucket is None:
-            continue  # never moved through the central store
+        if bucket is None:
+            continue  # untouched in the filtered period
+        slot = bounds.get(item.pk)
         start = slot[0] if slot and slot[0] is not None else Decimal("0")
         close = slot[1] if slot and slot[1] is not None else Decimal("0")
         bucket = bucket or {}

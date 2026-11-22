@@ -1,7 +1,7 @@
 /* Minimal service worker — enables PWA install + auto-update.
    No caching: every request hits the network so the app is never stale.
    VERSION bumps force browsers to fetch a new worker after each deploy. */
-var SW_VERSION = "2026-11-08.3";
+var SW_VERSION = "2026-11-22.1";
 
 self.addEventListener("install", function () {
   self.skipWaiting();

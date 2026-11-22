@@ -30,8 +30,7 @@
         <button
           type="button"
           class="ax-apply"
-          data-ax-confirm-print
-          data-print-url="{{ page.print_url }}"
+          data-modal-open="print-receipts"
         >
           <i data-lucide="printer" aria-hidden="true"></i>
           Print list
@@ -98,12 +97,10 @@
           <col class="ax-col-select">
           <col class="ax-col-receipt">
           <col class="ax-col-client">
-          <col class="ax-col-sold-by">
-          <col class="ax-col-sold-as">
+          <col class="ax-col-sold">
           <col class="ax-col-amount">
-          <col class="ax-col-reference">
+          <col class="ax-col-ref-paid">
           <col class="ax-col-when">
-          <col class="ax-col-paid">
         </colgroup>
         <thead>
           <tr>
@@ -115,12 +112,10 @@
             </th>
             <th class="ax-th--item">Receipt</th>
             <th>Client</th>
-            <th>Sold by</th>
-            <th>Sold as</th>
+            <th>Sold</th>
             <th class="ax-th--amount">Amount</th>
-            <th>Reference</th>
+            <th>Ref · Paid</th>
             <th>Printed</th>
-            <th>Paid (entered)</th>
           </tr>
         </thead>
         <tbody data-ax-confirm-rows>
@@ -171,17 +166,20 @@
                 <span class="ax-confirm-stack-sub">{{ row.client_phone|default:"—" }}</span>
               </div>
             </td>
-            <td class="ax-confirm-sold-by" data-label="Sold by">{{ row.sold_by|default:"—" }}</td>
-            <td class="ax-confirm-sold-as" data-label="Sold as">{{ row.sold_as_label|default:"—" }}</td>
-            <td class="ax-confirm-amount" data-label="Amount">{{ row.amount_label|default:"—" }}</td>
-            <td class="ax-confirm-reference" data-label="Reference">{{ row.reference|default:"—" }}</td>
-            <td class="ax-confirm-when" data-label="Printed">{{ row.when }}</td>
-            <td class="ax-confirm-when ax-confirm-paid" data-label="Paid">
+            <td class="ax-confirm-sold" data-label="Sold">
               <div class="ax-confirm-stack">
-                <span class="ax-confirm-stack-main">{{ row.paid_when|default:"—" }}</span>
-                {% if row.paid_via %}<span class="ax-confirm-stack-sub">{{ row.paid_via }}</span>{% endif %}
+                <span class="ax-confirm-stack-main">{{ row.sold_by|default:"—" }}</span>
+                <span class="ax-confirm-stack-sub">{{ row.sold_as_label|default:"—" }}</span>
               </div>
             </td>
+            <td class="ax-confirm-amount" data-label="Amount">{{ row.amount_label|default:"—" }}</td>
+            <td class="ax-confirm-ref-paid" data-label="Ref · Paid">
+              <div class="ax-confirm-stack">
+                <span class="ax-confirm-stack-main ax-confirm-reference">{{ row.reference|default:"—" }}</span>
+                <span class="ax-confirm-stack-sub">{{ row.paid_when|default:"—" }}{% if row.paid_via %} · {{ row.paid_via }}{% endif %}</span>
+              </div>
+            </td>
+            <td class="ax-confirm-when" data-label="Printed">{{ row.when }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -197,6 +195,7 @@
 
 {% block workspace_overlays %}
 {{ block.super }}
+{% include "employees/partials/receipts_print_modal.html" with receipts_print_modal=page.print_url receipts_print_url=page.print_url receipts_print_title="Print confirm receipts" receipts_print_lead="Uses the filters on this page — pick a paper size, then print or download the A4 PDF." receipts_print_filters="[data-analytics-filters]" %}
 <div class="ax-confirm-cart" data-ax-confirm-select-bar hidden>
   <div
     id="ax-confirm-cart-panel"
@@ -289,7 +288,8 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=43"></script>
+<script defer src="{% static 'js/analytics-confirm-receipts.js' %}?v=44"></script>
+<script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
 <script>
   (() => {
     const form = document.querySelector("[data-analytics-filters]");

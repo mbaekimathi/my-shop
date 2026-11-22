@@ -39,8 +39,6 @@
   const footnote = root.querySelector("[data-ax-confirm-footnote]");
   const periodEl = root.querySelector("[data-ax-confirm-period]");
   const filtersForm = root.querySelector("[data-analytics-filters]");
-  const printBtn = root.querySelector("[data-ax-confirm-print]");
-
   const verifyUrl = root.getAttribute("data-verify-login-url") || "";
 
   const modal = document.querySelector("[data-confirm-receipt-modal]");
@@ -463,21 +461,24 @@
       <span class="ax-confirm-stack-sub">${phone}</span>
     </div>
   </td>
-  <td class="ax-confirm-sold-by" data-label="Sold by">${escapeHtml(
-    row.sold_by || "—"
-  )}</td>
-  <td class="ax-confirm-sold-as" data-label="Sold as">${escapeHtml(
-    row.sold_as_label || "—"
-  )}</td>
-  <td class="ax-confirm-amount" data-label="Amount">${amount}</td>
-  <td class="ax-confirm-reference" data-label="Reference">${reference}</td>
-  <td class="ax-confirm-when" data-label="Printed">${when}</td>
-  <td class="ax-confirm-when ax-confirm-paid" data-label="Paid">
+  <td class="ax-confirm-sold" data-label="Sold">
     <div class="ax-confirm-stack">
-      <span class="ax-confirm-stack-main">${paidWhen}</span>
-      ${paidVia ? `<span class="ax-confirm-stack-sub">${paidVia}</span>` : ""}
+      <span class="ax-confirm-stack-main">${escapeHtml(row.sold_by || "—")}</span>
+      <span class="ax-confirm-stack-sub">${escapeHtml(
+        row.sold_as_label || "—"
+      )}</span>
     </div>
   </td>
+  <td class="ax-confirm-amount" data-label="Amount">${amount}</td>
+  <td class="ax-confirm-ref-paid" data-label="Ref · Paid">
+    <div class="ax-confirm-stack">
+      <span class="ax-confirm-stack-main ax-confirm-reference">${reference}</span>
+      <span class="ax-confirm-stack-sub">${paidWhen}${
+        paidVia ? ` · ${paidVia}` : ""
+      }</span>
+    </div>
+  </td>
+  <td class="ax-confirm-when" data-label="Printed">${when}</td>
 </tr>`;
   };
 
@@ -1951,32 +1952,6 @@ ${confirmPanelHtml}`;
     ) {
       syncSubmitConfirm();
     }
-  });
-
-  printBtn?.addEventListener("click", () => {
-    const printUrl =
-      printBtn.getAttribute("data-print-url") ||
-      root.getAttribute("data-receipt-print-url") ||
-      "";
-    if (!printUrl) return;
-    const params = new URLSearchParams();
-    if (filtersForm) {
-      new FormData(filtersForm).forEach((value, key) => {
-        if (value == null) return;
-        const text = String(value).trim();
-        if (!text && key !== "shop_id") return;
-        params.append(key, text);
-      });
-    } else {
-      new URLSearchParams(window.location.search).forEach((value, key) => {
-        params.append(key, value);
-      });
-    }
-    params.set("auto", "1");
-    params.delete("download");
-    params.delete("estimate");
-    const href = `${printUrl}?${params.toString()}`;
-    window.open(href, "_blank", "noopener");
   });
 
   const submitConfirm = async () => {

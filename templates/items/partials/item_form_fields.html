@@ -20,6 +20,127 @@
   <span class="field-label">Item description</span>
   <textarea name="description" rows="3" placeholder="Short description of the item" id="{{ prefix }}description">{{ form_data.description }}</textarea>
 </label>
+
+<div class="shop-pricing" data-item-type-toggle {% if not allow_combo %}hidden{% endif %}>
+  <span class="field-label">Item type</span>
+  <div class="shop-pricing-modes" role="radiogroup" aria-label="Item type">
+    <label class="shop-pricing-mode">
+      <input
+        type="radio"
+        name="item_type"
+        value="single"
+        id="{{ prefix }}item-type-single"
+        data-item-type
+        {% if form_data.item_type != "combo" %}checked{% endif %}
+      >
+      <span>
+        <strong>Single item</strong>
+        <small>Standard item with its own price and stock</small>
+      </span>
+    </label>
+    {% if allow_combo %}
+    <label class="shop-pricing-mode">
+      <input
+        type="radio"
+        name="item_type"
+        value="combo"
+        id="{{ prefix }}item-type-combo"
+        data-item-type
+        {% if form_data.item_type == "combo" %}checked{% endif %}
+      >
+      <span>
+        <strong>Combo</strong>
+        <small>Bundle registered items — set how much of each item one combo uses (e.g. 1 plate, 0.5); the price is each item's price × its portion, and a sale tallies each item by that portion</small>
+      </span>
+    </label>
+    {% endif %}
+  </div>
+</div>
+
+<div
+  class="item-combo"
+  data-combo-fields
+  data-combo-root
+  {% if form_data.item_type != "combo" or not allow_combo %}hidden{% endif %}
+>
+  <span class="field-label">Combo items</span>
+  <small class="field-hint field-hint--muted">
+    Pick registered items, then give each one's portion per combo — how
+    much of it one combo uses (1 plate, 0.5 kg, 2 pieces…). The combo
+    price is the total of price × portion, and selling it tallies each
+    item by that portion.
+  </small>
+  <div class="item-combo-picker" data-combo-picker>
+    <label class="item-search-field item-combo-search">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search registered items to add…"
+        autocomplete="off"
+        data-combo-search
+        aria-label="Search items for the combo"
+      >
+    </label>
+    <div class="item-combo-results" data-combo-results hidden></div>
+  </div>
+  <div class="item-combo-rows" data-combo-rows>
+    {% for comp in form_data.combo_components %}
+    <div class="item-combo-row" data-combo-row data-item-price="{{ comp.price }}">
+      <input type="hidden" name="combo_item_id" value="{{ comp.id }}">
+      <input type="hidden" name="combo_item_name" value="{{ comp.name }}">
+      <input type="hidden" name="combo_item_price" value="{{ comp.price }}">
+      <div class="item-combo-row-main">
+        <span class="item-combo-row-name">{{ comp.name }}</span>
+        <span class="item-combo-row-price">KSh {{ comp.price }}</span>
+      </div>
+      <label class="item-combo-row-qty">
+        <input
+          type="number"
+          name="combo_qty"
+          min="0.0001"
+          max="9999.9999"
+          step="any"
+          value="{{ comp.qty }}"
+          data-combo-qty
+          required
+          aria-label="Portions of {{ comp.name }} per combo"
+        >
+        <span aria-hidden="true">×</span>
+      </label>
+      <label class="item-combo-row-contrib">
+        <span aria-hidden="true">KSh</span>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value=""
+          data-combo-contrib
+          aria-label="Portion price for {{ comp.name }}"
+        >
+      </label>
+      <button
+        type="button"
+        class="item-combo-row-remove"
+        data-combo-remove
+        aria-label="Remove {{ comp.name }} from combo"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="item-combo-empty" data-combo-empty {% if form_data.combo_components %}hidden{% endif %}>
+    No items picked yet — search above to add combo items.
+  </p>
+  <div class="item-combo-total-row">
+    <p class="item-combo-total">
+      Minimum price ≈ <strong data-combo-total>KSh 0.00</strong>
+      <small class="field-hint field-hint--muted">the sum of each item's price × its portion — the lowest the combo can sell for, before per-shop price differences</small>
+    </p>
+  </div>
+</div>
+
+<div data-single-item-fields {% if form_data.item_type == "combo" %}hidden{% endif %}>
 <label class="field">
   <span class="field-label">Minimum selling price (KSh)</span>
   <div class="currency-field">
@@ -28,10 +149,12 @@
   </div>
   <small class="field-hint field-hint--muted">Enter <strong>-</strong> or <strong>0</strong> when the item has no minimum price.</small>
 </label>
+</div>
 
 <div class="shop-pricing" data-shop-pricing>
   <span class="field-label">Shop pricing</span>
-  <small class="field-hint field-hint--muted">Enter <strong>-</strong> or <strong>0</strong> to list the item free — it stays on the shop floor and sells at KSh 0.00.</small>
+  <small class="field-hint field-hint--muted" data-single-item-fields {% if form_data.item_type == "combo" %}hidden{% endif %}>Enter <strong>-</strong> or <strong>0</strong> to list the item free — it stays on the shop floor and sells at KSh 0.00.</small>
+  <small class="field-hint field-hint--muted" data-combo-item-fields {% if form_data.item_type != "combo" %}hidden{% endif %}>Set each shop's selling price — it must be at least the combo's items total there. Leave a price blank to sell at that total.</small>
   <div class="shop-pricing-modes" role="radiogroup" aria-label="Shop pricing mode">
     <label class="shop-pricing-mode">
       <input
@@ -147,7 +270,7 @@
   {% endif %}
 </div>
 
-<label class="field field--option">
+<label class="field field--option" data-single-item-fields {% if form_data.item_type == "combo" %}hidden{% endif %}>
   <span class="field--option-control">
     <input
       type="checkbox"

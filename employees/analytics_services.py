@@ -33,6 +33,7 @@ from django.utils import timezone
 from employees.models import EmployeeProfile, EmployeeStatus
 from items.models import (
     Item,
+    ShelfItem,
     ShelfStockMovement,
     ShelfStockMovementType,
     ShopStock,
@@ -1742,7 +1743,7 @@ def apply_supplier_receipt_payment(
                 balance_after += _due_amount(
                     info["total"], info["movement"].amount_paid
                 )
-            number = format_simple_doc_number("S", movement.pk)
+            number = format_simple_doc_number("ST", movement.pk)
             shop = (
                 movement.shelf_item.shop
                 if movement.shelf_item and movement.shelf_item.shop
@@ -3730,6 +3731,11 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
     filters["supply_item_id"] = (request.GET.get("item_id") or "").strip()
     filters["supplier_status"] = _parse_supplier_status(request.GET.get("status"))
     filters["supplier_view"] = (request.GET.get("view") or "").strip().lower()
+    filters["supplier_mode"] = (
+        (request.GET.get("mode") or "").strip().lower()
+        if section["slug"] == "suppliers"
+        else ""
+    )
     filters["client_scope"] = (request.GET.get("client") or "").strip().lower()
     builders = {
         "overview": _build_overview,
@@ -5402,6 +5408,126 @@ def build_confirm_receipts_print_document(*, profile, request) -> dict:
         "rows": print_rows,
         "count_label": context.get("count_label") or "receipt",
     }
+
+
+def build_confirm_receipts_report_pdf(
+    *, document: dict, company_name: str = ""
+) -> bytes:
+    """Flat landscape A4 ledger PDF of the filtered confirm-receipts list."""
+    brand = (company_name or "MY-SHOP").strip() or "MY-SHOP"
+    kind_label = document.get("kind_label") or "Receipts"
+    period_label = document.get("period_label") or "All time"
+    shop_label = document.get("shop_label") or "All shops"
+
+    headers = [
+        "Receipt",
+        "Status",
+        "Client",
+        "Shop",
+        "Sold",
+        "Amount",
+        "Ref · Paid",
+        "Printed",
+    ]
+    aligns = ["left", "left", "left", "left", "left", "right", "left", "left"]
+    rows = []
+    for row in document.get("rows") or []:
+        client = str(row.get("client_name") or "—")
+        phone = str(row.get("phone") or "").strip()
+        if phone and phone != "—":
+            client = f"{client} · {phone}"
+        sold = str(row.get("sold_by") or "—")
+        sold_as = str(row.get("sold_as") or "").strip()
+        if sold_as and sold_as != "—":
+            sold = f"{sold} · {sold_as}"
+        ref_paid = str(row.get("reference") or "—").strip() or "—"
+        paid = " · ".join(
+            bit
+            for bit in (
+                str(row.get("paid_when") or "").strip(),
+                str(row.get("paid_via") or "").strip(),
+            )
+            if bit and bit != "—"
+        )
+        if paid:
+            ref_paid = paid if ref_paid == "—" else f"{ref_paid} · {paid}"
+        rows.append(
+            [
+                row.get("number") or "—",
+                row.get("status") or "—",
+                client,
+                row.get("shop") or "—",
+                sold,
+                row.get("total") or "—",
+                ref_paid,
+                row.get("when") or "—",
+            ]
+        )
+    rows.append(
+        {
+            "kind": "total",
+            "cells": [
+                f"Total · {document.get('receipt_total') or 0} "
+                f"{document.get('count_label') or 'receipt'}"
+                f"{'' if document.get('receipt_total') == 1 else 's'}",
+                "",
+                "",
+                "",
+                "",
+                document.get("grand_amount") or "—",
+                "",
+                "",
+            ],
+        }
+    )
+
+    return _analytics_report_pdf(
+        title="Confirm receipts",
+        subtitle=(
+            "Filtered confirm-receipts list — pending first, "
+            "then cancelled, then confirmed."
+        ),
+        brand=brand,
+        meta_lines=[shop_label, period_label, kind_label],
+        kpi_cards=[],
+        sections=[
+            {
+                "kicker": "CONFIRM RECEIPTS",
+                "title": f"{kind_label} · {period_label}",
+                "headers": headers,
+                "aligns": aligns,
+                "rows": rows,
+                "empty": "No receipts for the selected shops and period.",
+                "footnote": "",
+            }
+        ],
+        footer_note=(
+            f"{brand} · Confirm receipts · {shop_label} · "
+            f"{period_label} · {kind_label}"
+        ),
+    )
+
+
+def confirm_receipts_report_pdf_response(*, document: dict, inline: bool = False):
+    """PDF download/print for the filtered confirm-receipts list."""
+    from django.http import HttpResponse
+    from django.utils.text import slugify
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    pdf_bytes = build_confirm_receipts_report_pdf(
+        document=document, company_name=company_name
+    )
+    stamp = timezone.localtime().strftime("%Y%m%d-%H%M")
+    kind = slugify(document.get("kind_label") or "receipts") or "receipts"
+    filename = f"confirm-receipts-{kind}-{stamp}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    disposition = "inline" if inline else "attachment"
+    response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+    response["Content-Length"] = str(len(pdf_bytes))
+    return response
 
 
 def client_credit_account_url(
@@ -8078,6 +8204,42 @@ def supplier_account_url(role, kind: str, supplier_id, *, query: str = "") -> st
     return href
 
 
+def item_suppliers_url(role, item_id, *, query: str = "") -> str:
+    """Item-suppliers page URL — the suppliers who supplied one catalog item."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    href = reverse(
+        "employees:analytics_item_suppliers",
+        kwargs={
+            "role_segment": role_url_segment(role),
+            "item_id": int(item_id),
+        },
+    )
+    if query:
+        return f"{href}?{query}"
+    return href
+
+
+def shelf_item_suppliers_url(role, shelf_item_id, *, query: str = "") -> str:
+    """Shelf-item-suppliers page URL — suppliers who supplied one shelf item."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    href = reverse(
+        "employees:analytics_shelf_item_suppliers",
+        kwargs={
+            "role_segment": role_url_segment(role),
+            "item_id": int(shelf_item_id),
+        },
+    )
+    if query:
+        return f"{href}?{query}"
+    return href
+
+
 def _stock_lines_for_supplier(supplier: Supplier, shop_ids):
     return StockMovementLine.objects.filter(
         movement__shop_id__in=shop_ids,
@@ -8349,7 +8511,7 @@ def build_supplier_account(
                     "pay_kind": "shelf",
                     "pay_id": movement.pk,
                     "kind_label": "Shelf stock",
-                    "number": format_simple_doc_number("S", movement.pk),
+                    "number": format_simple_doc_number("ST", movement.pk),
                     "shop": (
                         shelf_item.shop.name
                         if shelf_item and shelf_item.shop
@@ -8604,7 +8766,7 @@ def build_supplier_account(
                 "pay_kind": "shelf",
                 "pay_id": movement.pk,
                 "kind_label": "Shelf stock",
-                "number": format_simple_doc_number("S", movement.pk),
+                "number": format_simple_doc_number("ST", movement.pk),
                 "shop": (
                     shelf_item.shop.name
                     if shelf_item and shelf_item.shop
@@ -8660,6 +8822,555 @@ def build_supplier_account(
         "scope_hint": scope_hint,
         **shop_filter,
         **date_filter,
+    }
+
+
+def _registered_supplier_balance(supplier, shop_ids, start, end) -> Decimal:
+    """Outstanding due across a registered supplier's stock + shelf receipts."""
+    due_total = _zero()
+    lines = _within_created_range(
+        _stock_lines_for_supplier(supplier, shop_ids),
+        start,
+        end,
+        lookup="movement__created_at",
+    ).select_related("movement")
+    by_movement: dict[int, dict] = {}
+    for line in lines:
+        movement = line.movement
+        if movement is None:
+            continue
+        info = by_movement.get(movement.pk)
+        if info is None:
+            info = by_movement[movement.pk] = {
+                "total": _zero(),
+                "paid": Decimal(movement.amount_paid or 0),
+            }
+        qty = Decimal(line.quantity or 0)
+        unit = Decimal(line.buying_price or 0)
+        info["total"] += (unit * qty).quantize(Decimal("0.01"))
+    for info in by_movement.values():
+        due_total += _due_amount(info["total"], info["paid"])
+    phone = f"{supplier.phone_country_code} {supplier.phone_number}".strip()
+    for movement in _shelf_movements_for_identity(
+        supplier.name, phone, shop_ids, start=start, end=end
+    ):
+        due_total += _due_amount(
+            _shelf_movement_total(movement), movement.amount_paid
+        )
+    return due_total
+
+
+def _identity_supplier_balance(name, phone, shop_ids, start, end) -> Decimal:
+    """Outstanding due for a free-text supplier identity (shelf + item lines)."""
+    due_total = _zero()
+    for movement in _shelf_movements_for_identity(
+        name, phone, shop_ids, start=start, end=end
+    ):
+        due_total += _due_amount(
+            _shelf_movement_total(movement), movement.amount_paid
+        )
+    for info in _item_movements_for_identity(
+        name, phone, shop_ids, start=start, end=end
+    ).values():
+        due_total += _due_amount(
+            info["total"], Decimal(info["movement"].amount_paid or 0)
+        )
+    return due_total
+
+
+def build_item_suppliers_page(*, profile, request, item_id) -> dict:
+    """Suppliers who supplied one catalog item — balances and pay actions."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    from .module_permissions import employee_may
+
+    item = Item.objects.filter(pk=item_id).first()
+    if item is None:
+        raise Http404("Item not found.")
+
+    shop_filter = _allocated_shop_filter(profile, request)
+    shop_ids = shop_filter["active_shop_ids"]
+    date_filter = _date_filter_context(request, allow_all_time=True)
+    start, end = date_filter["start"], date_filter["end"]
+    period_label = date_filter.get("report_period_label") or "All time"
+    scope_hint = (
+        shop_filter["selected_shops"][0].name
+        if len(shop_filter["selected_shops"]) == 1
+        else shop_filter["shop_filter_label"]
+    )
+    query = request.GET.urlencode()
+    role = profile.role
+    can_pay = employee_may(profile, "analytics", "account_pay")
+
+    # A stock-in line's supplier text resolves to the Supplier registry via
+    # the normalized identity (name + national phone digits); anything else
+    # stays a free-text supplier that opens the name/phone ledger.
+    identity_to_supplier = {
+        _supplier_identity_key(
+            supplier.name, supplier.phone_country_code, supplier.phone_number
+        ): supplier
+        for supplier in Supplier.objects.all()
+    }
+
+    lines = list(
+        _within_created_range(
+            StockMovementLine.objects.filter(
+                movement__shop_id__in=shop_ids,
+                movement__movement_type=StockMovementType.IN,
+                item_id=item.pk,
+            ).exclude(supplier_name=""),
+            start,
+            end,
+            lookup="movement__created_at",
+        ).select_related("movement", "movement__shop")
+    )
+
+    suppliers_data: dict[tuple, dict] = {}
+    for line in lines:
+        movement = line.movement
+        if movement is None:
+            continue
+        name = (line.supplier_name or "").strip()
+        if not name:
+            continue
+        key = _supplier_identity_key(
+            name,
+            line.supplier_phone_country_code,
+            line.supplier_phone_number,
+        )
+        info = suppliers_data.get(key)
+        if info is None:
+            info = suppliers_data[key] = {
+                "name": name,
+                "phone_cc": (line.supplier_phone_country_code or "").strip(),
+                "phone_num": (line.supplier_phone_number or "").strip(),
+                "receipt_ids": set(),
+                "qty": _zero(),
+                "value": _zero(),
+            }
+        info["receipt_ids"].add(movement.pk)
+        qty = Decimal(line.quantity or 0)
+        unit = Decimal(line.buying_price or 0)
+        info["qty"] += qty
+        info["value"] += (unit * qty).quantize(Decimal("0.01"))
+
+    ranked = []
+    total_qty = _zero()
+    total_value = _zero()
+    total_due = _zero()
+    for key, info in suppliers_data.items():
+        supplier = identity_to_supplier.get(key)
+        name = info["name"]
+        if supplier is not None:
+            phone = (
+                f"{supplier.phone_country_code} {supplier.phone_number}".strip()
+            )
+            cell = _supplier_entity_cell(role, "stock", supplier, query)
+            due = _registered_supplier_balance(supplier, shop_ids, start, end)
+            pay_kind = "stock"
+            account_id = supplier.pk
+        else:
+            phone = f"{info['phone_cc']} {info['phone_num']}".strip()
+            stub = SimpleNamespace(
+                pk=key,
+                name=name,
+                phone_country_code=info["phone_cc"],
+                phone_number=info["phone_num"],
+            )
+            cell = _shelf_supplier_cell(stub, role=role, query=query)
+            due = _identity_supplier_balance(
+                name, phone, shop_ids, start, end
+            )
+            pay_kind = "shelf"
+            account_id = 0
+        total_qty += info["qty"]
+        total_value += info["value"]
+        total_due += due
+        ranked.append((due, name.lower(), cell, info, phone, pay_kind, account_id))
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+
+    columns = [
+        "Supplier",
+        "Receipts",
+        "Qty",
+        {"label": "Supplied", "money": True},
+        {"label": "Balance", "money": True},
+    ]
+    if can_pay:
+        columns.append("Pay")
+    rows = []
+    for due, _sort, cell, info, phone, pay_kind, account_id in ranked:
+        cells = [
+            cell,
+            str(len(info["receipt_ids"])),
+            _qty_label(info["qty"]),
+            _money_cell(
+                info["value"],
+                title=(
+                    f"{_qty_label(info['qty'])} supplied · "
+                    f"{_money_ksh(info['value'])}"
+                ),
+            ),
+            _money_cell(
+                due,
+                tone="warn" if due > 0 else "neutral",
+                title="Outstanding across all their receipts in this period",
+            ),
+        ]
+        if can_pay:
+            cells.append(
+                {
+                    "kind": "pay",
+                    "label": "Pay",
+                    "pay_kind": pay_kind,
+                    "account_id": account_id,
+                    "supplier_name": info["name"],
+                    "supplier_phone": phone,
+                    "pay_id": "",
+                    "number": info["name"],
+                    "due": _money_ksh(due),
+                    "due_raw": str(due),
+                    "shop": "",
+                    "can_pay": due > 0,
+                }
+            )
+        rows.append(cells)
+
+    back_href = _suppliers_view_url(
+        request, role, view="items", mode="supplied"
+    )
+    receipt_links = sum(len(info["receipt_ids"]) for info in suppliers_data.values())
+    return {
+        "headline": item.name or "Item",
+        "period_label": period_label,
+        "lead": (
+            f"Suppliers who supplied this item at {scope_hint} in "
+            f"{period_label}. Open a supplier for their receipts, or pay "
+            f"their balance here."
+        ),
+        "view": "items",
+        "list_mode": "supplied",
+        "back_href": back_href,
+        "back_label": "Back to items supplied",
+        "show_search": True,
+        "search_placeholder": "Search suppliers…",
+        "search_empty": "No suppliers match that search.",
+        "list_table_layout": True,
+        "alerts": [],
+        "insights": [],
+        "metrics": [
+            {
+                "label": "Suppliers",
+                "value": str(len(suppliers_data)),
+                "hint": "linked to this item",
+            },
+            {
+                "label": "Qty supplied",
+                "value": _qty_label(total_qty),
+                "hint": f"in {period_label}",
+            },
+            {
+                "label": "Supplied value",
+                "value": _money_ksh(total_value),
+                "hint": (
+                    f"{receipt_links} receipt"
+                    f"{'s' if receipt_links != 1 else ''}"
+                ),
+            },
+            {
+                "label": "Balance",
+                "value": _money_ksh(total_due),
+                "hint": "owed to these suppliers",
+                "tone": "warn" if total_due > 0 else "good",
+            },
+        ],
+        "tables": [
+            _table(
+                "Suppliers to pay",
+                columns,
+                rows,
+                empty=(
+                    f"No supplier-linked stock-ins for this item at "
+                    f"{scope_hint} in {period_label}."
+                ),
+                footnote=(
+                    "Balance covers all the supplier's receipts in this "
+                    "period. Pay clears their oldest receipts first."
+                ),
+                shop_grid=False,
+                searchable=True,
+            )
+        ],
+        "supplier_pay": bool(can_pay),
+        "pay_url": reverse(
+            "employees:analytics_account_pay",
+            kwargs={"role_segment": role_url_segment(role)},
+        ),
+        "pay_balance": _money_ksh(total_due),
+        "pay_balance_raw": str(total_due),
+    }
+
+
+def _suppliers_view_url(request, role, *, view: str, mode: str = "") -> str:
+    """Suppliers workspace URL carrying the current filters + tab/mode."""
+    from urllib.parse import urlencode
+
+    from .workspace import analytics_section_url
+
+    params = request.GET.copy() if request is not None else {}
+    for key in ("view", "mode", "page", "download", "name", "phone"):
+        params.pop(key, None)
+    params["view"] = view
+    if mode:
+        params["mode"] = mode
+    href = analytics_section_url(role, "suppliers")
+    encoded = (
+        params.urlencode() if hasattr(params, "urlencode") else urlencode(params)
+    )
+    return f"{href}?{encoded}" if encoded else href
+
+
+def _supplier_mode_href(query: str, view: str, mode: str) -> str:
+    """Same-page href with the suppliers tab + in-page mode swapped in."""
+    from urllib.parse import parse_qs, urlencode
+
+    params = parse_qs(query or "", keep_blank_values=True)
+    flat = {key: values[0] for key, values in params.items()}
+    flat.pop("download", None)
+    flat.pop("page", None)
+    flat["view"] = view
+    if mode:
+        flat["mode"] = mode
+    else:
+        flat.pop("mode", None)
+    return f"?{urlencode(flat)}"
+
+
+def build_shelf_item_suppliers_page(
+    *, profile, request, shelf_item_id
+) -> dict:
+    """Suppliers who supplied one shelf item — balances and pay actions."""
+    from django.urls import reverse
+
+    from employees.access import role_url_segment
+
+    from .module_permissions import employee_may
+
+    shelf_item = ShelfItem.objects.filter(pk=shelf_item_id).first()
+    if shelf_item is None:
+        raise Http404("Shelf item not found.")
+
+    shop_filter = _allocated_shop_filter(profile, request)
+    shop_ids = shop_filter["active_shop_ids"]
+    date_filter = _date_filter_context(request, allow_all_time=True)
+    start, end = date_filter["start"], date_filter["end"]
+    period_label = date_filter.get("report_period_label") or "All time"
+    scope_hint = (
+        shop_filter["selected_shops"][0].name
+        if len(shop_filter["selected_shops"]) == 1
+        else shop_filter["shop_filter_label"]
+    )
+    query = request.GET.urlencode()
+    role = profile.role
+    can_pay = employee_may(profile, "analytics", "account_pay")
+
+    identity_to_supplier = {
+        _supplier_identity_key(
+            supplier.name, supplier.phone_country_code, supplier.phone_number
+        ): supplier
+        for supplier in Supplier.objects.all()
+    }
+
+    movements = list(
+        _within_created_range(
+            ShelfStockMovement.objects.filter(
+                shelf_item_id=shelf_item.pk,
+                shelf_item__shop_id__in=shop_ids,
+                movement_type=ShelfStockMovementType.IN,
+            ).exclude(supplier_name=""),
+            start,
+            end,
+        )
+    )
+
+    suppliers_data: dict[tuple, dict] = {}
+    for movement in movements:
+        name = (movement.supplier_name or "").strip()
+        if not name:
+            continue
+        phone = (movement.supplier_phone or "").strip()
+        key = _supplier_identity_key(name, phone)
+        info = suppliers_data.get(key)
+        if info is None:
+            info = suppliers_data[key] = {
+                "name": name,
+                "phone": phone,
+                "receipt_ids": set(),
+                "qty": _zero(),
+                "value": _zero(),
+            }
+        info["receipt_ids"].add(movement.pk)
+        qty = Decimal(movement.quantity or 0)
+        unit = Decimal(movement.buying_price or 0)
+        info["qty"] += qty
+        info["value"] += (unit * qty).quantize(Decimal("0.01"))
+
+    ranked = []
+    total_qty = _zero()
+    total_value = _zero()
+    total_due = _zero()
+    for key, info in suppliers_data.items():
+        supplier = identity_to_supplier.get(key)
+        name = info["name"]
+        phone = info["phone"]
+        if supplier is not None:
+            phone = (
+                f"{supplier.phone_country_code} {supplier.phone_number}".strip()
+            )
+            cell = _supplier_entity_cell(role, "stock", supplier, query)
+            due = _registered_supplier_balance(supplier, shop_ids, start, end)
+            pay_kind = "stock"
+            account_id = supplier.pk
+        else:
+            stub = SimpleNamespace(
+                pk=key,
+                name=name,
+                phone_country_code="",
+                phone_number=phone,
+            )
+            cell = _shelf_supplier_cell(stub, role=role, query=query)
+            due = _identity_supplier_balance(
+                name, phone, shop_ids, start, end
+            )
+            pay_kind = "shelf"
+            account_id = 0
+        total_qty += info["qty"]
+        total_value += info["value"]
+        total_due += due
+        ranked.append((due, name.lower(), cell, info, phone, pay_kind, account_id))
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+
+    columns = [
+        "Supplier",
+        "Receipts",
+        "Qty",
+        {"label": "Supplied", "money": True},
+        {"label": "Balance", "money": True},
+    ]
+    if can_pay:
+        columns.append("Pay")
+    rows = []
+    for due, _sort, cell, info, phone, pay_kind, account_id in ranked:
+        cells = [
+            cell,
+            str(len(info["receipt_ids"])),
+            _qty_label(info["qty"]),
+            _money_cell(
+                info["value"],
+                title=(
+                    f"{_qty_label(info['qty'])} supplied · "
+                    f"{_money_ksh(info['value'])}"
+                ),
+            ),
+            _money_cell(
+                due,
+                tone="warn" if due > 0 else "neutral",
+                title="Outstanding across all their receipts in this period",
+            ),
+        ]
+        if can_pay:
+            cells.append(
+                {
+                    "kind": "pay",
+                    "label": "Pay",
+                    "pay_kind": pay_kind,
+                    "account_id": account_id,
+                    "supplier_name": info["name"],
+                    "supplier_phone": phone,
+                    "pay_id": "",
+                    "number": info["name"],
+                    "due": _money_ksh(due),
+                    "due_raw": str(due),
+                    "shop": "",
+                    "can_pay": due > 0,
+                }
+            )
+        rows.append(cells)
+
+    back_href = _suppliers_view_url(
+        request, role, view="shelf", mode="supplied"
+    )
+    receipt_links = sum(len(info["receipt_ids"]) for info in suppliers_data.values())
+    return {
+        "headline": shelf_item.name or "Shelf item",
+        "period_label": period_label,
+        "lead": (
+            f"Suppliers who supplied this shelf item at {scope_hint} in "
+            f"{period_label}. Open a supplier for their receipts, or pay "
+            f"their balance here."
+        ),
+        "view": "shelf",
+        "list_mode": "supplied",
+        "back_href": back_href,
+        "back_label": "Back to items supplied",
+        "show_search": True,
+        "search_placeholder": "Search suppliers…",
+        "search_empty": "No suppliers match that search.",
+        "list_table_layout": True,
+        "alerts": [],
+        "insights": [],
+        "metrics": [
+            {
+                "label": "Suppliers",
+                "value": str(len(suppliers_data)),
+                "hint": "linked to this shelf item",
+            },
+            {
+                "label": "Qty supplied",
+                "value": _qty_label(total_qty),
+                "hint": f"in {period_label}",
+            },
+            {
+                "label": "Supplied value",
+                "value": _money_ksh(total_value),
+                "hint": (
+                    f"{receipt_links} receipt"
+                    f"{'s' if receipt_links != 1 else ''}"
+                ),
+            },
+            {
+                "label": "Balance",
+                "value": _money_ksh(total_due),
+                "hint": "owed to these suppliers",
+                "tone": "warn" if total_due > 0 else "good",
+            },
+        ],
+        "tables": [
+            _table(
+                "Suppliers to pay",
+                columns,
+                rows,
+                empty=(
+                    f"No supplier-linked shelf stock-ins for this item at "
+                    f"{scope_hint} in {period_label}."
+                ),
+                footnote=(
+                    "Balance covers all the supplier's receipts in this "
+                    "period. Pay clears their oldest receipts first."
+                ),
+                shop_grid=False,
+                searchable=True,
+            )
+        ],
+        "supplier_pay": bool(can_pay),
+        "pay_url": reverse(
+            "employees:analytics_account_pay",
+            kwargs={"role_segment": role_url_segment(role)},
+        ),
+        "pay_balance": _money_ksh(total_due),
+        "pay_balance_raw": str(total_due),
     }
 
 
@@ -18087,6 +18798,241 @@ def _merged_supplier_rows(
     return rows, stats, shop_totals
 
 
+def _item_supplied_data(*, shop_ids, start, end, status_key):
+    """Supplied catalog items → ``{item_id: {"item", "cells": {shop_id: (qty, amt)}}}``.
+
+    Only stock-in lines that carry a supplier name count — this view exists to
+    reach the supplier to pay. A line counts when its receipt matches the
+    payment-status filter (receipt total = its supplier-linked lines, paid =
+    the movement's amount_paid — same convention as the supplier matrices).
+    """
+    lines = list(
+        _within_created_range(
+            StockMovementLine.objects.filter(
+                movement__shop_id__in=shop_ids,
+                movement__movement_type=StockMovementType.IN,
+                item__isnull=False,
+            ).exclude(supplier_name=""),
+            start,
+            end,
+            lookup="movement__created_at",
+        ).select_related("movement", "item")
+    )
+
+    receipts: dict[int, dict] = {}
+    for line in lines:
+        movement = line.movement
+        if movement is None:
+            continue
+        info = receipts.get(movement.pk)
+        if info is None:
+            info = receipts[movement.pk] = {
+                "total": _zero(),
+                "paid": Decimal(movement.amount_paid or 0),
+            }
+        qty = Decimal(line.quantity or 0)
+        unit = Decimal(line.buying_price or 0)
+        info["total"] += (unit * qty).quantize(Decimal("0.01"))
+
+    matched_ids = {
+        mid
+        for mid, info in receipts.items()
+        if _supplier_movement_matches_status(
+            status_key=status_key,
+            total=info["total"],
+            paid=info["paid"],
+            due=_due_amount(info["total"], info["paid"]),
+        )
+    }
+
+    entries: dict[int, dict] = {}
+    for line in lines:
+        movement = line.movement
+        item = line.item
+        if movement is None or item is None or movement.pk not in matched_ids:
+            continue
+        qty = Decimal(line.quantity or 0)
+        unit = Decimal(line.buying_price or 0)
+        entry = entries.get(item.pk)
+        if entry is None:
+            entry = entries[item.pk] = {"item": item, "cells": {}}
+        prev_qty, prev_amt = entry["cells"].get(
+            movement.shop_id, (_zero(), _zero())
+        )
+        entry["cells"][movement.shop_id] = (
+            prev_qty + qty,
+            prev_amt + (unit * qty).quantize(Decimal("0.01")),
+        )
+    return entries
+
+
+def _item_supplied_pair_columns(shops) -> list:
+    columns = ["Item"]
+    for index, shop in enumerate(shops):
+        col = _shop_col(shop, pair=True, pair_qty="Qty", pair_amt="Amt")
+        col["band"] = "flow"
+        if index == 0:
+            col["band_start"] = True
+        columns.append(col)
+    columns.append(
+        {**_pair_total_col(pair_qty="Qty", pair_amt="Amt"), "band": "total", "band_start": True}
+    )
+    return columns
+
+
+def _shelf_supplied_data(*, shop_ids, start, end, status_key):
+    """Supplied shelf items → ``{shelf_item_id: {"item", "cells"}}``.
+
+    Each shelf stock-in movement is its own receipt: total = qty × unit,
+    paid = the movement's amount_paid — same convention as item stock-ins.
+    """
+    movements = _within_created_range(
+        ShelfStockMovement.objects.filter(
+            shelf_item__shop_id__in=shop_ids,
+            movement_type=ShelfStockMovementType.IN,
+        ).exclude(supplier_name=""),
+        start,
+        end,
+    ).select_related("shelf_item")
+
+    entries: dict[int, dict] = {}
+    for movement in movements:
+        item = movement.shelf_item
+        if item is None:
+            continue
+        qty = Decimal(movement.quantity or 0)
+        unit = Decimal(movement.buying_price or 0)
+        total = (unit * qty).quantize(Decimal("0.01"))
+        paid = Decimal(movement.amount_paid or 0)
+        if not _supplier_movement_matches_status(
+            status_key=status_key,
+            total=total,
+            paid=paid,
+            due=_due_amount(total, paid),
+        ):
+            continue
+        entry = entries.get(item.pk)
+        if entry is None:
+            entry = entries[item.pk] = {"item": item, "cells": {}}
+        prev_qty, prev_amt = entry["cells"].get(
+            item.shop_id, (_zero(), _zero())
+        )
+        entry["cells"][item.shop_id] = (
+            prev_qty + qty,
+            prev_amt + total,
+        )
+    return entries
+
+
+def _item_supplied_rows(*, entries, shops, role, query, url_for=None, sub_of=None):
+    """Supplied-item entries → matrix rows (alphabetical) + totals row."""
+    if url_for is None:
+        url_for = lambda item: item_suppliers_url(role, item.pk, query=query)
+    ranked = sorted(
+        entries.values(),
+        key=lambda entry: (
+            (entry["item"].name or "").lower(),
+            int(entry["item"].pk or 0),
+        ),
+    )
+    shop_totals: dict[int, tuple] = {
+        shop.pk: (_zero(), _zero()) for shop in shops
+    }
+    rows = []
+    grand_qty = _zero()
+    grand_amt = _zero()
+    for entry in ranked:
+        item = entry["item"]
+        cell = {
+            "href": url_for(item),
+            "label": item.name or "Item",
+        }
+        sub = sub_of(item) if sub_of is not None else item.category
+        if (sub or "").strip():
+            cell["sub"] = sub
+        cells = [cell]
+        total_qty = _zero()
+        total_amt = _zero()
+        for shop in shops:
+            qty, amt = entry["cells"].get(shop.pk, (_zero(), _zero()))
+            prev_qty, prev_amt = shop_totals.get(shop.pk, (_zero(), _zero()))
+            shop_totals[shop.pk] = (prev_qty + qty, prev_amt + amt)
+            total_qty += qty
+            total_amt += amt
+            cells.append(
+                _qty_amount_cell(
+                    qty,
+                    amt,
+                    title=f"{_qty_label(qty)} supplied · {_money_ksh(amt)}",
+                )
+                if qty or amt
+                else "—"
+            )
+        grand_qty += total_qty
+        grand_amt += total_amt
+        cells.append(
+            _qty_amount_cell(
+                total_qty,
+                total_amt,
+                title=f"{_qty_label(total_qty)} supplied · {_money_ksh(total_amt)}",
+            )
+        )
+        rows.append(cells)
+
+    if ranked:
+        total_cells = ["Total"]
+        for shop in shops:
+            qty, amt = shop_totals.get(shop.pk, (_zero(), _zero()))
+            total_cells.append(
+                _qty_amount_cell(
+                    qty,
+                    amt,
+                    title=f"{_qty_label(qty)} supplied · {_money_ksh(amt)}",
+                )
+            )
+        total_cells.append(
+            _qty_amount_cell(
+                grand_qty,
+                grand_amt,
+                title=f"{_qty_label(grand_qty)} supplied · {_money_ksh(grand_amt)}",
+            )
+        )
+        rows.append(total_cells)
+    return rows
+
+
+def _items_supplied_view_spec(
+    status_key: str, period_label: str, *, noun: str = "items"
+):
+    """Empty/footnote copy for the items-supplied matrix view."""
+    if status_key == "paid":
+        return {
+            "empty": f"No {noun} on paid supplier receipts for {period_label}.",
+            "footnote": (
+                f"Showing {noun} from fully paid receipts for {period_label}. "
+                f"Qty = units supplied; Amt = supplied value."
+            ),
+        }
+    if status_key == "not_paid":
+        return {
+            "empty": (
+                f"No {noun} on not-paid supplier receipts for {period_label}."
+            ),
+            "footnote": (
+                f"Showing {noun} from not-paid receipts for {period_label}. "
+                f"Qty = units supplied; Amt = supplied value."
+            ),
+        }
+    return {
+        "empty": f"No supplied {noun} for {period_label}.",
+        "footnote": (
+            f"{noun.capitalize()} supplied in {period_label} — open an item "
+            f"to see the suppliers to pay. "
+            f"Qty = units supplied; Amt = supplied value."
+        ),
+    }
+
+
 def _supplier_view_spec(status_key: str, period_label: str, *, scope: str):
     """Empty/footnote copy for a suppliers matrix view."""
     if status_key == "all":
@@ -18126,8 +19072,14 @@ def _build_suppliers(filters):
     status_label = _supplier_status_label(status_key)
     amount_is_paid = status_key == "paid"
     view = (filters.get("supplier_view") or "").strip().lower()
+    mode = (filters.get("supplier_mode") or "").strip().lower()
+    if view == "supplied":
+        # Legacy standalone tab — now the items view's supplied mode.
+        view, mode = "items", "supplied"
     if view not in ("items", "shelf"):
         view = ""
+        mode = ""
+    supplied_mode = mode == "supplied"
 
     # Stock mode is set company-wide but read per shop via effective settings
     # so any shop-level override is honoured: item suppliers list only while
@@ -18194,7 +19146,121 @@ def _build_suppliers(filters):
     stats = _empty_supplier_stats()
     balance_shop_ids: set[int] = set()
 
-    if view == "items":
+    if view == "items" and supplied_mode:
+        supplied_entries = _item_supplied_data(
+            shop_ids=[shop.pk for shop in item_shops],
+            start=start,
+            end=end,
+            status_key=status_key,
+        )
+        supplied_rows = _item_supplied_rows(
+            entries=supplied_entries,
+            shops=item_shops,
+            role=role,
+            query=query,
+        )
+        supplied_rows, supplied_pager = _page_table_rows(
+            supplied_rows,
+            filters,
+            searchable=True,
+            tail_rows=1 if supplied_rows else 0,
+        )
+        # The summary board keeps supplier stats — it is the payment context
+        # the items list is meant to reach.
+        view_stats = _supplier_ledger_stats(
+            [entry["supplier"] for entry in item_entries.values()],
+            {
+                entry["supplier"].pk: _supplier_status_cells(
+                    entry["cells"], status_key
+                )
+                for entry in item_entries.values()
+            },
+        )
+        for key in stats:
+            stats[key] += view_stats[key]
+        for cells_map in (
+            _supplier_status_cells(entry["cells"], status_key)
+            for entry in item_entries.values()
+        ):
+            balance_shop_ids.update(
+                shop_id
+                for shop_id, (_entries, amount) in cells_map.items()
+                if Decimal(amount or 0) > 0
+            )
+        spec = _items_supplied_view_spec(status_key, period_label)
+        tables.append(
+            _table(
+                "Items supplied by shop",
+                _item_supplied_pair_columns(item_shops),
+                supplied_rows,
+                empty=spec["empty"],
+                footnote=spec["footnote"],
+                shop_grid=True,
+                searchable=True,
+                table_class="ax-table--suppliers",
+                pager=supplied_pager,
+            )
+        )
+    elif view == "shelf" and supplied_mode:
+        shelf_supplied_entries = _shelf_supplied_data(
+            shop_ids=[shop.pk for shop in shelf_shops],
+            start=start,
+            end=end,
+            status_key=status_key,
+        )
+        shelf_supplied_rows = _item_supplied_rows(
+            entries=shelf_supplied_entries,
+            shops=shelf_shops,
+            role=role,
+            query=query,
+            url_for=lambda item: shelf_item_suppliers_url(
+                role, item.pk, query=query
+            ),
+            sub_of=lambda item: (item.category or item.unit or ""),
+        )
+        shelf_supplied_rows, shelf_supplied_pager = _page_table_rows(
+            shelf_supplied_rows,
+            filters,
+            searchable=True,
+            tail_rows=1 if shelf_supplied_rows else 0,
+        )
+        view_stats = _supplier_ledger_stats(
+            [entry["supplier"] for entry in shelf_entries.values()],
+            {
+                entry["supplier"].pk: _supplier_status_cells(
+                    entry["cells"], status_key
+                )
+                for entry in shelf_entries.values()
+            },
+        )
+        for key in stats:
+            stats[key] += view_stats[key]
+        for cells_map in (
+            _supplier_status_cells(entry["cells"], status_key)
+            for entry in shelf_entries.values()
+        ):
+            balance_shop_ids.update(
+                shop_id
+                for shop_id, (_entries, amount) in cells_map.items()
+                if Decimal(amount or 0) > 0
+            )
+        spec = _items_supplied_view_spec(
+            status_key, period_label, noun="shelf items"
+        )
+        tables.append(
+            _table(
+                "Shelf items supplied by shop",
+                _item_supplied_pair_columns(shelf_shops),
+                shelf_supplied_rows,
+                empty=spec["empty"],
+                footnote=spec["footnote"],
+                shop_grid=True,
+                searchable=True,
+                table_class="ax-table--suppliers",
+                pager=shelf_supplied_pager,
+            )
+        )
+    elif view == "items":
         rows, view_stats, shop_totals = _rows_from(
             item_entries, mode_shops=item_shops
         )
@@ -18294,7 +19360,9 @@ def _build_suppliers(filters):
             )
         )
 
-    if view == "items":
+    if supplied_mode:
+        scope = "Items supplied" if view == "items" else "Shelf items supplied"
+    elif view == "items":
         scope = "Item suppliers"
     elif view == "shelf":
         scope = "Shelf suppliers"
@@ -18304,7 +19372,25 @@ def _build_suppliers(filters):
         scope = "Shelf suppliers"
     else:
         scope = "Stock suppliers"
-    if status_key == "all":
+    if supplied_mode:
+        noun = "Items" if view == "items" else "Shelf items"
+        if status_key == "all":
+            lead = (
+                f"{noun} supplied in {period_label}. "
+                f"Open an item to see the suppliers to pay. "
+                f"Qty = units supplied; Amt = supplied value."
+            )
+        elif status_key == "paid":
+            lead = (
+                f"{noun} on fully paid supplier receipts for {period_label}. "
+                f"Qty = units supplied; Amt = supplied value."
+            )
+        else:
+            lead = (
+                f"{noun} on not-paid supplier receipts for {period_label}. "
+                f"Qty = units supplied; Amt = supplied value."
+            )
+    elif status_key == "all":
         lead = (
             f"{scope} who supplied in {period_label}. "
             f"Not paid first, then paid. "
@@ -18347,17 +19433,41 @@ def _build_suppliers(filters):
             "not paid first"
         )
 
+    view_tabs = []
+    if view in ("items", "shelf"):
+        view_tabs = [
+            {
+                "label": "Suppliers",
+                "href": _supplier_mode_href(query, view, ""),
+                "active": not supplied_mode,
+            },
+            {
+                "label": "Items supplied",
+                "href": _supplier_mode_href(query, view, "supplied"),
+                "active": supplied_mode,
+            },
+        ]
+
     return {
         "headline": "All suppliers",
         "period_label": period_label,
         "lead": lead,
+        "view": view,
+        "list_mode": mode,
+        "view_tabs": view_tabs,
         "status_filter": status_key,
         "status_options": SUPPLIER_STATUS_FILTERS,
         "status_label": status_label,
         "bal_is_paid": amount_is_paid,
         "show_search": True,
-        "search_placeholder": "Search suppliers…",
-        "search_empty": "No suppliers match that search.",
+        "search_placeholder": (
+            "Search items…" if supplied_mode else "Search suppliers…"
+        ),
+        "search_empty": (
+            "No items match that search."
+            if supplied_mode
+            else "No suppliers match that search."
+        ),
         "alerts": [],
         "summary_board": summary,
         "insights": [],

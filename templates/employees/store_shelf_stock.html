@@ -352,6 +352,7 @@
                     <span class="store-stock-item-name">{{ row.name }}</span>
                   </span>
                   {% if row.category or row.unit %}<span class="store-stock-item-cat-mobile">{% if row.category %}{{ row.category }}{% endif %}{% if row.category and row.unit %} · {% endif %}{% if row.unit %}{{ row.unit }}{% endif %}</span>{% endif %}
+                  {% if row.portion_hint %}<span class="store-stock-item-cat-mobile">Trade out → {{ row.portion_hint }}</span>{% endif %}
                 </div>
               </td>
               <td class="store-stock-col-qty" data-label="On shelf">
@@ -535,7 +536,7 @@
     {% else %}
     <div class="store-stock-empty">
       <i data-lucide="bar-chart-3" aria-hidden="true"></i>
-      <p><strong>Nothing to report.</strong> Register shelf stock on the Current stock tab first.</p>
+      <p><strong>Nothing to report.</strong> No shelf stock moved in this period.</p>
     </div>
     {% endif %}
   </section>
@@ -635,7 +636,7 @@
   {% elif shelf_mode == "audits" %}
   {% include "shops/partials/shelf_stock_audits.html" %}
   {% else %}
-  {% include "shops/partials/shelf_stock_body.html" with shelf_readonly=True %}
+  {% include "shops/partials/shelf_stock_body.html" with shelf_readonly=True shelf_health=True %}
   {% endif %}
 
   {% else %}
@@ -662,7 +663,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/stock-shelf.js' %}?v=12"></script>
+<script defer src="{% static 'js/stock-shelf.js' %}?v=15"></script>
 <script defer src="{% static 'js/store-stock.js' %}?v=8"></script>
 {% include "employees/partials/movement_print_root.html" %}
 {% endblock %}

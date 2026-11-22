@@ -576,6 +576,29 @@
   color: var(--warning-text);
 }
 
+.low-stock-badge.is-low::before {
+  box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent);
+  animation: low-stock-badge-pulse 1.8s ease-out infinite;
+}
+
+@keyframes low-stock-badge-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 0.45rem transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .low-stock-badge.is-low::before {
+    animation: none;
+  }
+}
+
 .low-stock-sync-cell {
   text-align: center;
 }
@@ -2309,6 +2332,16 @@
   min-width: 6.5rem;
 }
 
+.stock-matrix-health-col {
+  min-width: 6rem;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.stock-matrix-health-col .low-stock-badge {
+  margin-inline: auto;
+}
+
 /* Editable multi-shop matrix ? analytics-style dense list table */
 .stock-matrix-scroll--list {
   border: 1px solid color-mix(in srgb, var(--line) 85%, var(--text-strong));
@@ -2537,6 +2570,27 @@
 
 .stock-list-pair--out {
   grid-template-columns: 2.75rem 3rem 2.75rem;
+}
+
+.stock-th-pair-cols--flow {
+  grid-template-columns: 2.75rem 3rem 3.5rem 4.25rem;
+}
+
+.stock-list-pair--flow {
+  grid-template-columns: 2.75rem 3rem 3.5rem 4.25rem;
+}
+
+.stock-list-cost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 1.7rem;
+  padding-inline: 0.15rem;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--mist-soft);
+  text-align: right;
+  white-space: nowrap;
 }
 
 .stock-list-balance,
@@ -2990,6 +3044,11 @@
 
   .stock-list-pair--out {
     grid-template-columns: 2.5rem 2.65rem 2.5rem;
+  }
+
+  .stock-th-pair-cols--flow,
+  .stock-list-pair--flow {
+    grid-template-columns: 2.5rem 2.65rem 3rem 3.75rem;
   }
 
   .stock-th-pair-cols--out {

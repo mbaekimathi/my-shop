@@ -35,6 +35,7 @@
   data-pos-payment-options="{% if pos_flags.enable_cart_payment_options %}1{% else %}0{% endif %}"
   data-pos-discount="{% if pos_settings.enable_discount %}1{% else %}0{% endif %}"
   data-pos-stock-tracking="{% if pos_settings.enable_stock_tracking %}1{% else %}0{% endif %}"
+  data-pos-block-negative="{% if pos_settings.block_negative_stock %}1{% else %}0{% endif %}"
   data-pos-client-data="{% if pos_flags.enable_client_data %}1{% else %}0{% endif %}"
   data-pos-require-client-phone="{% if pos_flags.enable_client_data and pos_flags.require_client_phone %}1{% else %}0{% endif %}"
   data-pos-require-client-name="{% if pos_flags.enable_client_data and pos_flags.require_client_name %}1{% else %}0{% endif %}"

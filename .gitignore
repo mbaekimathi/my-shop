@@ -29,3 +29,7 @@ passenger_wsgi.pyc
 
 # Local print agent config (contains shop token — never commit)
 print_agent.json
+
+# Database dumps (live data + credentials — never commit)
+db_dumps/
+*.sql

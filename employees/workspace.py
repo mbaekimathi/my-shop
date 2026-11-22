@@ -309,6 +309,13 @@ def _workspace_parent_url(request, role):
             drop=("from", "name", "phone"),
         )
 
+    if view_name == "employees:analytics_item_suppliers":
+        return _with_request_query(
+            analytics_section_url(role, "suppliers"),
+            request,
+            drop=("from",),
+        )
+
     if view_name in {
         "employees:analytics_client_account",
         "employees:analytics_client_credit",
@@ -441,7 +448,9 @@ def _link(
     new_tab=False,
     sidebar_only=False,
     child=False,
+    child_open=False,
     group=False,
+    group_open=False,
 ):
     item = {
         "type": "link",
@@ -453,8 +462,12 @@ def _link(
     }
     if child:
         item["child"] = True
+    if child_open:
+        item["child_open"] = True
     if group:
         item["group"] = True
+    if group_open:
+        item["group_open"] = True
     if url_name:
         item["url_name"] = url_name
         item["href"] = reverse(url_name)
@@ -567,6 +580,24 @@ def _footer_site_links(
                         f"{analytics_section_url(profile.role, 'balances')}"
                         "?mode=settings"
                     ),
+                    active=settings_active,
+                )
+            )
+    elif profile is not None and profile.role in (
+        EmployeeRole.COMPANY_STORE_MANAGER,
+        EmployeeRole.SHOP_STORE_MANAGER,
+    ):
+        # The store manager's settings surface is the Stock Management
+        # ?mode=settings page — company-wide compulsory stock fields —
+        # since settings/home (the system settings hub) stays denied. The
+        # page is exempt from the shop-allocation gate, so the link stays
+        # even before a shop is allocated.
+        if employee_may(profile, "stock-management", "settings"):
+            links.append(
+                _link(
+                    "Store settings",
+                    "sliders-horizontal",
+                    href=stock_management_url(profile.role, "settings"),
                     active=settings_active,
                 )
             )
@@ -838,7 +869,112 @@ def _store_item_stock_links(*, active=None):
             href=store_stock_report_url(),
             active=active == "report",
         ),
+        _link(
+            "Shop store analytics",
+            "banknote",
+            href=stock_management_url(
+                EmployeeRole.COMPANY_STORE_MANAGER, "shop-analytics"
+            ),
+            active=active == "shop-analytics",
+        ),
     ]
+
+
+def _shop_stock_scope_shops(profile):
+    """Shops the stock links should consider for a shop-scoped manager:
+    their actionable shops (allocated, or the acting-shop pick), or every
+    active shop while unallocated — they can still pick one on the role
+    picker / Switch shop menu, so the links must not vanish just because
+    nothing is allocated yet."""
+    from items.services import actionable_shops_for_profile
+    from shops.models import Shop
+
+    shops = actionable_shops_for_profile(profile)
+    if shops:
+        return shops
+    return list(Shop.objects.filter(is_hidden=False, is_suspended=False))
+
+
+def _shop_item_stock_link(role, profile, *, active=None):
+    """Item stock entry for the Shop Store Manager — the stock-management
+    item view, scoped to the manager's shops. Hidden unless at least one of
+    those shops tracks item stock."""
+    from .module_permissions import employee_may
+    from .store_stock_views import item_stock_tracking_enabled
+    from items.views import _shop_stock_tracking_enabled
+
+    if not item_stock_tracking_enabled():
+        return []
+    if profile is not None:
+        if not employee_may(profile, "stock-management", "view"):
+            return []
+        if not any(
+            _shop_stock_tracking_enabled(shop)
+            for shop in _shop_stock_scope_shops(profile)
+        ):
+            return []
+    return [
+        _link(
+            "Item stock",
+            "boxes",
+            href=stock_management_url(role, "view"),
+            active=active == "item-stock",
+        )
+    ]
+
+
+def _shop_shelf_stock_link(role, profile, *, active=None):
+    """Shelf stock entry for the Shop Store Manager — the stock-management
+    Shelf tab, scoped to the manager's shops. Hidden unless at least one of
+    those shops runs Shelf mode."""
+    from .module_permissions import employee_may
+    from .store_stock_views import shelf_mode_shops
+    from items.views import _shop_shelf_mode_enabled
+
+    if profile is not None and not employee_may(
+        profile, "my-shop", "shelf_stock"
+    ):
+        return []
+    if profile is None:
+        if not shelf_mode_shops():
+            return []
+    elif not any(
+        _shop_shelf_mode_enabled(shop)
+        for shop in _shop_stock_scope_shops(profile)
+    ):
+        return []
+    return [
+        _link(
+            "Shelf stock",
+            "layers",
+            href=f"{stock_management_url(role, 'view')}&tab=shelf",
+            active=active == "shelf-stock",
+        )
+    ]
+
+
+def _shop_stock_group_links(role, profile, *, active_slug=None):
+    """Stock Management group for the Shop Store Manager — a collapsible
+    parent with the shop-scoped Item stock / Shelf stock children."""
+    links = [
+        *_shop_item_stock_link(role, profile, active=active_slug),
+        *_shop_shelf_stock_link(role, profile, active=active_slug),
+    ]
+    if links:
+        for link in links:
+            link["child"] = True
+        links.insert(
+            0,
+            _link(
+                "Stock Management",
+                "warehouse",
+                href=stock_management_url(role, "view"),
+                active=active_slug in ("item-stock", "shelf-stock"),
+                sidebar_only=True,
+                group=True,
+            ),
+        )
+    return links
 
 
 def _store_shelf_nav_links(profile, *, active=None):
@@ -2188,6 +2324,15 @@ def sidebar_for_role_dashboard(
     if role in split_stock_roles:
         # "Stock Management" splits into direct item / shelf stock links below.
         skip_slugs = (*skip_slugs, "stock-management")
+    if role == EmployeeRole.SHOP_STORE_MANAGER:
+        # Shop store managers get a Stock Management group holding the
+        # Item stock / Shelf stock links instead of the module links.
+        skip_slugs = (*skip_slugs, "item-management", "stock-management")
+        if not active_slug:
+            # Dashboard only — the shop store manager reaches analytics
+            # through the stock pages (Shop store analytics), not the
+            # dashboard module link.
+            skip_slugs = (*skip_slugs, "analytics")
     if role == EmployeeRole.EMPLOYEE:
         skip_slugs = (
             *skip_slugs,
@@ -2223,6 +2368,16 @@ def sidebar_for_role_dashboard(
                 )[:1],
                 *_store_shelf_stock_link(profile, active=active_slug == "shelf-stock"),
             ]
+        )
+    if role == EmployeeRole.SHOP_STORE_MANAGER:
+        # Same Item stock / Shelf stock entries as the company dashboard,
+        # but scoped to the manager's shops through the stock-management
+        # page — each only while that stock mode is enabled on one of
+        # them — nested under a Stock Management group.
+        primary.extend(
+            _shop_stock_group_links(
+                role, profile, active_slug=active_slug
+            )
         )
     if role in (
         EmployeeRole.COMPANY_STORE_MANAGER,
@@ -2969,13 +3124,24 @@ def sidebar_for_item_management(role, profile=None, *, active_mode="view"):
     if mode == "view" and (
         profile is None or employee_may(profile, "item-management", "register")
     ):
+        from shops.services import get_company_pos_settings
+
         primary.append(_action("Register item", "plus", action="register-item"))
+        if getattr(
+            get_company_pos_settings(), "enable_combo_items", True
+        ):
+            primary.append(
+                _action(
+                    "Register item combo", "layers", action="register-item-combo"
+                )
+            )
     return resolve_sidebar_hrefs(
         {
             "page": "item_management",
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
@@ -2998,6 +3164,7 @@ def sidebar_for_shop_management(role, profile=None):
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
@@ -3388,6 +3555,28 @@ def sidebar_for_stock_management(
                         active=active_mode == "request",
                     ),
                 ),
+                *(
+                    [
+                        (
+                            "request",
+                            _link(
+                                "Shelf stock trade",
+                                "repeat",
+                                href=(
+                                    _tabbed(
+                                        stock_management_url(
+                                            role, "request", **shop_kwargs
+                                        )
+                                    )
+                                    + "&flow=trade_out"
+                                ),
+                                active=active_mode == "shelf-trade",
+                            ),
+                        )
+                    ]
+                    if shelf_scope
+                    else []
+                ),
                 (
                     "serials",
                     _link(
@@ -3463,6 +3652,15 @@ def sidebar_for_stock_management(
                         "activity",
                         href=stock_management_url(role, "activity-audits"),
                         active=active_mode == "activity-audits",
+                    )
+                )
+            if _allowed("shop-analytics"):
+                primary.append(
+                    _link(
+                        "Shop store analytics",
+                        "banknote",
+                        href=stock_management_url(role, "shop-analytics"),
+                        active=active_mode == "shop-analytics",
                     )
                 )
             if not item_only or shelf_tab:
@@ -3595,6 +3793,8 @@ def sidebar_for_stock_management(
             "dashboard_url": dashboard_url,
             "primary": primary,
             "footer": _footer_site_links(
+                profile=profile,
+                settings_active=active_mode == "settings",
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
@@ -4172,8 +4372,9 @@ def sidebar_for_suppliers(role, *, profile=None, request=None, view: str = ""):
                 if key == "view":
                     continue
                 params[key] = value
-        if view_key:
-            params["view"] = view_key
+        # Always carry an explicit view so the selected tab survives the
+        # session-restore redirect on the suppliers page.
+        params["view"] = view_key or "all"
         encoded = urlencode(params)
         return f"{base}?{encoded}" if encoded else base
 
@@ -4474,6 +4675,7 @@ def sidebar_for_module(role, module_slug, profile=None):
                 _link("Dashboard", "layout-dashboard", href=dashboard_url),
             ],
             "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
@@ -4496,7 +4698,7 @@ def sidebar_for_super_admin(profile=None):
     return sidebar
 
 
-def sidebar_for_profile(role):
+def sidebar_for_profile(role, profile=None):
     """Sidebar links unique to the My Profile page."""
     dashboard_url = reverse(role_home_url_name(role))
     return resolve_sidebar_hrefs(
@@ -4507,6 +4709,7 @@ def sidebar_for_profile(role):
                 _link("Dashboard", "layout-dashboard", href=dashboard_url),
             ],
             "footer": _footer_site_links(
+                profile=profile,
                 tail=[
                     _link("Sign out", "log-out", url_name="employees:logout", danger=True),
                 ],
@@ -4607,6 +4810,24 @@ SETTINGS_NESTED_SECTIONS = (
     },
 )
 
+# POS settings page tabs — rendered as child links under the POS settings
+# sidebar group; each href is a #tab-<slug> hash pos-settings.js activates.
+POS_SETTING_TABS = (
+    ("all", "All settings", "layout-list"),
+    ("checkout", "Checkout", "shopping-cart"),
+    ("stock", "Stock", "boxes"),
+    ("staff", "Staff & sessions", "users"),
+    ("floor", "Shop floor", "store"),
+)
+
+# Receipt settings page tabs — same sidebar child-link pattern as POS tabs.
+RECEIPT_SETTING_TABS = (
+    ("all", "All settings", "layout-list"),
+    ("printing", "Printing", "printer"),
+    ("content", "Receipt content", "file-text"),
+    ("confirm", "Confirm", "clipboard-check"),
+)
+
 SETTINGS_SECTION_BY_SLUG = {section["slug"]: section for section in SETTINGS_SECTIONS}
 SETTINGS_NESTED_BY_SLUG = {section["slug"]: section for section in SETTINGS_NESTED_SECTIONS}
 POS_SIDEBAR_SLUGS = frozenset({"company-pos", "company-receipt"})
@@ -4702,23 +4923,80 @@ def sidebar_for_settings(role, *, active_view="home", profile=None):
         pos_section = get_settings_section(role, "company-pos")
         receipt_section = get_settings_section(role, "company-receipt")
         if _allowed("company-pos"):
-            primary.append(
-                _link(
-                    pos_section["label"],
-                    pos_section["icon"],
-                    href=pos_section["href"],
-                    active=active_view == "company-pos",
+            if active_view == "company-pos":
+                # On the POS settings page the section link becomes a group —
+                # its children are the settings tabs (#tab-<slug> anchors the
+                # page's JS activates without a reload).
+                primary.append(
+                    _link(
+                        pos_section["label"],
+                        pos_section["icon"],
+                        href=pos_section["href"],
+                        active=True,
+                        sidebar_only=True,
+                        group=True,
+                        group_open=True,
+                    )
                 )
-            )
+                primary.extend(
+                    _link(
+                        label,
+                        icon,
+                        href=f"{pos_section['href']}#tab-{slug}",
+                        child=True,
+                        child_open=True,
+                        sidebar_only=True,
+                        nav_key=f"pos-tab-{slug}",
+                        active=slug == "all",
+                    )
+                    for slug, label, icon in POS_SETTING_TABS
+                )
+            else:
+                primary.append(
+                    _link(
+                        pos_section["label"],
+                        pos_section["icon"],
+                        href=pos_section["href"],
+                        active=active_view == "company-pos",
+                    )
+                )
         if _allowed("company-receipt"):
-            primary.append(
-                _link(
-                    receipt_section["label"],
-                    receipt_section["icon"],
-                    href=receipt_section["href"],
-                    active=active_view == "company-receipt",
+            if active_view == "company-receipt":
+                # On the Receipt settings page the section link becomes a group
+                # whose children are the page's settings tabs (#tab-<slug>).
+                primary.append(
+                    _link(
+                        receipt_section["label"],
+                        receipt_section["icon"],
+                        href=receipt_section["href"],
+                        active=True,
+                        sidebar_only=True,
+                        group=True,
+                        group_open=True,
+                    )
                 )
-            )
+                primary.extend(
+                    _link(
+                        label,
+                        icon,
+                        href=f"{receipt_section['href']}#tab-{slug}",
+                        child=True,
+                        child_open=True,
+                        sidebar_only=True,
+                        nav_key=f"pos-tab-{slug}",
+                        active=slug == "all",
+                    )
+                    for slug, label, icon in RECEIPT_SETTING_TABS
+                )
+            else:
+                primary.append(
+                    _link(
+                        receipt_section["label"],
+                        receipt_section["icon"],
+                        href=receipt_section["href"],
+                        active=active_view == "company-receipt",
+                    )
+                )
     elif active_view in PAYMENTS_SIDEBAR_SLUGS:
         payments_section = get_settings_section(role, "company-payments")
         daraja_section = get_settings_section(role, "company-daraja")

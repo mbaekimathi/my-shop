@@ -20,7 +20,15 @@
   const filterInput = root.querySelector("[data-pos-filter]");
   const filterEmptyEl = root.querySelector("[data-pos-filter-empty]");
   const groupSections = Array.from(root.querySelectorAll("[data-pos-group]"));
-  const jumpLinks = Array.from(root.querySelectorAll("[data-pos-jump]"));
+  // Tabs live in the app sidebar (outside root) as child nav links.
+  const tabButtons = Array.from(
+    document.querySelectorAll('[data-nav-key^="pos-tab-"]')
+  );
+  let activePosTab = "all";
+
+  function posTabSlug(el) {
+    return (el.dataset.navKey || "").replace(/^pos-tab-/, "");
+  }
 
   function applyPosFilter() {
     if (!filterInput || !groupSections.length) return;
@@ -35,28 +43,115 @@
         row.classList.toggle("is-filtered-out", !match);
         if (match && !row.hidden) visibleRows += 1;
       });
+      // Sections without setting rows (pickers, previews) match on their title.
+      if (!visibleRows && query && groupTitle.includes(query)) visibleRows = 1;
       const empty = Boolean(query) && visibleRows === 0;
       section.classList.toggle("is-filtered-empty", empty);
       if (visibleRows > 0) anyVisible = true;
     });
-    jumpLinks.forEach((link) => {
-      const target = root.querySelector(`#pos-group-${link.dataset.posJump}`);
-      link.classList.toggle(
-        "is-empty",
-        Boolean(query) &&
-          Boolean(target) &&
-          target.classList.contains("is-filtered-empty")
+    tabButtons.forEach((btn) => {
+      const slug = posTabSlug(btn);
+      if (!query || slug === "all") {
+        btn.classList.remove("is-empty");
+        return;
+      }
+      const tabHasVisible = groupSections.some(
+        (section) =>
+          section.dataset.posTabSection === slug &&
+          !section.classList.contains("is-filtered-empty")
       );
+      btn.classList.toggle("is-empty", !tabHasVisible);
     });
     if (filterEmptyEl) {
       filterEmptyEl.hidden = !(query && !anyVisible);
     }
   }
 
-  if (filterInput) {
-    filterInput.addEventListener("input", applyPosFilter);
-    filterInput.addEventListener("search", applyPosFilter);
+  function activatePosTab(slug) {
+    const valid = tabButtons.some((btn) => posTabSlug(btn) === slug);
+    activePosTab = valid ? slug : "all";
+    tabButtons.forEach((btn) => {
+      const on = posTabSlug(btn) === activePosTab;
+      btn.classList.toggle("is-active", on);
+      if (on) btn.setAttribute("aria-current", "true");
+      else btn.removeAttribute("aria-current");
+    });
+    groupSections.forEach((section) => {
+      const inTab =
+        !tabButtons.length ||
+        activePosTab === "all" ||
+        section.dataset.posTabSection === activePosTab;
+      section.classList.toggle("is-tab-hidden", !inTab);
+    });
+    applyPosFilter();
   }
+
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      activatePosTab(posTabSlug(btn));
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}#tab-${activePosTab}`
+        );
+      }
+    });
+  });
+
+  function onPosFilterInput() {
+    const query = (filterInput?.value || "").trim();
+    if (query && activePosTab !== "all") {
+      activatePosTab("all");
+      return;
+    }
+    applyPosFilter();
+  }
+
+  if (filterInput) {
+    filterInput.addEventListener("input", onPosFilterInput);
+    filterInput.addEventListener("search", onPosFilterInput);
+  }
+
+  function posFieldOn(field) {
+    return Boolean(
+      root.querySelector(`[data-pos-toggle][data-field="${field}"]:checked`)
+    );
+  }
+
+  // Linked settings: data-pos-requires="a|b" shows the element only while at
+  // least one listed toggle is on; data-pos-requires-all="c|d" additionally
+  // requires every listed toggle on. data-pos-locked-hidden pins the element
+  // hidden regardless (its parent toggle lives on another settings page).
+  function syncPosRequires() {
+    root
+      .querySelectorAll(
+        "[data-pos-requires], [data-pos-requires-all], [data-pos-locked-hidden]"
+      )
+      .forEach((el) => {
+        const anySpec = el.dataset.posRequires || "";
+        const allSpec = el.dataset.posRequiresAll || "";
+        const anyOk =
+          !anySpec ||
+          anySpec
+            .split("|")
+            .some((field) => field && posFieldOn(field.trim()));
+        const allOk =
+          !allSpec ||
+          allSpec
+            .split("|")
+            .every((field) => field && posFieldOn(field.trim()));
+        el.hidden =
+          !(anyOk && allOk) || el.hasAttribute("data-pos-locked-hidden");
+      });
+  }
+  const MPESA_CHANNEL_FIELDS = new Set([
+    "enable_mpesa",
+    "enable_cash_mpesa",
+    "enable_mpesa_card",
+    "enable_cash_mpesa_card",
+  ]);
   const stkToggle = root.querySelector("[data-stk-shop-toggle]");
   const stkState = root.querySelector("[data-stk-shop-state]");
   const stkHint = root.querySelector("[data-stk-shop-hint]");
@@ -87,6 +182,7 @@
   const shopTimeoutRow = root.querySelector("[data-shop-timeout-row]");
   const shopTimeoutInput = root.querySelector("[data-shop-timeout-input]");
   const clientDataDependents = root.querySelectorAll("[data-client-data-dependent]");
+  const stockItemsDependents = root.querySelectorAll("[data-stock-items-dependent]");
   const openCloseDependents = root.querySelectorAll("[data-open-close-dependent]");
   const openCloseCompulsory = root.querySelector(
     '[data-pos-toggle][data-field="enable_open_close"]'
@@ -122,6 +218,19 @@
   function syncClientDataDependents(enabled) {
     clientDataDependents.forEach((row) => {
       row.hidden = !enabled;
+    });
+    applyPosFilter();
+  }
+
+  function syncStockItemsDependents() {
+    const itemsOn = Boolean(
+      root.querySelector(
+        '[data-stock-mode-toggle][data-field="stock_mode_items"]:checked, ' +
+          '[data-stock-mode-toggle][data-field="stock_mode_both"]:checked'
+      )
+    );
+    stockItemsDependents.forEach((row) => {
+      row.hidden = !itemsOn;
     });
     applyPosFilter();
   }
@@ -168,10 +277,7 @@
 
   function optimisticMpesaStkHint() {
     if (!isCompanyPos || !stkHint) return;
-    const mpesa =
-      root.querySelector('[data-pos-toggle][data-field="enable_mpesa"]')?.checked ||
-      root.querySelector('[data-pos-toggle][data-field="enable_cash_mpesa"]')
-        ?.checked;
+    const mpesa = Array.from(MPESA_CHANNEL_FIELDS).some(posFieldOn);
     if (!mpesa) {
       stkHint.textContent = "Enable M-Pesa below.";
       root.dataset.stkCanEnable = "0";
@@ -273,6 +379,7 @@
             setStateLabel(el, false);
           }
         });
+        syncStockItemsDependents();
       }
       setStateLabel(input, enabled);
       if (input.dataset.field === "enable_tax") {
@@ -294,11 +401,8 @@
         syncOpenCloseDependents();
       }
       syncEmployeePermLinks(input.dataset.field, enabled);
-      if (
-        isCompanyPos &&
-        (input.dataset.field === "enable_mpesa" ||
-          input.dataset.field === "enable_cash_mpesa")
-      ) {
+      syncPosRequires();
+      if (isCompanyPos && MPESA_CHANNEL_FIELDS.has(input.dataset.field)) {
         optimisticMpesaStkHint();
       }
       input.closest(".perm-switch")?.classList.add("is-saving");
@@ -319,6 +423,7 @@
             setStateLabel(el, el.checked);
           });
         }
+        if (stockModeInputs.length) syncStockItemsDependents();
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(Boolean(data.enabled));
         }
@@ -337,12 +442,9 @@
         if (input.dataset.field === "enable_open_close") {
           syncOpenCloseDependents();
         }
+        syncPosRequires();
         syncEnabledCount();
-        if (
-          isCompanyPos &&
-          (input.dataset.field === "enable_mpesa" ||
-            input.dataset.field === "enable_cash_mpesa")
-        ) {
+        if (isCompanyPos && MPESA_CHANNEL_FIELDS.has(input.dataset.field)) {
           renderStkShopStatus(data);
         }
       } catch (error) {
@@ -352,6 +454,7 @@
           el.checked = stockModeBefore[index];
           setStateLabel(el, el.checked);
         });
+        if (stockModeInputs.length) syncStockItemsDependents();
         if (input.dataset.field === "enable_tax") {
           syncTaxRow(previous);
         }
@@ -371,6 +474,7 @@
           syncOpenCloseDependents();
         }
         syncEmployeePermLinks(input.dataset.field, previous);
+        syncPosRequires();
         syncEnabledCount();
         window.alert(error.message || "Could not save setting.");
       } finally {
@@ -424,6 +528,25 @@
     });
   });
   syncOpenCloseDependents();
+  syncStockItemsDependents();
+  syncPosRequires();
+
+  // Deep links: #tab-<slug> opens a tab; #pos-group-<slug> opens the tab
+  // holding that group so the browser can scroll to it.
+  (function restorePosTabFromHash() {
+    if (!tabButtons.length) return;
+    const hash = (window.location.hash || "").replace(/^#/, "");
+    if (!hash) return;
+    if (hash.startsWith("tab-")) {
+      activatePosTab(hash.slice(4));
+      return;
+    }
+    const target = document.getElementById(hash);
+    const section = target?.closest?.("[data-pos-tab-section]");
+    if (section?.dataset.posTabSection) {
+      activatePosTab(section.dataset.posTabSection);
+    }
+  })();
 
   if (isCompanyPos && stkToggle) {
     setStkToggleLabel(stkToggle.checked);

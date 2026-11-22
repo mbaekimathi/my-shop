@@ -883,6 +883,11 @@
               <th scope="col" class="stock-matrix-item-col">Item</th>
               ${shopHeaders}
               ${totalHeader}
+              ${
+                readOnlyMatrix
+                  ? '<th scope="col" class="stock-matrix-health-col" title="Low-stock alert status">Health</th>'
+                  : ""
+              }
             </tr>
           </thead>
           <tbody data-stock-catalog-tbody></tbody>
@@ -899,7 +904,10 @@
       </div>`;
       section.querySelector(".stock-category-title").textContent = key;
       section.dataset.colCount = String(
-        1 + viewShops.length + (editableMatrix || !showAllShops ? 0 : 1)
+        1 +
+          viewShops.length +
+          (editableMatrix || !showAllShops ? 0 : 1) +
+          (readOnlyMatrix ? 1 : 0)
       );
       listRoot.appendChild(section);
       groupEls.set(key, section);
@@ -1409,13 +1417,20 @@
           : normalizeStockQty(quantities.reduce((sum, q) => sum + q, 0));
       const qtyText = (qty) =>
         qty == null ? "Hidden" : qty === 0 ? "—" : qty;
+      const healthStates = Array.isArray(item.shop_health)
+        ? item.shop_health
+        : [];
+      const lowMark = (index) =>
+        healthStates[index] === "low"
+          ? ` data-shelf-low title="At or below the low-stock alert"`
+          : "";
       const qtyCells = showAllShops
         ? quantities
             .map(
-              (qty) =>
+              (qty, index) =>
                 `<td class="stock-matrix-shop-col"><span class="stock-matrix-qty${
                   qty == null ? " is-hidden" : qty === 0 ? " is-empty" : ""
-                }">${qtyText(qty)}</span></td>`
+                }"${lowMark(index)}>${qtyText(qty)}</span></td>`
             )
             .join("") +
           `<td class="stock-matrix-total-col"><span class="stock-matrix-qty stock-matrix-qty--total${
@@ -1427,7 +1442,12 @@
               : quantities[0] === 0
                 ? " is-empty"
                 : ""
-          }">${qtyText(quantities[0])}</span></td>`;
+          }"${lowMark(0)}>${qtyText(quantities[0])}</span></td>`;
+      const healthCell = `<td class="stock-matrix-health-col"><span class="low-stock-badge is-${escapeHtml(
+        item.health || "off"
+      )}" title="${escapeHtml(item.health_title || "")}">${escapeHtml(
+        item.health_label || "Off"
+      )}</span></td>`;
       const header = document.createElement("tr");
       header.className = `stock-matrix-row${
         item.is_suspended ? " is-suspended" : ""
@@ -1448,7 +1468,8 @@
             }
           </div>
         </th>
-        ${qtyCells}`;
+        ${qtyCells}
+        ${healthCell}`;
       return [header];
     }
 
@@ -1652,6 +1673,7 @@
           grandTotal === 0 ? " is-empty" : ""
         }">${formatQty(grandTotal)}</span></td>`;
       }
+      cellsHtml += `<td class="stock-matrix-health-col"></td>`;
 
       row.innerHTML = cellsHtml;
       tfoot.hidden = false;

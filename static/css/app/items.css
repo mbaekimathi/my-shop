@@ -786,3 +786,298 @@
 .item-bulk-actions .item-count {
   margin: 0;
 }
+
+/* Combo item builder (register/edit item modals). */
+.item-combo {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background: color-mix(in srgb, var(--surface) 70%, var(--bg));
+}
+
+.item-combo-picker {
+  position: relative;
+}
+
+.item-combo-search {
+  margin: 0;
+}
+
+.item-combo-results {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  display: grid;
+  max-height: 17rem;
+  overflow: auto;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--surface);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.item-combo-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item-combo-result + .item-combo-result {
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.item-combo-result:hover:not(:disabled),
+.item-combo-result:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  outline: none;
+}
+
+.item-combo-result:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.item-combo-result-main {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.item-combo-result-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-combo-result-cat {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.item-combo-result-price {
+  flex-shrink: 0;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.item-combo-result-tag {
+  flex-shrink: 0;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 45%, transparent);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.item-combo-result-empty {
+  margin: 0;
+  padding: 0.9rem 0.75rem;
+  color: var(--mist-dim);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.item-combo-rows {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.item-combo-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 1.75rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--surface);
+}
+
+/* The shelf-portion picker rows carry no KSh value — 3 columns only. */
+.shelf-portion-picker .item-combo-row {
+  grid-template-columns: minmax(0, 1fr) auto 1.75rem;
+}
+
+.item-combo-row-main {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.item-combo-row-name {
+  font-size: 0.88rem;
+  font-weight: 550;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-combo-row-price {
+  font-size: 0.78rem;
+  color: var(--mist-dim);
+}
+
+.item-combo-row-qty {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--mist-dim);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.item-combo-row-qty input {
+  width: 4rem;
+  flex: 0 0 auto;
+  min-width: 0;
+  text-align: right;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.item-combo-row-contrib {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--mist-dim);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.item-combo-row-contrib input {
+  width: 5.25rem;
+  flex: 0 0 auto;
+  min-width: 0;
+  text-align: right;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.item-combo-row-contrib input:disabled {
+  opacity: 0.55;
+  background: transparent;
+}
+
+.item-combo-row-qty input:focus,
+.item-combo-row-contrib input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: none;
+}
+
+.item-combo-row-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mist-dim);
+  cursor: pointer;
+}
+
+.item-combo-row-remove:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.item-combo-row-remove i {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.item-combo-empty {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px dashed var(--line);
+  border-radius: calc(var(--radius) + 2px);
+  color: var(--mist-dim);
+  font-size: 0.85rem;
+}
+
+.item-combo-total {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  color: var(--text-strong);
+  font-size: 0.92rem;
+}
+
+.item-combo-total .field-hint {
+  margin: 0;
+}
+
+.item-combo-total-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.75rem 1.25rem;
+}
+
+/* Narrow modals: stack the inputs under the item name so nothing clips. */
+@media (max-width: 400px) {
+  .item-combo-row {
+    grid-template-rows: auto auto;
+    row-gap: 0.4rem;
+  }
+  .item-combo-row-main {
+    grid-column: 1 / 4;
+    grid-row: 1;
+  }
+  .item-combo-row-qty {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+  }
+  .item-combo-row-contrib {
+    grid-column: 3;
+    grid-row: 2;
+    justify-self: end;
+  }
+  .item-combo-row-remove {
+    grid-column: 4;
+    grid-row: 1 / 3;
+    align-self: start;
+  }
+  .shelf-portion-picker .item-combo-row-main {
+    grid-column: 1 / 3;
+  }
+  .shelf-portion-picker .item-combo-row-remove {
+    grid-column: 3;
+  }
+}

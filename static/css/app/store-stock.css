@@ -1200,6 +1200,31 @@ tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
   border-radius: 22px;
 }
 
+/* Keep the shelf modals centred — components.css turns generic
+   .workspace-modal into a bottom sheet on narrow viewports. "safe"
+   centering + overflow keep the whole dialog reachable when it is
+   taller than the viewport (Register button never clipped away). */
+.workspace-modal.stock-shelf-modal {
+  place-items: center;
+  place-items: safe center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 639px) {
+  .workspace-modal.stock-shelf-modal {
+    padding: 1rem;
+    place-items: center;
+    place-items: safe center;
+  }
+
+  .stock-shelf-modal .shelf-register-dialog {
+    width: min(35rem, calc(100vw - 2rem));
+    border-bottom: 1px solid var(--border, var(--line));
+    border-radius: 18px;
+  }
+}
+
 /* Gradient-tinted header with a coloured icon tile. */
 .shelf-register-head {
   align-items: flex-start;
@@ -1244,12 +1269,7 @@ tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
 }
 
 .shelf-cat-suggest {
-  position: absolute;
-  z-index: 45;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  margin: 0;
+  margin: 0.4rem 0 0;
   padding: 0.3rem;
   list-style: none;
   max-height: 13rem;
@@ -1257,7 +1277,6 @@ tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
   border: 1px solid var(--border, var(--line));
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 14px 34px rgba(8, 28, 34, 0.18);
 }
 
 .shelf-cat-option {
@@ -1493,6 +1512,34 @@ tr[data-item-row][hidden] + tr[data-shelf-row-inputs] {
 
 .store-stock-field[hidden] {
   display: none;
+}
+
+/* Trade-out portion picker — search/browse list + share rows (the
+   row/result styling comes from .item-combo-* in items.css). */
+.shelf-portion-picker {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+}
+
+/* Inside the shelf modal the open list grows in-flow so it never covers
+   the fields below (elsewhere .item-combo-results stays an overlay). */
+.shelf-portion-picker .item-combo-results {
+  position: static;
+  margin-top: 0.4rem;
+  box-shadow: none;
+}
+
+.shelf-portion-picker .item-combo-total [data-portion-total] {
+  min-width: 3.2rem;
+}
+
+.shelf-portion-picker.has-rows:not(.is-complete) .item-combo-total [data-portion-total] {
+  color: var(--danger, #c0392b);
+}
+
+.shelf-portion-picker.is-complete .item-combo-total [data-portion-total] {
+  color: var(--ok, #1e8e5a);
 }
 
 /* Item stock trade popup — two pick lists (give / receive) in one modal. */

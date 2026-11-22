@@ -2905,7 +2905,7 @@
         }
         card.classList.toggle(
           "is-out",
-          stockTrackingEnabled &&
+          stockLimited &&
             (card.getAttribute("data-item-sale-tracked") || "1") !== "0" &&
             qty <= 0
         );
@@ -2965,6 +2965,8 @@
       cartRoot.dataset.posPaymentOptions !== "0";
     const discountEnabled = cartRoot.dataset.posDiscount === "1";
     const stockTrackingEnabled = cartRoot.dataset.posStockTracking !== "0";
+    const blockNegativeStock = cartRoot.dataset.posBlockNegative !== "0";
+    const stockLimited = stockTrackingEnabled && blockNegativeStock;
     const clientDataEnabled = cartRoot.dataset.posClientData === "1";
     const requireClientPhone = cartRoot.dataset.posRequireClientPhone === "1";
     const requireClientName = cartRoot.dataset.posRequireClientName === "1";
@@ -5451,7 +5453,7 @@
       let next = roundQty(qty);
       if (!Number.isFinite(next) || next <= 0) next = 0;
       if (
-        stockTrackingEnabled &&
+        stockLimited &&
         tracked &&
         selectedKind() !== "trade_in" &&
         stock > 0 &&
@@ -5635,7 +5637,7 @@
         const qtyInput = card.querySelector("[data-cart-qty-input]");
         const stock = Math.max(0, roundQty(card.getAttribute("data-item-stock")));
         const trackedQty =
-          stockTrackingEnabled &&
+          stockLimited &&
           (card.getAttribute("data-item-sale-tracked") || "1") !== "0";
 
         card.classList.toggle("is-in-cart", inCart);
@@ -5676,7 +5678,7 @@
       );
       const inCart = Boolean(line);
       const trackedQty =
-        stockTrackingEnabled &&
+        stockLimited &&
         productModal.dataset.itemSaleTracked !== "0" &&
         line?.saleTracked !== false;
       const outOfStock =
@@ -6024,7 +6026,7 @@
         qtyInput.min = "0.001";
         qtyInput.step = "0.001";
         if (
-          stockTrackingEnabled &&
+          stockLimited &&
           line.saleTracked !== false &&
           selectedKind() !== "trade_in" &&
           line.stock > 0
@@ -6042,7 +6044,7 @@
         inc.dataset.cartQty = "inc";
         inc.innerHTML = '<i data-lucide="plus" aria-hidden="true"></i>';
         if (
-          stockTrackingEnabled &&
+          stockLimited &&
           line.saleTracked !== false &&
           selectedKind() !== "trade_in" &&
           line.stock > 0 &&
@@ -6252,7 +6254,7 @@
         return false;
       }
       if (
-        stockTrackingEnabled &&
+        stockLimited &&
         serialSaleItem.stock > 0 &&
         collectSerialSaleValues().length >= serialSaleItem.stock
       ) {
@@ -6317,7 +6319,7 @@
       }
 
       if (
-        stockTrackingEnabled &&
+        stockLimited &&
         serialSaleItem.stock > 0 &&
         collectSerialSaleValues().length >= serialSaleItem.stock
       ) {
@@ -6718,7 +6720,7 @@
         return false;
       }
       if (
-        stockTrackingEnabled &&
+        stockLimited &&
         serialSaleItem.saleTracked !== false &&
         serialSaleItem.stock > 0 &&
         serials.length > serialSaleItem.stock
@@ -6765,7 +6767,7 @@
       const item = readItemFromEl(sourceEl);
       if (!item.id) return;
       if (
-        stockTrackingEnabled &&
+        stockLimited &&
         item.saleTracked !== false &&
         selectedKind() !== "trade_in" &&
         item.stock <= 0
@@ -7443,7 +7445,7 @@
         option.type = "button";
         option.className = "shop-cart-client-suggest-option";
         const out =
-          stockTrackingEnabled &&
+          stockLimited &&
           item.saleTracked !== false &&
           kind !== "trade_in" &&
           item.stock <= 0;
@@ -7573,7 +7575,7 @@
           qtyInput.step = "0.001";
           if (
             !isIn &&
-            stockTrackingEnabled &&
+            stockLimited &&
             line.saleTracked !== false &&
             line.stock > 0
           ) {
@@ -7591,7 +7593,7 @@
           inc.innerHTML = '<i data-lucide="plus" aria-hidden="true"></i>';
           if (
             !isIn &&
-            stockTrackingEnabled &&
+            stockLimited &&
             line.saleTracked !== false &&
             line.stock > 0 &&
             line.qty >= line.stock
@@ -7689,7 +7691,7 @@
       if (tradeSearch) tradeSearch.value = "";
       const kind = tradeKind();
       if (
-        stockTrackingEnabled &&
+        stockLimited &&
         item.saleTracked !== false &&
         kind !== "trade_in" &&
         item.stock <= 0

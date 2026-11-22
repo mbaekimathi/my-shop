@@ -38,8 +38,8 @@ def app_name() -> str:
     return f"{company_name()} Chat"
 
 
-def bot_name() -> str:
-    return f"{company_name()} Assistant"
+def bot_name(shop_name: str) -> str:
+    return f"{shop_name} - Accounts"
 
 
 def bot_welcome(shop_name: str) -> str:
@@ -145,6 +145,125 @@ def get_or_create_bot(shop: Shop) -> Conversation:
         is_bot=True,
         kind=MessageKind.TEXT,
         body=bot_welcome(shop.name),
+    )
+    return convo
+
+
+# Stock assistant — a second per-shop bot thread that only answers stock
+# questions (in/out, trades, transfers, suppliers, low stock, item lookups).
+STOCK_BOT_PAIR_PREFIX = "stockbot:"
+STOCK_BOT_SUBTITLE = "Stock data helper"
+
+
+def is_stock_bot(convo: Conversation) -> bool:
+    return convo.kind == ConversationKind.STOCK_BOT
+
+
+# Expenses assistant — a third per-shop bot thread that only answers expense
+# questions (expenses, paid/unpaid, categories, suppliers, expense report).
+EXPENSE_BOT_PAIR_PREFIX = "expensebot:"
+EXPENSE_BOT_SUBTITLE = "Expense data helper"
+
+
+def is_expense_bot(convo: Conversation) -> bool:
+    return convo.kind == ConversationKind.EXPENSE_BOT
+
+
+def is_bot_thread(convo: Conversation) -> bool:
+    return convo.kind in (
+        ConversationKind.BOT,
+        ConversationKind.STOCK_BOT,
+        ConversationKind.EXPENSE_BOT,
+    )
+
+
+def stock_bot_name(shop_name: str) -> str:
+    return f"{shop_name} - Movements"
+
+
+def stock_bot_welcome(shop_name: str) -> str:
+    return (
+        f"Hi {shop_name}! I'm your {company_name()} stock assistant.\n\n"
+        "Ask me about stock movement, for example:\n"
+        "- *stock in* — deliveries received today\n"
+        "- *stock out* — stock taken out today\n"
+        "- *stock trade* — traded in and out today\n"
+        "- *transfers* — stock moved between shops\n"
+        "- *suppliers* — who supplied stock today\n"
+        "- *stock report* — the day's full movement summary\n"
+        "- *low stock* — items running out\n"
+        "- *stock <item>* — on-hand quantity and price\n\n"
+        "Add a day or period, e.g. *stock in yesterday* or "
+        "*stock out this week*."
+    )
+
+
+def get_or_create_stock_bot(shop: Shop) -> Conversation:
+    key = STOCK_BOT_PAIR_PREFIX + str(shop.pk)
+    convo = Conversation.objects.filter(
+        kind=ConversationKind.STOCK_BOT, pair_key=key
+    ).first()
+    if convo is not None:
+        return convo
+    try:
+        convo = Conversation.objects.create(
+            kind=ConversationKind.STOCK_BOT, pair_key=key
+        )
+    except IntegrityError:
+        return Conversation.objects.get(
+            kind=ConversationKind.STOCK_BOT, pair_key=key
+        )
+    Participant.objects.create(conversation=convo, shop_id=shop.pk)
+    Message.objects.create(
+        conversation=convo,
+        sender_shop_id=None,
+        is_bot=True,
+        kind=MessageKind.TEXT,
+        body=stock_bot_welcome(shop.name),
+    )
+    return convo
+
+
+def expense_bot_name(shop_name: str) -> str:
+    return f"{shop_name} - Expenses"
+
+
+def expense_bot_welcome(shop_name: str) -> str:
+    return (
+        f"Hi {shop_name}! I'm your {company_name()} expenses assistant.\n\n"
+        "Ask me about expenses, for example:\n"
+        "- *expenses* — today's entries\n"
+        "- *paid* / *unpaid* — settled vs owing entries\n"
+        "- *by category* — totals per expense category\n"
+        "- *suppliers* — who the expenses were paid to\n"
+        "- *expense report* — the day's expense summary\n\n"
+        "Add a day or period, e.g. *expenses yesterday* or "
+        "*unpaid this week*."
+    )
+
+
+def get_or_create_expense_bot(shop: Shop) -> Conversation:
+    key = EXPENSE_BOT_PAIR_PREFIX + str(shop.pk)
+    convo = Conversation.objects.filter(
+        kind=ConversationKind.EXPENSE_BOT, pair_key=key
+    ).first()
+    if convo is not None:
+        return convo
+    try:
+        convo = Conversation.objects.create(
+            kind=ConversationKind.EXPENSE_BOT, pair_key=key
+        )
+    except IntegrityError:
+        return Conversation.objects.get(
+            kind=ConversationKind.EXPENSE_BOT, pair_key=key
+        )
+    Participant.objects.create(conversation=convo, shop_id=shop.pk)
+    Message.objects.create(
+        conversation=convo,
+        sender_shop_id=None,
+        is_bot=True,
+        kind=MessageKind.TEXT,
+        body=expense_bot_welcome(shop.name),
     )
     return convo
 
@@ -519,6 +638,8 @@ CARD_META_KEYS = (
     "summary",
     "credits",
     "expenses",
+    "stock_list",
+    "table",
 )
 
 
@@ -575,7 +696,21 @@ def serialize_conversation(convo: Conversation, me: Shop, shops_map: dict) -> di
     others = _group_others(convo, me) if group else []
 
     if convo.kind == ConversationKind.BOT:
-        title, subtitle, tone, bot = bot_name(), BOT_SUBTITLE, 2, True
+        title, subtitle, tone, bot = bot_name(me.name), BOT_SUBTITLE, 2, True
+        online = True
+        last_seen = ""
+        typing = False
+    elif is_stock_bot(convo):
+        title, subtitle, tone, bot = (
+            stock_bot_name(me.name), STOCK_BOT_SUBTITLE, 3, True
+        )
+        online = True
+        last_seen = ""
+        typing = False
+    elif is_expense_bot(convo):
+        title, subtitle, tone, bot = (
+            expense_bot_name(me.name), EXPENSE_BOT_SUBTITLE, 4, True
+        )
         online = True
         last_seen = ""
         typing = False
@@ -633,7 +768,7 @@ def serialize_conversation(convo: Conversation, me: Shop, shops_map: dict) -> di
             "created_at": _time_iso(last.created_at),
             "status": (
                 "read"
-                if convo.kind == ConversationKind.BOT
+                if is_bot_thread(convo)
                 else _group_message_status(last, others)
                 if group
                 else _message_status(last, peer)
@@ -644,7 +779,9 @@ def serialize_conversation(convo: Conversation, me: Shop, shops_map: dict) -> di
 
     return {
         "id": convo.pk,
-        "kind": convo.kind,
+        # Serialize as "bot" so the client applies assistant-thread UX
+        # (bot avatar, suggestions bar, no typing indicator).
+        "kind": "bot" if is_bot_thread(convo) else convo.kind,
         "title": title,
         "subtitle": subtitle,
         "initials": "*" if bot else initials(title),
@@ -660,7 +797,30 @@ def serialize_conversation(convo: Conversation, me: Shop, shops_map: dict) -> di
         # Members can rename/delete any group, including activity feeds.
         "can_manage": group,
         "activity": group and is_activity_group(convo),
+        # Stock/expense threads carry their own chip sets; the main
+        # assistant falls back to the global suggestions in the template.
+        "suggestions": (
+            _expense_suggestions()
+            if is_expense_bot(convo)
+            else _stock_suggestions()
+            if is_stock_bot(convo)
+            else None
+        ),
+        "stock_bot": is_stock_bot(convo),
+        "expense_bot": is_expense_bot(convo),
     }
+
+
+def _stock_suggestions():
+    from . import bot as bot_engine
+
+    return bot_engine.STOCK_SUGGESTIONS
+
+
+def _expense_suggestions():
+    from . import bot as bot_engine
+
+    return bot_engine.EXPENSE_SUGGESTIONS
 
 
 def serialize_group_peer(

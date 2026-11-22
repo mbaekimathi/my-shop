@@ -26,6 +26,7 @@ from .myshop_models import (
     Expense,
     ExpenseSupplier,
     Item,
+    ItemComboComponent,
     ItemSerial,
     Shop,
     ShopDaySession,
@@ -361,7 +362,20 @@ def _normalize_serials(values) -> list:
     return serials
 
 
-def _parse_lines(raw_lines, shop, *, need_stock: bool, sale_flow: bool = False):
+def _item_list_price(item, override):
+    """Mirror of Item.resolve_list_price for the unmanaged model."""
+    if (
+        getattr(item, "use_individual_shop_prices", False)
+        and override is not None
+    ):
+        return override
+    if item.shop_price is not None and item.shop_price > 0:
+        return item.shop_price
+    return item.minimum_selling_price or Decimal("0")
+
+
+def _parse_lines(raw_lines, shop, *, need_stock: bool, sale_flow: bool = False,
+                 allow_negative: bool = False):
     if not isinstance(raw_lines, list) or not raw_lines:
         raise StockError("Add at least one item with a quantity.")
     if len(raw_lines) > 20:
@@ -413,6 +427,143 @@ def _parse_lines(raw_lines, shop, *, need_stock: bool, sale_flow: bool = False):
             shop_id=shop.pk, item_id__in=set(item_ids)
         )
     }
+
+    # Combo items explode into their component lines — chat sales and stock
+    # moves tally the single items by each one's portion (mirrors MY-SHOP
+    # checkout). Component items and stock rows join the checks below.
+    combo_ids = [
+        i.pk for i in items.values() if getattr(i, "is_combo", False)
+    ]
+    if combo_ids:
+        combos_enabled = CompanyPosSettings.objects.filter(pk=1).values_list(
+            "enable_combo_items", flat=True
+        ).first()
+        if combos_enabled is False:
+            raise StockError(
+                "Combo items are turned off in Settings → POS."
+            )
+        legs_by_combo = {}
+        for leg in ItemComboComponent.objects.filter(
+            combo_id__in=combo_ids
+        ).order_by("position", "id"):
+            legs_by_combo.setdefault(leg.combo_id, []).append(leg)
+        component_ids = {
+            leg.component_id
+            for legs in legs_by_combo.values()
+            for leg in legs
+        }
+        if component_ids:
+            items.update(
+                {
+                    i.pk: i
+                    for i in Item.objects.select_for_update().filter(
+                        pk__in=component_ids
+                    )
+                }
+            )
+            stocks.update(
+                {
+                    s.item_id: s
+                    for s in ShopStock.objects.select_for_update().filter(
+                        shop_id=shop.pk, item_id__in=component_ids
+                    )
+                }
+            )
+        price_by_item = {
+            iid: price
+            for iid, price in ShopItemPrice.objects.filter(
+                shop_id=shop.pk,
+                item_id__in=set(item_ids) | component_ids,
+            ).values_list("item_id", "price")
+        }
+        expanded = []
+        for line in parsed:
+            item = items.get(line["item_id"])
+            if item is None or not getattr(item, "is_combo", False):
+                expanded.append(line)
+                continue
+            legs = legs_by_combo.get(item.pk) or []
+            if not legs:
+                raise StockError(f'"{item.name}" is a combo with no items.')
+            typed = line["buying_price"]
+            # A combo's minimum at this shop is the sum of its components'
+            # list prices × their portions — a typed sale price below it
+            # rises to the floor, and legs scale off that same sum.
+            combo_min = sum(
+                (
+                    _item_list_price(
+                        items.get(leg.component_id),
+                        price_by_item.get(leg.component_id),
+                    )
+                    if items.get(leg.component_id) is not None
+                    else Decimal("0")
+                )
+                * leg.qty
+                for leg in legs
+            ).quantize(Decimal("0.01"))
+            if sale_flow and typed is not None and typed < combo_min:
+                typed = combo_min
+                line["buying_price"] = typed
+            factor = (
+                typed / combo_min
+                if typed is not None and combo_min > 0
+                else None
+            )
+            total_qty = sum(leg.qty for leg in legs)
+            target_total = (
+                (typed * line["quantity"]).quantize(Decimal("0.01"))
+                if sale_flow and typed is not None
+                else None
+            )
+            valid_legs = []
+            for leg in legs:
+                leg_qty = (line["quantity"] * leg.qty).quantize(QTY_QUANTUM)
+                if leg_qty > 0:
+                    valid_legs.append((leg, leg_qty))
+            running_total = Decimal("0.00")
+            for index, (leg, leg_qty) in enumerate(valid_legs):
+                component = items.get(leg.component_id)
+                comp_list = (
+                    _item_list_price(component, price_by_item.get(leg.component_id))
+                    if component is not None
+                    else Decimal("0")
+                )
+                if not sale_flow or typed is None:
+                    # Stock moves keep the typed cost; sales resolve the
+                    # component's own list price downstream.
+                    comp_price = typed
+                elif index == len(valid_legs) - 1:
+                    # Last leg absorbs rounding drift so component totals
+                    # equal the charged combo total.
+                    residual = target_total - running_total
+                    comp_price = (
+                        (residual / leg_qty).quantize(Decimal("0.01"))
+                        if residual > 0
+                        else Decimal("0.00")
+                    )
+                elif factor is not None:
+                    comp_price = (comp_list * factor).quantize(Decimal("0.01"))
+                else:
+                    # Zero-price combo with a typed amount: give every leg
+                    # the same unit price; the last leg takes the drift.
+                    comp_price = (typed / total_qty).quantize(
+                        Decimal("0.01")
+                    )
+                expanded.append(
+                    {
+                        "item_id": leg.component_id,
+                        "quantity": leg_qty,
+                        "buying_price": comp_price,
+                        "serials": [],
+                        "from_combo": True,
+                    }
+                )
+                if comp_price is not None:
+                    running_total += (comp_price * leg_qty).quantize(
+                        Decimal("0.01")
+                    )
+        parsed = expanded
+
     for line in parsed:
         item = items.get(line["item_id"])
         if item is None:
@@ -427,9 +578,21 @@ def _parse_lines(raw_lines, shop, *, need_stock: bool, sale_flow: bool = False):
             )
         if need_stock:
             stock = stocks.get(item.pk)
+            if stock is None and sale_flow and allow_negative:
+                # Negative sales still need a stock row to deduct into.
+                stock, _ = ShopStock.objects.select_for_update().get_or_create(
+                    shop_id=shop.pk,
+                    item_id=item.pk,
+                    defaults={"quantity": ZERO_QTY},
+                )
+                stocks[item.pk] = stock
             available = stock.quantity if stock else ZERO_QTY
             tracks_sale = getattr(item, "deduct_stock_on_sale", True)
-            if (tracks_sale or not sale_flow) and available < line["quantity"]:
+            if (
+                not (sale_flow and allow_negative)
+                and (tracks_sale or not sale_flow)
+                and available < line["quantity"]
+            ):
                 raise StockError(
                     f'Not enough "{item.name}" at {shop.name} '
                     f"(have {available}, sending {line['quantity']})."
@@ -1726,7 +1889,13 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
     track_store = bool(pos["enable_stock_tracking"])
 
     # Sale needs stock like a transfer — same line parsing.
-    lines = _parse_lines(raw_lines, me, need_stock=True, sale_flow=True)
+    lines = _parse_lines(
+        raw_lines,
+        me,
+        need_stock=True,
+        sale_flow=True,
+        allow_negative=not pos.get("block_negative_stock", True),
+    )
 
     price_rows = {
         r.item_id: r
@@ -1738,7 +1907,8 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
     for line in lines:
         item = line["item"]
         pr = price_rows.get(item.pk)
-        if pr is not None and not pr.is_sold:
+        from_combo = bool(line.get("from_combo"))
+        if pr is not None and not pr.is_sold and not from_combo:
             raise StockError(f'"{item.name}" is not sold at {me.name}.')
         if item.track_serial_number:
             # Serials required — verified available at the selling shop.
@@ -1753,7 +1923,11 @@ def create_sale(me, raw_lines, *, payment_method, cash_amount=None,
                 price = _money(pr.price)
             else:
                 price = _money(item.shop_price or item.minimum_selling_price)
-        if item.minimum_selling_price and 0 < price < item.minimum_selling_price:
+        if (
+            item.minimum_selling_price
+            and 0 < price < item.minimum_selling_price
+            and not from_combo
+        ):
             price = _money(item.minimum_selling_price)
         unit_cost = _money(line["shop_stock"].average_cost if line.get("shop_stock") else 0)
         # Free sales (price 0) skip the below-cost guard.
@@ -3426,6 +3600,7 @@ _POS_BOOL_FIELDS = (
     "enable_discount",
     "enable_stock_tracking",
     "enable_shelf_mode",
+    "block_negative_stock",
     "enable_open_close",
     "enable_client_data",
     "require_client_phone",
@@ -3455,6 +3630,7 @@ _POS_DEFAULTS = {
     "enable_discount": True,
     "enable_stock_tracking": True,
     "enable_shelf_mode": False,
+    "block_negative_stock": True,
     "enable_open_close": True,
     "enable_client_data": True,
     "require_client_phone": False,
@@ -3595,6 +3771,7 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
         me,
         need_stock=kind == "trade_out" and track_stock,
         sale_flow=True,
+        allow_negative=not pos.get("block_negative_stock", True),
     )
 
     if kind == "trade_out":
@@ -3608,7 +3785,8 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
         for line in lines:
             item = line["item"]
             pr = price_rows.get(item.pk)
-            if pr is not None and not pr.is_sold:
+            from_combo = bool(line.get("from_combo"))
+            if pr is not None and not pr.is_sold and not from_combo:
                 raise StockError(f'"{item.name}" is not sold at {me.name}.')
             if item.track_serial_number:
                 line["serials"] = _resolve_transfer_serials(item, me, line)
@@ -3619,7 +3797,11 @@ def create_trade(me, raw_lines, *, kind, client_name="", client_phone="",
                     or item.shop_price
                     or item.minimum_selling_price
                 )
-            if item.minimum_selling_price and price < item.minimum_selling_price:
+            if (
+                item.minimum_selling_price
+                and price < item.minimum_selling_price
+                and not from_combo
+            ):
                 price = _money(item.minimum_selling_price)
             unit_cost = _money(
                 line["shop_stock"].average_cost

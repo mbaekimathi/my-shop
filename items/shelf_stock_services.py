@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from items.models import (
+    Item,
     ShelfItem,
+    ShelfItemPortionTarget,
     ShelfStockMovement,
     ShelfStockMovementType,
     StockOutReason,
@@ -16,6 +19,7 @@ from items.models import (
 )
 from items.store_stock_services import (
     _parse_buying_price,
+    record_store_stock_in,
     register_supplier_from_stock_in,
 )
 
@@ -64,6 +68,122 @@ def shelf_categories() -> list[str]:
     )
 
 
+def shelf_portions_enabled() -> bool:
+    """Trade-out portions need the company Both stock mode (items + shelf)."""
+    from shops.services import get_company_pos_settings
+
+    pos = get_company_pos_settings()
+    return bool(
+        getattr(pos, "enable_stock_tracking", False)
+        and getattr(pos, "enable_shelf_mode", False)
+    )
+
+
+def portion_item_options() -> list[dict]:
+    """Catalog items the trade-out portions can stock into (item stock page)."""
+    if not shelf_portions_enabled():
+        return []
+    return [
+        {"id": item.pk, "name": item.name, "category": item.category}
+        for item in Item.objects.filter(is_suspended=False).order_by(
+            "category", "name"
+        )
+    ]
+
+
+def _post_list(data, name) -> list:
+    """Read a repeated POST field from a QueryDict or a plain dict."""
+    if hasattr(data, "getlist"):
+        return list(data.getlist(name))
+    value = data.get(name)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _resolve_portion_targets(
+    portion_item_ids,
+    portion_qtys,
+    *,
+    current_item_ids=(),
+):
+    """Validate ``portion_item_id[]``/``portion_qty[]`` posts.
+
+    Returns ``(targets, portions)`` — targets is a list of
+    ``{"item": Item, "portions": Decimal}`` where ``portions`` is how
+    many of that item each shelf unit gives on a trade out, and
+    ``portions`` (the second return) is their total — stamped onto
+    ``ShelfItem.portions_per_unit`` as a derived value.
+    """
+    raw_ids = [str(raw or "").strip() for raw in (portion_item_ids or [])]
+    raw_qtys = [str(raw or "").strip() for raw in (portion_qtys or [])]
+    parsed = []
+    seen = set()
+    current = set(current_item_ids or ())
+    for index, raw_id in enumerate(raw_ids):
+        if not raw_id:
+            continue
+        try:
+            item_id = int(raw_id)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "Pick a valid item for the trade-out portions."
+            ) from exc
+        if item_id in seen:
+            raise ValidationError(
+                "Each item can only receive portions once."
+            )
+        seen.add(item_id)
+        raw_qty = raw_qtys[index] if index < len(raw_qtys) else ""
+        portions = parse_shelf_qty(raw_qty, label="Portions per unit")
+        parsed.append({"item_id": item_id, "portions": portions})
+
+    if not parsed and any(raw for raw in raw_qtys):
+        raise ValidationError(
+            "Pick the item that trade-out portions stock into."
+        )
+
+    targets = []
+    if parsed:
+        items_by_id = Item.objects.filter(
+            pk__in=[row["item_id"] for row in parsed]
+        ).in_bulk()
+        for row in parsed:
+            item = items_by_id.get(row["item_id"])
+            if item is None:
+                raise ValidationError(
+                    "One of the portion items no longer exists."
+                )
+            if item.is_suspended and item.pk not in current:
+                raise ValidationError(
+                    f"“{item.name}” is suspended — pick another item."
+                )
+            targets.append({"item": item, "portions": row["portions"]})
+
+    portions = sum(
+        (row["portions"] for row in targets), Decimal("0")
+    )
+    return targets, portions
+
+
+def _write_portion_targets(shelf_item, targets) -> None:
+    """Replace a shelf item's portion targets with the validated set."""
+    shelf_item.portion_targets.all().delete()
+    ShelfItemPortionTarget.objects.bulk_create(
+        [
+            ShelfItemPortionTarget(
+                shelf_item=shelf_item,
+                item=row["item"],
+                portions=row["portions"],
+                position=index,
+            )
+            for index, row in enumerate(targets)
+        ]
+    )
+
+
 def parse_shelf_qty(raw, *, allow_zero=False, label="Quantity") -> Decimal:
     text = str(raw if raw is not None else "").strip().replace(",", "")
     if not text:
@@ -85,9 +205,11 @@ def parse_shelf_qty(raw, *, allow_zero=False, label="Quantity") -> Decimal:
 
 
 def _shelf_item_queryset(*, shop=None, shops=None, suspended: bool = False):
-    qs = ShelfItem.objects.filter(
-        is_archived=False, is_suspended=suspended
-    ).select_related("shop")
+    qs = (
+        ShelfItem.objects.filter(is_archived=False, is_suspended=suspended)
+        .select_related("shop")
+        .prefetch_related("portion_targets__item")
+    )
     if shop is not None:
         return qs.filter(shop=shop).order_by("category", "name")
     if shops is not None:
@@ -110,7 +232,41 @@ def _shelf_item_rows(items) -> list[dict]:
     rows = []
     for item in items:
         threshold = Decimal(item.low_stock_threshold or 0)
+        is_low = threshold > 0 and item.quantity <= threshold
+        if is_low:
+            health, health_label, health_title = (
+                "low",
+                "Low now",
+                f"At or below the low stock alert ({_qty_display(threshold)}).",
+            )
+        elif threshold > 0:
+            health, health_label, health_title = (
+                "ok",
+                "Watching",
+                f"Above the low stock alert ({_qty_display(threshold)}).",
+            )
+        else:
+            health, health_label, health_title = (
+                "off",
+                "Off",
+                "No low-stock alert set for this item.",
+            )
         price = last_price.get(item.pk)
+        portion_targets = [
+            {
+                "id": target.item_id,
+                "name": target.item.name,
+                "portions": _qty_display(target.portions),
+                "suspended": bool(target.item.is_suspended),
+                "qty_display": _qty_display(target.portions),
+            }
+            for target in item.portion_targets.all()
+        ]
+        portion_hint = " · ".join(
+            f"+{row['qty_display']} {row['name']}"
+            + (" (suspended)" if row["suspended"] else "")
+            for row in portion_targets
+        )
         rows.append(
             {
                 "id": item.pk,
@@ -119,10 +275,31 @@ def _shelf_item_rows(items) -> list[dict]:
                 "shop_name": item.shop.name,
                 "category": item.category,
                 "unit": item.unit,
+                "portion_targets": portion_targets,
+                "portion_targets_json": json.dumps(
+                    [
+                        {
+                            "id": row["id"],
+                            "name": row["name"],
+                            "portions": row["portions"],
+                            "suspended": row["suspended"],
+                        }
+                        for row in portion_targets
+                    ]
+                ),
+                "portion_hint": portion_hint,
+                "portions_display": (
+                    _qty_display(item.portions_per_unit)
+                    if portion_targets and item.portions_per_unit
+                    else ""
+                ),
                 "quantity": item.quantity,
                 "quantity_display": _qty_display(item.quantity),
                 "low_stock_threshold_display": _qty_display(threshold),
-                "is_low": threshold > 0 and item.quantity <= threshold,
+                "is_low": is_low,
+                "health": health,
+                "health_label": health_label,
+                "health_title": health_title,
                 "image_url": item.public_image_url(),
                 "last_buying_price": price,
                 "last_buying_price_display": (
@@ -198,7 +375,9 @@ def build_shelf_stock_report(*, shop, day_start, day_end, item_id=None) -> dict:
     - ``trades`` — ``trade_in`` − ``trade_out``, shown net.
     - ``out`` — stock outs that are neither trades nor transfers.
 
-    ``item_id`` narrows the rows to one shelf item for this shop.
+    ``item_id`` narrows the rows to one shelf item for this shop. Only
+    items that moved inside the period are listed — a row whose whole
+    content is a carried start/close balance is hidden.
     """
     items = list(
         ShelfItem.objects.filter(shop=shop).order_by("category", "name")
@@ -283,12 +462,12 @@ def build_shelf_stock_report(*, shop, day_start, day_end, item_id=None) -> dict:
         for key in ("start", "in", "transfers", "trades", "out", "close")
     }
     for item in report_items:
+        bucket = buckets.get(item.pk)
+        if bucket is None:
+            continue  # untouched in the filtered period
         slot = bounds.get(item.pk) or [None, None]
         start = slot[0] if slot[0] is not None else Decimal("0")
         close = slot[1] if slot[1] is not None else Decimal("0")
-        bucket = buckets.get(item.pk)
-        if item.is_archived and bucket is None and start == 0 and close == 0:
-            continue
         bucket = bucket or {}
         in_qty = bucket.get("in", Decimal("0"))
         out_qty = bucket.get("out", Decimal("0"))
@@ -355,6 +534,8 @@ def register_shelf_item(
     opening_qty=None,
     low_stock_threshold=None,
     image=None,
+    portion_item_ids=None,
+    portion_qtys=None,
 ) -> ShelfItem:
     name = " ".join(str(name or "").split()).upper()
     if not name:
@@ -366,6 +547,17 @@ def register_shelf_item(
     qty = parse_shelf_qty(opening_qty, allow_zero=True, label="Opening quantity")
     threshold = parse_shelf_qty(
         low_stock_threshold, allow_zero=True, label="Low stock alert"
+    )
+    link_given = portion_item_ids is not None or portion_qtys is not None
+    if link_given and not shelf_portions_enabled():
+        raise ValidationError(
+            "Trade-out portions need the Both stock mode — turn on "
+            "items and shelf under Settings → POS → Stock."
+        )
+    portion_targets, portions = (
+        _resolve_portion_targets(portion_item_ids or [], portion_qtys or [])
+        if link_given
+        else ([], Decimal("0"))
     )
 
     existing = (
@@ -398,10 +590,17 @@ def register_shelf_item(
                 "is_suspended",
                 "updated_at",
             ]
+            if link_given:
+                # Re-register posts can retarget or clear the links;
+                # name-only stock-ins leave them untouched.
+                existing.portions_per_unit = portions
+                update_fields.append("portions_per_unit")
             if image is not None:
                 existing.image = image
                 update_fields.append("image")
             existing.save(update_fields=update_fields)
+            if link_given:
+                _write_portion_targets(existing, portion_targets)
             item = existing
         else:
             item = ShelfItem.objects.create(
@@ -411,9 +610,12 @@ def register_shelf_item(
                 unit=unit,
                 quantity=qty,
                 low_stock_threshold=threshold,
+                portions_per_unit=portions,
                 image=image,
                 created_by=actor,
             )
+            if link_given:
+                _write_portion_targets(item, portion_targets)
     except IntegrityError as exc:
         raise ValidationError(f"“{name}” is already on the shelf list.") from exc
     ShelfStockMovement.objects.create(
@@ -491,7 +693,7 @@ def record_shelf_movement(
             supplier_name=supplier_name,
             supplier_phone=supplier_phone,
         )
-    return ShelfStockMovement.objects.create(
+    movement = ShelfStockMovement.objects.create(
         shelf_item=item,
         movement_type=mode,
         quantity=amount,
@@ -532,6 +734,44 @@ def record_shelf_movement(
         note=str(note or "").strip()[:255],
         created_by=actor,
     )
+    if (
+        mode == ShelfStockMovementType.OUT
+        and reason_clean == StockOutReason.TRADE_OUT
+        and (item.portions_per_unit or 0) > 0
+        and actor is not None
+        and shelf_portions_enabled()
+    ):
+        targets = list(item.portion_targets.select_related("item"))
+        if targets:
+            # Trade out stocks each linked item's portions into the
+            # central store — tagged trade_in so they land under Trades,
+            # valued at the item's list price. A suspended target's leg
+            # is skipped, not moved elsewhere.
+            quant = Decimal("0.001")
+            movement.portion_movements = []
+            for target in targets:
+                leg_qty = (amount * target.portions).quantize(quant)
+                if target.item.is_suspended or leg_qty <= 0:
+                    continue
+                movement.portion_movements.append(
+                    record_store_stock_in(
+                        actor=actor,
+                        item_id=target.item_id,
+                        quantity=leg_qty,
+                        received_by_id=None,
+                        supplier_name=supplier_name,
+                        supplier_phone=supplier_phone,
+                        buying_price=target.item.resolve_list_price(),
+                        reason=StockOutReason.TRADE_IN,
+                        note=(
+                            f"Portions from shelf trade out · "
+                            f"{_qty_display(amount)} "
+                            f"{item.unit or 'units'} of {item.name} · "
+                            f"{_qty_display(target.portions)} per unit"
+                        )[:255],
+                    )
+                )
+    return movement
 
 
 @transaction.atomic
@@ -640,6 +880,17 @@ def transfer_shelf_item(
         ShelfItem.objects.filter(shop=to_shop, name__iexact=item.name).first()
     )
     if target is None or target.is_archived:
+        copy_link = (
+            item.portions_per_unit > 0 and shelf_portions_enabled()
+        )
+        source_targets = (
+            [
+                {"item": row.item, "portions": row.portions}
+                for row in item.portion_targets.select_related("item")
+            ]
+            if copy_link
+            else []
+        )
         target = register_shelf_item(
             shop=to_shop,
             actor=actor,
@@ -648,6 +899,12 @@ def transfer_shelf_item(
             opening_qty=0,
             low_stock_threshold=item.low_stock_threshold,
         )
+        if source_targets:
+            # Copy the links verbatim (suspended legs included) — they
+            # stay dormant and just skip on trade out.
+            target.portions_per_unit = item.portions_per_unit
+            target.save(update_fields=["portions_per_unit", "updated_at"])
+            _write_portion_targets(target, source_targets)
     elif target.is_suspended:
         target.is_suspended = False
         target.save(update_fields=["is_suspended", "updated_at"])
@@ -688,6 +945,8 @@ def update_shelf_item(
     low_stock_threshold=None,
     image=None,
     clear_image=False,
+    portion_item_ids=None,
+    portion_qtys=None,
 ) -> ShelfItem:
     """Edit a shelf item's details (not its quantity — use in/out for that)."""
     item = (
@@ -722,6 +981,26 @@ def update_shelf_item(
         "low_stock_threshold",
         "updated_at",
     ]
+    link_given = portion_item_ids is not None or portion_qtys is not None
+    portion_targets = None
+    if link_given:
+        # Posted (possibly blank) portion fields retarget or clear the
+        # links; posts that omit them leave them untouched. Enabling or
+        # disabling is only allowed in the Both stock mode; a suspended
+        # item stays pickable only while it is a current target.
+        if not shelf_portions_enabled():
+            raise ValidationError(
+                "Trade-out portions need the Both stock mode — turn on "
+                "items and shelf under Settings → POS → Stock."
+            )
+        portion_targets, item.portions_per_unit = _resolve_portion_targets(
+            portion_item_ids or [],
+            portion_qtys or [],
+            current_item_ids=item.portion_targets.values_list(
+                "item_id", flat=True
+            ),
+        )
+        update_fields.append("portions_per_unit")
     if image is not None:
         item.image = image
         update_fields.append("image")
@@ -729,6 +1008,8 @@ def update_shelf_item(
         item.image = None
         update_fields.append("image")
     item.save(update_fields=update_fields)
+    if portion_targets is not None:
+        _write_portion_targets(item, portion_targets)
     return item
 
 
@@ -778,6 +1059,23 @@ def apply_shelf_action(
 ) -> ShelfActionResult:
     """Run one shelf page action (register / in / out / transfer / archive); returns a success message."""
     action = (data.get("action") or "").strip()
+
+    def _portion_kwargs():
+        """Portion fields count as posted when any of the keys exists —
+        repeated ``portion_item_id``/``portion_qty`` rows only appear once
+        items are picked, while the picker's ``portion_links`` marker
+        always posts so a cleared picker still retargets."""
+        given = any(
+            key in data
+            for key in ("portion_item_id", "portion_qty", "portion_links")
+        )
+        if not given:
+            return {}
+        return {
+            "portion_item_ids": _post_list(data, "portion_item_id"),
+            "portion_qtys": _post_list(data, "portion_qty"),
+        }
+
     if action == "register":
         item = register_shelf_item(
             shop=shop,
@@ -788,6 +1086,7 @@ def apply_shelf_action(
             opening_qty=data.get("opening_qty"),
             low_stock_threshold=data.get("low_stock_threshold"),
             image=files.get("image") if files else None,
+            **_portion_kwargs(),
         )
         return ShelfActionResult(f"“{item.name}” added to the shelf list.")
     if action == "in_new":
@@ -893,6 +1192,7 @@ def apply_shelf_action(
             low_stock_threshold=data.get("low_stock_threshold"),
             image=files.get("image") if files else None,
             clear_image=(data.get("clear_image") or "").strip() in ("1", "on"),
+            **_portion_kwargs(),
         )
         return ShelfActionResult(f"“{item.name}” updated.")
     if action == "suspend":

@@ -306,7 +306,7 @@ def legacy_shop_login_redirect(request):
 
 @active_employee_required
 def workspace_module(request, role_segment, module_slug):
-    from .module_permissions import employee_may_any, permission_denied_response
+    from .module_permissions import module_entry_allowed, permission_denied_response
 
     profile = get_profile_for_request(request)
     if role_from_url_segment(role_segment) is None:
@@ -324,7 +324,7 @@ def workspace_module(request, role_segment, module_slug):
     if module is None:
         raise Http404("Module not found.")
 
-    if not employee_may_any(profile, module_slug):
+    if not module_entry_allowed(request, profile, module_slug):
         return permission_denied_response(
             request,
             profile,
@@ -2358,7 +2358,7 @@ def employee_profile(request):
             "meta": meta,
             "role_label": profile.get_role_display(),
             "status_label": profile.get_status_display(),
-            "page_sidebar": sidebar_for_profile(profile.role),
+            "page_sidebar": sidebar_for_profile(profile.role, profile=profile),
         },
     )
 
@@ -3545,6 +3545,7 @@ POS_SETTING_GROUPS = (
     {
         "title": "Transaction types",
         "summary": "",
+        "tab": "checkout",
         "toggles": (
             ("enable_sale", "Sale"),
             ("enable_credit", "Credit"),
@@ -3557,6 +3558,8 @@ POS_SETTING_GROUPS = (
     {
         "title": "Payment methods",
         "summary": "",
+        "tab": "checkout",
+        "show_stk_push": True,
         "toggles": (
             ("enable_cash", "Cash"),
             ("enable_mpesa", "M-Pesa"),
@@ -3571,17 +3574,20 @@ POS_SETTING_GROUPS = (
     {
         "title": "Discounts",
         "summary": "",
+        "tab": "checkout",
         "toggles": (("enable_discount", "Discount"),),
     },
     {
         "title": "Tax",
         "summary": "",
+        "tab": "checkout",
         "toggles": (("enable_tax", "Tax"),),
         "show_tax_percent": True,
     },
     {
         "title": "Clients",
         "summary": "",
+        "tab": "checkout",
         "toggles": (
             ("enable_client_data", "Collect client data"),
             ("require_client_phone", "Compulsory client phone"),
@@ -3591,6 +3597,7 @@ POS_SETTING_GROUPS = (
     {
         "title": "Cart",
         "summary": "",
+        "tab": "checkout",
         "toggles": (
             ("enable_cart_confirm_receipt", "Show \"Confirm receipt now\""),
             ("enable_cart_delivery", "Show \"Delivery\""),
@@ -3600,15 +3607,26 @@ POS_SETTING_GROUPS = (
     {
         "title": "Stock",
         "summary": "Pick one. Turning one on switches the others off.",
+        "tab": "stock",
         "toggles": (
             ("stock_mode_items", "Items"),
             ("stock_mode_shelf", "Shelf"),
             ("stock_mode_both", "Both"),
+            ("block_negative_stock", "Block negative stock"),
+        ),
+    },
+    {
+        "title": "Combo items",
+        "summary": "Bundle registered items into one sellable combo — the sale tallies each item by its portion.",
+        "tab": "stock",
+        "toggles": (
+            ("enable_combo_items", "Combo items"),
         ),
     },
     {
         "title": "Open & close",
         "summary": "",
+        "tab": "staff",
         "toggles": (
             ("enable_open_close", "Compulsory open & close"),
             ("require_clock_in", "Compulsory clock in"),
@@ -3618,6 +3636,7 @@ POS_SETTING_GROUPS = (
     {
         "title": "Shop switching",
         "summary": "",
+        "tab": "staff",
         "toggles": (
             ("enable_passwordless_shop_switch", "Switch shops without password"),
         ),
@@ -3625,6 +3644,7 @@ POS_SETTING_GROUPS = (
     {
         "title": "Session timeout",
         "summary": "Off = a session ends only when the user logs out. On = the user is signed out after the set minutes of inactivity.",
+        "tab": "staff",
         "toggles": (
             ("enable_employee_session_timeout", "Employee session"),
             ("enable_shop_session_timeout", "Shop session"),
@@ -3634,6 +3654,7 @@ POS_SETTING_GROUPS = (
     {
         "title": "Shop floor sidebar",
         "summary": "Choose which menu links appear on the shop page.",
+        "tab": "floor",
         "toggles": (
             ("enable_sidebar_open_close", 'Show "Open / Close shop"'),
             ("enable_sidebar_trade", 'Show "Trade"'),
@@ -3650,6 +3671,7 @@ POS_SETTING_GROUPS = (
     {
         "title": "Analytics",
         "summary": "Filter controls on the analytics pages.",
+        "tab": "floor",
         "toggles": (
             ("enable_analytics_time_filter", "Time filter on analytics"),
         ),
@@ -3660,6 +3682,7 @@ RECEIPT_SETTING_GROUPS = (
     {
         "title": "Printing",
         "summary": "Require printing on sales and choose available print channels.",
+        "tab": "printing",
         "toggles": (
             ("compulsory_print_on_sale", "Compulsory printing on sale or credit"),
             ("enable_print_bluetooth", "Print via Bluetooth"),
@@ -3672,6 +3695,10 @@ RECEIPT_SETTING_GROUPS = (
     {
         "title": "Receipts to print",
         "summary": "Choose which copies print on each sale or credit sale.",
+        "tab": "printing",
+        # Meaningless with no print channel (or when neither sale nor credit
+        # is enabled) — hidden by the page's data-pos-requires engine.
+        "requires_channels": True,
         "toggles": (
             ("print_customer_receipt", "Customer receipt"),
             ("print_staff_receipt", "Staff receipt"),
@@ -3681,6 +3708,10 @@ RECEIPT_SETTING_GROUPS = (
     {
         "title": "Confirm receipts",
         "summary": "Rules for confirming pending sales in analytics.",
+        "tab": "confirm",
+        # Only meaningful while an M-Pesa checkout method is enabled (set on
+        # the POS settings page) — hidden server-side otherwise.
+        "hide_when_no_mpesa": True,
         "toggles": (
             (
                 "require_mpesa_reference_on_confirm",
@@ -4118,6 +4149,10 @@ def _company_pos_settings(
             {
                 "title": group["title"],
                 "summary": group["summary"],
+                "tab": group.get("tab") or "",
+                "requires_channels": bool(group.get("requires_channels")),
+                "hide_when_no_mpesa": bool(group.get("hide_when_no_mpesa")),
+                "show_stk_push": bool(group.get("show_stk_push")),
                 "show_tax_percent": bool(group.get("show_tax_percent")),
                 "show_delivery_amount": bool(group.get("show_delivery_amount")),
                 "show_open_close_schedule": bool(
@@ -4147,10 +4182,16 @@ def _company_pos_settings(
     from django.urls import reverse
 
     stk_shop = stk_shop_activation_status(pos=pos)
+    from shops.models import PAYMENT_METHOD_TOGGLES
+
+    payment_methods_enabled = any(
+        bool(getattr(pos, field, False)) for field in PAYMENT_METHOD_TOGGLES.values()
+    )
     context.update(
         {
             "pos_settings": pos,
             "pos_setting_groups": groups,
+            "pos_payment_methods_enabled": payment_methods_enabled,
             "pos_settings_flags": pos_settings_as_dict(pos),
             "pos_enabled_count": enabled_count,
             "pos_toggle_count": toggle_count,

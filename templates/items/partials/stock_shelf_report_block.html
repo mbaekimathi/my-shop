@@ -100,7 +100,7 @@ Expects: shelf_report, shelf_report_shop (optional), is_movements_page.
   {% else %}
   <div class="dashboard-placeholder">
     <i data-lucide="archive" aria-hidden="true"></i>
-    <p>No shelf items are registered for {% if shelf_report.multi_shop %}these shops{% else %}this shop{% endif %} yet. Register them from the Shelf stock page.</p>
+    <p>No shelf stock changes in this period for {% if shelf_report.multi_shop %}these shops{% else %}this shop{% endif %}.</p>
   </div>
   {% endif %}
   {% endif %}

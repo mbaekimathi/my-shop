@@ -46,6 +46,7 @@
             <th scope="col">Shelf item</th>
             <th scope="col" class="store-stock-col-qty">Last buy price</th>
             <th scope="col" class="store-stock-col-qty">On shelf</th>
+            {% if shelf_health %}<th scope="col" class="store-stock-col-qty" title="Low-stock alert status">Health</th>{% endif %}
             {% if not shelf_readonly %}<th scope="col" class="shelf-stock-col-change">Change</th>{% endif %}
             {% if shelf_manage %}<th scope="col" class="shelf-stock-col-manage">Manage</th>{% endif %}
           </tr>
@@ -53,9 +54,11 @@
         <tbody>
           {% for row in shelf_items %}
           {% ifchanged row.category %}
+          {% with change_col=shelf_readonly|yesno:"0,1" manage_col=shelf_manage|yesno:"1,0" health_col=shelf_health|yesno:"1,0" %}
           <tr class="store-stock-cat-row" data-store-cat-row>
-            <td colspan="{% if shelf_readonly %}{% if shelf_manage %}4{% else %}3{% endif %}{% else %}{% if shelf_manage %}5{% else %}4{% endif %}{% endif %}">{{ row.category|default:"Uncategorised" }}</td>
+            <td colspan="{{ 3|add:change_col|add:manage_col|add:health_col }}">{{ row.category|default:"Uncategorised" }}</td>
           </tr>
+          {% endwith %}
           {% endifchanged %}
           <tr class="store-stock-row" data-shelf-row="{{ row.id }}" data-store-items-row data-search="{{ row.search_text }}">
             <td data-label="Item">
@@ -65,6 +68,7 @@
                   <span class="store-stock-item-name">{{ row.name }}</span>
                 </span>
                 {% if row.category or row.unit %}<span class="store-stock-item-cat-mobile">{% if row.category %}{{ row.category }}{% endif %}{% if row.category and row.unit %} · {% endif %}{% if row.unit %}{{ row.unit }}{% endif %}</span>{% endif %}
+                {% if row.portion_hint %}<span class="store-stock-item-cat-mobile">Trade out → {{ row.portion_hint }}</span>{% endif %}
               </div>
             </td>
             <td class="store-stock-col-qty" data-label="Last buy price">
@@ -75,6 +79,11 @@
                 {{ row.quantity_display }}{% if row.unit %} {{ row.unit }}{% endif %}{% if row.is_low %} · low{% endif %}
               </span>
             </td>
+            {% if shelf_health %}
+            <td class="store-stock-col-qty" data-label="Health">
+              <span class="low-stock-badge is-{{ row.health }}" title="{{ row.health_title }}">{{ row.health_label }}</span>
+            </td>
+            {% endif %}
             {% if not shelf_readonly %}
             <td class="shelf-stock-col-change" data-label="Change">
               <form method="post" class="shelf-stock-move">
@@ -126,6 +135,7 @@
                   data-category="{{ row.category }}"
                   data-unit="{{ row.unit }}"
                   data-threshold="{{ row.low_stock_threshold_display }}"
+                  data-portion-targets="{{ row.portion_targets_json }}"
                   data-image-url="{{ row.image_url }}"
                   aria-label="Edit {{ row.name }}"
                   title="Edit {{ row.name }}"
@@ -262,7 +272,6 @@
               data-shelf-category-input
             >
           </div>
-          <ul class="shelf-cat-suggest" id="shelf-category-suggest" role="listbox" data-shelf-category-list hidden></ul>
           <datalist data-shelf-category-source>
             {% for cat in shelf_categories %}<option value="{{ cat }}">{% endfor %}
           </datalist>
@@ -275,6 +284,7 @@
             {% endfor %}
           </div>
           {% endif %}
+          <ul class="shelf-cat-suggest" id="shelf-category-suggest" role="listbox" data-shelf-category-list hidden></ul>
         </div>
         <label class="store-stock-field">
           <span>Name</span>
@@ -294,6 +304,9 @@
             </select>
           </div>
         </label>
+        {% if shelf_portions_enabled %}
+        {% include "items/partials/shelf_portion_picker.html" %}
+        {% endif %}
         <div class="store-stock-field store-stock-field--full shelf-file-field">
           <span>Upload image <em>optional</em></span>
           <div class="shelf-file-drop" data-shelf-file-drop>
@@ -421,6 +434,9 @@
           >
         </div>
       </label>
+      {% if shelf_portions_enabled %}
+      {% include "items/partials/shelf_portion_picker.html" %}
+      {% endif %}
       <div class="store-stock-field store-stock-field--full">
         <span>Replace image <em>optional — leave blank to keep the current one</em></span>
         <div class="store-stock-input-wrap">
@@ -515,6 +531,8 @@
   var editModal = document.querySelector("[data-modal='shelf-edit']");
   var editForm = editModal && editModal.querySelector("[data-shelf-edit-form]");
   if (editModal && editForm) {
+    // Hang the fixed overlay off <body>: animated/transformed ancestors trap position:fixed.
+    document.body.appendChild(editModal);
     var closeEdit = function () {
       editModal.hidden = true;
       editModal.setAttribute("aria-hidden", "true");
@@ -547,6 +565,17 @@
         unitSel.value = unit;
         editForm.querySelector("[data-shelf-edit-threshold]").value =
           btn.getAttribute("data-threshold") || "";
+        if (window.shelfPortionPicker) {
+          var portionTargets = [];
+          try {
+            portionTargets = JSON.parse(
+              btn.getAttribute("data-portion-targets") || "[]"
+            );
+          } catch (_err) {
+            portionTargets = [];
+          }
+          window.shelfPortionPicker.fill(editForm, portionTargets);
+        }
         var clearWrap = editForm.querySelector("[data-shelf-edit-clear-wrap]");
         var thumb = editForm.querySelector("[data-shelf-edit-thumb]");
         var imageUrl = btn.getAttribute("data-image-url") || "";

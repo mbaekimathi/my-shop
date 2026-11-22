@@ -200,6 +200,61 @@
 
 .rpt-meta-chip .lucide { width: 0.85rem; height: 0.85rem; opacity: 0.85; }
 
+/* Hero day picker (all-shops stock page) */
+.rpt-dateform {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.9rem;
+}
+
+.rpt-dateform input[type="date"] {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.5rem 0.85rem;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color-scheme: dark;
+  outline: none;
+}
+
+.rpt-dateform input[type="date"]:focus {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+
+.rpt-dateform__go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.3rem;
+  height: 2.3rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--wa-send);
+  color: #fff;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.rpt-dateform__go:hover { filter: brightness(1.08); }
+.rpt-dateform__go .lucide { width: 1rem; height: 1rem; }
+
+/* Card-head trailing link ("All sections") */
+.rpt-headlink { margin-left: auto; flex: 0 0 auto; }
+
+/* Scope/stock-type chips inside the hero meta row */
+a.rpt-scope { text-decoration: none; cursor: pointer; transition: background 0.15s ease; }
+a.rpt-scope:hover { background: rgba(255, 255, 255, 0.2); color: #fff; }
+.rpt-scope.is-on {
+  background: #fff;
+  color: var(--wa-teal);
+  box-shadow: none;
+}
+
 /* ---------- Alerts ---------- */
 .rpt-alert {
   display: flex;

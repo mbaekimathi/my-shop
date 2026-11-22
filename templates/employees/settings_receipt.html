@@ -31,16 +31,63 @@
     </div>
   </header>
 
-  <div class="pos-settings-groups">
+  <div class="pos-settings-toolbar">
+    <label class="item-search-field pos-settings-filter">
+      <i data-lucide="search" aria-hidden="true"></i>
+      <input
+        type="search"
+        placeholder="Search settings…"
+        autocomplete="off"
+        aria-label="Search receipt settings"
+        data-pos-filter
+      >
+    </label>
+    <p class="pos-settings-filter-empty" data-pos-filter-empty hidden>
+      No settings match your search.
+    </p>
+  </div>
+
+  <div class="pos-settings-groups pos-settings-groups--list">
     {% for group in pos_setting_groups %}
-    <section class="pos-settings-group">
+    <section
+      class="pos-settings-group"
+      id="pos-group-{{ group.title|slugify }}"
+      data-pos-group
+      data-group-title="{{ group.title }}"
+      {% if group.tab %}data-pos-tab-section="{{ group.tab }}"{% endif %}
+      {% if group.requires_channels %}
+      data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+      {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+      {% if not pos_settings.enable_sale and not pos_settings.enable_credit %}hidden data-pos-locked-hidden{% endif %}
+      {% endif %}
+      {% if group.hide_when_no_mpesa and not stk_shop.mpesa_checkout_enabled %}hidden{% endif %}
+    >
       <div class="pos-settings-group-head">
-        <h3>{{ group.title }}</h3>
-        <p>{{ group.summary }}</p>
+        <div>
+          <h3>{{ group.title }}</h3>
+          <p>{{ group.summary }}</p>
+        </div>
+        <p class="staff-count">
+          {{ group.toggles|length }} setting{{ group.toggles|length|pluralize }}
+        </p>
       </div>
       <ul class="pos-settings-list">
         {% for toggle in group.toggles %}
-        <li class="pos-settings-row">
+        <li
+          class="pos-settings-row"
+          {% if toggle.field == "compulsory_print_on_sale" or toggle.field == "show_client_phone_on_receipt" %}
+          data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+          {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+          {% endif %}
+          {% if toggle.field == "show_client_phone_on_receipt" %}
+          {% if not pos_settings.enable_client_data %}hidden data-pos-locked-hidden{% endif %}
+          {% endif %}
+          {% if toggle.field == "enable_receipt_payment_methods" %}
+          data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+          {% if not pos_settings.enabled_print_channels or not pos_payment_methods_enabled %}hidden{% endif %}
+          {% if not pos_payment_methods_enabled %}data-pos-locked-hidden{% endif %}
+          {% endif %}
+        >
           <div class="pos-settings-copy">
             <strong>{{ toggle.label }}</strong>
           </div>
@@ -64,10 +111,20 @@
     </section>
     {% endfor %}
 
-    <section class="pos-settings-group receipt-paper-group">
+    <section
+      class="pos-settings-group receipt-paper-group"
+      id="pos-group-paper-size"
+      data-pos-group
+      data-group-title="Paper size"
+      data-pos-tab-section="printing"
+      data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+      {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+    >
       <div class="pos-settings-group-head">
-        <h3>Paper size</h3>
-        <p>Thermal roll width used when receipts print.</p>
+        <div>
+          <h3>Paper size</h3>
+          <p>Thermal roll width used when receipts print.</p>
+        </div>
       </div>
       <div class="receipt-paper-picker" role="group" aria-label="Receipt paper size">
         <label class="receipt-paper-option{% if receipt_paper_width == '80' %} is-active{% endif %}">
@@ -99,10 +156,18 @@
       </div>
     </section>
 
-    <section class="pos-settings-group receipt-format-group">
+    <section
+      class="pos-settings-group receipt-format-group"
+      id="pos-group-receipt-number-format"
+      data-pos-group
+      data-group-title="Receipt number format"
+      data-pos-tab-section="content"
+    >
       <div class="pos-settings-group-head">
-        <h3>Receipt number format</h3>
-        <p>Short prefix + 4-digit sequence (example: <code>S0001</code>).</p>
+        <div>
+          <h3>Receipt number format</h3>
+          <p>Short prefix + 4-digit sequence (example: <code>S0001</code>).</p>
+        </div>
       </div>
       <ul class="pos-settings-list receipt-format-list">
         <li class="pos-settings-row pos-settings-row--format" data-receipt-kind-row="sale"{% if not pos_settings.enable_sale %} hidden{% endif %}>
@@ -210,10 +275,21 @@
       </ul>
     </section>
 
-    <section class="pos-settings-group receipt-payment-group">
+    <section
+      class="pos-settings-group receipt-payment-group"
+      id="pos-group-payment-details"
+      data-pos-group
+      data-group-title="Payment details"
+      data-pos-tab-section="content"
+      data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+      data-pos-requires-all="enable_receipt_payment_methods"
+      {% if not pos_settings.enabled_print_channels or not pos_settings.enable_receipt_payment_methods %}hidden{% endif %}
+    >
       <div class="pos-settings-group-head">
-        <h3>Payment details</h3>
-        <p>M-Pesa collection details printed on receipts.</p>
+        <div>
+          <h3>Payment details</h3>
+          <p>M-Pesa collection details printed on receipts.</p>
+        </div>
       </div>
       <div class="receipt-payment-body">
         <div class="receipt-paper-picker receipt-payment-type" role="group" aria-label="M-Pesa collection type">
@@ -364,10 +440,20 @@
       </div>
     </section>
 
-    <section class="pos-settings-group receipt-font-group">
+    <section
+      class="pos-settings-group receipt-font-group"
+      id="pos-group-receipt-text-style"
+      data-pos-group
+      data-group-title="Receipt text style"
+      data-pos-tab-section="content"
+      data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+      {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+    >
       <div class="pos-settings-group-head">
-        <h3>Receipt text style</h3>
-        <p>Size and weight of printed receipt text.</p>
+        <div>
+          <h3>Receipt text style</h3>
+          <p>Size and weight of printed receipt text.</p>
+        </div>
       </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row pos-settings-row--format">
@@ -399,10 +485,20 @@
       </ul>
     </section>
 
-    <section class="pos-settings-group receipt-qr-group">
+    <section
+      class="pos-settings-group receipt-qr-group"
+      id="pos-group-qr-code"
+      data-pos-group
+      data-group-title="QR code"
+      data-pos-tab-section="content"
+      data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+      {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+    >
       <div class="pos-settings-group-head">
-        <h3>QR code</h3>
-        <p>Optional scannable QR on printed receipts.</p>
+        <div>
+          <h3>QR code</h3>
+          <p>Optional scannable QR on printed receipts.</p>
+        </div>
       </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row">
@@ -477,10 +573,20 @@
       </div>
     </section>
 
-    <section class="pos-settings-group receipt-return-notice-group">
+    <section
+      class="pos-settings-group receipt-return-notice-group"
+      id="pos-group-return-policy"
+      data-pos-group
+      data-group-title="Return policy"
+      data-pos-tab-section="content"
+      data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+      {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+    >
       <div class="pos-settings-group-head">
-        <h3>Return policy</h3>
-        <p>Shown at the bottom of sale and credit receipts.</p>
+        <div>
+          <h3>Return policy</h3>
+          <p>Shown at the bottom of sale and credit receipts.</p>
+        </div>
       </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row">
@@ -523,10 +629,20 @@
       </ul>
     </section>
 
-    <section class="pos-settings-group receipt-maintainer-group">
+    <section
+      class="pos-settings-group receipt-maintainer-group"
+      id="pos-group-system-maintenance"
+      data-pos-group
+      data-group-title="System maintenance"
+      data-pos-tab-section="content"
+      data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+      {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+    >
       <div class="pos-settings-group-head">
-        <h3>System maintenance</h3>
-        <p>Support contact printed at the bottom of receipts.</p>
+        <div>
+          <h3>System maintenance</h3>
+          <p>Support contact printed at the bottom of receipts.</p>
+        </div>
       </div>
       <ul class="pos-settings-list">
         <li class="pos-settings-row">
@@ -570,7 +686,16 @@
     </section>
   </div>
 
-  <section class="receipt-design-panel">
+  <section
+    class="receipt-design-panel"
+    id="pos-group-copies-preview"
+    data-pos-group
+    data-group-title="Copies that will print"
+    data-pos-tab-section="printing"
+    data-pos-requires="enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+    {% if not pos_settings.enabled_print_channels or not pos_settings.enable_sale and not pos_settings.enable_credit %}hidden{% endif %}
+    {% if not pos_settings.enable_sale and not pos_settings.enable_credit %}data-pos-locked-hidden{% endif %}
+  >
     <div class="receipt-design-head">
       <div>
         <p class="stock-kicker">Preview</p>
@@ -628,7 +753,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/pos-settings.js' %}?v=2"></script>
+<script defer src="{% static 'js/pos-settings.js' %}?v=18"></script>
 <script defer src="{% static 'js/shop-printer.js' %}?v=20261217-batch-copies"></script>
 <script defer src="{% static 'js/receipt-settings.js' %}?v=23"></script>
 {% endblock %}

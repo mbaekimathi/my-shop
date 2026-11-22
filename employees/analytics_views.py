@@ -33,9 +33,12 @@ from .analytics_services import (
     build_confirm_receipts_page,
     build_confirm_receipts_print_document,
     build_confirm_receipts_rows,
+    confirm_receipts_report_pdf_response,
     build_credit_clients_page,
     build_credit_report_page,
     build_item_report_page,
+    build_item_suppliers_page,
+    build_shelf_item_suppliers_page,
     build_receipts_print_document,
     build_return_receipts_audits,
     build_return_receipts_page,
@@ -579,6 +582,47 @@ def analytics_section(request, role_segment, section):
         if (section or "").strip().lower() != "balances":
             return HttpResponseNotAllowed(["GET"])
         return _balances_settings_post(request, profile)
+
+    if (section or "").strip().lower() == "suppliers":
+        # The selected suppliers tab (and its in-page mode) sticks: a fresh
+        # visit with no ?view= restores what the user last picked.
+        # ?view=all opts back out. ?view=supplied is the legacy standalone
+        # tab — now the items view's supplied mode.
+        view = (request.GET.get("view") or "").strip().lower()
+        mode = (request.GET.get("mode") or "").strip().lower()
+        session = getattr(request, "session", None)
+        if view == "supplied":
+            params = request.GET.copy()
+            params["view"] = "items"
+            params["mode"] = "supplied"
+            return redirect(f"{request.path}?{params.urlencode()}")
+        if session is not None:
+            if view in ("all", "items", "shelf"):
+                if session.get("suppliers_view") != view:
+                    session["suppliers_view"] = view
+                saved_mode = (
+                    "supplied"
+                    if mode == "supplied" and view in ("items", "shelf")
+                    else ""
+                )
+                if session.get("suppliers_mode") != saved_mode:
+                    session["suppliers_mode"] = saved_mode
+            elif not view:
+                saved = (session.get("suppliers_view") or "").strip().lower()
+                if saved == "supplied":
+                    params = request.GET.copy()
+                    params["view"] = "items"
+                    params["mode"] = "supplied"
+                    return redirect(f"{request.path}?{params.urlencode()}")
+                if saved and saved != "all":
+                    params = request.GET.copy()
+                    params["view"] = saved
+                    saved_mode = (
+                        session.get("suppliers_mode") or ""
+                    ).strip().lower()
+                    if saved in ("items", "shelf") and saved_mode == "supplied":
+                        params["mode"] = "supplied"
+                    return redirect(f"{request.path}?{params.urlencode()}")
 
     return _render_analytics(request, profile, section_slug=section)
 
@@ -1323,7 +1367,7 @@ def analytics_confirm_receipts(request, role_segment):
 @active_employee_required
 @require_GET
 def analytics_confirm_receipts_print(request, role_segment):
-    """Printable filtered confirm-receipts list (A4 browser print)."""
+    """Printable / downloadable confirm-receipts list (print popup)."""
     from django.utils import timezone
 
     from shops.services import get_company_profile
@@ -1349,6 +1393,12 @@ def analytics_confirm_receipts_print(request, role_segment):
     if denied is not None:
         return denied
 
+    paper = (request.GET.get("paper") or "a4").strip().lower()
+    if paper in ("50",):
+        paper = "58"
+    if paper not in ("a4", "80", "58"):
+        paper = "a4"
+
     document = build_confirm_receipts_print_document(
         profile=profile, request=request
     )
@@ -1356,6 +1406,7 @@ def analytics_confirm_receipts_print(request, role_segment):
     company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
     printed_at = timezone.localtime()
     as_estimate = (request.GET.get("estimate") or "").strip() == "1"
+    as_download = (request.GET.get("download") or "").strip() == "1"
     if as_estimate:
         return JsonResponse(
             {
@@ -1364,16 +1415,20 @@ def analytics_confirm_receipts_print(request, role_segment):
                 "receipt_count": document.get("receipt_total") or 0,
                 "a4_page_estimate": document.get("a4_page_estimate") or 1,
                 "kind_label": document.get("kind_label") or "Sales",
+                "count_label": document.get("count_label") or "receipt",
                 "period_label": document.get("period_label") or "",
             }
         )
+
+    if as_download:
+        return confirm_receipts_report_pdf_response(document=document)
 
     return render(
         request,
         "employees/analytics_confirm_receipts_print.html",
         {
             "document": document,
-            "paper": "a4",
+            "paper": paper,
             "error": "",
             "printed_at": printed_at,
             "company_name": company_name,
@@ -2354,6 +2409,92 @@ def analytics_supplier_account(request, role_segment, kind, supplier_id):
 
     return _render_supplier_account(
         request, profile, module, kind=kind, supplier_id=supplier_id
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_item_suppliers(request, role_segment, item_id):
+    """Suppliers of one item (/…/analytics/suppliers/items/<id>/)."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        from django.urls import reverse
+
+        target = reverse(
+            "employees:analytics_item_suppliers",
+            kwargs={"role_segment": expected, "item_id": item_id},
+        )
+        query = request.GET.urlencode()
+        return redirect(f"{target}?{query}" if query else target)
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    page = build_item_suppliers_page(
+        profile=profile, request=request, item_id=item_id
+    )
+    return _render_analytics(
+        request,
+        profile,
+        section_slug="suppliers",
+        page_override=page,
+        meta_override={
+            "title": f"{page['headline']} · Item suppliers",
+            "headline": page["headline"],
+            "summary": page.get("lead") or "Suppliers to pay",
+        },
+    )
+
+
+@active_employee_required
+@require_GET
+def analytics_shelf_item_suppliers(request, role_segment, item_id):
+    """Suppliers of one shelf item (/…/analytics/suppliers/shelf-items/<id>/)."""
+    profile = get_profile_for_request(request)
+    if role_from_url_segment(role_segment) is None:
+        from django.http import Http404
+
+        raise Http404("Role portal not found.")
+
+    expected = role_url_segment(profile.role)
+    if role_segment != expected:
+        from django.urls import reverse
+
+        target = reverse(
+            "employees:analytics_shelf_item_suppliers",
+            kwargs={"role_segment": expected, "item_id": item_id},
+        )
+        query = request.GET.urlencode()
+        return redirect(f"{target}?{query}" if query else target)
+
+    module = get_dashboard_module("analytics", profile.role)
+    if module is None:
+        from django.http import Http404
+
+        raise Http404("Module not found.")
+
+    page = build_shelf_item_suppliers_page(
+        profile=profile, request=request, shelf_item_id=item_id
+    )
+    return _render_analytics(
+        request,
+        profile,
+        section_slug="suppliers",
+        page_override=page,
+        meta_override={
+            "title": f"{page['headline']} · Shelf item suppliers",
+            "headline": page["headline"],
+            "summary": page.get("lead") or "Suppliers to pay",
+        },
     )
 
 

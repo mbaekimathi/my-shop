@@ -1,0 +1,217 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block title %}Stock movement — {{ company_name|default:"MY-SHOP" }} Chat{% endblock %}
+{% block body_class %}page-day-report{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/chat-report.css' %}?v=2">
+{% endblock %}
+
+{% block body %}
+<div class="rpt">
+  <header class="rpt-bar">
+    <a class="rpt-bar__btn" href="{{ back_href }}" title="{{ back_label }}" aria-label="{{ back_label }}">
+      <i data-lucide="arrow-left" aria-hidden="true"></i>
+    </a>
+    <div class="rpt-bar__title">
+      <strong>Stock movement</strong>
+      <span>{{ page_label }} · {{ company_name|default:"MY-SHOP" }}</span>
+    </div>
+    <div class="rpt-bar__actions">
+      <button type="button" class="rpt-bar__btn" data-theme-toggle title="Toggle theme" aria-label="Toggle theme">
+        <i data-lucide="moon" data-icon-dark></i><i data-lucide="sun" data-icon-light></i>
+      </button>
+    </div>
+  </header>
+
+  <main class="rpt-main">
+    <section class="rpt-hero">
+      <div class="rpt-hero__top">
+        <div class="rpt-hero__brand">
+          <p class="rpt-kicker">{{ page_label }} · stock ledger</p>
+          <h1>{% if is_today %}Today · {% endif %}{{ day_label }}</h1>
+          <p class="rpt-hero__sub">Stock in, stock out, trades, transfers and suppliers.</p>
+        </div>
+      </div>
+      <div class="rpt-hero__meta">
+        <span class="rpt-meta-chip"><i data-lucide="package" aria-hidden="true"></i> {{ total_moves }} move{{ total_moves|pluralize }}</span>
+        <span class="rpt-meta-chip"><i data-lucide="banknote" aria-hidden="true"></i> {{ total_value_fmt }} moved</span>
+        {% if scope_options %}
+        {% for o in scope_options %}
+        <a class="rpt-meta-chip rpt-scope{% if o.active %} is-on{% endif %}" href="{{ o.href }}">{{ o.label }}</a>
+        {% endfor %}
+        {% endif %}
+        {% if kind_options %}
+        {% for o in kind_options %}
+        <a class="rpt-meta-chip rpt-scope{% if o.active %} is-on{% endif %}" href="{{ o.href }}">{{ o.label }}</a>
+        {% endfor %}
+        {% endif %}
+      </div>
+      <form method="get" class="rpt-dateform">
+        <input type="date" name="date" value="{{ day_iso }}" aria-label="Pick a day">
+        <input type="hidden" name="scope" value="{{ scope }}">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        {% if view %}<input type="hidden" name="view" value="{{ view }}">{% endif %}
+        <button type="submit" class="rpt-dateform__go" title="Apply" aria-label="Apply">
+          <i data-lucide="arrow-right" aria-hidden="true"></i>
+        </button>
+      </form>
+    </section>
+
+    {% if show_mode_alert %}
+    <div class="rpt-alert" role="status">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <p><strong>Item stock tracking is off</strong> — switch the stock type filter to the enabled ledger.</p>
+    </div>
+    {% endif %}
+
+    {% if view == "" %}
+    <section class="rpt-card">
+      <header class="rpt-card__head"><h2>Pick a section</h2></header>
+      <div class="rpt-table-wrap">
+        <table class="rpt-table">
+          <thead>
+            <tr>
+              <th>Section</th>
+              <th class="num">Moves</th>
+              <th class="num">Units</th>
+              <th class="num">Value</th>
+              <th class="num"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in sections %}
+            <tr>
+              <td>{{ s.label }}</td>
+              <td class="num">{{ s.moves }}</td>
+              <td class="num">{{ s.units_fmt }}</td>
+              <td class="num rpt-amt">{{ s.value_fmt }}</td>
+              <td class="num"><a class="rpt-link" href="?{{ base_qs }}&amp;view={{ s.key }}">View items</a></td>
+            </tr>
+            {% endfor %}
+            <tr>
+              <td>Suppliers</td>
+              <td class="num">{{ suppliers|length }}</td>
+              <td class="num">{{ suppliers_units_fmt }}</td>
+              <td class="num rpt-amt">{{ suppliers_value_fmt }}</td>
+              <td class="num"><a class="rpt-link" href="?{{ base_qs }}&amp;view=suppliers">View</a></td>
+            </tr>
+            <tr class="rpt-total">
+              <td>Stock report</td>
+              <td class="num">{{ total_moves }}</td>
+              <td class="num"><span class="rpt-dash">—</span></td>
+              <td class="num rpt-amt">{{ total_value_fmt }}</td>
+              <td class="num"><a class="rpt-link" href="?{{ base_qs }}&amp;view=report">View</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if view == "suppliers" %}
+    <section class="rpt-card">
+      <header class="rpt-card__head">
+        <h2>Suppliers — {{ day_label }}</h2>
+        <a class="rpt-headlink rpt-link" href="?{{ base_qs }}">All sections</a>
+      </header>
+      {% if suppliers %}
+      <div class="rpt-table-wrap">
+        <table class="rpt-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="num">Qty</th>
+              <th class="num">Unit</th>
+              <th class="num">Value</th>
+              <th>Shop</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sup in suppliers %}
+            <tr class="rpt-group">
+              <td colspan="5">{{ sup.name }}{% if sup.phone %} · {{ sup.phone }}{% endif %} — {{ sup.moves }} deliver{{ sup.moves|pluralize:"y,ies" }} · {{ sup.units_fmt }} units · {{ sup.value_fmt }}</td>
+            </tr>
+            {% for l in sup.lines %}
+            <tr>
+              <td>{{ l.item }}{% if l.serials %}<span class="cell-sub">{{ l.serials }} serial{{ l.serials|pluralize }}</span>{% endif %}</td>
+              <td class="num">{{ l.qty_fmt }}</td>
+              <td class="num">{{ l.unit_fmt }}</td>
+              <td class="num rpt-amt">{{ l.value_fmt }}</td>
+              <td>{{ l.shop }}</td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="rpt-empty">No supplier deliveries recorded for {{ day_label }}.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% for sec in cards %}
+    <section class="rpt-card">
+      <header class="rpt-card__head">
+        <h2>{{ sec.label }} — {{ day_label }}</h2>
+        {% if view != "report" %}<a class="rpt-headlink rpt-link" href="?{{ base_qs }}">All sections</a>{% endif %}
+      </header>
+      {% if sec.rows %}
+      <div class="rpt-table-wrap">
+        <table class="rpt-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="num">Qty</th>
+              <th class="num">Unit</th>
+              <th class="num">Value</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for mv in sec.rows %}
+            <tr class="rpt-group">
+              <td colspan="5">
+                {{ mv.when }} · {{ mv.head }}
+                {% if mv.status %} · <span class="rpt-chip">{{ mv.status }}</span>{% endif %}
+                {% if mv.source %} · {{ mv.source }}{% endif %}
+                {% if mv.by %} · by {{ mv.by }}{% endif %}
+                {% if mv.note %} · {{ mv.note }}{% endif %}
+              </td>
+            </tr>
+            {% for l in mv.lines %}
+            <tr>
+              <td>{{ l.item }}{% if l.serials %}<span class="cell-sub">{{ l.serials }} serial{{ l.serials|pluralize }}</span>{% endif %}</td>
+              <td class="num">{{ l.qty_fmt }}</td>
+              <td class="num">{{ l.unit_fmt }}</td>
+              <td class="num rpt-amt">{{ l.value_fmt }}</td>
+              <td>
+                {% if l.supplier %}{{ l.supplier }}{% if l.supplier_phone %} · {{ l.supplier_phone }}{% endif %}{% endif %}
+                {% if l.reason %}<span class="rpt-chip">{{ l.reason }}</span>{% endif %}
+                {% if l.note %}<span class="cell-sub">{{ l.note }}</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+            <tr class="rpt-total">
+              <td>Total</td>
+              <td class="num">{{ sec.units_fmt }}</td>
+              <td class="num"><span class="rpt-dash">—</span></td>
+              <td class="num rpt-amt">{{ sec.value_fmt }}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="rpt-empty">No {{ sec.label|lower }} recorded for {{ day_label }}.</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    <p class="rpt-footer">Values use recorded buying price (in) and unit cost (out) — {{ company_name|default:"MY-SHOP" }}.</p>
+  </main>
+</div>
+{% endblock %}

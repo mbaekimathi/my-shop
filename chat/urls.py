@@ -13,6 +13,7 @@ urlpatterns = [
     path("logout/", views.logout_view, name="logout"),
     path("login/pick/", views.pick_shop, name="pick_shop"),
     path("all/", views.all_shops_view, name="all_shops"),
+    path("all/stock/", views.all_stock_view, name="all_stock"),
     path("role/<slug:slug>/", views.role_home_view, name="role_home"),
     path("api/store/items/", views.api_store_items, name="api_store_items"),
     path(
@@ -52,6 +53,7 @@ urlpatterns = [
         name="all_session_report",
     ),
     path("chat/", views.app_view, name="app"),
+    path("chat/stock/", views.shop_stock_view, name="shop_stock"),
     path("chat/receipts/", views.receipts_view, name="receipts"),
     path("api/receipts/", views.api_receipts_list, name="api_receipts_list"),
     path(

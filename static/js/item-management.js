@@ -20,6 +20,12 @@
     const selected = root.querySelector('input[name="pricing_mode"]:checked');
     const mode = selected?.value || "single";
     const isEditForm = Boolean(root.closest("[data-edit-form]"));
+    // Combos price off their items' total — shop prices stay optional
+    // (blank sells at the total), so nothing here is ever required.
+    const isCombo =
+      root
+        .closest("form")
+        ?.querySelector('[name="item_type"]:checked')?.value === "combo";
     root.querySelectorAll("[data-pricing-panel]").forEach((panel) => {
       const isActive = panel.dataset.pricingPanel === mode;
       panel.hidden = !isActive;
@@ -30,17 +36,17 @@
 
     const singleInput = root.querySelector("[data-single-shop-price]");
     if (singleInput && !singleInput.disabled) {
-      singleInput.required = true;
+      singleInput.required = !isCombo;
     }
 
     root.querySelectorAll("[data-shop-price-input]").forEach((input) => {
-      input.required = mode === "individual" && !input.disabled;
+      input.required = mode === "individual" && !input.disabled && !isCombo;
     });
 
     const fillValue = singleInput?.value?.trim() || "";
 
     // Only pre-fill blank per-shop prices when registering a new item.
-    if (mode === "individual" && fillValue && !isEditForm) {
+    if (mode === "individual" && fillValue && !isEditForm && !isCombo) {
       root.querySelectorAll("[data-shop-price-input]").forEach((input) => {
         if (!input.value) input.value = fillValue;
       });
@@ -62,7 +68,13 @@
     const name = modal.dataset.modal;
     if (!name) return;
 
-    document.querySelectorAll(`[data-modal-open="${name}"]`).forEach((trigger) => {
+    // The combo sidebar action opens the same register modal — item-combo.js
+    // pre-selects the combo item type on that click.
+    const openSelector =
+      name === "register-item"
+        ? '[data-modal-open="register-item"], [data-modal-open="register-item-combo"]'
+        : `[data-modal-open="${name}"]`;
+    document.querySelectorAll(openSelector).forEach((trigger) => {
       trigger.addEventListener("click", () => {
         if (name === "register-item") {
           const trackSerial = modal.querySelector('input[type="checkbox"][name="track_serial_number"]');

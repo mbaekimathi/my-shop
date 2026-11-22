@@ -70,9 +70,55 @@ class RoleScopedSettingsUrlTests(TestCase):
         self.assertContains(response, 'data-field="enable_shop_session_timeout"')
         self.assertContains(response, 'data-employee-timeout-input')
         self.assertContains(response, 'data-shop-timeout-input')
-        self.assertContains(response, 'href="#pos-group-tax"')
         self.assertContains(response, 'data-pos-enabled-count')
         self.assertContains(response, 'data-pos-group')
+
+    def test_company_pos_renders_sidebar_tabs_and_linked_settings(self):
+        client = self._login_employee()
+        response = client.get("/it-support/settings/company-pos/")
+        self.assertEqual(response.status_code, 200)
+        # The POS settings sidebar link becomes an open group whose children
+        # are the page tabs.
+        self.assertContains(response, 'data-nav-group')
+        for slug in ("all", "checkout", "stock", "staff", "floor"):
+            self.assertContains(
+                response,
+                f'href="/it-support/settings/company-pos/#tab-{slug}"',
+            )
+            self.assertContains(response, f'data-nav-key="pos-tab-{slug}"')
+        self.assertContains(response, 'data-pos-tab-section="checkout"')
+        self.assertContains(response, 'data-pos-tab-section="stock"')
+        self.assertContains(response, 'data-pos-tab-section="staff"')
+        self.assertContains(response, 'data-pos-tab-section="floor"')
+        self.assertContains(response, 'id="pos-group-stk-push"')
+        self.assertContains(response, 'data-pos-requires="enable_trade_out|enable_trade_in"')
+        self.assertContains(response, 'data-pos-requires="stock_mode_shelf|stock_mode_both"')
+
+    def test_company_receipt_renders_sidebar_tabs_and_linked_settings(self):
+        client = self._login_employee()
+        response = client.get("/it-support/settings/company-receipt/")
+        self.assertEqual(response.status_code, 200)
+        # The Receipt settings sidebar link becomes an open group whose
+        # children are the page tabs.
+        self.assertContains(response, 'data-nav-group')
+        for slug in ("all", "printing", "content", "confirm"):
+            self.assertContains(
+                response,
+                f'href="/it-support/settings/company-receipt/#tab-{slug}"',
+            )
+            self.assertContains(response, f'data-nav-key="pos-tab-{slug}"')
+        self.assertContains(response, 'data-pos-tab-section="printing"')
+        self.assertContains(response, 'data-pos-tab-section="content"')
+        self.assertContains(response, 'data-pos-tab-section="confirm"')
+        self.assertContains(response, 'data-pos-filter')
+        # Channel-linked settings only appear while a print channel is on.
+        channels = "enable_print_bluetooth|enable_print_usb|enable_print_wifi"
+        self.assertContains(response, f'data-pos-requires="{channels}"')
+        self.assertContains(response, 'id="pos-group-paper-size"')
+        self.assertContains(response, 'id="pos-group-copies-preview"')
+        self.assertContains(
+            response, 'data-pos-requires-all="enable_receipt_payment_methods"'
+        )
 
     def test_wrong_role_segment_redirects_to_session_role(self):
         client = self._login_employee()

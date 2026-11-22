@@ -39,64 +39,19 @@
         data-pos-filter
       >
     </label>
-    <nav class="perm-module-nav pos-settings-jump" aria-label="Jump to a settings group">
-      <a class="perm-module-nav-link" href="#pos-group-stk-push" data-pos-jump="stk-push">STK Push</a>
-      {% for group in pos_setting_groups %}
-      <a class="perm-module-nav-link" href="#pos-group-{{ group.title|slugify }}" data-pos-jump="{{ group.title|slugify }}">{{ group.title }}</a>
-      {% endfor %}
-    </nav>
     <p class="pos-settings-filter-empty" data-pos-filter-empty hidden>
       No settings match your search.
     </p>
   </div>
 
   <div class="pos-settings-groups pos-settings-groups--list">
-    <section
-      class="pos-settings-group"
-      id="pos-group-stk-push"
-      data-pos-group
-      data-group-title="STK Push M-Pesa"
-      data-stk-shop-group
-    >
-      <div class="pos-settings-group-head">
-        <div>
-          <h3>STK Push</h3>
-          <p>Safaricom STK Push prompt on the shop cart.</p>
-        </div>
-        <p class="staff-count">1 setting</p>
-      </div>
-      <ul class="pos-settings-list">
-        <li class="pos-settings-row">
-          <div class="pos-settings-copy">
-            <strong>STK Push on shop</strong>
-            <p data-stk-shop-hint>
-              {% if stk_shop.stk_ready_for_shop %}Active on cart.{% elif not stk_shop.mpesa_checkout_enabled %}Enable M-Pesa below.{% elif not stk_shop.stk_credentials_ready %}Set up <a href="{{ daraja_settings_url }}">Daraja</a> first.{% else %}Ready to enable.{% endif %}
-            </p>
-            <p class="daraja-form-message" data-stk-shop-message hidden></p>
-          </div>
-          <label class="perm-switch{% if not stk_shop.enable_stk_push %} is-denied{% endif %}">
-            <input
-              type="checkbox"
-              class="perm-switch-input"
-              {% if stk_shop.enable_stk_push %}checked{% endif %}
-              data-stk-shop-toggle
-              aria-label="Enable STK Push on shop"
-            >
-            <span class="perm-switch-ui" aria-hidden="true"></span>
-            <span class="perm-switch-state" data-stk-shop-state>
-              {% if stk_shop.enable_stk_push %}On{% else %}Off{% endif %}
-            </span>
-          </label>
-        </li>
-      </ul>
-    </section>
-
     {% for group in pos_setting_groups %}
     <section
       class="pos-settings-group"
       id="pos-group-{{ group.title|slugify }}"
       data-pos-group
       data-group-title="{{ group.title }}"
+      {% if group.tab %}data-pos-tab-section="{{ group.tab }}"{% endif %}
     >
       <div class="pos-settings-group-head">
         <div>
@@ -115,6 +70,26 @@
           data-client-data-dependent
           {% if not pos_settings.enable_client_data %}hidden{% endif %}
           {% endif %}
+          {% if toggle.field == "block_negative_stock" or toggle.field == "enable_combo_items" %}
+          data-stock-items-dependent
+          {% if not pos_settings.enable_stock_tracking %}hidden{% endif %}
+          {% endif %}
+          {% if toggle.field == "enable_cart_payment_options" %}
+          data-pos-requires="enable_cash|enable_mpesa|enable_card|enable_cash_mpesa|enable_cash_card|enable_mpesa_card|enable_cash_mpesa_card"
+          {% if not pos_payment_methods_enabled %}hidden{% endif %}
+          {% endif %}
+          {% if toggle.field == "enable_sidebar_trade" %}
+          data-pos-requires="enable_trade_out|enable_trade_in"
+          {% if not pos_settings.enable_trade_out and not pos_settings.enable_trade_in %}hidden{% endif %}
+          {% endif %}
+          {% if toggle.field == "enable_sidebar_shelf_stock" %}
+          data-pos-requires="stock_mode_shelf|stock_mode_both"
+          {% if not pos_settings.enable_shelf_mode %}hidden{% endif %}
+          {% endif %}
+          {% if toggle.field == "enable_sidebar_printer" %}
+          data-print-channels-dependent
+          {% if not pos_settings.enabled_print_channels %}hidden{% endif %}
+          {% endif %}
         >
           <div class="pos-settings-copy">
             <strong>{{ toggle.label }}</strong>
@@ -124,6 +99,8 @@
             <p>Track a shelf stock list you register in Stock Management. Shelf items are not sold, so the shop page shows no items.</p>
             {% elif toggle.field == "stock_mode_both" %}
             <p>Track stock on the items you sell and keep a separate shelf stock list, managed in Stock Management.</p>
+            {% elif toggle.field == "block_negative_stock" %}
+            <p>Stop a sale that would take an item's stock below zero. When off, tracked items can sell into negative stock.</p>
             {% endif %}
             {% if toggle.employee_perm %}
             <p class="pos-settings-employee-link">
@@ -352,6 +329,9 @@
         {% endif %}
       </ul>
     </section>
+    {% if group.show_stk_push %}
+    {% include "employees/partials/pos_stk_push_group.html" %}
+    {% endif %}
     {% endfor %}
   </div>
 </section>
@@ -359,5 +339,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/pos-settings.js' %}?v=15"></script>
+<script src="{% static 'js/pos-settings.js' %}?v=18"></script>
 {% endblock %}

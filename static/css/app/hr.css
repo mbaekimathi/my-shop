@@ -1870,6 +1870,12 @@ a.hr-perm-card:hover .hr-perm-card-arrow {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.item-status-icon--combo {
+  background: color-mix(in srgb, var(--warn, #b45309) 14%, var(--surface));
+  color: var(--warn, #b45309);
+  border-color: color-mix(in srgb, var(--warn, #b45309) 30%, transparent);
+}
+
 .item-row--suspended {
   opacity: 0.72;
 }

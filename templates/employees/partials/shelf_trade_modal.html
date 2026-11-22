@@ -97,6 +97,7 @@
             <div class="stock-flow-row-copy">
               <strong>{{ row.name }}</strong>
               <small>{{ row.unit }} · on shelf {{ row.quantity_display }}</small>
+              {% if row.portion_hint %}<small>Trade out → {{ row.portion_hint }}</small>{% endif %}
             </div>
             <div class="stock-flow-inputs" data-store-row-inputs>
               <input

@@ -73,21 +73,26 @@
       padding: 0 0 0.4rem;
       border-bottom: 1.5px solid var(--line);
     }
-    .sheet-brand { min-width: 0; }
+    .sheet-brand { min-width: 0; max-width: 100%; }
     .doc-kicker {
       margin: 0 0 0.15rem;
       font-size: 0.72rem;
       letter-spacing: 0.06em;
       text-transform: uppercase;
+      overflow-wrap: anywhere;
     }
     .sheet-brand h1 {
       margin: 0;
       font: 700 1.15rem/1.2 "Manrope", system-ui, sans-serif;
+      overflow-wrap: anywhere;
+      max-width: 100%;
     }
     .sheet-subtitle {
       margin: 0.2rem 0 0;
       font-size: 0.82rem;
       font-weight: 650;
+      overflow-wrap: anywhere;
+      max-width: 100%;
     }
     .sheet-meta {
       text-align: right;
@@ -106,6 +111,7 @@
       border: 1px solid #333;
       border-radius: 999px;
       font-size: 0.7rem;
+      white-space: nowrap;
     }
     .sheet-hint {
       margin: 0 0 0.55rem;
@@ -140,6 +146,90 @@
     table.sheet-grid .col-status {
       white-space: nowrap;
     }
+    table.sheet-grid .cell-sub {
+      display: block;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .sheet-footer {
+      margin-top: 0.9rem;
+      padding-top: 0.4rem;
+      border-top: 1.5px solid var(--line);
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    /* ===== Stacked rows (thermal) ===== */
+    /* Wide tables become a compact list, not cards — each record is a bold
+       title line then wrapped "Label: value" pairs separated by " · ", so
+       the thermal roll stays short. */
+    table.sheet-grid.stack,
+    table.sheet-grid.stack tbody,
+    table.sheet-grid.stack tr,
+    table.sheet-grid.stack td {
+      display: block;
+      width: 100%;
+    }
+    table.sheet-grid.stack thead { display: none; }
+    table.sheet-grid.stack {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    table.sheet-grid.stack tbody tr {
+      border-top: 1px dashed #666;
+      padding: 0.4mm 0;
+      background: #fff !important;
+    }
+    table.sheet-grid.stack tbody tr:first-child { border-top: 0; }
+    table.sheet-grid.stack tbody tr:nth-child(even) td {
+      background: transparent;
+    }
+    table.sheet-grid.stack td {
+      display: inline;
+      width: auto;
+      border: 0;
+      padding: 0;
+      text-align: left;
+      background: transparent !important;
+    }
+    table.sheet-grid.stack td[data-label]::before {
+      content: attr(data-label) ": ";
+      font-weight: 800;
+    }
+    table.sheet-grid.stack td:not(:first-child):not(:last-child)::after {
+      content: " · ";
+    }
+    table.sheet-grid.stack td:first-child {
+      display: block;
+      font-weight: 800;
+    }
+    table.sheet-grid.stack td:first-child::before { content: none; }
+    table.sheet-grid.stack td.num {
+      text-align: left;
+      white-space: normal;
+    }
+    table.sheet-grid.stack .cell-sub {
+      display: inline;
+      font-size: inherit;
+    }
+    table.sheet-grid.stack .cell-sub::before { content: " · "; }
+    table.sheet-grid.stack td.col-when,
+    table.sheet-grid.stack td.col-status { white-space: normal; }
+
+    /* Thermal trims to the essentials — kicker, chips, and the hint are
+       A4/PDF detail, not roll paper. */
+    body.paper-80 .doc-kicker,
+    body.paper-58 .doc-kicker,
+    body.paper-80 .meta-chips,
+    body.paper-58 .meta-chips,
+    body.paper-80 .sheet-hint,
+    body.paper-58 .sheet-hint {
+      display: none;
+    }
+
+    /* ===== A4 ===== */
     body.paper-a4 {
       padding: 10px 12px 18px;
       font: 10.5pt/1.3 "Manrope", system-ui, sans-serif;
@@ -154,10 +244,82 @@
       box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
     }
 
+    /* ===== Thermal 80 mm ===== */
+    body.paper-80 {
+      padding: 6px;
+      font: 8pt/1.3 "Manrope", system-ui, sans-serif;
+      background: #e8eef0;
+    }
+    body.paper-80 .sheet {
+      width: 76mm;
+      margin: 0 auto;
+      padding: 2mm;
+      background: #fff;
+      border: 1px solid #ddd;
+    }
+    body.paper-80 .sheet-head { flex-direction: column; align-items: flex-start; }
+    body.paper-80 .sheet-meta { text-align: left; }
+    body.paper-80 .sheet-brand h1 { font-size: 0.95rem; }
+    body.paper-80 .sheet-subtitle { font-size: 0.7rem; }
+    body.paper-80 table.sheet-grid { font-size: 0.68rem; }
+    body.paper-80 .sheet-footer { font-size: 0.62rem; }
+
+    /* ===== Thermal 58 mm ===== */
+    body.paper-58 {
+      padding: 4px;
+      font: 7pt/1.3 "Manrope", system-ui, sans-serif;
+      background: #e8eef0;
+    }
+    body.paper-58 .sheet {
+      width: 52mm;
+      margin: 0 auto;
+      padding: 1.5mm;
+      background: #fff;
+      border: 1px solid #ddd;
+    }
+    body.paper-58 .sheet-head { flex-direction: column; align-items: flex-start; }
+    body.paper-58 .sheet-meta { text-align: left; font-size: 0.62rem; }
+    body.paper-58 .sheet-brand h1 { font-size: 0.82rem; }
+    body.paper-58 .sheet-subtitle { font-size: 0.62rem; }
+    body.paper-58 table.sheet-grid { font-size: 0.62rem; }
+    body.paper-58 .sheet-footer { font-size: 0.54rem; }
+
     @media print {
       .print-toolbar { display: none !important; }
       thead { display: table-header-group; }
+      table.sheet-grid.stack thead { display: none; }
       tr { break-inside: avoid; }
+      {% if paper == "80" %}
+      @page { size: 80mm auto; margin: 1.5mm; }
+      body.paper-80 {
+        width: auto;
+        max-width: 76mm;
+        margin: 0;
+        padding: 0.5mm;
+        background: #fff;
+      }
+      body.paper-80 .sheet {
+        width: auto;
+        border: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+      {% elif paper == "58" %}
+      @page { size: 58mm auto; margin: 1mm; }
+      body.paper-58 {
+        width: auto;
+        max-width: 52mm;
+        margin: 0;
+        padding: 0.4mm;
+        background: #fff;
+      }
+      body.paper-58 .sheet {
+        width: auto;
+        border: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+      {% else %}
       @page { size: A4; margin: 6mm 6mm 7mm; }
       body.paper-a4 {
         padding: 0;
@@ -172,10 +334,11 @@
         border: 0;
         box-shadow: none;
       }
+      {% endif %}
     }
   </style>
 </head>
-<body class="paper-a4">
+<body class="paper-{{ paper|default:'a4' }}">
   <div class="print-toolbar">
     <button type="button" class="primary" onclick="window.print()">Print / Save PDF</button>
     <button type="button" onclick="window.close()">Close</button>
@@ -200,48 +363,60 @@
         <div class="meta-chips">
           <span class="meta-chip">{{ document.receipt_total }} {{ document.count_label }}{{ document.receipt_total|pluralize }}</span>
           <span class="meta-chip">{{ document.grand_amount }}</span>
-          <span class="meta-chip">A4</span>
+          <span class="meta-chip">
+            {% if paper == "80" %}80 mm
+            {% elif paper == "58" %}58 mm
+            {% else %}A4{% endif %}
+          </span>
+          {% if paper == "a4" or paper == "" %}
           <span class="meta-chip">≈ {{ a4_page_estimate|default:1 }} page{{ a4_page_estimate|default:1|pluralize }}</span>
+          {% endif %}
         </div>
       </div>
     </header>
 
     <p class="sheet-hint">
-      Filtered confirm-receipts list: receipt, status, client, shop, sold by, sold as, amount, reference, printed time, and paid time (as entered on confirm).
+      Filtered confirm-receipts list: receipt, status, client, shop, who sold it and how,
+      amount, reference and paid time (as entered on confirm), and printed time.
       Ordered pending first, then cancelled, then confirmed.
     </p>
 
     {% if document.rows %}
-    <table class="sheet-grid">
+    <table class="sheet-grid{% if paper == "80" or paper == "58" %} stack{% endif %}">
       <thead>
         <tr>
           <th>Receipt</th>
           <th class="col-status">Status</th>
           <th>Client</th>
-          <th>Phone</th>
           <th>Shop</th>
-          <th>Sold by</th>
-          <th>Sold as</th>
+          <th>Sold</th>
           <th class="num">Amount</th>
-          <th>Reference</th>
+          <th>Ref · Paid</th>
           <th class="col-when">Printed</th>
-          <th class="col-when">Paid</th>
         </tr>
       </thead>
       <tbody>
         {% for row in document.rows %}
         <tr>
           <td>{{ row.number }}</td>
-          <td class="col-status">{{ row.status }}</td>
-          <td>{{ row.client_name }}</td>
-          <td>{{ row.phone }}</td>
-          <td>{{ row.shop }}</td>
-          <td>{{ row.sold_by }}</td>
-          <td>{{ row.sold_as }}</td>
-          <td class="num">{{ row.total }}</td>
-          <td>{{ row.reference }}</td>
-          <td class="col-when">{{ row.when }}</td>
-          <td class="col-when">{{ row.paid_when }}{% if row.paid_via %}<br>{{ row.paid_via }}{% endif %}</td>
+          <td class="col-status" data-label="Status">{{ row.status }}</td>
+          <td data-label="Client">
+            {{ row.client_name }}
+            {% if row.phone and row.phone != "—" %}<span class="cell-sub">{{ row.phone }}</span>{% endif %}
+          </td>
+          <td data-label="Shop">{{ row.shop }}</td>
+          <td data-label="Sold">
+            {{ row.sold_by }}
+            {% if row.sold_as and row.sold_as != "—" %}<span class="cell-sub">{{ row.sold_as }}</span>{% endif %}
+          </td>
+          <td class="num" data-label="Amount">{{ row.total }}</td>
+          <td data-label="Ref · Paid">
+            {{ row.reference }}
+            {% if row.paid_when and row.paid_when != "—" %}
+            <span class="cell-sub">{{ row.paid_when }}{% if row.paid_via %} · {{ row.paid_via }}{% endif %}</span>
+            {% endif %}
+          </td>
+          <td class="col-when" data-label="Printed">{{ row.when }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -249,6 +424,10 @@
     {% else %}
     <p class="print-error">No receipts for the selected shops and period.</p>
     {% endif %}
+
+    <footer class="sheet-footer">
+      Generated {{ printed_at|date:"d M Y H:i" }} — {{ company_name }} · Confirm receipts
+    </footer>
   </div>
   {% endif %}
 

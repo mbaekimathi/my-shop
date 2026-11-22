@@ -551,7 +551,8 @@ def _stock_reply(shop: Shop, text: str) -> str:
     return "\n\n".join(lines[:6])
 
 
-def _low_stock_reply(shop: Shop, text: str) -> str:
+def _low_stock_rows(shop: Shop) -> list:
+    """(name, qty, threshold) items at or below their low-stock alert."""
     modes = shop_stock_modes(shop)
     low = []
     if modes["items"]:
@@ -584,9 +585,14 @@ def _low_stock_reply(shop: Shop, text: str) -> str:
                 low.append((name, item.quantity, threshold))
             elif not threshold and item.quantity <= 5:
                 low.append((name, item.quantity, 5))
+    low.sort(key=lambda x: x[1])
+    return low
+
+
+def _low_stock_reply(shop: Shop, text: str) -> str:
+    low = _low_stock_rows(shop)
     if not low:
         return f"Nothing is running low at {shop.name} right now. Stock looks healthy."
-    low.sort(key=lambda x: x[1])
     lines = [f"*Low stock — {shop.name}* ({len(low)} items)", ""]
     for name, q, t in low[:10]:
         lines.append(f"- {name}: *{qty_fmt(q)}* left (alert at {qty_fmt(t)})")
@@ -1091,13 +1097,10 @@ def card_meta(shop: Shop, text: str):
         }
 
     if re.search(r"\b(stock movements?|movements?|transfers?|moved)\b", low):
-        label, groups, ledger, disabled = _shop_movement(shop, t)
-        if disabled is not None or not groups:
+        _, _, _, disabled = _shop_movement(shop, t)
+        if disabled is not None:
             return None
-        card = {"movement": {"label": label, "groups": groups}}
-        if ledger == "shelf":
-            card["movement"]["title"] = "Shelf stock movement"
-        return card
+        return _stock_movement_flat_card(shop, t)
 
     if re.search(r"\b(summary|report|overview|snapshot|today's|todays|performance)\b", low):
         start, end, label = _date_range(t)
@@ -2061,59 +2064,7 @@ def card_for_all(text: str, section_visible=None):
         ledger = _movement_ledger(t, modes)
         if _movement_disabled_reply(ledger, modes) is not None:
             return None
-        if ledger == "shelf":
-            groups = _all_shelf_movement_groups(start_dt, end_dt)
-            if not groups:
-                return None
-            return {
-                "movement": {
-                    "title": "Shelf stock movement",
-                    "label": label,
-                    "groups": groups,
-                }
-            }
-        moves = list(
-            StockMovement.objects.filter(
-                created_at__range=(start_dt, end_dt)
-            ).order_by("-created_at")[:30]
-        )
-        if not moves:
-            return None
-        names = _shop_names()
-        line_map = {}
-        for l in StockMovementLine.objects.filter(
-            movement_id__in=[m.pk for m in moves]
-        ).order_by("pk"):
-            line_map.setdefault(l.movement_id, []).append(l)
-        groups = []
-        for m in moves:
-            src = names.get(m.shop_id, "?")
-            if m.movement_type == "in":
-                head, kind = f"{src} — Stock in", "in"
-            elif m.movement_type == "out":
-                head, kind = f"{src} — Stock out", "out"
-            else:
-                dst = names.get(m.requested_from_shop_id, "?")
-                head, kind = f"{src} → {dst}", "tout"
-            groups.append(
-                {
-                    "kind": kind,
-                    "head": head,
-                    "status": (
-                        m.request_status
-                        if m.movement_type == "request"
-                        else ""
-                    ),
-                    "when": timezone.localtime(m.created_at).strftime(
-                        "%d %b, %H:%M"
-                    ),
-                    "items": [
-                        {"item": l.item_name, "qty": qty_fmt(l.quantity)}
-                        for l in line_map.get(m.pk, [])
-                    ],
-                }
-            )
-        return {"movement": {"label": label, "groups": groups}}
+        return _stock_movement_flat_card(None, t)
 
     if re.search(r"\b(summary|report|overview|snapshot|performance)\b", low):
         from django.urls import reverse
@@ -2283,3 +2234,1313 @@ BOT_SUGGESTIONS = [
 
 # Topics whose period picker shows pending/confirmed receipt scope.
 RECEIPT_STATUS_TOPICS = frozenset({"sales", "items", "summary", "report"})
+STOCK_SUGGESTIONS = [
+    "Stock in",
+    "Stock out",
+    "Stock trade",
+    "Transfers",
+    "Suppliers",
+    "Stock report",
+    "Low stock",
+]
+# Per-shop expenses assistant chips — "By shop" is dropped (single shop).
+EXPENSE_SUGGESTIONS = [
+    "Expenses",
+    "Paid",
+    "Unpaid",
+    "By category",
+    "Suppliers",
+    "Expense report",
+]
+
+
+def _stock_ledger(shop: Shop, text: str) -> str:
+    """'shelf' when asked and available, else the enabled item ledger."""
+    modes = shop_stock_modes(shop)
+    if "shelf" in text.lower() and modes["shelf"]:
+        return "shelf"
+    if modes["shelf"] and not modes["items"]:
+        return "shelf"
+    return "items"
+
+
+def _merge_stock_range(start, end, *, shop_id=None, kind="items") -> dict:
+    """build_stock_day() merged across a (≤ 62-day) range."""
+    from . import all_stock
+
+    sections = {
+        key: {"key": key, "label": label, "rows": [],
+              "moves": 0, "units": Decimal("0"), "value": Decimal("0")}
+        for key, label in (
+            ("in", "Stock in"), ("out", "Stock out"),
+            ("trade_in", "Traded in"), ("trade_out", "Traded out"),
+            ("transfers", "Transfers"),
+        )
+    }
+    suppliers = {}
+    day = start
+    days = 0
+    while day <= end and days < 62:
+        days += 1
+        data = all_stock.build_stock_day(day, shop_id=shop_id, kind=kind)
+        for s in data["sections"]:
+            slot = sections[s["key"]]
+            slot["rows"].extend(s["rows"])
+            slot["moves"] += s["moves"]
+            slot["units"] += s["units"]
+            slot["value"] += s["value"]
+        for s in data["suppliers"]:
+            key = (s["name"], s["phone"])
+            slot = suppliers.setdefault(
+                key,
+                {"name": s["name"], "phone": s["phone"], "moves": 0,
+                 "units": Decimal("0"), "value": Decimal("0"),
+                 "paid": Decimal("0"), "due": Decimal("0")},
+            )
+            slot["moves"] += s["moves"]
+            slot["units"] += s["units"]
+            slot["value"] += s["value"]
+            slot["paid"] += s["paid"]
+            slot["due"] += s["due"]
+        day += timedelta(days=1)
+    ordered = sorted(
+        suppliers.values(), key=lambda r: (-r["value"], r["name"].lower())
+    )
+    return {
+        "sections": [sections[k] for k in
+                     ("in", "out", "trade_in", "trade_out", "transfers")],
+        "suppliers": ordered,
+    }
+
+
+def _stock_view(shop, text):
+    """(merged sections/suppliers, range label) for a shop — ``None`` →
+    ALL SHOPS combined."""
+    start, end, label = _date_range(text)
+    if shop is None:
+        kind = _movement_ledger(text, company_stock_modes())
+        return (
+            _merge_stock_range(start, end, shop_id=None, kind=kind), label
+        )
+    kind = _stock_ledger(shop, text)
+    return (
+        _merge_stock_range(start, end, shop_id=shop.pk, kind=kind), label
+    )
+
+
+def _stock_who(shop) -> str:
+    return shop.name if shop is not None else "ALL SHOPS"
+
+
+def _section_lines(section: dict, limit: int = 5, drop_head=None) -> list:
+    lines = []
+    for row in section["rows"][:limit]:
+        items = ", ".join(
+            f"{l['item']} ×{qty_fmt(l['qty'])}" for l in row["lines"][:3]
+        )
+        if len(row["lines"]) > 3:
+            items += f" +{len(row['lines']) - 3} more"
+        head = row["head"]
+        if drop_head and head == drop_head:
+            head = ""
+        extra = f" ({row['status']})" if row.get("status") else ""
+        lead = f"{head}{extra}"
+        lines.append(
+            f"- {row['when']} · {lead + ' — ' if lead else ''}{items} · "
+            f"{money(row['value'])}"
+        )
+    if len(section["rows"]) > limit:
+        lines.append(f"...plus {len(section['rows']) - limit} more.")
+    return lines
+
+
+def _stock_section_reply(shop, text: str, key: str) -> str:
+    data, label = _stock_view(shop, text)
+    section = next(s for s in data["sections"] if s["key"] == key)
+    lines = [
+        f"*{section['label']} — {_stock_who(shop)}* ({label})",
+        f"{section['moves']} move{'s' if section['moves'] != 1 else ''} · "
+        f"{qty_fmt(section['units'])} units · *{money(section['value'])}*",
+    ]
+    if section["rows"]:
+        lines.append("")
+        lines.extend(_section_lines(section))
+    else:
+        lines.append(f"\nNothing recorded {label}.")
+    return "\n".join(lines)
+
+
+def _stock_trades_reply(shop, text: str) -> str:
+    """Combined traded-in + traded-out view for the 'stock trade' filter."""
+    data, label = _stock_view(shop, text)
+    by_key = {s["key"]: s for s in data["sections"]}
+    traded_in, traded_out = by_key["trade_in"], by_key["trade_out"]
+    lines = [
+        f"*Stock trade — {_stock_who(shop)}* ({label})",
+        f"Traded in: {traded_in['moves']} moves · "
+        f"{qty_fmt(traded_in['units'])} units · "
+        f"*{money(traded_in['value'])}*",
+        f"Traded out: {traded_out['moves']} moves · "
+        f"{qty_fmt(traded_out['units'])} units · "
+        f"*{money(traded_out['value'])}*",
+    ]
+    for section in (traded_in, traded_out):
+        if not section["rows"]:
+            continue
+        lines.append("")
+        lines.append(f"*{section['label']}*")
+        lines.extend(
+            _section_lines(
+                section, drop_head=shop.name if shop is not None else None
+            )
+        )
+    if not traded_in["rows"] and not traded_out["rows"]:
+        lines.append(f"\nNo trades recorded {label}.")
+    lines.append(
+        "\nAsk *traded in* or *traded out* for just one side."
+    )
+    return "\n".join(lines)
+
+
+_SUPPLIER_PAID_RE = re.compile(r"\b(paid|settled|cleared)\b", re.I)
+_SUPPLIER_UNPAID_RE = re.compile(
+    r"\b(unpaid|owing|owed|balances?|debts?)\b", re.I
+)
+_SUPPLIER_ASK_CLEAN_RE = re.compile(
+    r"\b(unpaid|paid|settled|cleared|owing|owed|balances?|debts?|pending)\b",
+    re.I,
+)
+
+
+def _suppliers_paid_flag(text: str) -> bool:
+    """'suppliers paid …' → show settled suppliers; default/unpaid → owing."""
+    low = (text or "").lower()
+    if _SUPPLIER_UNPAID_RE.search(low):
+        return False
+    return bool(_SUPPLIER_PAID_RE.search(low))
+
+
+def _suppliers_base_ask(text: str) -> str:
+    """Query text minus the paid/unpaid marker — base for the foot link."""
+    ask = _SUPPLIER_ASK_CLEAN_RE.sub(" ", text or "")
+    return re.sub(r"\s+", " ", ask).strip() or "suppliers"
+
+
+def _stock_suppliers_reply(shop, text: str) -> str:
+    data, label = _stock_view(shop, text)
+    sup = data["suppliers"]
+    owing = [s for s in sup if s["due"] > 0]
+    cleared = [s for s in sup if s["due"] <= 0]
+    wants_paid = _suppliers_paid_flag(text)
+    shown = cleared if wants_paid else owing
+    other = owing if wants_paid else cleared
+    head = "Paid suppliers" if wants_paid else "Suppliers"
+    lines = [f"*{head} — {_stock_who(shop)}* ({label})"]
+    if not sup:
+        lines.append(f"\nNo supplier deliveries {label}.")
+        return "\n".join(lines)
+    if not shown:
+        lines.append(
+            f"\nNo {'paid' if wants_paid else 'unpaid'} suppliers {label}."
+        )
+    else:
+        for s in shown[:10]:
+            phone = f" ({s['phone']})" if s["phone"] else ""
+            amount = s["paid"] if wants_paid else s["due"]
+            lines.append(
+                f"- {s['name']}{phone}: {s['moves']} move"
+                f"{'s' if s['moves'] != 1 else ''} · "
+                f"{qty_fmt(s['units'])} units · {money(amount)}"
+            )
+        if len(shown) > 10:
+            lines.append(f"...plus {len(shown) - 10} more.")
+    if other:
+        lines.append(
+            f"\n{len(other)} {'unpaid' if wants_paid else 'paid'} supplier"
+            f"{'s' if len(other) != 1 else ''} — ask *suppliers"
+            f"{'' if wants_paid else ' paid'}*."
+        )
+    return "\n".join(lines)
+
+
+def _stock_report_reply(shop, text: str) -> str:
+    data, label = _stock_view(shop, text)
+    lines = [f"*Stock report — {_stock_who(shop)}* ({label})"]
+    total = Decimal("0")
+    for s in data["sections"]:
+        total += s["value"]
+        lines.append(
+            f"- {s['label']}: {s['moves']} moves · "
+            f"{qty_fmt(s['units'])} units · {money(s['value'])}"
+        )
+    lines.append(f"\nSuppliers: {len(data['suppliers'])}")
+    lines.append(
+        "Ask *stock in*, *stock out*, *traded in*, *traded out* or "
+        "*transfers* for the item detail."
+    )
+    return "\n".join(lines)
+
+
+def _stock_help_reply(shop: Shop) -> str:
+    return (
+        f"*{shop.name} stock assistant*\n\n"
+        "Ask about a section and add a day or period:\n"
+        "- *stock in* — deliveries received\n"
+        "- *stock out* — stock taken out\n"
+        "- *stock trade* — traded in and out (or *traded in* /\n"
+        "  *traded out* for one side)\n"
+        "- *transfers* — stock moved between shops\n"
+        "- *suppliers* — who supplied stock\n"
+        "- *stock report* — the day's movement summary\n"
+        "- *low stock* — items running out\n"
+        "- *stock <item>* — on-hand quantity and price\n"
+        "- *stock movement* — recent movement cards\n\n"
+        "e.g. *stock in yesterday*, *stock out this week*, "
+        "*suppliers this month*."
+    )
+
+
+def _stock_fallback_reply() -> str:
+    return (
+        "I only answer stock questions in this chat. Try *stock in*, "
+        "*stock out*, *stock trade*, *transfers*, *suppliers*, "
+        "*stock report*, *low stock* or *stock <item>* — type *help* for "
+        "the full list. For sales, credits and the rest, use the main "
+        "assistant chat."
+    )
+
+
+def reply_for_stock(shop: Shop, text: str) -> str:
+    """Reply engine for the dedicated stock assistant thread."""
+    t = (text or "").strip()
+    if not t:
+        return _stock_fallback_reply()
+    low = t.lower()
+
+    if GREETING_RE.match(t):
+        return (
+            f"Hello {shop.name}! Ask me anything about stock — try "
+            "*stock in*, *stock out*, *transfers*, *suppliers*, "
+            "*stock report* or *low stock*."
+        )
+    if THANKS_RE.match(t):
+        return "You're welcome! Ask me anything else about stock."
+    if re.search(r"\b(traded?[- ]in|trade[- ]ins?|received trade)\b", low):
+        return _stock_section_reply(shop, t, "trade_in")
+    if re.search(r"\b(traded?[- ]out|trade[- ]outs?)\b", low):
+        return _stock_section_reply(shop, t, "trade_out")
+    if re.search(r"\b(stock trades?|trades?|traded)\b", low):
+        return _stock_trades_reply(shop, t)
+    if re.search(r"\b(transfers?|moved between|sent to)\b", low):
+        return _stock_section_reply(shop, t, "transfers")
+    if re.search(r"\bstock in\b|\bstocked in\b|\bdeliver(y|ies)\b|"
+                 r"\breceived\b|\bbought\b|\brestocked\b", low):
+        return _stock_section_reply(shop, t, "in")
+    if re.search(r"\bstock out\b|\btaken out\b|\bremoved\b|"
+                 r"\bwrite[n ]?off\b|\bdamaged\b", low):
+        return _stock_section_reply(shop, t, "out")
+    if re.search(r"\bsupplier", low):
+        return _stock_suppliers_reply(shop, t)
+    if re.search(r"\b(low|running|finish|out of|restock)\b", low) and \
+            re.search(r"\b(stock|stok|items?)\b", low):
+        return _low_stock_reply(shop, t)
+    if re.search(r"\b(low stock|running out|running low|restock)\b", low):
+        return _low_stock_reply(shop, t)
+    if re.search(r"\b(stock movements?|movements?|moved)\b", low):
+        return _stock_movement_reply(shop, t) + (
+            "\n\nFilter by type: *stock in*, *stock out*, *stock trade*, "
+            "*transfers*, *suppliers* or *stock report*."
+        )
+    if re.search(r"\b(stock report|stock summary|report|summary)\b", low):
+        return _stock_report_reply(shop, t)
+    if re.search(
+        r"\b(stock|stok|price|bei|have|many|much|left|remaining|"
+        r"available|availability)\b",
+        low,
+    ):
+        return _stock_reply(shop, t)
+    if HELP_RE.search(t):
+        return _stock_help_reply(shop)
+    return _stock_fallback_reply()
+
+
+def card_meta_stock(shop: Shop, text: str):
+    """Card payload for the stock thread — flat data tables everywhere."""
+    t = (text or "").strip()
+    low = t.lower()
+    type_card = _stock_type_card(shop, t)
+    if type_card is not None:
+        return type_card
+    if re.search(r"\bsupplier", low):
+        return _stock_suppliers_card(shop, t)
+    if re.search(r"\b(stock report|stock summary|summary)\b", low):
+        return _stock_report_card(shop, t)
+    if re.search(r"\b(low stock|running out|running low|restock)\b", low):
+        return _stock_low_card(shop, t)
+    if re.search(r"\b(stock movements?|movements?|transfers?|moved)\b", low):
+        return _stock_movement_flat_card(shop, t)
+    return None
+
+
+def _all_low_stock_rows() -> list:
+    """(shop_name, item_name, qty, threshold) low rows across the company,
+    lowest quantity first."""
+    modes = company_stock_modes()
+    shops = {
+        s.pk: s.name
+        for s in Shop.objects.filter(is_suspended=False, is_hidden=False)
+    }
+    out = []
+    if modes["items"]:
+        rows = list(ShopStock.objects.all())
+        items = {
+            i.pk: i
+            for i in Item.objects.filter(
+                pk__in=[r.item_id for r in rows], is_suspended=False
+            )
+        }
+        for r in rows:
+            item = items.get(r.item_id)
+            if item is None or r.shop_id not in shops:
+                continue
+            threshold = r.low_stock_threshold or 0
+            if (threshold and r.quantity <= threshold) or (
+                not threshold and r.quantity <= 5
+            ):
+                out.append(
+                    (shops[r.shop_id], item.name, r.quantity,
+                     threshold or 5)
+                )
+    if modes["shelf"]:
+        shelf_rows = ShelfItem.objects.filter(
+            is_suspended=False, is_archived=False
+        )
+        for item in shelf_rows:
+            if item.shop_id not in shops:
+                continue
+            threshold = item.low_stock_threshold or 0
+            if (threshold and item.quantity <= threshold) or (
+                not threshold and item.quantity <= 5
+            ):
+                out.append(
+                    (shops[item.shop_id], f"{item.name} (shelf)",
+                     item.quantity, threshold or 5)
+                )
+    out.sort(key=lambda x: (x[2], x[0], x[1]))
+    return out
+
+
+def _all_low_stock_reply(text: str) -> str:
+    """Low stock grouped per shop across the company."""
+    rows = _all_low_stock_rows()
+    if not rows:
+        return "Nothing is running low across the shops right now."
+    by_shop = {}
+    for shop_name, iname, q, t in rows:
+        by_shop.setdefault(shop_name, []).append((iname, q, t))
+    lines = ["*Low stock — ALL SHOPS*", ""]
+    for name in sorted(by_shop):
+        low = sorted(by_shop[name], key=lambda x: x[1])
+        lines.append(f"*{name}* ({len(low)} items)")
+        for iname, q, t in low[:5]:
+            lines.append(f"- {iname}: *{qty_fmt(q)}* left")
+        if len(low) > 5:
+            lines.append(f"  ...plus {len(low) - 5} more.")
+    return "\n".join(lines)
+
+
+def _all_stock_help_reply() -> str:
+    return (
+        "*Stock movement — ALL SHOPS*\n\n"
+        "Pick a stock filter and add a day or period:\n"
+        "- *stock in* — deliveries received\n"
+        "- *stock out* — stock taken out\n"
+        "- *stock trade* — traded in and out\n"
+        "- *transfers* — stock moved between shops\n"
+        "- *suppliers* — who supplied stock\n"
+        "- *stock movement* — recent movement cards\n"
+        "- *stock report* — the day's movement summary\n"
+        "- *low stock* — items running out per shop\n\n"
+        "e.g. *stock in yesterday*, *stock out this week*."
+    )
+
+
+def reply_for_all_stock(
+    text: str, section_visible=None, fallback_topic: str = "",
+    shop=None,
+) -> str:
+    """Stock-only reply engine for the all-shops stock page (`mode=stock`).
+
+    ``fallback_topic`` is the last stock filter the page had selected —
+    a bare period query (*yesterday*, *this week*) reuses it.
+    ``shop`` scopes every answer to that one shop — the per-shop
+    engine already drops the repeated shop name from rows.
+    """
+    t = (text or "").strip()
+    if not t:
+        return _stock_fallback_reply()
+    if shop is not None:
+        reply = reply_for_stock(shop, t)
+        if reply == _stock_fallback_reply() and fallback_topic:
+            reply = reply_for_stock(shop, f"{fallback_topic} {t}")
+        return reply
+    low = t.lower()
+
+    if GREETING_RE.match(t):
+        return (
+            "Hello! Ask me anything about stock across all shops — try "
+            "*stock in*, *stock out*, *stock trade*, *transfers*, "
+            "*suppliers*, *stock report* or *low stock*."
+        )
+    if THANKS_RE.match(t):
+        return "You're welcome! Ask me anything else about stock."
+    if re.search(r"\b(traded?[- ]in|trade[- ]ins?)\b", low):
+        return _stock_section_reply(None, t, "trade_in")
+    if re.search(r"\b(traded?[- ]out|trade[- ]outs?)\b", low):
+        return _stock_section_reply(None, t, "trade_out")
+    if re.search(r"\b(stock trades?|trades?|traded)\b", low):
+        return _stock_trades_reply(None, t)
+    if re.search(r"\b(transfers?|moved between|sent to)\b", low):
+        return _stock_section_reply(None, t, "transfers")
+    if re.search(r"\bstock in\b|\bstocked in\b|\bdeliver(y|ies)\b|"
+                 r"\breceived\b|\bbought\b|\brestocked\b", low):
+        return _stock_section_reply(None, t, "in")
+    if re.search(r"\bstock out\b|\btaken out\b|\bremoved\b|"
+                 r"\bwrite[n ]?off\b|\bdamaged\b", low):
+        return _stock_section_reply(None, t, "out")
+    if re.search(r"\bsupplier", low):
+        return _stock_suppliers_reply(None, t)
+    if re.search(r"\b(low stock|running out|running low|restock)\b", low):
+        return _all_low_stock_reply(t)
+    if re.search(r"\b(stock movements?|movements?|moved)\b", low):
+        return reply_for_all(t, section_visible=section_visible)
+    if re.search(r"\b(stock report|stock summary|report|summary)\b", low):
+        return _stock_report_reply(None, t)
+    if HELP_RE.search(t):
+        return _all_stock_help_reply()
+    if fallback_topic:
+        # Bare period ("yesterday", "this week") — apply the last stock
+        # filter the page had selected.
+        return reply_for_all_stock(
+            f"{fallback_topic} {t}", section_visible=section_visible
+        )
+    return _stock_fallback_reply()
+
+
+_STOCK_CARD_MAX_ROWS = 60
+
+_STOCK_CARD_KIND = {
+    "in": "in",
+    "trade_in": "in",
+    "out": "out",
+    "trade_out": "out",
+    "transfers": "tout",
+}
+
+
+def _stock_type_card(shop, text: str):
+    """Flat item-list card for stock in/out/trade/transfer queries —
+    shop or ``None`` for ALL SHOPS."""
+    t = (text or "").strip()
+    low = t.lower()
+
+    if re.search(r"\b(traded?[- ]in|trade[- ]ins?)\b", low):
+        keys = ["trade_in"]
+    elif re.search(r"\b(traded?[- ]out|trade[- ]outs?)\b", low):
+        keys = ["trade_out"]
+    elif re.search(r"\b(stock trades?|trades?|traded)\b", low):
+        keys = ["trade_in", "trade_out"]
+    elif re.search(r"\b(transfers?|moved between|sent to)\b", low):
+        keys = ["transfers"]
+    elif re.search(r"\bstock in\b|\bstocked in\b|\bdeliver(y|ies)\b|"
+                   r"\breceived\b|\bbought\b|\brestocked\b", low):
+        keys = ["in"]
+    elif re.search(r"\bstock out\b|\btaken out\b|\bremoved\b|"
+                   r"\bwrite[n ]?off\b|\bdamaged\b", low):
+        keys = ["out"]
+    else:
+        return None
+
+    data, label = _stock_view(shop, t)
+    by_key = {s["key"]: s for s in data["sections"]}
+    sections = [by_key[k] for k in keys]
+
+    rows = []
+    for section in sections:
+        for row in section["rows"]:
+            for l in row["lines"]:
+                rows.append(
+                    {
+                        "kind": _STOCK_CARD_KIND.get(section["key"], "in"),
+                        "when": row["when"],
+                        "head": (
+                            row["head"]
+                            if shop is None or section["key"] == "transfers"
+                            else ""
+                        ),
+                        "status": (
+                            row.get("status") or l.get("reason") or ""
+                        ),
+                        "item": l["item"],
+                        "qty": qty_fmt(l["qty"]),
+                        "unit": money(l["unit"]) if l["unit"] else "—",
+                        "value": money(l["value"]),
+                    }
+                )
+    if not rows:
+        return None
+
+    moves = sum(s["moves"] for s in sections)
+    units = sum(s["units"] for s in sections)
+    value = sum(s["value"] for s in sections)
+    title = "Stock trade" if len(keys) > 1 else sections[0]["label"]
+    more = len(rows) - _STOCK_CARD_MAX_ROWS
+    return {
+        "stock_list": {
+            "title": f"{title} — {_stock_who(shop)}",
+            "label": label,
+            "stats": [
+                ["Moves", moves],
+                ["Units", qty_fmt(units)],
+                ["Items", len(rows)],
+                ["Value", money(value), 1],
+            ],
+            "typed": len(keys) > 1,
+            "rows": rows[:_STOCK_CARD_MAX_ROWS],
+            "more": more if more > 0 else 0,
+        }
+    }
+
+
+def card_for_all_stock(text: str, fallback_topic: str = "", shop=None):
+    """Card payload for the all-shops stock page (`mode=stock`)."""
+    if shop is not None:
+        card = card_meta_stock(shop, text)
+        if card is None and fallback_topic:
+            card = card_meta_stock(shop, f"{fallback_topic} {text}")
+        return card
+    card = _all_stock_card(text)
+    if card is None and fallback_topic:
+        card = _all_stock_card(f"{fallback_topic} {text}")
+    return card
+
+
+def _all_stock_card(text: str):
+    """Stock-page card for the combined ALL SHOPS scope."""
+    t = (text or "").strip()
+    low = t.lower()
+    card = _stock_type_card(None, t)
+    if card is not None:
+        return card
+    if re.search(r"\bsupplier", low):
+        return _stock_suppliers_card(None, t)
+    if re.search(r"\b(stock report|stock summary|summary)\b", low):
+        return _stock_report_card(None, t)
+    if re.search(r"\b(low stock|running out|running low|restock)\b", low):
+        return _stock_low_card(None, t)
+    if re.search(r"\b(stock movements?|movements?|moved)\b", low):
+        return _stock_movement_flat_card(None, t)
+    return None
+
+
+def _tbl_card(icon, title, label, stats, cols, rows, foot="", link=None):
+    """Generic wa-card table payload — same chrome as stock_list cards:
+    icon head, stats block, single flat table, footer line. ``link`` is an
+    optional {"label", "ask"} the footer renders as a tap-to-ask link."""
+    card = {
+        "table": {
+            "icon": icon,
+            "title": title,
+            "label": label,
+            "stats": stats,
+            "cols": cols,
+            "rows": rows,
+            "foot": foot,
+        }
+    }
+    if link:
+        card["table"]["link"] = link
+    return card
+
+
+_STOCK_BADGES = {
+    "in": "+IN",
+    "trade_in": "+IN",
+    "out": "−OUT",
+    "trade_out": "−OUT",
+    "transfers": "→",
+}
+
+
+def _stock_movement_flat_card(shop, text: str):
+    """'Stock movement' as one flat item list — every section merged,
+    newest first, with a type badge per row."""
+    data, label = _stock_view(shop, text)
+    rows = []
+    moves = units = value = 0
+    for section in data["sections"]:
+        moves += section["moves"]
+        units += section["units"]
+        value += section["value"]
+        for row in section["rows"]:
+            for l in row["lines"]:
+                rows.append(
+                    {
+                        "kind": _STOCK_CARD_KIND.get(
+                            section["key"], "in"
+                        ),
+                        "badge": _STOCK_BADGES.get(section["key"], ""),
+                        "ts": row.get("ts") or "",
+                        "when": row["when"],
+                        "head": (
+                            row["head"]
+                            if shop is None
+                            or section["key"] == "transfers"
+                            else ""
+                        ),
+                        "status": (
+                            row.get("status") or l.get("reason") or ""
+                        ),
+                        "item": l["item"],
+                        "qty": qty_fmt(l["qty"]),
+                        "unit": money(l["unit"]) if l["unit"] else "—",
+                        "value": money(l["value"]),
+                    }
+                )
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    for r in rows:
+        r.pop("ts", None)
+    title = (
+        "Shelf stock movement"
+        if _stock_view_ledger_name(shop, text) == "shelf"
+        else "Stock movement"
+    )
+    more = len(rows) - _STOCK_CARD_MAX_ROWS
+    return {
+        "stock_list": {
+            "title": f"{title} — {_stock_who(shop)}",
+            "label": label,
+            "stats": [
+                ["Moves", moves],
+                ["Units", qty_fmt(units)],
+                ["Items", len(rows)],
+                ["Value", money(value), 1],
+            ],
+            "typed": True,
+            "rows": rows[:_STOCK_CARD_MAX_ROWS],
+            "more": more if more > 0 else 0,
+        }
+    }
+
+
+def _stock_view_ledger_name(shop, text) -> str:
+    """Which ledger a stock view reads — 'items' | 'shelf'."""
+    if shop is None:
+        return _movement_ledger(text, company_stock_modes())
+    return _stock_ledger(shop, text)
+
+
+def _stock_suppliers_card(shop, text: str):
+    data, label = _stock_view(shop, text)
+    sup = data["suppliers"]
+    owing = [s for s in sup if s["due"] > 0]
+    cleared = [s for s in sup if s["due"] <= 0]
+    wants_paid = _suppliers_paid_flag(text)
+    shown = cleared if wants_paid else owing
+    other = owing if wants_paid else cleared
+    if not shown:
+        return None
+    units = sum((s["units"] for s in shown), Decimal("0"))
+    total = sum(
+        (s["paid"] if wants_paid else s["due"] for s in shown),
+        Decimal("0"),
+    )
+    cap = _STOCK_CARD_MAX_ROWS
+    rows = [
+        [i + 1, s["name"], s["phone"] or "—", s["moves"],
+         qty_fmt(s["units"]), money(s["value"]),
+         money(s["paid"] if wants_paid else s["due"])]
+        for i, s in enumerate(shown[:cap])
+    ]
+    more = len(shown) - cap
+    base_ask = _suppliers_base_ask(text)
+    link = (
+        {
+            "label": (
+                f"View {len(other)} "
+                f"{'unpaid' if wants_paid else 'paid'} supplier"
+                f"{'s' if len(other) != 1 else ''} →"
+            ),
+            "ask": base_ask if wants_paid else f"{base_ask} paid",
+        }
+        if other
+        else None
+    )
+    title = (
+        f"Paid suppliers — {_stock_who(shop)}"
+        if wants_paid
+        else f"Suppliers — {_stock_who(shop)}"
+    )
+    return _tbl_card(
+        "truck",
+        title,
+        label,
+        [
+            ["Suppliers", len(shown)],
+            ["Units", qty_fmt(units)],
+            ["Paid" if wants_paid else "Owed", money(total), 1],
+        ],
+        [["#", 1], ["Supplier"], ["Phone"], ["Moves", 1], ["Units", 1],
+         ["Value", 1], ["Paid" if wants_paid else "Due", 1]],
+        rows,
+        f"{len(shown)} supplier{'s' if len(shown) != 1 else ''}"
+        + (" paid" if wants_paid else " owing")
+        + (f" · +{more} more" if more > 0 else ""),
+        link=link,
+    )
+
+
+def _stock_report_card(shop, text: str):
+    data, label = _stock_view(shop, text)
+    sections = data["sections"]
+    if not any(s["moves"] for s in sections):
+        return None
+    total = sum((s["value"] for s in sections), Decimal("0"))
+    moves = sum(s["moves"] for s in sections)
+    units = sum((s["units"] for s in sections), Decimal("0"))
+    rows = [
+        [i + 1, s["label"], s["moves"], qty_fmt(s["units"]),
+         money(s["value"])]
+        for i, s in enumerate(sections)
+    ]
+    return _tbl_card(
+        "clipboard-list",
+        f"Stock report — {_stock_who(shop)}",
+        label,
+        [
+            ["Moves", moves],
+            ["Units", qty_fmt(units)],
+            ["Suppliers", len(data["suppliers"])],
+            ["Value", money(total), 1],
+        ],
+        [["#", 1], ["Section"], ["Moves", 1], ["Units", 1], ["Value", 1]],
+        rows,
+        f"{len(sections)} sections",
+    )
+
+
+def _stock_low_card(shop, text: str):
+    """Low-stock table — per-shop or company-wide when ``shop`` is None."""
+    if shop is None:
+        rows_src = _all_low_stock_rows()
+        cols = [["#", 1], ["Shop"], ["Item"], ["Qty left", 1],
+                ["Alert at", 1]]
+        rows = [
+            [i + 1, shop_name, iname, qty_fmt(q), qty_fmt(t)]
+            for i, (shop_name, iname, q, t) in enumerate(
+                rows_src[:_STOCK_CARD_MAX_ROWS]
+            )
+        ]
+        who = "ALL SHOPS"
+    else:
+        rows_src = _low_stock_rows(shop)
+        cols = [["#", 1], ["Item"], ["Qty left", 1], ["Alert at", 1]]
+        rows = [
+            [i + 1, iname, qty_fmt(q), qty_fmt(t)]
+            for i, (iname, q, t) in enumerate(
+                rows_src[:_STOCK_CARD_MAX_ROWS]
+            )
+        ]
+        who = shop.name
+    if not rows:
+        return None
+    more = len(rows_src) - _STOCK_CARD_MAX_ROWS
+    return _tbl_card(
+        "alert-triangle",
+        f"Low stock — {who}",
+        "",
+        [["Items", len(rows_src), 1]],
+        cols,
+        rows,
+        f"{len(rows_src)} item{'s' if len(rows_src) != 1 else ''} low"
+        + (f" · +{more} more" if more > 0 else ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Expenses assistant — dedicated expenses chat page (`mode=expenses` on
+# /chatbot/all/), same shape as the stock assistant.
+# ---------------------------------------------------------------------------
+
+def _expense_fallback_reply() -> str:
+    return (
+        "I only answer expense questions in this chat. Try *expenses*, "
+        "*paid*, *unpaid*, *by category*, *by shop*, *suppliers* or "
+        "*expense report* — add a day or period like *today*, *yesterday* "
+        "or *this week*. For sales, stock and the rest use the other "
+        "chats."
+    )
+
+
+def _expense_who(shop) -> str:
+    return shop.name if shop is not None else "ALL SHOPS"
+
+
+def _expense_window(shop, text, paid=None):
+    """(rows, label) — expense rows in the parsed window; ``paid`` True
+    keeps fully-paid rows, False keeps rows with a balance."""
+    start, end, label = _date_range(text)
+    start_dt, end_dt = _window(start, end)
+    qs = Expense.objects.filter(
+        created_at__gte=start_dt, created_at__lt=end_dt
+    ).order_by("-created_at")
+    if shop is not None:
+        qs = qs.filter(shop_id=shop.pk)
+    rows = list(qs[:400])
+    if paid is True:
+        rows = [r for r in rows if _dec(r.amount_paid) >= _dec(r.amount)]
+    elif paid is False:
+        rows = [r for r in rows if _dec(r.amount_paid) < _dec(r.amount)]
+    return rows, label
+
+
+def _expense_names(rows) -> dict:
+    return dict(
+        Shop.objects.filter(
+            pk__in={r.shop_id for r in rows}
+        ).values_list("pk", "name")
+    )
+
+
+def _expense_totals(rows):
+    total = sum((_dec(r.amount) for r in rows), Decimal("0"))
+    paid = sum((_dec(r.amount_paid) for r in rows), Decimal("0"))
+    return total, paid, total - paid
+
+
+def _expense_status(row) -> str:
+    return (row.payment_status or "").strip().title() or "—"
+
+
+def _expenses_list_reply(shop, text, paid=None, title="Expenses") -> str:
+    rows, label = _expense_window(shop, text, paid=paid)
+    if not rows:
+        return f"No {title.lower()} recorded {label}."
+    total, paid_sum, owed = _expense_totals(rows)
+    names = _expense_names(rows) if shop is None else {}
+    lines = [
+        f"*{title} — {_expense_who(shop)}* ({label})",
+        f"{len(rows)} entr{'ies' if len(rows) != 1 else 'y'} · "
+        f"*{money(total)}*"
+        + (f" · unpaid {money(owed)}" if owed else ""),
+        "",
+    ]
+    for r in rows[:12]:
+        shop_bit = f"{names.get(r.shop_id, '?')} · " if shop is None else ""
+        owed_bit = (
+            f" · owes {money(_dec(r.amount) - _dec(r.amount_paid))}"
+            if _dec(r.amount_paid) < _dec(r.amount) else ""
+        )
+        lines.append(
+            f"- {shop_bit}{r.name} ({r.category}) — {money(r.amount)}"
+            f"{owed_bit} · {_expense_status(r)}"
+        )
+    if len(rows) > 12:
+        lines.append(f"...plus {len(rows) - 12} more.")
+    return "\n".join(lines)
+
+
+def _expense_category_reply(shop, text) -> str:
+    rows, label = _expense_window(shop, text)
+    if not rows:
+        return f"No expenses recorded {label}."
+    cats = {}
+    for r in rows:
+        slot = cats.setdefault(r.category, {"t": Decimal("0"), "c": 0})
+        slot["t"] += _dec(r.amount)
+        slot["c"] += 1
+    total, _, _ = _expense_totals(rows)
+    lines = [
+        f"*Expenses by category — {_expense_who(shop)}* ({label})",
+        f"Total: *{money(total)}*",
+        "",
+    ] + [
+        f"- {cat}: {v['c']} entr{'ies' if v['c'] != 1 else 'y'} · "
+        f"*{money(v['t'])}*"
+        for cat, v in sorted(cats.items(), key=lambda kv: -kv[1]["t"])
+    ]
+    return "\n".join(lines)
+
+
+def _expense_byshop_reply(text) -> str:
+    rows, label = _expense_window(None, text)
+    if not rows:
+        return f"No expenses recorded {label}."
+    names = _expense_names(rows)
+    per = {}
+    for r in rows:
+        slot = per.setdefault(
+            names.get(r.shop_id, "?"),
+            {"t": Decimal("0"), "u": Decimal("0"), "c": 0},
+        )
+        slot["t"] += _dec(r.amount)
+        slot["u"] += _dec(r.amount) - _dec(r.amount_paid)
+        slot["c"] += 1
+    lines = [f"*Expenses by shop — ALL SHOPS* ({label})", ""]
+    for name, v in sorted(per.items(), key=lambda kv: -kv[1]["t"]):
+        unpaid = f" · unpaid {money(v['u'])}" if v["u"] else ""
+        lines.append(
+            f"- {name}: {v['c']} entr{'ies' if v['c'] != 1 else 'y'} · "
+            f"*{money(v['t'])}*{unpaid}"
+        )
+    return "\n".join(lines)
+
+
+def _expense_supplier_rows(shop, text):
+    rows, label = _expense_window(shop, text)
+    sup = {}
+    for r in rows:
+        name = (r.supplier_name or "").strip()
+        if not name:
+            continue
+        phone = " ".join(
+            bit
+            for bit in (
+                (r.supplier_phone_country_code or "").strip(),
+                (r.supplier_phone_number or "").strip(),
+            )
+            if bit
+        )
+        slot = sup.setdefault(
+            name, {"phone": phone, "t": Decimal("0"), "c": 0}
+        )
+        slot["t"] += _dec(r.amount)
+        slot["c"] += 1
+    ordered = sorted(sup.items(), key=lambda kv: -kv[1]["t"])
+    return ordered, label
+
+
+def _expense_suppliers_reply(shop, text) -> str:
+    sup, label = _expense_supplier_rows(shop, text)
+    if not sup:
+        return f"No expense suppliers recorded {label}."
+    lines = [f"*Expense suppliers — {_expense_who(shop)}* ({label})", ""]
+    for name, v in sup[:10]:
+        lines.append(
+            f"- {name}: {v['c']} entr{'ies' if v['c'] != 1 else 'y'} · "
+            f"*{money(v['t'])}*"
+        )
+    if len(sup) > 10:
+        lines.append(f"...plus {len(sup) - 10} more.")
+    return "\n".join(lines)
+
+
+def _expense_report_reply(shop, text) -> str:
+    rows, label = _expense_window(shop, text)
+    if not rows:
+        return f"No expenses recorded {label}."
+    total, paid_sum, owed = _expense_totals(rows)
+    names = _expense_names(rows) if shop is None else {}
+    by_shop = {}
+    for r in rows:
+        by_shop[r.shop_id] = by_shop.get(r.shop_id, Decimal("0")) + _dec(
+            r.amount
+        )
+    lines = [
+        f"*Expense report — {_expense_who(shop)}* ({label})",
+        f"- Entries: {len(rows)}",
+        f"- Total: *{money(total)}*",
+        f"- Paid: {money(paid_sum)}",
+        f"- Unpaid: *{money(owed)}*" if owed else "- Unpaid: KSh 0.00",
+    ]
+    if shop is None:
+        lines.append("")
+        for sid, t in sorted(by_shop.items(), key=lambda kv: -kv[1]):
+            lines.append(f"- {names.get(sid, '?')}: {money(t)}")
+    return "\n".join(lines)
+
+
+def _expense_help_reply(shop) -> str:
+    return (
+        f"*{_expense_who(shop)} expenses*\n\n"
+        "Pick a filter and add a day or period:\n"
+        "- *expenses* — every expense entry\n"
+        "- *paid* / *unpaid* — settled vs owing entries\n"
+        "- *by category* — totals per expense category\n"
+        "- *by shop* — totals per shop (all-shops view)\n"
+        "- *suppliers* — who the expenses were paid to\n"
+        "- *expense report* — totals summary\n\n"
+        "e.g. *expenses today*, *unpaid this week*, "
+        "*by category this month*."
+    )
+
+
+
+
+def reply_for_all_expenses(
+    text: str, section_visible=None, fallback_topic: str = "",
+    shop=None,
+) -> str:
+    """Expense-only reply engine for the all-shops expenses page
+    (`mode=expenses`). ``shop`` scopes every answer to one shop."""
+    t = (text or "").strip()
+    if not t:
+        return _expense_fallback_reply()
+    low = t.lower()
+
+    if GREETING_RE.match(t):
+        return (
+            "Hello! Ask me anything about expenses"
+            + (f" at {shop.name}" if shop is not None else "") +
+            " — try *expenses*, *paid*, *unpaid*, *by category*, "
+            "*by shop*, *suppliers* or *expense report*."
+        )
+    if THANKS_RE.match(t):
+        return "You're welcome! Ask me anything else about expenses."
+    if re.search(r"\b(unpaid|pending|owing|owed|debt|balance)\b", low):
+        return _expenses_list_reply(
+            shop, t, paid=False, title="Unpaid expenses"
+        )
+    if re.search(r"\b(paid|settled|cleared)\b", low):
+        return _expenses_list_reply(
+            shop, t, paid=True, title="Paid expenses"
+        )
+    if re.search(r"\b(categor|by category)\b", low):
+        return _expense_category_reply(shop, t)
+    if re.search(r"\b(by shop|per shop|each shop|shops)\b", low):
+        return _expense_byshop_reply(t)
+    if re.search(r"\b(suppliers?|vendors?)\b", low):
+        return _expense_suppliers_reply(shop, t)
+    if re.search(r"\b(report|summary|overview)\b", low):
+        return _expense_report_reply(shop, t)
+    if re.search(
+        r"\b(expenses?|spent|spending|costs?|bills?|outgoing)\b", low
+    ):
+        return _expenses_list_reply(shop, t)
+    if HELP_RE.search(t):
+        return _expense_help_reply(shop)
+    if fallback_topic:
+        return reply_for_all_expenses(
+            f"{fallback_topic} {t}",
+            section_visible=section_visible, shop=shop,
+        )
+    return _expense_fallback_reply()
+
+
+def _expense_table_card(shop, text, paid=None, title="Expenses"):
+    rows, label = _expense_window(shop, text, paid=paid)
+    if not rows:
+        return None
+    total, paid_sum, owed = _expense_totals(rows)
+    names = _expense_names(rows) if shop is None else {}
+    cap = _STOCK_CARD_MAX_ROWS
+    cols = [["#", 1], ["Expense"], ["Category"], ["Amount", 1],
+            ["Balance", 1], ["Status"]]
+    if shop is None:
+        cols.insert(2, ["Shop"])
+    table_rows = []
+    for i, r in enumerate(rows[:cap]):
+        bal = _dec(r.amount) - _dec(r.amount_paid)
+        row = [i + 1, r.name]
+        if shop is None:
+            row.append(names.get(r.shop_id, "?"))
+        row += [
+            r.category, money(r.amount),
+            money(bal) if bal > 0 else "—",
+            _expense_status(r),
+        ]
+        table_rows.append(row)
+    more = len(rows) - cap
+    return _tbl_card(
+        "receipt",
+        f"{title} — {_expense_who(shop)}",
+        label,
+        [
+            ["Entries", len(rows)],
+            ["Total", money(total), 1],
+            ["Paid", money(paid_sum)],
+            ["Unpaid", money(owed), 1 if owed else 0],
+        ],
+        cols,
+        table_rows,
+        f"{len(rows)} entr{'ies' if len(rows) != 1 else 'y'}"
+        + (f" · +{more} more" if more > 0 else ""),
+    )
+
+
+def _expense_category_card(shop, text):
+    rows, label = _expense_window(shop, text)
+    if not rows:
+        return None
+    cats = {}
+    for r in rows:
+        slot = cats.setdefault(
+            r.category,
+            {"t": Decimal("0"), "u": Decimal("0"), "c": 0},
+        )
+        slot["t"] += _dec(r.amount)
+        slot["u"] += _dec(r.amount) - _dec(r.amount_paid)
+        slot["c"] += 1
+    total, paid_sum, owed = _expense_totals(rows)
+    table_rows = [
+        [i + 1, cat, v["c"], money(v["t"]),
+         money(v["u"]) if v["u"] > 0 else "—"]
+        for i, (cat, v) in enumerate(
+            sorted(cats.items(), key=lambda kv: -kv[1]["t"])
+        )
+    ]
+    return _tbl_card(
+        "tags",
+        f"Expenses by category — {_expense_who(shop)}",
+        label,
+        [
+            ["Categories", len(cats)],
+            ["Total", money(total), 1],
+            ["Unpaid", money(owed), 1 if owed else 0],
+        ],
+        [["#", 1], ["Category"], ["Entries", 1], ["Total", 1],
+         ["Unpaid", 1]],
+        table_rows,
+        f"{len(cats)} categor{'ies' if len(cats) != 1 else 'y'}",
+    )
+
+
+def _expense_byshop_card(text):
+    rows, label = _expense_window(None, text)
+    if not rows:
+        return None
+    names = _expense_names(rows)
+    per = {}
+    for r in rows:
+        slot = per.setdefault(
+            names.get(r.shop_id, "?"),
+            {"t": Decimal("0"), "u": Decimal("0"), "c": 0},
+        )
+        slot["t"] += _dec(r.amount)
+        slot["u"] += _dec(r.amount) - _dec(r.amount_paid)
+        slot["c"] += 1
+    total, paid_sum, owed = _expense_totals(rows)
+    table_rows = [
+        [i + 1, name, v["c"], money(v["t"]),
+         money(v["u"]) if v["u"] > 0 else "—"]
+        for i, (name, v) in enumerate(
+            sorted(per.items(), key=lambda kv: -kv[1]["t"])
+        )
+    ]
+    return _tbl_card(
+        "store",
+        "Expenses by shop — ALL SHOPS",
+        label,
+        [
+            ["Shops", len(per)],
+            ["Total", money(total), 1],
+            ["Unpaid", money(owed), 1 if owed else 0],
+        ],
+        [["#", 1], ["Shop"], ["Entries", 1], ["Total", 1], ["Unpaid", 1]],
+        table_rows,
+        f"{len(per)} shop{'s' if len(per) != 1 else ''}",
+    )
+
+
+def _expense_supplier_card(shop, text):
+    sup, label = _expense_supplier_rows(shop, text)
+    if not sup:
+        return None
+    total = sum((v["t"] for _, v in sup), Decimal("0"))
+    cap = _STOCK_CARD_MAX_ROWS
+    table_rows = [
+        [i + 1, name, v["phone"] or "—", v["c"], money(v["t"])]
+        for i, (name, v) in enumerate(sup[:cap])
+    ]
+    more = len(sup) - cap
+    return _tbl_card(
+        "truck",
+        f"Expense suppliers — {_expense_who(shop)}",
+        label,
+        [["Suppliers", len(sup)], ["Total", money(total), 1]],
+        [["#", 1], ["Supplier"], ["Phone"], ["Entries", 1], ["Total", 1]],
+        table_rows,
+        f"{len(sup)} supplier{'s' if len(sup) != 1 else ''}"
+        + (f" · +{more} more" if more > 0 else ""),
+    )
+
+
+def _expense_report_card(shop, text):
+    rows, label = _expense_window(shop, text)
+    if not rows:
+        return None
+    total, paid_sum, owed = _expense_totals(rows)
+    cats = {}
+    for r in rows:
+        cats[r.category] = cats.get(r.category, Decimal("0")) + _dec(
+            r.amount
+        )
+    table_rows = [
+        [i + 1, cat, money(t)]
+        for i, (cat, t) in enumerate(
+            sorted(cats.items(), key=lambda kv: -kv[1])
+        )
+    ]
+    return _tbl_card(
+        "clipboard-list",
+        f"Expense report — {_expense_who(shop)}",
+        label,
+        [
+            ["Entries", len(rows)],
+            ["Total", money(total), 1],
+            ["Paid", money(paid_sum)],
+            ["Unpaid", money(owed), 1 if owed else 0],
+        ],
+        [["#", 1], ["Category"], ["Total", 1]],
+        table_rows,
+        f"{len(cats)} categor{'ies' if len(cats) != 1 else 'y'}",
+    )
+
+
+def _all_expense_card(text: str, shop=None):
+    """Expense-page card for all-shops (``shop=None``) or one shop."""
+    t = (text or "").strip()
+    low = t.lower()
+    if re.search(r"\b(unpaid|pending|owing|owed|debt|balance)\b", low):
+        return _expense_table_card(
+            shop, t, paid=False, title="Unpaid expenses"
+        )
+    if re.search(r"\b(paid|settled|cleared)\b", low):
+        return _expense_table_card(
+            shop, t, paid=True, title="Paid expenses"
+        )
+    if re.search(r"\b(categor|by category)\b", low):
+        return _expense_category_card(shop, t)
+    if re.search(r"\b(by shop|per shop|each shop|shops)\b", low):
+        return _expense_byshop_card(t)
+    if re.search(r"\b(suppliers?|vendors?)\b", low):
+        return _expense_supplier_card(shop, t)
+    if re.search(r"\b(report|summary|overview)\b", low):
+        return _expense_report_card(shop, t)
+    if re.search(
+        r"\b(expenses?|spent|spending|costs?|bills?|outgoing)\b", low
+    ):
+        return _expense_table_card(shop, t)
+    return None
+
+
+def card_for_all_expenses(
+    text: str, fallback_topic: str = "", shop=None
+):
+    """Card payload for the all-shops expenses page (`mode=expenses`)."""
+    card = _all_expense_card(text, shop=shop)
+    if card is None and fallback_topic:
+        card = _all_expense_card(f"{fallback_topic} {text}", shop=shop)
+    return card
+
+
+def reply_for_expenses(shop: Shop, text: str) -> str:
+    """Reply engine for the per-shop expenses assistant thread."""
+    return reply_for_all_expenses(text, shop=shop)
+
+
+def card_meta_expenses(shop: Shop, text: str):
+    """Card payload for the per-shop expenses assistant thread."""
+    return card_for_all_expenses(text, shop=shop)

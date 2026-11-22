@@ -160,10 +160,13 @@
     const receiptKindInput = payModal.querySelector("[data-ax-pay-receipt-kind]");
     const receiptIdsWrap = payModal.querySelector("[data-ax-pay-receipt-ids]");
     const accountIdInput = payForm?.querySelector("[name=account_id]");
+    const kindInput = payForm?.querySelector("[name=kind]");
     const supplierNameInput = payForm?.querySelector("[name=supplier_name]");
     const supplierPhoneInput = payForm?.querySelector("[name=supplier_phone]");
     const defaultAccountId =
       accountIdInput?.value || payModal.getAttribute("data-account-id") || "";
+    const defaultKind =
+      kindInput?.value || payModal.getAttribute("data-account-kind") || "";
     const defaultSupplierName = supplierNameInput?.value || "";
     const defaultSupplierPhone = supplierPhoneInput?.value || "";
     const payTitleEl = payModal.querySelector("[data-ax-pay-title]");
@@ -269,8 +272,16 @@
         receiptIds = [];
         title = "Pay amount";
         hint = "Clears from earliest receipt to latest.";
-        dueRaw = accountDueRaw;
-        dueLabel = accountDueLabel;
+        dueRaw =
+          source?.getAttribute?.("data-receipt-due-raw") || accountDueRaw;
+        dueLabel =
+          source?.getAttribute?.("data-receipt-due") || accountDueLabel;
+        const payAllName =
+          source?.getAttribute?.("data-supplier-name") || "";
+        if (payAllName) {
+          title = `Pay ${payAllName}`;
+          hint = "Clears their receipts from earliest to latest.";
+        }
       } else {
         receiptIds = receiptId ? [receiptId] : [];
         dueRaw = source?.getAttribute?.("data-receipt-due-raw") || accountDueRaw;
@@ -286,6 +297,10 @@
           !multi && !payAll
             ? (source?.getAttribute?.("data-pay-kind") || "").trim()
             : "";
+      }
+      if (kindInput) {
+        kindInput.value =
+          (source?.getAttribute?.("data-pay-kind") || "").trim() || defaultKind;
       }
       const sourceAccountId = source?.getAttribute?.("data-account-id");
       if (accountIdInput) {

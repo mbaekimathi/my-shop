@@ -808,6 +808,14 @@ class CompanyPosSettings(models.Model):
         default=False,
         help_text="When on, the shop tracks a separate shelf stock list registered by hand. Shelf items are not sold at the POS.",
     )
+    block_negative_stock = models.BooleanField(
+        default=True,
+        help_text="When on, tracked item sales cannot take shop stock below zero. When off, tracked items can sell into negative stock.",
+    )
+    enable_combo_items = models.BooleanField(
+        default=True,
+        help_text="When on, combo items can be registered in Item Management and sold (the sale tallies each component by its portion). When off, combos cannot be registered or sold.",
+    )
     enable_open_close = models.BooleanField(
         default=True,
         help_text="When on, staff must open the shop day before selling and are redirected to open/close. When off, open/close is optional.",

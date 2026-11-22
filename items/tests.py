@@ -184,7 +184,7 @@ class ItemStockReportRowsTests(TestCase):
         self.assertEqual(by_shop[self.shop_b.name]["stock_transfer_in"], 2)
         self.assertEqual(by_shop[self.shop_b.name]["stock_transfer_out"], 0)
 
-    def test_all_shops_list_every_shop_under_the_item(self):
+    def test_all_shops_list_only_active_shops_under_the_item(self):
         from items.models import ShopStock
         from items.views import _build_item_report_rows
 
@@ -198,24 +198,26 @@ class ItemStockReportRowsTests(TestCase):
             created_by=self.profile,
         )
         ShopStock.objects.create(shop=shop_c, item=self.item, quantity=0)
+        self._fulfill_transfer(qty=2)
         rows = _build_item_report_rows(
             [self.item],
             [self.shop_a.pk, self.shop_b.pk, shop_c.pk],
             self.day_start,
             self.day_end,
         )
+        # shop_c was untouched in the period, so it stays hidden.
         self.assertEqual(
             [row["shop_name"] for row in rows],
-            [self.shop_a.name, self.shop_b.name, shop_c.name, "Total"],
+            [self.shop_a.name, self.shop_b.name, "Total"],
         )
         self.assertTrue(rows[0]["is_item_start"])
         self.assertTrue(rows[-1]["is_item_total"])
-        self.assertEqual(rows[2]["starting_stock"], 0)
-        self.assertEqual(rows[2]["closing_stock"], 0)
+        self.assertEqual(rows[-1]["stock_transfer_in"], 2)
+        self.assertEqual(rows[-1]["stock_transfer_out"], 2)
         self.assertEqual(rows[-1]["starting_stock"], 10)
         self.assertEqual(rows[-1]["closing_stock"], 10)
 
-    def test_idle_stock_still_listed(self):
+    def test_idle_stock_is_hidden(self):
         from items.views import _build_item_report_rows
 
         rows = _build_item_report_rows(
@@ -224,11 +226,7 @@ class ItemStockReportRowsTests(TestCase):
             self.day_start,
             self.day_end,
         )
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["starting_stock"], 8)
-        self.assertEqual(rows[0]["closing_stock"], 8)
-        self.assertEqual(rows[0]["stock_transfer_in"], 0)
-        self.assertEqual(rows[0]["stock_transfer_out"], 0)
+        self.assertEqual(rows, [])
 
     def test_report_row_net_sale_subtracts_returns(self):
         from decimal import Decimal
@@ -286,6 +284,7 @@ class ItemStockReportRowsTests(TestCase):
 
     def test_pending_request_is_not_a_transfer(self):
         from items.models import (
+            ShopStock,
             StockMovement,
             StockMovementLine,
             StockMovementType,
@@ -305,6 +304,21 @@ class ItemStockReportRowsTests(TestCase):
             item=self.item,
             quantity=3,
         )
+        # A pending request alone is not period activity, so the item stays
+        # hidden; add a real stock-in to keep the row visible for the check.
+        self.assertEqual(
+            _build_item_report_rows(
+                [self.item],
+                [self.shop_a.pk],
+                self.day_start,
+                self.day_end,
+            ),
+            [],
+        )
+        self._stock_in(shop=self.shop_a, qty=3, at=self.now)
+        ShopStock.objects.filter(shop=self.shop_a, item=self.item).update(
+            quantity=5
+        )
         dest_rows = _build_item_report_rows(
             [self.item],
             [self.shop_a.pk],
@@ -313,7 +327,8 @@ class ItemStockReportRowsTests(TestCase):
         )
         self.assertEqual(dest_rows[0]["stock_transfer_in"], 0)
         self.assertEqual(dest_rows[0]["stock_transfer_out"], 0)
-        self.assertEqual(dest_rows[0]["closing_stock"], 2)
+        self.assertEqual(dest_rows[0]["stock_in"], 3)
+        self.assertEqual(dest_rows[0]["closing_stock"], 5)
 
     def _stock_in(self, *, shop, qty, at):
         from items.models import StockMovement, StockMovementLine, StockMovementType
@@ -3155,6 +3170,269 @@ class StockActivityAnalyticsTests(TestCase):
         self.assertContains(response, "STOCK ACT SHOP")
 
 
+class ShopStoreAnalyticsTests(TestCase):
+    """Shop store analytics — trade-out usage per item at buying price,
+    rolled up per supplier (amount supposed to be given to suppliers)."""
+
+    def setUp(self):
+        from items.models import Item
+
+        self.password = "shop-analytics-pass"
+        self.user = User.objects.create_user(
+            username="840071",
+            password=self.password,
+            email="shop-analytics@test.local",
+            first_name="Shop",
+            last_name="Analytics",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="840071",
+            phone_country_code="+254",
+            phone_number="700000991",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_STORE_MANAGER,
+        )
+        self.shop = Shop.objects.create(
+            name="ANALYTICS SHOP",
+            location="NAIROBI",
+            email="shop-analytics-shop@test.local",
+            phone_number="0700000991",
+            login_code="840171",
+            password_hash="x",
+            created_by=self.profile,
+        )
+        self.shop.assigned_employees.add(self.profile)
+        self.item = Item.objects.create(
+            category="TOOLS",
+            name="ANALYTICS ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        self.item_b = Item.objects.create(
+            category="TOOLS",
+            name="ORPHAN ITEM",
+            minimum_selling_price=Decimal("5.00"),
+            shop_price=Decimal("8.00"),
+            created_by=self.profile,
+        )
+
+    def _seed_movements(self):
+        from items.models import (
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+            StockOutReason,
+        )
+
+        stock_in = StockMovement.objects.create(
+            movement_type=StockMovementType.IN,
+            shop=self.shop,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=stock_in,
+            item=self.item,
+            quantity=10,
+            buying_price=Decimal("8.50"),
+            supplier_name="ACME SUPPLIES",
+            supplier_phone_country_code="+254",
+            supplier_phone_number="700111222",
+        )
+        trade_out = StockMovement.objects.create(
+            movement_type=StockMovementType.OUT,
+            shop=self.shop,
+            created_by=self.profile,
+        )
+        StockMovementLine.objects.create(
+            movement=trade_out,
+            item=self.item,
+            quantity=2,
+            unit_cost=Decimal("8.50"),
+            reason=StockOutReason.TRADE_OUT,
+        )
+        StockMovementLine.objects.create(
+            movement=trade_out,
+            item=self.item_b,
+            quantity=3,
+            unit_cost=Decimal("4.00"),
+            reason=StockOutReason.TRADE_OUT,
+        )
+        # A waste stock-out must not count as trade-out usage.
+        StockMovementLine.objects.create(
+            movement=trade_out,
+            item=self.item_b,
+            quantity=5,
+            unit_cost=Decimal("4.00"),
+            reason=StockOutReason.WASTE,
+        )
+        return stock_in, trade_out
+
+    def test_builder_groups_trade_outs_by_item_and_supplier(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from items.views import _build_shop_store_analytics
+
+        self._seed_movements()
+        end = timezone.now() + timedelta(minutes=1)
+        start = end - timedelta(days=1)
+        page = _build_shop_store_analytics(
+            shop_ids=[self.shop.pk], start=start, end=end, role=self.profile.role
+        )
+        rows = {row["name"]: row for row in page["trade_item_rows"]}
+        self.assertEqual(rows["ANALYTICS ITEM"]["quantity_label"], "2")
+        self.assertEqual(rows["ANALYTICS ITEM"]["value_label"], "17")
+        self.assertEqual(rows["ANALYTICS ITEM"]["supplier"], "ACME SUPPLIES")
+        self.assertEqual(rows["ORPHAN ITEM"]["quantity_label"], "3")
+        self.assertEqual(rows["ORPHAN ITEM"]["value_label"], "12")
+        self.assertEqual(rows["ORPHAN ITEM"]["supplier"], "")
+
+        suppliers = {row["name"]: row for row in page["trade_supplier_rows"]}
+        self.assertEqual(suppliers["ACME SUPPLIES"]["value_label"], "17")
+        self.assertEqual(
+            suppliers["Supplier not recorded"]["value_label"], "12"
+        )
+        self.assertEqual(page["trade_totals"]["value_label"], "29")
+        self.assertEqual(page["trade_totals"]["items"], 2)
+        self.assertEqual(page["trade_totals"]["suppliers"], 1)
+
+    def test_builder_includes_shelf_trade_outs(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from items.models import (
+            ShelfItem,
+            ShelfStockMovement,
+            ShelfStockMovementType,
+            StockOutReason,
+        )
+        from items.views import _build_shop_store_analytics
+
+        self._seed_movements()
+        shelf_item = ShelfItem.objects.create(
+            shop=self.shop,
+            name="GAS CYLINDER",
+            quantity=20,
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=10,
+            balance_after=10,
+            buying_price=Decimal("3.00"),
+            supplier_name="SHELF SUPPLIER",
+            supplier_phone="0712000222",
+        )
+        # Second batch at a higher price — the 12-unit trade out draws
+        # the cheap batch first (FIFO): 10×3.00 + 2×6.00 = 42.
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=10,
+            balance_after=20,
+            buying_price=Decimal("6.00"),
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_item,
+            movement_type=ShelfStockMovementType.OUT,
+            quantity=12,
+            balance_after=8,
+            reason=StockOutReason.TRADE_OUT,
+            supplier_name="JOHN COLLECTOR",
+            supplier_phone="0712000111",
+        )
+        # The recorded trade person wins over the stock-in supplier.
+        shelf_plain = ShelfItem.objects.create(
+            shop=self.shop,
+            name="CRATE",
+            quantity=8,
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_plain,
+            movement_type=ShelfStockMovementType.IN,
+            quantity=8,
+            balance_after=8,
+            buying_price=Decimal("5.00"),
+            supplier_name="SHELF SUPPLIER",
+            supplier_phone="0712000222",
+        )
+        ShelfStockMovement.objects.create(
+            shelf_item=shelf_plain,
+            movement_type=ShelfStockMovementType.OUT,
+            quantity=2,
+            balance_after=6,
+            reason=StockOutReason.TRADE_OUT,
+        )
+
+        end = timezone.now() + timedelta(minutes=1)
+        start = end - timedelta(days=1)
+        page = _build_shop_store_analytics(
+            shop_ids=[self.shop.pk], start=start, end=end, role=self.profile.role
+        )
+        rows = {row["name"]: row for row in page["trade_item_rows"]}
+        self.assertTrue(rows["GAS CYLINDER"]["is_shelf"])
+        self.assertEqual(rows["GAS CYLINDER"]["quantity_label"], "12")
+        self.assertEqual(rows["GAS CYLINDER"]["value_label"], "42")
+        self.assertEqual(rows["GAS CYLINDER"]["avg_price_label"], "3.50")
+        self.assertEqual(rows["GAS CYLINDER"]["supplier"], "SHELF SUPPLIER")
+        self.assertEqual(rows["CRATE"]["quantity_label"], "2")
+        self.assertEqual(rows["CRATE"]["value_label"], "10")
+        self.assertEqual(rows["CRATE"]["supplier"], "SHELF SUPPLIER")
+
+        suppliers = {row["name"]: row for row in page["trade_supplier_rows"]}
+        # The trade-out receiver is not the supplier — the supplier is
+        # the name/phone recorded at stock-in.
+        self.assertNotIn("JOHN COLLECTOR", suppliers)
+        self.assertEqual(suppliers["SHELF SUPPLIER"]["value_label"], "52")
+
+        # The shelf matrix's cost column is the FIFO price of the oldest
+        # batch still on the shelf — after the 12-unit trade out the
+        # remaining 8 units are all from the second (6.00) batch.
+        from items.views import _shelf_view_matrix
+
+        cells = {
+            row["name"]: cell
+            for group in _shelf_view_matrix([self.shop])
+            for row in group["items"]
+            for cell in row["cells"]
+            if cell
+        }
+        self.assertEqual(
+            cells["GAS CYLINDER"]["unit_cost"], Decimal("6.00")
+        )
+        self.assertEqual(
+            cells["GAS CYLINDER"]["unit_cost_display"], "6"
+        )
+
+    def test_page_renders_and_sidebar_links_it(self):
+        from django.utils import timezone
+
+        self._seed_movements()
+        self.client.login(username="840071", password=self.password)
+        response = self.client.get(
+            "/shop-store-manager/stock-management/",
+            {
+                "mode": "shop-analytics",
+                "range": "day",
+                "date": timezone.localdate().isoformat(),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Shop store analytics")
+        self.assertContains(response, "ANALYTICS ITEM")
+        self.assertContains(response, "ACME SUPPLIES")
+        self.assertContains(response, "Supplier not recorded")
+        labels = [
+            item["label"] for item in response.context["page_sidebar"]["primary"]
+        ]
+        self.assertIn("Shop store analytics", labels)
+
+
 class ItSupportItemStockPagesTests(TestCase):
     """IT support stock pages are item-stock only — shelf stock lives on the
     Shelf stock management tab (mode=view&tab=shelf)."""
@@ -3311,6 +3589,7 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertIn("Shelf stock in", labels)
         self.assertIn("Shelf stock out", labels)
         self.assertIn("Shelf stock transfer", labels)
+        self.assertIn("Shelf stock trade", labels)
         self.assertIn("Shelf stock movement", labels)
         self.assertIn("Shelf stock report", labels)
         self.assertNotIn("Serials", labels)
@@ -3336,8 +3615,29 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertIn("tab=shelf", hrefs["Shelf stock in"])
         self.assertIn("tab=shelf", hrefs["Shelf stock out"])
         self.assertIn("tab=shelf", hrefs["Shelf stock transfer"])
+        self.assertIn("tab=shelf", hrefs["Shelf stock trade"])
+        self.assertIn("mode=request", hrefs["Shelf stock trade"])
+        self.assertIn("flow=trade_out", hrefs["Shelf stock trade"])
         self.assertIn("tab=shelf", hrefs["Shelf stock movement"])
         self.assertIn("tab=shelf", hrefs["Shelf stock report"])
+
+    def test_shelf_trade_flow_marks_trade_link_active(self):
+        from shops.services import set_company_pos_setting
+
+        set_company_pos_setting(field="stock_mode_both", enabled=True)
+        self._shelf_item()
+
+        page = self.client.get(
+            self.url,
+            {"mode": "request", "tab": "shelf", "flow": "trade_out"},
+        )
+        self.assertEqual(page.status_code, 200)
+        items = {
+            item["label"]: item
+            for item in page.context["page_sidebar"]["primary"]
+        }
+        self.assertTrue(items["Shelf stock trade"]["active"])
+        self.assertFalse(items["Shelf stock transfer"]["active"])
 
     def test_shelf_tab_stock_in_shows_shelf_panel_only(self):
         from shops.services import set_company_pos_setting
@@ -3394,9 +3694,23 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertContains(page, "IT SHELF WIDGET")
         self.assertContains(page, "IT SHELF GADGET")
         self.assertContains(page, ">Total<")
-        # No item-catalog surface on the shelf tab.
+        # No item-catalog surface on the shelf tab — the register modal's
+        # trade-out portions picker is the only catalog reference allowed.
         self.assertNotContains(page, "data-stock-catalog-api")
-        self.assertNotContains(page, "IT STOCK ITEM")
+        import re
+
+        body = re.sub(
+            r'<datalist[^>]*data-portion-source[^>]*>.*?</datalist>',
+            "",
+            page.content.decode(),
+            flags=re.S,
+        )
+        body = re.sub(
+            r'<option value="\d+">[^<]*</option>',
+            "",
+            body,
+        )
+        self.assertNotIn("IT STOCK ITEM", body)
 
         groups = page.context["shelf_matrix_groups"]
         rows = [row for group in groups for row in group["items"]]
@@ -3528,20 +3842,40 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertNotContains(sheet, "Activity details")
 
     def test_shelf_tab_report_shows_all_scope_shops(self):
-        from items.models import ShelfItem
+        from items.models import (
+            ShelfItem,
+            ShelfStockMovement,
+            ShelfStockMovementType,
+        )
         from shops.services import set_company_pos_setting
 
         set_company_pos_setting(field="stock_mode_both", enabled=True)
-        self._shelf_item()
-        ShelfItem.objects.create(
+        widget = self._shelf_item()
+        gadget = ShelfItem.objects.create(
             shop=self.shop_b,
             name="IT SHELF GADGET",
             unit="PCS",
             quantity=Decimal("2"),
             created_by=self.profile,
         )
+        idle = ShelfItem.objects.create(
+            shop=self.shop_b,
+            name="IT SHELF IDLE",
+            unit="PCS",
+            quantity=Decimal("5"),
+            created_by=self.profile,
+        )
+        for shelf_item in (widget, gadget):
+            ShelfStockMovement.objects.create(
+                shelf_item=shelf_item,
+                movement_type=ShelfStockMovementType.REGISTER,
+                quantity=shelf_item.quantity,
+                balance_after=shelf_item.quantity,
+                created_by=self.profile,
+            )
 
-        # No shop picked: the report covers every in-scope shelf shop.
+        # No shop picked: the report covers every in-scope shelf shop, and
+        # the idle item (untouched in the period) stays hidden.
         page = self.client.get(
             self.url,
             {
@@ -3556,12 +3890,13 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertIsNotNone(report)
         self.assertTrue(report["multi_shop"])
         self.assertEqual(
-            {row["item"].shop_id for row in report["rows"]},
-            {self.shop.pk, self.shop_b.pk},
+            {row["item"].pk for row in report["rows"]},
+            {widget.pk, gadget.pk},
         )
         self.assertContains(page, "IT SHELF WIDGET")
         self.assertContains(page, "IT SHELF GADGET")
         self.assertContains(page, "IT STOCK SHOP B")
+        self.assertNotContains(page, "IT SHELF IDLE")
 
         # A picked shop narrows the report to that shop only.
         page = self.client.get(

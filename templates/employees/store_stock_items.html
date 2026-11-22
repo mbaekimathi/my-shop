@@ -54,6 +54,7 @@
             <th scope="col">Item</th>
             <th scope="col" class="store-stock-col-qty">Last buy price</th>
             <th scope="col" class="store-stock-col-qty">In store</th>
+            <th scope="col" class="store-stock-col-qty" title="Low-stock alert status across shops">Health</th>
             <th scope="col" class="store-stock-col-qty" title="When on, sales deduct this item's store count">Stock count</th>
           </tr>
         </thead>
@@ -61,7 +62,7 @@
           {% for item in items %}
           {% ifchanged item.category %}
           <tr class="store-stock-cat-row" data-store-cat-row>
-            <td colspan="4">{{ item.category|default:"Uncategorised" }}</td>
+            <td colspan="5">{{ item.category|default:"Uncategorised" }}</td>
           </tr>
           {% endifchanged %}
           <tr class="store-stock-row" data-store-items-row data-search="{{ item.search_text }}">
@@ -76,6 +77,9 @@
             </td>
             <td class="store-stock-col-qty" data-label="In store">
               <span class="store-stock-balance-pill">{{ item.store_qty_display }}</span>
+            </td>
+            <td class="store-stock-col-qty" data-label="Health">
+              <span class="low-stock-badge is-{{ item.health }}" title="{{ item.health_title }}">{{ item.health_label }}</span>
             </td>
             <td class="store-stock-col-qty" data-label="Stock count">
               <label

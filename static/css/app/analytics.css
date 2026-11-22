@@ -6946,28 +6946,20 @@
   width: 15%;
 }
 
-.ax--confirm .ax-table--confirm-compact col.ax-col-sold-by {
-  width: 12%;
-}
-
-.ax--confirm .ax-table--confirm-compact col.ax-col-sold-as {
-  width: 8%;
+.ax--confirm .ax-table--confirm-compact col.ax-col-sold {
+  width: 16%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-amount {
-  width: 11%;
+  width: 12%;
 }
 
-.ax--confirm .ax-table--confirm-compact col.ax-col-reference {
-  width: 13%;
+.ax--confirm .ax-table--confirm-compact col.ax-col-ref-paid {
+  width: 17%;
 }
 
 .ax--confirm .ax-table--confirm-compact col.ax-col-when {
-  width: 12.5%;
-}
-
-.ax--confirm .ax-table--confirm-compact col.ax-col-paid {
-  width: 12.5%;
+  width: 13%;
 }
 
 .ax--confirm .ax-table--confirm-compact th,
@@ -7031,7 +7023,9 @@
 }
 
 .ax--confirm .ax-confirm-receipt-status,
-.ax--confirm .ax-confirm-client-phone {
+.ax--confirm .ax-confirm-client-phone,
+.ax--confirm .ax-confirm-sold,
+.ax--confirm .ax-confirm-ref-paid {
   white-space: normal;
   overflow: visible;
 }
@@ -7372,27 +7366,27 @@
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-receipt {
-    width: 15%;
+    width: 16%;
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-client {
-    width: 20%;
+    width: 18%;
+  }
+
+  .ax--confirm .ax-table--confirm-compact col.ax-col-sold {
+    width: 15%;
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-amount {
     width: 12%;
   }
 
-  .ax--confirm .ax-table--confirm-compact col.ax-col-reference {
+  .ax--confirm .ax-table--confirm-compact col.ax-col-ref-paid {
     width: 15%;
   }
 
   .ax--confirm .ax-table--confirm-compact col.ax-col-when {
-    width: 14%;
-  }
-
-  .ax--confirm .ax-table--confirm-compact col.ax-col-paid {
-    width: 14%;
+    width: 12%;
   }
 
   .ax--confirm .ax-table--confirm-compact td.ax-cell--primary,
@@ -7415,7 +7409,9 @@
   }
 
   .ax--confirm .ax-confirm-receipt-status,
-  .ax--confirm .ax-confirm-client-phone {
+  .ax--confirm .ax-confirm-client-phone,
+  .ax--confirm .ax-confirm-sold,
+  .ax--confirm .ax-confirm-ref-paid {
     white-space: normal;
     overflow: visible;
   }
@@ -7529,12 +7525,12 @@
 
   .ax--confirm .ax-table--confirm-compact th:nth-child(4),
   .ax--confirm .ax-table--confirm-compact td:nth-child(4) {
-    width: 34%;
+    width: 24%;
   }
 
   .ax--confirm .ax-table--confirm-compact th:nth-child(2),
   .ax--confirm .ax-table--confirm-compact td:nth-child(2) {
-    width: 38%;
+    width: 30%;
   }
 }
 

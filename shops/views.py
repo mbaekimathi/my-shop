@@ -1212,6 +1212,10 @@ def my_shop_switch(request):
 
 def _catalog_base_qs(shop=None):
     qs = Item.objects.filter(is_suspended=False)
+    from shops.services import get_company_pos_settings
+
+    if not getattr(get_company_pos_settings(), "enable_combo_items", True):
+        qs = qs.filter(is_combo=False)
     if shop is not None:
         # Only items flagged "sold here" appear in this shop's catalogues.
         qs = qs.exclude(
@@ -1232,6 +1236,7 @@ def _catalog_base_qs(shop=None):
             "discount_min_qty",
             "discount_amount",
             "track_serial_number",
+            "is_combo",
             "deduct_stock_on_sale",
             "image",
             "is_suspended",
@@ -1301,6 +1306,7 @@ def _catalog_rows_for_items(shop, items):
                 "sold_quantity": _qty_number(getattr(item, "sold_quantity", 0) or 0),
 
                 "track_serial": bool(item.track_serial_number),
+                "is_combo": bool(getattr(item, "is_combo", False)),
                 "image_url": image_url,
             }
         )
@@ -2212,8 +2218,10 @@ def my_shop_shelf_stock(request, shop_id):
         SHELF_UNIT_CHOICES,
         apply_shelf_action,
         list_shelf_items,
+        portion_item_options,
         recent_shelf_movements,
         shelf_categories,
+        shelf_portions_enabled,
     )
     from shops.services import get_company_stock_settings
 
@@ -2272,6 +2280,8 @@ def my_shop_shelf_stock(request, shop_id):
             "shelf_needs_staff_id": profile is None,
             "shelf_unit_choices": SHELF_UNIT_CHOICES,
             "shelf_categories": shelf_categories(),
+            "shelf_portion_items": portion_item_options(),
+            "shelf_portions_enabled": shelf_portions_enabled(),
             "stock_req": get_company_stock_settings(),
         },
     )

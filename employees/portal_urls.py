@@ -563,6 +563,16 @@ urlpatterns = [
         name="analytics_shelf_supplier_account",
     ),
     path(
+        "<role_segment:role_segment>/analytics/suppliers/items/<int:item_id>/",
+        analytics_views.analytics_item_suppliers,
+        name="analytics_item_suppliers",
+    ),
+    path(
+        "<role_segment:role_segment>/analytics/suppliers/shelf-items/<int:item_id>/",
+        analytics_views.analytics_shelf_item_suppliers,
+        name="analytics_shelf_item_suppliers",
+    ),
+    path(
         "<role_segment:role_segment>/analytics/suppliers/<slug:kind>/<int:supplier_id>/",
         analytics_views.analytics_supplier_account,
         name="analytics_supplier_account",

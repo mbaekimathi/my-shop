@@ -16,6 +16,8 @@ def chat_attachment_path(instance, filename):
 class ConversationKind(models.TextChoices):
     DIRECT = "direct", "Shop to shop"
     BOT = "bot", "Assistant"
+    STOCK_BOT = "stock_bot", "Stock assistant"
+    EXPENSE_BOT = "expense_bot", "Expenses assistant"
     GROUP = "group", "Group"
 
 
@@ -42,6 +44,10 @@ class Conversation(models.Model):
     def __str__(self):
         if self.kind == ConversationKind.BOT:
             return f"Assistant thread (shop {self.bot_shop_id})"
+        if self.kind == ConversationKind.STOCK_BOT:
+            return f"Stock assistant thread {self.pair_key}"
+        if self.kind == ConversationKind.EXPENSE_BOT:
+            return f"Expenses assistant thread {self.pair_key}"
         if self.kind == ConversationKind.GROUP:
             return f"Group {self.name!r}"
         return f"Direct thread {self.pair_key}"
@@ -95,6 +101,10 @@ class Message(models.Model):
     # Structured payload for rich bubbles (e.g. stock transfer cards).
     meta = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Drives the poll change-feed: stamped on every save so card/meta updates
+    # (transfer outcomes, pending confirmations) reach other devices.
+    # auto_now only fires on full saves — update_fields saves must list it.
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["id"]

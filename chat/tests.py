@@ -584,6 +584,69 @@ class DirectChatTests(ChatTestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class PollChangeFeedTests(ChatTestCase):
+    """Rewrites of already-delivered messages (transfer outcome, pending
+    confirmation) must reach installed devices on the next poll beat."""
+
+    def setUp(self):
+        super().setUp()
+        self.login()
+
+    def _poll(self, convo, **params):
+        return self.client.get(
+            reverse("chat:api_poll"),
+            {"conversation_id": convo.pk, **params},
+        ).json()
+
+    def test_changed_messages_arrive_via_change_feed(self):
+        convo = services.get_or_create_direct(self.shop_a, self.shop_b)
+        msg = convo.messages.create(
+            sender_shop_id=self.shop_b.pk,
+            body="transfer card",
+            meta={"transfer": {"status": "pending"}},
+        )
+        # The create-stamp sits inside the feed's overlap window — backdate it
+        # so the next beat starts from a clean slate.
+        Message.objects.filter(pk=msg.pk).update(
+            updated_at=timezone.now() - timedelta(seconds=30)
+        )
+        # Full load (after_id=0) carries no change feed.
+        data = self._poll(convo)
+        self.assertEqual(len(data["active"]["messages"]), 1)
+        self.assertNotIn("changed", data["active"])
+        since = data["now"]
+
+        # Incremental beat with nothing changed → empty feed.
+        data = self._poll(convo, after_id=msg.pk, changed_since=since)
+        self.assertEqual(data["active"]["changed"], [])
+
+        # Another device rewrites the card's meta — it lands in `changed`.
+        meta = dict(msg.meta)
+        meta["transfer"] = {"status": "fulfilled"}
+        msg.meta = meta
+        msg.save(update_fields=["meta", "updated_at"])
+        data = self._poll(convo, after_id=msg.pk, changed_since=since)
+        changed = data["active"]["changed"]
+        self.assertEqual([m["id"] for m in changed], [msg.pk])
+        self.assertEqual(
+            changed[0]["meta"]["transfer"]["status"], "fulfilled"
+        )
+        # And the message itself is not re-sent as new.
+        self.assertEqual(data["active"]["messages"], [])
+
+    def test_updated_at_stamped_on_meta_save(self):
+        convo = services.get_or_create_direct(self.shop_a, self.shop_b)
+        msg = convo.messages.create(sender_shop_id=self.shop_a.pk, body="x")
+        stale = timezone.now() - timedelta(hours=1)
+        # update() bypasses auto_now — plant a stale stamp deterministically.
+        Message.objects.filter(pk=msg.pk).update(updated_at=stale)
+        msg.meta = {"pending_action": {"status": "done"}}
+        msg.save(update_fields=["meta", "updated_at"])
+        msg.refresh_from_db()
+        self.assertGreater(msg.updated_at, stale)
+        self.assertEqual(msg.meta["pending_action"]["status"], "done")
+
+
 class BotTests(ChatTestCase):
     def setUp(self):
         super().setUp()
@@ -3332,13 +3395,14 @@ class AllShopsShelfMovementTests(ChatTestCase):
         from .bot import card_for_all
 
         card = card_for_all("shelf stock movement")
-        mv = card["movement"]
-        self.assertEqual(mv["title"], "Shelf stock movement")
-        self.assertEqual(len(mv["groups"]), 1)
-        group = mv["groups"][0]
-        self.assertEqual(group["head"], "Alpha Store — Shelf in")
-        self.assertEqual(group["items"][0]["item"], "Sugar")
-        self.assertEqual(group["items"][0]["qty"], "5")
+        mv = card["stock_list"]
+        self.assertIn("Shelf stock movement", mv["title"])
+        self.assertTrue(mv["typed"])
+        self.assertEqual(len(mv["rows"]), 1)
+        row = mv["rows"][0]
+        self.assertEqual(row["head"], "Alpha Store")
+        self.assertEqual(row["item"], "Sugar")
+        self.assertEqual(row["qty"], "5")
 
     def test_bare_movement_defaults_to_item_ledger(self):
         StockMovement.objects.create(
@@ -3827,10 +3891,11 @@ class ShopShelfAssistantTests(ChatTestCase):
         from .bot import card_meta
 
         card = card_meta(self.shop_a, "shelf stock movement")
-        mv = card["movement"]
-        self.assertEqual(mv["title"], "Shelf stock movement")
-        self.assertEqual(mv["groups"][0]["head"], "Shelf out")
-        self.assertIn("Waste", mv["groups"][0]["status"])
+        mv = card["stock_list"]
+        self.assertIn("Shelf stock movement", mv["title"])
+        row = mv["rows"][0]
+        self.assertEqual(row["badge"], "−OUT")
+        self.assertIn("Waste", row["status"])
 
     def test_bare_movement_uses_shelf_when_items_off(self):
         self._set_modes(items=False, shelf=True)
@@ -3873,3 +3938,1211 @@ class ShopShelfAssistantTests(ChatTestCase):
         )
         reply = reply_for(self.shop_a, "low stock")
         self.assertIn("Sugar (shelf)", reply)
+
+
+class AllShopsStockPageTests(ChatTestCase):
+    """The /all/stock/ day page — section totals + drill-down views."""
+
+    EMPLOYEE_DDL = (
+        "CREATE TABLE IF NOT EXISTS employees_employeeprofile ("
+        "id INTEGER PRIMARY KEY, employee_id VARCHAR(12) NOT NULL, "
+        "user_id BIGINT, role VARCHAR(32) NOT NULL, "
+        "status VARCHAR(16) NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS "
+        "employees_employeeprofile_assigned_shops ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "employeeprofile_id BIGINT NOT NULL, shop_id BIGINT NOT NULL)",
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.prepare_employee_fixtures()
+        insert_employee_profile(
+            pk=31, employee_id="310001", user_id=None,
+            role="it_support", status="active",
+        )
+        insert_employee_profile(
+            pk=32, employee_id="310002", user_id=None,
+            role="shop_cashier", status="active",
+        )
+        self.item = Item.objects.create(
+            category="Drinks", name="Soda",
+            minimum_selling_price=Decimal("50"),
+            shop_price=Decimal("80"), stock=Decimal("0"),
+            low_stock_notify=False, low_stock_threshold=0,
+            is_suspended=False,
+        )
+        session = self.client.session
+        session["chatbot_employee_id"] = 31
+        session.save()
+
+    def _movement(self, **kw):
+        return StockMovement.objects.create(**kw)
+
+    def _line(self, movement, **kw):
+        kw.setdefault("item_name", self.item.name)
+        kw.setdefault("quantity", Decimal("1"))
+        return StockMovementLine.objects.create(
+            movement_id=movement.pk, item_id=self.item.pk, **kw
+        )
+
+    def _seed_day(self):
+        stock_in = self._movement(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            stock_in, quantity=Decimal("4"), buying_price=Decimal("100"),
+            supplier_name="Acme Supplies",
+            supplier_phone_country_code="+254",
+            supplier_phone_number="700000001",
+        )
+        trade_in = self._movement(
+            movement_type="in", entry_source="trade_in",
+            shop_id=self.shop_b.pk,
+        )
+        self._line(trade_in, quantity=Decimal("2"), buying_price=Decimal("60"))
+        stock_out = self._movement(
+            movement_type="out", entry_source="stock_management",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            stock_out, quantity=Decimal("3"), unit_cost=Decimal("90"),
+            reason="waste",
+        )
+        trade_out = self._movement(
+            movement_type="out", entry_source="trade_out",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            trade_out, quantity=Decimal("1"), unit_cost=Decimal("70"),
+            reason="trade_out",
+        )
+        transfer = self._movement(
+            movement_type="request", shop_id=self.shop_a.pk,
+            requested_from_shop_id=self.shop_b.pk,
+            request_status="pending",
+        )
+        self._line(
+            transfer, quantity=Decimal("5"), buying_price=Decimal("100"),
+            reason="transfer",
+        )
+
+    def test_summary_board_lists_sections_with_values(self):
+        self._seed_day()
+        resp = self.client.get(reverse("chat:all_stock"))
+        self.assertEqual(resp.status_code, 200)
+        for label in (
+            "Stock in", "Stock out", "Traded in", "Traded out",
+            "Transfers", "Suppliers", "Stock report",
+        ):
+            self.assertContains(resp, label)
+        # Stock in: 4 × 100; stock out: 3 × 90; trade in: 2 × 60;
+        # trade out: 1 × 70; transfer: 5 × 100.
+        for amount in (
+            "KSh 400.00", "KSh 270.00", "KSh 120.00",
+            "KSh 70.00", "KSh 500.00",
+        ):
+            self.assertContains(resp, amount)
+
+    def test_stock_in_view_lists_supplier_and_items(self):
+        self._seed_day()
+        resp = self.client.get(
+            reverse("chat:all_stock"), {"view": "in"}
+        )
+        self.assertContains(resp, "Stock in — ")
+        self.assertContains(resp, "Soda")
+        self.assertContains(resp, "Acme Supplies")
+        self.assertContains(resp, "Alpha Store")
+
+    def test_trade_buckets_split_by_entry_source(self):
+        self._seed_day()
+        from . import all_stock
+
+        data = all_stock.build_stock_day(timezone.localdate())
+        sections = {s["key"]: s for s in data["sections"]}
+        self.assertEqual(sections["in"]["moves"], 1)
+        self.assertEqual(sections["in"]["value"], Decimal("400"))
+        self.assertEqual(sections["trade_in"]["moves"], 1)
+        self.assertEqual(sections["trade_in"]["value"], Decimal("120"))
+        self.assertEqual(sections["trade_out"]["moves"], 1)
+        self.assertEqual(sections["trade_out"]["value"], Decimal("70"))
+        self.assertEqual(sections["transfers"]["moves"], 1)
+        self.assertEqual(len(data["suppliers"]), 1)
+        self.assertEqual(data["suppliers"][0]["name"], "Acme Supplies")
+
+    def test_legacy_trade_out_line_reason_buckets_as_trade(self):
+        mv = self._movement(
+            movement_type="out", entry_source="", shop_id=self.shop_a.pk
+        )
+        self._line(
+            mv, quantity=Decimal("2"), unit_cost=Decimal("50"),
+            reason="trade_out",
+        )
+        from . import all_stock
+
+        sections = {
+            s["key"]: s
+            for s in all_stock.build_stock_day(timezone.localdate())["sections"]
+        }
+        self.assertEqual(sections["trade_out"]["moves"], 1)
+        self.assertEqual(sections["out"]["moves"], 0)
+
+    def test_suppliers_view_groups_deliveries(self):
+        self._seed_day()
+        resp = self.client.get(
+            reverse("chat:all_stock"), {"view": "suppliers"}
+        )
+        self.assertContains(resp, "Suppliers — ")
+        self.assertContains(resp, "Acme Supplies")
+        self.assertContains(resp, "+254 700000001")
+        self.assertContains(resp, "Soda")
+
+    def test_report_view_renders_all_sections(self):
+        self._seed_day()
+        resp = self.client.get(
+            reverse("chat:all_stock"), {"view": "report"}
+        )
+        for label in (
+            "Stock in — ", "Stock out — ", "Traded in — ",
+            "Traded out — ", "Transfers — ",
+        ):
+            self.assertContains(resp, label)
+
+    def test_date_param_picks_other_day(self):
+        self._seed_day()
+        resp = self.client.get(
+            reverse("chat:all_stock"), {"date": "2000-01-02"}
+        )
+        self.assertContains(resp, "02 Jan 2000")
+        self.assertContains(resp, "KSh 0.00")
+
+    def test_cashier_blocked(self):
+        session = self.client.session
+        session["chatbot_employee_id"] = 32
+        session.save()
+        resp = self.client.get(reverse("chat:all_stock"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(
+            reverse("chat:role_home", args=["shop-cashier"]),
+            resp["Location"],
+        )
+
+    def test_requires_login(self):
+        self.client.session.flush()
+        resp = self.client.get(reverse("chat:all_stock"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse("chat:login"), resp["Location"])
+
+    # ----- scope/kind filters + shop-scoped page -----
+
+    def _store_movement(self, **kw):
+        kw.setdefault("created_by_id", self.staff_pk)
+        kw.setdefault("received_by_id", self.staff_pk)
+        kw.setdefault("item_id", self.item.pk)
+        kw.setdefault("quantity", Decimal("1"))
+        kw.setdefault("balance_after", Decimal("0"))
+        return StoreStockMovement.objects.create(**kw)
+
+    def test_company_store_scope_lists_store_ledger(self):
+        self._store_movement(
+            movement_type="in", quantity=Decimal("6"),
+            buying_price=Decimal("50"), supplier_name="ACME WHOLESALE",
+            supplier_phone="0700111222",
+        )
+        self._store_movement(
+            movement_type="out", quantity=Decimal("2"), reason="waste"
+        )
+        self._seed_day()  # shop ledger rows — must not leak into store scope
+
+        resp = self.client.get(
+            reverse("chat:all_stock"), {"scope": "store"}
+        )
+        self.assertContains(resp, "Company store")
+        # Store in: 6 × 50 = 300; the shop ledger's KSh 400 in stays out.
+        self.assertContains(resp, "KSh 300.00")
+        self.assertNotContains(resp, "KSh 400.00")
+
+        detail = self.client.get(
+            reverse("chat:all_stock"), {"scope": "store", "view": "in"}
+        )
+        self.assertContains(detail, "ACME WHOLESALE")
+        self.assertContains(detail, "Soda")
+
+        suppliers = self.client.get(
+            reverse("chat:all_stock"),
+            {"scope": "store", "view": "suppliers"},
+        )
+        self.assertContains(suppliers, "ACME WHOLESALE")
+
+    def test_shelf_kind_lists_shelf_movements(self):
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": True,
+                "enable_shelf_mode": True,
+            },
+        )
+        if _myshop_apps_installed():
+            shelf = ShelfItem.objects.create(
+                shop=self.shop_a, name="Flour", unit="kg",
+                quantity=Decimal("10"),
+            )
+            ShelfStockMovement.objects.create(
+                shelf_item=shelf, movement_type="in",
+                quantity=Decimal("5"), buying_price=Decimal("40"),
+            )
+        else:
+            shelf = ShelfItem.objects.create(
+                shop_id=self.shop_a.pk, name="Flour", unit="kg",
+                quantity=Decimal("10"),
+            )
+            ShelfStockMovement.objects.create(
+                shelf_item_id=shelf.pk, movement_type="in",
+                quantity=Decimal("5"), buying_price=Decimal("40"),
+            )
+        self._seed_day()  # item ledger rows must not leak into shelf kind
+
+        resp = self.client.get(
+            reverse("chat:all_stock"), {"kind": "shelf"}
+        )
+        self.assertContains(resp, "Shelf stock")
+        self.assertContains(resp, "Item stock")
+        # 5 × 40 = 200 — item ledger's KSh 400 in stays out.
+        self.assertContains(resp, "KSh 200.00")
+        self.assertNotContains(resp, "KSh 400.00")
+
+        detail = self.client.get(
+            reverse("chat:all_stock"), {"kind": "shelf", "view": "in"}
+        )
+        self.assertContains(detail, "Flour")
+        self.assertContains(detail, "Alpha Store")
+
+    def test_kind_picker_hidden_when_single_mode(self):
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": True,
+                "enable_shelf_mode": False,
+            },
+        )
+        resp = self.client.get(reverse("chat:all_stock"))
+        # Single-mode companies get no item/shelf chip picker in the hero —
+        # "Shelf stock" only ever renders as a kind-filter chip here.
+        self.assertNotContains(resp, "Shelf stock")
+
+    def test_shop_page_scopes_to_logged_in_shop(self):
+        self._seed_day()
+        session = self.client.session
+        session["chatbot_shop_id"] = self.shop_a.pk
+        session.save()
+
+        resp = self.client.get(reverse("chat:shop_stock"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Alpha Store")
+
+        # Shop A sees the transfer it sent to B in the transfers detail.
+        transfers = self.client.get(
+            reverse("chat:shop_stock"), {"view": "transfers"}
+        )
+        self.assertContains(transfers, "Alpha Store → Beta Mart")
+
+        # …but B's own trade-in movement never reaches A's page.
+        detail = self.client.get(
+            reverse("chat:shop_stock"), {"view": "trade_in"}
+        )
+        self.assertNotContains(detail, "Beta Mart")
+
+    def test_shop_page_shows_shelf_ledger_when_shelf_kind(self):
+        CompanyPosSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "enable_stock_tracking": True,
+                "enable_shelf_mode": True,
+            },
+        )
+        if _myshop_apps_installed():
+            shelf = ShelfItem.objects.create(
+                shop=self.shop_a, name="Rice", unit="kg",
+                quantity=Decimal("8"),
+            )
+            ShelfStockMovement.objects.create(
+                shelf_item=shelf, movement_type="in",
+                quantity=Decimal("3"),
+            )
+        else:
+            shelf = ShelfItem.objects.create(
+                shop_id=self.shop_a.pk, name="Rice", unit="kg",
+                quantity=Decimal("8"),
+            )
+            ShelfStockMovement.objects.create(
+                shelf_item_id=shelf.pk, movement_type="in",
+                quantity=Decimal("3"),
+            )
+        session = self.client.session
+        session["chatbot_shop_id"] = self.shop_a.pk
+        session.save()
+
+        resp = self.client.get(
+            reverse("chat:shop_stock"), {"kind": "shelf", "view": "in"}
+        )
+        self.assertContains(resp, "Rice")
+
+    def test_shop_page_requires_shop_session(self):
+        self.client.session.flush()
+        resp = self.client.get(reverse("chat:shop_stock"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse("chat:login"), resp["Location"])
+
+
+class StockBotTests(ChatTestCase):
+    """Dedicated stock assistant thread — stock answers only, shop-scoped."""
+
+    def setUp(self):
+        super().setUp()
+        self.login()
+        self.item = Item.objects.create(
+            category="Drinks", name="Soda",
+            minimum_selling_price=Decimal("50"),
+            shop_price=Decimal("80"), stock=Decimal("0"),
+            low_stock_notify=False, low_stock_threshold=0,
+            is_suspended=False,
+        )
+
+    def _line(self, movement, **kw):
+        kw.setdefault("item_name", self.item.name)
+        kw.setdefault("quantity", Decimal("1"))
+        return StockMovementLine.objects.create(
+            movement_id=movement.pk, item_id=self.item.pk, **kw
+        )
+
+    def _send(self, convo, body):
+        return self.client.post(
+            reverse("chat:api_send", args=[convo.pk]),
+            data=json.dumps({"body": body}),
+            content_type="application/json",
+        ).json()
+
+    def test_thread_created_with_welcome(self):
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        self.assertEqual(convo.kind, ConversationKind.STOCK_BOT)
+        first = convo.messages.first()
+        self.assertTrue(first.is_bot)
+        self.assertIn("stock assistant", first.body)
+
+    def test_thread_appears_in_conversation_list(self):
+        resp = self.client.get(reverse("chat:api_poll"))
+        convos = resp.json()["conversations"]
+        stock = [c for c in convos
+                 if c["subtitle"] == services.STOCK_BOT_SUBTITLE]
+        self.assertEqual(len(stock), 1)
+        c = stock[0]
+        # Serialized as a bot thread so the client shows assistant UX.
+        self.assertEqual(c["kind"], "bot")
+        self.assertTrue(c["bot"])
+        self.assertEqual(c["title"], "Alpha Store - Movements")
+        from .bot import STOCK_SUGGESTIONS
+        self.assertEqual(c["suggestions"], STOCK_SUGGESTIONS)
+
+    def test_main_assistant_keeps_generic_suggestions(self):
+        resp = self.client.get(reverse("chat:api_poll"))
+        convos = resp.json()["conversations"]
+        main = [c for c in convos
+                if c["subtitle"] == services.BOT_SUBTITLE]
+        self.assertEqual(len(main), 1)
+        self.assertEqual(main[0]["title"], "Alpha Store - Accounts")
+        self.assertIsNone(main[0]["suggestions"])
+
+    def test_stock_in_reply_scoped_to_shop(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_b.pk,
+        )
+        self._line(mv, quantity=Decimal("9"), buying_price=Decimal("50"))
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        data = self._send(convo, "stock in today")
+        self.assertTrue(data["ok"])
+        body = data["reply"]["body"]
+        self.assertIn("Stock in", body)
+        # Shop B's movement must not leak into shop A's stock chat.
+        self.assertIn("0 moves", body)
+
+    def test_stock_in_reply_with_own_movement(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            mv, quantity=Decimal("4"), buying_price=Decimal("100"),
+            supplier_name="Acme Supplies",
+        )
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        data = self._send(convo, "stock in today")
+        body = data["reply"]["body"]
+        self.assertIn("1 move", body)
+        self.assertIn("400.00", body)
+        self.assertIn("Soda", body)
+
+    def test_suppliers_reply(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            mv, quantity=Decimal("2"), buying_price=Decimal("100"),
+            supplier_name="Acme Supplies",
+        )
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        body = self._send(convo, "suppliers today")["reply"]["body"]
+        self.assertIn("Acme Supplies", body)
+
+    def test_stock_trade_reply(self):
+        tin = StockMovement.objects.create(
+            movement_type="in", entry_source="trade_in",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(tin, quantity=Decimal("2"), buying_price=Decimal("60"))
+        tout = StockMovement.objects.create(
+            movement_type="out", entry_source="trade_out",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            tout, quantity=Decimal("1"), unit_cost=Decimal("70"),
+            reason="trade_out",
+        )
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        body = self._send(convo, "stock trade today")["reply"]["body"]
+        self.assertIn("Stock trade", body)
+        self.assertIn("Traded in", body)
+        self.assertIn("Traded out", body)
+        self.assertIn("120.00", body)
+
+    def test_stock_report_reply(self):
+        mv = StockMovement.objects.create(
+            movement_type="out", entry_source="stock_management",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("1"), unit_cost=Decimal("70"))
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        body = self._send(convo, "stock report today")["reply"]["body"]
+        self.assertIn("Stock report", body)
+        self.assertIn("Stock out", body)
+
+    def test_non_stock_question_gets_hint(self):
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        body = self._send(convo, "credits today")["reply"]["body"]
+        self.assertIn("only answer stock questions", body)
+
+    def test_item_lookup_still_works(self):
+        ShopStock.objects.create(
+            shop_id=self.shop_a.pk, item_id=self.item.pk,
+            quantity=Decimal("12"), low_stock_threshold=0,
+            average_cost=Decimal("50"),
+        )
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        body = self._send(convo, "stock soda")["reply"]["body"]
+        self.assertIn("Soda", body)
+        self.assertIn("12", body)
+
+    def test_transfer_blocked_in_stock_thread(self):
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        resp = self.client.post(
+            reverse("chat:api_transfer", args=[convo.pk]),
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        data = resp.json()
+        self.assertFalse(data.get("ok", False))
+        self.assertIn("shop chat", data["error"])
+
+    def test_active_payload_carries_stock_suggestions_and_peer(self):
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        resp = self.client.get(
+            reverse("chat:api_poll"), {"conversation_id": convo.pk}
+        )
+        active = resp.json()["active"]
+        from .bot import STOCK_SUGGESTIONS
+        self.assertEqual(active["suggestions"], STOCK_SUGGESTIONS)
+        self.assertEqual(active["peer"]["name"], "Alpha Store - Movements")
+        self.assertTrue(active["peer"]["online"])
+
+    def test_other_shop_cannot_open_foreign_stock_thread(self):
+        convo = services.get_or_create_stock_bot(self.shop_a)
+        client_b = Client()
+        client_b.post(
+            reverse("chat:login"),
+            {"login_code": "222222", "password": "pass-b"},
+        )
+        resp = client_b.post(
+            reverse("chat:api_send", args=[convo.pk]),
+            data=json.dumps({"body": "stock in"}),
+            content_type="application/json",
+        )
+        self.assertFalse(resp.json().get("ok", True))
+
+
+class ExpenseBotTests(ChatTestCase):
+    """Dedicated expenses assistant thread — expense answers, shop-scoped."""
+
+    def setUp(self):
+        super().setUp()
+        self.login()
+
+    def _send(self, convo, body):
+        return self.client.post(
+            reverse("chat:api_send", args=[convo.pk]),
+            data=json.dumps({"body": body}),
+            content_type="application/json",
+        ).json()
+
+    def _expense(self, shop, **kw):
+        kw.setdefault("category", "transport")
+        kw.setdefault("name", "Fuel")
+        kw.setdefault("amount", Decimal("100"))
+        kw.setdefault("amount_paid", Decimal("0"))
+        kw.setdefault("payment_status", "unpaid")
+        kw.setdefault("created_by_id", self.staff_pk)
+        return Expense.objects.create(shop_id=shop.pk, **kw)
+
+    def test_thread_created_with_welcome(self):
+        convo = services.get_or_create_expense_bot(self.shop_a)
+        self.assertEqual(convo.kind, ConversationKind.EXPENSE_BOT)
+        first = convo.messages.first()
+        self.assertTrue(first.is_bot)
+        self.assertIn("expenses assistant", first.body)
+
+    def test_thread_appears_in_conversation_list(self):
+        resp = self.client.get(reverse("chat:api_poll"))
+        convos = resp.json()["conversations"]
+        exp = [
+            c for c in convos
+            if c["subtitle"] == services.EXPENSE_BOT_SUBTITLE
+        ]
+        self.assertEqual(len(exp), 1)
+        c = exp[0]
+        # Serialized as a bot thread so the client shows assistant UX.
+        self.assertEqual(c["kind"], "bot")
+        self.assertTrue(c["bot"])
+        self.assertTrue(c["expense_bot"])
+        self.assertFalse(c["stock_bot"])
+        self.assertEqual(c["title"], "Alpha Store - Expenses")
+        from .bot import EXPENSE_SUGGESTIONS
+        self.assertEqual(c["suggestions"], EXPENSE_SUGGESTIONS)
+
+    def test_expense_reply_scoped_to_shop(self):
+        self._expense(self.shop_a, amount=Decimal("200"), name="Rent")
+        self._expense(self.shop_b, amount=Decimal("999"), name="Other")
+        convo = services.get_or_create_expense_bot(self.shop_a)
+        data = self._send(convo, "expenses today")
+        self.assertTrue(data["ok"])
+        body = data["reply"]["body"]
+        self.assertIn("Expenses", body)
+        self.assertIn("200", body)
+        # Shop B's expense must not leak into shop A's expenses chat.
+        self.assertNotIn("999", body)
+        self.assertNotIn("ALL SHOPS", body)
+
+    def test_unpaid_reply_and_table_card(self):
+        self._expense(self.shop_a, amount=Decimal("200"))
+        convo = services.get_or_create_expense_bot(self.shop_a)
+        body = self._send(convo, "unpaid today")["reply"]["body"]
+        self.assertIn("Unpaid", body)
+        card = self._send(convo, "expenses today")["reply"]["meta"]["table"]
+        self.assertIn("Expenses", card["title"])
+        self.assertEqual(len(card["rows"]), 1)
+        data = self._send(convo, "expense report today")
+        self.assertTrue(data["ok"])
+
+    def test_non_expense_question_gets_hint(self):
+        convo = services.get_or_create_expense_bot(self.shop_a)
+        body = self._send(convo, "credits today")["reply"]["body"]
+        self.assertIn("only answer expense questions", body)
+
+    def test_active_payload_carries_expense_suggestions_and_peer(self):
+        convo = services.get_or_create_expense_bot(self.shop_a)
+        resp = self.client.get(
+            reverse("chat:api_poll"), {"conversation_id": convo.pk}
+        )
+        active = resp.json()["active"]
+        from .bot import EXPENSE_SUGGESTIONS
+        self.assertEqual(active["suggestions"], EXPENSE_SUGGESTIONS)
+        self.assertEqual(active["peer"]["name"], "Alpha Store - Expenses")
+        self.assertTrue(active["peer"]["online"])
+
+    def test_transfer_blocked_in_expense_thread(self):
+        convo = services.get_or_create_expense_bot(self.shop_a)
+        resp = self.client.post(
+            reverse("chat:api_transfer", args=[convo.pk]),
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        data = resp.json()
+        self.assertFalse(data.get("ok", False))
+        self.assertIn("shop chat", data["error"])
+
+    def test_app_page_lists_shop_rows(self):
+        resp = self.client.get(reverse("chat:app"))
+        for label in (
+            "Shop accounts", "Shop stock movement", "Shop expenses",
+        ):
+            self.assertContains(resp, label)
+        self.assertContains(resp, "?open=assistant")
+        self.assertContains(resp, "?open=stock")
+        self.assertContains(resp, "?open=expenses")
+
+
+class AllShopsStockChatTests(ChatTestCase):
+    """?open=stock stock-only page on the all-shops assistant."""
+
+    EMPLOYEE_DDL = (
+        "CREATE TABLE IF NOT EXISTS employees_employeeprofile ("
+        "id INTEGER PRIMARY KEY, employee_id VARCHAR(12) NOT NULL, "
+        "user_id BIGINT, role VARCHAR(32) NOT NULL, "
+        "status VARCHAR(16) NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS "
+        "employees_employeeprofile_assigned_shops ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "employeeprofile_id BIGINT NOT NULL, shop_id BIGINT NOT NULL)",
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.prepare_employee_fixtures()
+        insert_employee_profile(
+            pk=31, employee_id="310001", user_id=None,
+            role="it_support", status="active",
+        )
+        self.item = Item.objects.create(
+            category="Drinks", name="Soda",
+            minimum_selling_price=Decimal("50"),
+            shop_price=Decimal("80"), stock=Decimal("0"),
+            low_stock_notify=False, low_stock_threshold=0,
+            is_suspended=False,
+        )
+        session = self.client.session
+        session["chatbot_employee_id"] = 31
+        session.save()
+
+    def _line(self, movement, **kw):
+        kw.setdefault("item_name", self.item.name)
+        kw.setdefault("quantity", Decimal("1"))
+        return StockMovementLine.objects.create(
+            movement_id=movement.pk, item_id=self.item.pk, **kw
+        )
+
+    def _chat(self, text, mode="stock", shop=None, topic=""):
+        return self.client.post(
+            reverse("chat:api_all_chat"),
+            data=json.dumps({
+                "text": text, "mode": mode,
+                "shop": shop, "topic": topic,
+            }),
+            content_type="application/json",
+        ).json()
+
+    def test_stock_page_shows_only_stock_filters(self):
+        resp = self.client.get(
+            reverse("chat:all_shops"), {"open": "stock"}
+        )
+        self.assertContains(resp, 'data-stock-mode="1"')
+        for sug in ("Stock in", "Stock out", "Stock trade", "Transfers",
+                    "Suppliers", "Stock movement", "Stock report",
+                    "Low stock"):
+            self.assertContains(resp, f'data-sug="{sug}"')
+        self.assertNotContains(resp, 'data-sug="Sales"')
+        self.assertNotContains(resp, 'data-sug="Credits"')
+        self.assertNotContains(resp, 'data-sug="Expenses"')
+
+    def test_plain_page_keeps_generic_filters(self):
+        resp = self.client.get(reverse("chat:all_shops"))
+        self.assertContains(resp, 'data-sug="Sales"')
+        self.assertNotContains(resp, 'data-stock-mode="1"')
+
+    def test_stock_page_overview_shows_stock_totals(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("4"), buying_price=Decimal("100"))
+        out = StockMovement.objects.create(
+            movement_type="out", entry_source="stock_management",
+            shop_id=self.shop_b.pk,
+        )
+        self._line(out, quantity=Decimal("2"), unit_cost=Decimal("30"))
+        resp = self.client.get(
+            reverse("chat:all_shops"), {"open": "stock"}
+        )
+        self.assertContains(resp, "Today — stock movement")
+        self.assertContains(resp, ">Stock in<")
+        self.assertContains(resp, ">Stock out<")
+        self.assertContains(resp, ">Traded<")
+        self.assertContains(resp, ">Transfers<")
+        self.assertContains(resp, "KSh 400.00")  # shop A stock-in
+        self.assertContains(resp, "KSh 60.00")   # shop B stock-out
+        self.assertContains(resp, "Alpha Store")
+        self.assertContains(resp, "Beta Mart")
+
+    def test_stock_in_reply_combines_all_shops(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("4"), buying_price=Decimal("100"))
+        mv_b = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_b.pk,
+        )
+        self._line(mv_b, quantity=Decimal("2"), buying_price=Decimal("50"))
+        body = self._chat("stock in today")["reply"]
+        self.assertIn("Stock in", body)
+        self.assertIn("ALL SHOPS", body)
+        self.assertIn("500.00", body)  # 4×100 + 2×50
+        self.assertIn("Alpha Store", body)
+        self.assertIn("Beta Mart", body)
+
+    def test_stock_trade_reply(self):
+        tin = StockMovement.objects.create(
+            movement_type="in", entry_source="trade_in",
+            shop_id=self.shop_b.pk,
+        )
+        self._line(tin, quantity=Decimal("2"), buying_price=Decimal("60"))
+        body = self._chat("stock trade today")["reply"]
+        self.assertIn("Stock trade", body)
+        self.assertIn("Traded in", body)
+        self.assertIn("Beta Mart", body)
+
+    def test_stock_in_returns_item_list_card(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            mv, quantity=Decimal("4"), buying_price=Decimal("100"),
+        )
+        data = self._chat("stock in today")
+        card = (data.get("card") or {}).get("stock_list")
+        self.assertIsNotNone(card)
+        self.assertIn("Stock in", card["title"])
+        self.assertIn("ALL SHOPS", card["title"])
+        self.assertFalse(card["typed"])
+        row = card["rows"][0]
+        self.assertEqual(row["item"], "Soda")
+        self.assertEqual(row["value"], "KSh 400.00")
+        self.assertEqual(row["unit"], "KSh 100.00")
+        stats = {s[0]: s[1] for s in card["stats"]}
+        self.assertEqual(stats["Value"], "KSh 400.00")
+
+    def test_stock_trade_card_is_typed(self):
+        tin = StockMovement.objects.create(
+            movement_type="in", entry_source="trade_in",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(tin, quantity=Decimal("2"), buying_price=Decimal("60"))
+        data = self._chat("stock trade today")
+        card = (data.get("card") or {}).get("stock_list")
+        self.assertIsNotNone(card)
+        self.assertTrue(card["typed"])
+        self.assertEqual(card["rows"][0]["kind"], "in")
+
+    def test_suppliers_reply(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            mv, quantity=Decimal("2"), buying_price=Decimal("100"),
+            supplier_name="Acme Supplies",
+        )
+        body = self._chat("suppliers today")["reply"]
+        self.assertIn("Acme Supplies", body)
+
+    def test_stock_report_reply(self):
+        mv = StockMovement.objects.create(
+            movement_type="out", entry_source="stock_management",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("1"), unit_cost=Decimal("70"))
+        body = self._chat("stock report today")["reply"]
+        self.assertIn("Stock report", body)
+        self.assertIn("Stock out", body)
+
+    def test_non_stock_query_gets_hint(self):
+        body = self._chat("credits today")["reply"]
+        self.assertIn("only answer stock questions", body)
+
+    def test_shop_scope_filters_reply_to_that_shop(self):
+        mv_a = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv_a, quantity=Decimal("4"), buying_price=Decimal("100"))
+        mv_b = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_b.pk,
+        )
+        self._line(mv_b, quantity=Decimal("2"), buying_price=Decimal("50"))
+        body = self._chat(
+            "stock in today", shop=self.shop_a.pk
+        )["reply"]
+        self.assertIn(self.shop_a.name, body)
+        self.assertNotIn("ALL SHOPS", body)
+        self.assertNotIn(self.shop_b.name, body)
+        self.assertIn("400.00", body)
+        self.assertNotIn("500.00", body)
+
+    def test_shop_scope_card_drops_repeated_shop_head(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("4"), buying_price=Decimal("100"))
+        data = self._chat("stock in today", shop=self.shop_a.pk)
+        card = (data.get("card") or {}).get("stock_list")
+        self.assertIsNotNone(card)
+        self.assertIn(self.shop_a.name, card["title"])
+        self.assertNotIn("ALL SHOPS", card["title"])
+        self.assertEqual(card["rows"][0]["head"], "")
+
+    def test_shop_scope_keeps_transfer_route_head(self):
+        mv = StockMovement.objects.create(
+            movement_type="request", entry_source="transfer",
+            shop_id=self.shop_a.pk,
+            requested_from_shop_id=self.shop_b.pk,
+        )
+        self._line(mv, quantity=Decimal("1"), unit_cost=Decimal("10"))
+        data = self._chat("transfers today", shop=self.shop_a.pk)
+        card = (data.get("card") or {}).get("stock_list")
+        self.assertIsNotNone(card)
+        self.assertIn("→", card["rows"][0]["head"])
+
+    def test_suppliers_returns_table_card(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            mv, quantity=Decimal("2"), buying_price=Decimal("100"),
+            supplier_name="Acme Supplies",
+        )
+        card = (self._chat("suppliers today").get("card") or {})["table"]
+        self.assertIn("Suppliers", card["title"])
+        self.assertIn("ALL SHOPS", card["title"])
+        self.assertEqual(card["rows"][0][1], "Acme Supplies")
+        self.assertEqual(card["rows"][0][5], "KSh 200.00")
+
+    def _suppliers_paid_pair(self):
+        owing = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(
+            owing, quantity=Decimal("2"), buying_price=Decimal("100"),
+            supplier_name="Acme Supplies",
+        )
+        settled = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_b.pk, payment_status="paid",
+            amount_paid=Decimal("300"),
+        )
+        self._line(
+            settled, quantity=Decimal("3"), buying_price=Decimal("100"),
+            supplier_name="Beta Wholesale",
+        )
+
+    def test_suppliers_card_shows_only_unpaid_with_due(self):
+        self._suppliers_paid_pair()
+        card = (self._chat("suppliers today").get("card") or {})["table"]
+        self.assertEqual([r[1] for r in card["rows"]], ["Acme Supplies"])
+        self.assertEqual(card["cols"][-1][0], "Due")
+        self.assertEqual(card["rows"][0][6], "KSh 200.00")
+        stats = {s[0]: s[1] for s in card["stats"]}
+        self.assertEqual(stats["Owed"], "KSh 200.00")
+        self.assertEqual(
+            card["link"],
+            {"label": "View 1 paid supplier →",
+             "ask": "suppliers today paid"},
+        )
+
+    def test_suppliers_card_partial_payment_shows_balance(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk, payment_status="partial",
+            amount_paid=Decimal("50"),
+        )
+        self._line(
+            mv, quantity=Decimal("2"), buying_price=Decimal("100"),
+            supplier_name="Acme Supplies",
+        )
+        card = (self._chat("suppliers today").get("card") or {})["table"]
+        self.assertEqual(card["rows"][0][6], "KSh 150.00")
+
+    def test_suppliers_paid_card_lists_settled(self):
+        self._suppliers_paid_pair()
+        card = (
+            self._chat("suppliers paid today").get("card") or {}
+        )["table"]
+        self.assertIn("Paid suppliers", card["title"])
+        self.assertEqual([r[1] for r in card["rows"]], ["Beta Wholesale"])
+        self.assertEqual(card["cols"][-1][0], "Paid")
+        self.assertEqual(card["rows"][0][6], "KSh 300.00")
+        self.assertEqual(
+            card["link"],
+            {"label": "View 1 unpaid supplier →",
+             "ask": "suppliers today"},
+        )
+
+    def test_stock_report_returns_table_card(self):
+        mv = StockMovement.objects.create(
+            movement_type="out", entry_source="stock_management",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("1"), unit_cost=Decimal("70"))
+        card = (self._chat("stock report today").get("card") or {})["table"]
+        self.assertIn("Stock report", card["title"])
+        labels = [r[1] for r in card["rows"]]
+        self.assertIn("Stock out", labels)
+
+    def test_movement_returns_flat_stock_list_card(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("4"), buying_price=Decimal("100"))
+        out = StockMovement.objects.create(
+            movement_type="out", entry_source="stock_management",
+            shop_id=self.shop_b.pk,
+        )
+        self._line(out, quantity=Decimal("2"), unit_cost=Decimal("30"))
+        card = (self._chat("stock movement today").get("card") or {})[
+            "stock_list"
+        ]
+        self.assertIn("Stock movement", card["title"])
+        self.assertTrue(card["typed"])
+        kinds = {r["badge"] for r in card["rows"]}
+        self.assertEqual(kinds, {"+IN", "−OUT"})
+
+    def test_movement_card_scoped_to_shop_has_badges(self):
+        mv = StockMovement.objects.create(
+            movement_type="out", entry_source="stock_management",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("1"), unit_cost=Decimal("10"))
+        card = (self._chat(
+            "stock movement today", shop=self.shop_a.pk
+        ).get("card") or {})["stock_list"]
+        self.assertIn(self.shop_a.name, card["title"])
+        self.assertEqual(card["rows"][0]["head"], "")
+        self.assertEqual(card["rows"][0]["badge"], "−OUT")
+
+    def test_shop_scope_uses_last_filter_for_bare_period(self):
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        self._line(mv, quantity=Decimal("1"), buying_price=Decimal("5"))
+        body = self._chat(
+            "today", shop=self.shop_a.pk, topic="Stock in"
+        )["reply"]
+        self.assertIn("Stock in", body)
+        self.assertIn(self.shop_a.name, body)
+
+    def test_invalid_shop_scope_falls_back_to_all_shops(self):
+        body = self._chat("stock in today", shop=999999)["reply"]
+        self.assertIn("ALL SHOPS", body)
+
+    def test_plain_mode_unaffected(self):
+        body = self._chat("stock movement today", mode="")["reply"]
+        self.assertNotIn("only answer stock questions", body)
+
+
+class AllShopsExpensesChatTests(ChatTestCase):
+    """?open=expenses expense-only page on the all-shops assistant."""
+
+    EMPLOYEE_DDL = (
+        "CREATE TABLE IF NOT EXISTS employees_employeeprofile ("
+        "id INTEGER PRIMARY KEY, employee_id VARCHAR(12) NOT NULL, "
+        "user_id BIGINT, role VARCHAR(32) NOT NULL, "
+        "status VARCHAR(16) NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS "
+        "employees_employeeprofile_assigned_shops ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "employeeprofile_id BIGINT NOT NULL, shop_id BIGINT NOT NULL)",
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.prepare_employee_fixtures()
+        insert_employee_profile(
+            pk=32, employee_id="320001", user_id=None,
+            role="it_support", status="active",
+        )
+        session = self.client.session
+        session["chatbot_employee_id"] = 32
+        session.save()
+
+    def _expense(self, shop, **kw):
+        kw.setdefault("category", "transport")
+        kw.setdefault("name", "Fuel")
+        kw.setdefault("amount", Decimal("100"))
+        kw.setdefault("amount_paid", Decimal("0"))
+        kw.setdefault("payment_status", "unpaid")
+        kw.setdefault("created_by_id", 32)
+        return Expense.objects.create(shop_id=shop.pk, **kw)
+
+    def _chat(self, text, mode="expenses", shop=None, topic=""):
+        return self.client.post(
+            reverse("chat:api_all_chat"),
+            data=json.dumps({
+                "text": text, "mode": mode,
+                "shop": shop, "topic": topic,
+            }),
+            content_type="application/json",
+        ).json()
+
+    def test_expenses_page_shows_only_expense_filters(self):
+        resp = self.client.get(
+            reverse("chat:all_shops"), {"open": "expenses"}
+        )
+        self.assertContains(resp, 'data-expense-mode="1"')
+        for sug in ("Expenses", "Paid", "Unpaid", "By category",
+                    "By shop", "Suppliers", "Expense report"):
+            self.assertContains(resp, f'data-sug="{sug}"')
+        self.assertNotContains(resp, 'data-sug="Sales"')
+        self.assertNotContains(resp, 'data-sug="Stock in"')
+        self.assertContains(resp, "Today — expenses")
+
+    def test_expenses_reply_and_card(self):
+        self._expense(self.shop_a, amount=Decimal("500"),
+                      amount_paid=Decimal("500"), payment_status="paid")
+        self._expense(self.shop_b, amount=Decimal("200"), name="Rent")
+        body = self._chat("expenses today")["reply"]
+        self.assertIn("Expenses", body)
+        self.assertIn("ALL SHOPS", body)
+        self.assertIn("700", body)
+        card = (self._chat("expenses today").get("card") or {})["table"]
+        self.assertIn("Expenses", card["title"])
+        self.assertEqual(len(card["rows"]), 2)
+
+    def test_unpaid_filter(self):
+        self._expense(self.shop_a, amount=Decimal("500"),
+                      amount_paid=Decimal("500"), payment_status="paid")
+        self._expense(self.shop_b, amount=Decimal("200"))
+        body = self._chat("unpaid today")["reply"]
+        self.assertIn("Unpaid", body)
+        self.assertIn("200", body)
+        self.assertNotIn("500", body)
+
+    def test_by_category_card(self):
+        self._expense(self.shop_a, category="rent", name="Rent",
+                      amount=Decimal("300"))
+        self._expense(self.shop_b, category="transport", name="Fuel",
+                      amount=Decimal("100"))
+        card = (self._chat("by category today").get("card") or {})[
+            "table"
+        ]
+        self.assertIn("category", card["title"].lower())
+        cats = [r[1] for r in card["rows"]]
+        self.assertIn("rent", cats)
+        self.assertIn("transport", cats)
+
+    def test_by_shop_card(self):
+        self._expense(self.shop_a, amount=Decimal("300"))
+        self._expense(self.shop_b, amount=Decimal("100"))
+        card = (self._chat("by shop today").get("card") or {})["table"]
+        self.assertIn("by shop", card["title"].lower())
+        shops = [r[1] for r in card["rows"]]
+        self.assertIn(self.shop_a.name, shops)
+        self.assertIn(self.shop_b.name, shops)
+
+    def test_shop_scope_filters_reply(self):
+        self._expense(self.shop_a, amount=Decimal("300"))
+        self._expense(self.shop_b, amount=Decimal("900"), name="Big")
+        body = self._chat(
+            "expenses today", shop=self.shop_a.pk
+        )["reply"]
+        self.assertIn(self.shop_a.name, body)
+        self.assertNotIn("ALL SHOPS", body)
+        self.assertNotIn("900", body)
+
+    def test_sticky_filter_for_bare_period(self):
+        self._expense(self.shop_a, amount=Decimal("80"))
+        body = self._chat(
+            "today", topic="Unpaid"
+        )["reply"]
+        self.assertIn("Unpaid", body)
+
+    def test_non_expense_query_gets_hint(self):
+        body = self._chat("stock in today")["reply"]
+        self.assertIn("only answer expense questions", body)
+
+
+class AllShopsStockStickyFilterTests(ChatTestCase):
+    """Stock page reuses the last filter for bare-period queries."""
+
+    EMPLOYEE_DDL = (
+        "CREATE TABLE IF NOT EXISTS employees_employeeprofile ("
+        "id INTEGER PRIMARY KEY, employee_id VARCHAR(12) NOT NULL, "
+        "user_id BIGINT, role VARCHAR(32) NOT NULL, "
+        "status VARCHAR(16) NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS "
+        "employees_employeeprofile_assigned_shops ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "employeeprofile_id BIGINT NOT NULL, shop_id BIGINT NOT NULL)",
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.prepare_employee_fixtures()
+        insert_employee_profile(
+            pk=31, employee_id="310001", user_id=None,
+            role="it_support", status="active",
+        )
+        self.item = Item.objects.create(
+            category="Drinks", name="Soda",
+            minimum_selling_price=Decimal("50"),
+            shop_price=Decimal("80"), stock=Decimal("0"),
+            low_stock_notify=False, low_stock_threshold=0,
+            is_suspended=False,
+        )
+        session = self.client.session
+        session["chatbot_employee_id"] = 31
+        session.save()
+        mv = StockMovement.objects.create(
+            movement_type="in", entry_source="buy_items",
+            shop_id=self.shop_a.pk,
+        )
+        StockMovementLine.objects.create(
+            movement_id=mv.pk, item_id=self.item.pk,
+            item_name=self.item.name, quantity=Decimal("4"),
+            buying_price=Decimal("100"),
+        )
+
+    def _chat(self, text, topic=""):
+        return self.client.post(
+            reverse("chat:api_all_chat"),
+            data=json.dumps(
+                {"text": text, "mode": "stock", "topic": topic}
+            ),
+            content_type="application/json",
+        ).json()
+
+    def test_bare_period_reuses_previous_filter(self):
+        data = self._chat("today", topic="Stock in")
+        self.assertIn("Stock in", data["reply"])
+        self.assertIn("ALL SHOPS", data["reply"])
+        card = (data.get("card") or {}).get("stock_list")
+        self.assertIsNotNone(card)
+        self.assertEqual(card["rows"][0]["item"], "Soda")
+
+    def test_bare_period_with_different_filter(self):
+        data = self._chat("today", topic="Stock report")
+        self.assertIn("Stock report", data["reply"])
+
+    def test_explicit_query_still_wins(self):
+        data = self._chat("stock out today", topic="Stock in")
+        self.assertIn("Stock out", data["reply"])
+        self.assertNotIn("Stock in —", data["reply"])
+
+    def test_no_topic_no_match_still_hint(self):
+        data = self._chat("gibberish words")
+        self.assertIn("only answer stock questions", data["reply"])

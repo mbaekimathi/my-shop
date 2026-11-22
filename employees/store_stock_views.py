@@ -489,9 +489,11 @@ def store_shelf_stock(request):
         apply_shelf_action,
         list_shelf_items,
         list_suspended_shelf_items,
+        portion_item_options,
         record_shelf_movement,
         shelf_categories,
         shelf_movements_in_period,
+        shelf_portions_enabled,
     )
 
     profile = get_profile_for_request(request)
@@ -626,6 +628,7 @@ def store_shelf_stock(request):
             done = 0
             total = Decimal("0")
             movement_ids = []
+            portions = []
             for shelf_item_id, qty, value in lines:
                 try:
                     movement = record_shelf_movement(
@@ -647,11 +650,23 @@ def store_shelf_stock(request):
                     done += 1
                     total += movement.quantity
                     movement_ids.append(movement.pk)
+                    for portion_movement in getattr(
+                        movement, "portion_movements", None
+                    ) or []:
+                        portions.append(
+                            f"{portion_movement.item.name} "
+                            f"×{portion_movement.quantity.normalize():f}"
+                        )
             if done:
                 messages.success(
                     request,
                     f"Recorded {done} shelf trade line"
-                    f"{'' if done == 1 else 's'} ({total} units).",
+                    f"{'' if done == 1 else 's'} ({total} units)."
+                    + (
+                        f" Portions stocked in: {', '.join(portions)}."
+                        if portions
+                        else ""
+                    ),
                 )
             return _back(keep_mode=False, print_ids=movement_ids)
         try:
@@ -867,6 +882,8 @@ def store_shelf_stock(request):
             "shelf_shop_field": True,
             "shelf_unit_choices": SHELF_UNIT_CHOICES,
             "shelf_categories": shelf_categories(),
+            "shelf_portion_items": portion_item_options(),
+            "shelf_portions_enabled": shelf_portions_enabled(),
             "page_sidebar": sidebar_for_store_stock(
                 EmployeeRole.COMPANY_STORE_MANAGER,
                 profile=profile,

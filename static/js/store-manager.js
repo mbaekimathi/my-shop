@@ -118,7 +118,12 @@
     if (reportPanel) reportPanel.hidden = panel !== "report";
     root.classList.toggle("is-stock-open", !!panel);
     root.classList.toggle("is-chat-open", panel === "feed");
-    if (panel === "feed") loadFeed();
+    if (panel === "feed") {
+      loadFeed();
+      startFeedPoll();
+    } else {
+      stopFeedPoll();
+    }
     icons();
   }
 
@@ -295,8 +300,13 @@
     }
   }
 
-  function loadFeed() {
+  function loadFeed(quiet) {
     if (!urls.feed || !feedEl) return;
+    // Quiet reloads keep the reader's place — only stick to the bottom when
+    // they were already there.
+    var nearBottom =
+      feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 80;
+    var prevScroll = feedEl.scrollTop;
     fetchJSON(urls.feed)
       .then(function (data) {
         var messages = data.messages || [];
@@ -315,15 +325,33 @@
           .forEach(function (msg) {
             appendFeedMessage(msg, false);
           });
-        feedEl.scrollTop = feedEl.scrollHeight;
+        feedEl.scrollTop =
+          !quiet || nearBottom ? feedEl.scrollHeight : prevScroll;
       })
       .catch(function () {
+        if (quiet) return; // keep the last good feed on transient errors
         if (feedEmpty) {
           feedEmpty.hidden = false;
           feedEmpty.innerHTML =
             "<span>Could not load store messages.</span>";
         }
       });
+  }
+
+  // Live refresh: store activity posted by other devices lands in this feed
+  // automatically while the panel is open.
+  var feedTimer = null;
+  function startFeedPoll() {
+    stopFeedPoll();
+    feedTimer = setInterval(function () {
+      if (!document.hidden) loadFeed(true);
+    }, 8000);
+  }
+  function stopFeedPoll() {
+    if (feedTimer) {
+      clearInterval(feedTimer);
+      feedTimer = null;
+    }
   }
 
   function reqMark(el, base, required) {
@@ -1264,6 +1292,17 @@
     window.visualViewport.addEventListener("resize", repositionFloatSuggests);
     window.visualViewport.addEventListener("scroll", repositionFloatSuggests);
   }
+
+  // Resume signals: refresh the feed immediately when the app comes back.
+  function feedWake() {
+    if (!document.hidden && feedPanel && !feedPanel.hidden) {
+      loadFeed(true);
+    }
+  }
+  document.addEventListener("visibilitychange", feedWake);
+  window.addEventListener("pageshow", feedWake);
+  window.addEventListener("focus", feedWake);
+  window.addEventListener("online", feedWake);
 
   loadFeed();
   icons();

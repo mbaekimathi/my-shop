@@ -82,6 +82,8 @@ POS_SETTING_FIELDS = {
     "enable_discount",
     "enable_stock_tracking",
     "enable_shelf_mode",
+    "block_negative_stock",
+    "enable_combo_items",
     "enable_open_close",
     "require_clock_in",
     "enable_passwordless_shop_switch",
@@ -266,7 +268,7 @@ DOC_NUMBER_PREFIX = {
     "delivery": "D",
     "goods_received": "G",
     "expense": "E",
-    "shelf_movement": "H",
+    "shelf_movement": "ST",
     "store_movement": "R",
     "prepayment": "A",
 }
@@ -599,6 +601,7 @@ def set_shop_pos_setting(*, shop: Shop, field: str, enabled: bool) -> ShopPosSet
     if field in STOCK_MODE_FIELDS or field in (
         "enable_stock_tracking",
         "enable_shelf_mode",
+        "block_negative_stock",
     ):
         # Stock mode is a company-wide decision — every shop uses the same one.
         raise ValidationError(
@@ -4140,6 +4143,10 @@ def pos_settings_as_dict(settings_row: CompanyPosSettings | None = None) -> dict
         "enable_discount": row.enable_discount,
         "enable_stock_tracking": bool(getattr(row, "enable_stock_tracking", True)),
         "enable_shelf_mode": bool(getattr(row, "enable_shelf_mode", False)),
+        "block_negative_stock": bool(
+            getattr(row, "block_negative_stock", True)
+        ),
+        "enable_combo_items": bool(getattr(row, "enable_combo_items", True)),
         "enable_open_close": bool(getattr(row, "enable_open_close", True)),
         "require_clock_in": bool(getattr(row, "require_clock_in", False)),
         "enable_client_data": bool(getattr(row, "enable_client_data", True)),
@@ -6840,6 +6847,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
     from employees.services import invalid_staff_code_message, verify_active_employee_code
     from items.models import (
         Item,
+        ItemComboComponent,
         ItemSerial,
         ShopItemPrice,
         ShopStock,
@@ -7065,6 +7073,33 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
         items_by_id = Item.objects.filter(
             pk__in=item_ids, is_suspended=False
         ).in_bulk()
+
+        # Combo cart lines explode into their component items — a combo sale
+        # tallies each single item by its portion qty of the combo (price
+        # and stock). Component ids join the price/stock lookups below.
+        combo_legs = {}
+        combo_item_ids = [
+            pk
+            for pk, item in items_by_id.items()
+            if getattr(item, "is_combo", False)
+        ]
+        if combo_item_ids:
+            for leg in (
+                ItemComboComponent.objects.filter(combo_id__in=combo_item_ids)
+                .select_related("component")
+                .order_by("position", "id")
+            ):
+                combo_legs.setdefault(leg.combo_id, []).append(leg)
+            component_ids = {
+                leg.component_id
+                for legs in combo_legs.values()
+                for leg in legs
+            }
+            if component_ids:
+                item_ids = item_ids | component_ids
+                items_by_id.update(
+                    Item.objects.filter(pk__in=component_ids).in_bulk()
+                )
         price_row_by_item = {
             item_id: (price, is_sold)
             for item_id, price, is_sold in ShopItemPrice.objects.filter(
@@ -7101,6 +7136,132 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
                 item_ids, prefer_shop_id=shop.pk
             )
 
+        # Expand combo lines into their component lines. The combo itself is
+        # validated like a normal line (sold-here flag, price floor, trade-in
+        # amount); each component then goes through the standard stock,
+        # serial, and cost checks below so a combo sale tallies the single
+        # items by their portion qtys.
+        expanded_lines = []
+        for row in parsed_lines:
+            item = items_by_id.get(row["item_id"])
+            if item is None or not getattr(item, "is_combo", False):
+                expanded_lines.append(row)
+                continue
+
+            item_id = row["item_id"]
+            qty = row["qty"]
+            unit_price = row["unit_price"]
+            if not getattr(pos_settings, "enable_combo_items", True):
+                errors.append(
+                    f"“{item.name}” is a combo — combo items are turned off "
+                    "in Settings → POS."
+                )
+                continue
+            price_row = price_row_by_item.get(item_id)
+            if (
+                price_row is not None
+                and not price_row[1]
+                and kind != ShopReceiptKind.TRADE_IN
+            ):
+                errors.append(
+                    f"“{item.name}” is not sold at {shop.name}."
+                )
+                continue
+            override = price_row[0] if price_row else None
+            combo_list_price = item.resolve_list_price(override)
+            legs = combo_legs.get(item_id) or []
+            if not legs:
+                errors.append(
+                    f"Combo “{item.name}” has no items — "
+                    "set its items in item management."
+                )
+                continue
+
+            def comp_list_price_of(component):
+                comp_price_row = price_row_by_item.get(component.pk)
+                comp_override = (
+                    comp_price_row[0]
+                    if comp_price_row and component.use_individual_shop_prices
+                    else None
+                )
+                return component.resolve_list_price(comp_override)
+
+            # The combo's minimum at this shop is the sum of its
+            # components' list prices × their portions — it can never sell
+            # below what its items would cost there.
+            combo_min = sum(
+                comp_list_price_of(leg.component) * leg.qty
+                for leg in legs
+                if leg.component is not None
+            ).quantize(Decimal("0.01"))
+            if kind == ShopReceiptKind.TRADE_IN:
+                if unit_price <= 0:
+                    errors.append(
+                        f"Enter the amount owed for “{item.name}”."
+                    )
+                    continue
+            elif not price_editable:
+                unit_price = combo_list_price
+            elif unit_price < combo_min and (
+                unit_price > 0 or combo_list_price > 0
+            ):
+                errors.append(
+                    f"“{item.name}” is below the minimum selling price "
+                    f"(KSh {combo_min})."
+                )
+                continue
+
+            factor = unit_price / combo_min if combo_min > 0 else None
+            total_qty = sum(leg.qty for leg in legs)
+            target_total = (unit_price * qty).quantize(Decimal("0.01"))
+
+            valid_legs = []
+            for leg in legs:
+                component = leg.component
+                leg_qty = (qty * leg.qty).quantize(_QTY_QUANTUM)
+                if leg_qty <= 0:
+                    continue
+                if component is None or component.is_suspended:
+                    errors.append(
+                        f"An item in combo “{item.name}” is no longer available."
+                    )
+                    continue
+                valid_legs.append((leg, component, leg_qty))
+            running_total = Decimal("0.00")
+            for index, (leg, component, leg_qty) in enumerate(valid_legs):
+                if index == len(valid_legs) - 1:
+                    # Last leg absorbs any rounding drift so the component
+                    # line totals always add up to the charged combo total.
+                    residual = target_total - running_total
+                    comp_unit = (
+                        (residual / leg_qty).quantize(Decimal("0.01"))
+                        if residual > 0
+                        else Decimal("0.00")
+                    )
+                elif factor is not None:
+                    comp_unit = (comp_list_price_of(component) * factor).quantize(
+                        Decimal("0.01")
+                    )
+                else:
+                    # Zero-list-price combo with a typed amount: give every
+                    # leg the same unit price; the last leg takes the drift.
+                    comp_unit = (unit_price / total_qty).quantize(
+                        Decimal("0.01")
+                    )
+                expanded_lines.append(
+                    {
+                        "item_id": component.pk,
+                        "qty": leg_qty,
+                        "unit_price": comp_unit,
+                        "serial_numbers": [],
+                        "from_combo": True,
+                    }
+                )
+                running_total += (comp_unit * leg_qty).quantize(
+                    Decimal("0.01")
+                )
+        parsed_lines = expanded_lines
+
         prepared = []
         for row in parsed_lines:
             item_id = row["item_id"]
@@ -7112,9 +7273,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
                 errors.append(f"Item #{item_id} is unavailable.")
                 continue
 
+            from_combo = bool(row.get("from_combo"))
             price_row = price_row_by_item.get(item_id)
             if (
-                price_row is not None
+                not from_combo
+                and price_row is not None
                 and not price_row[1]
                 and kind != ShopReceiptKind.TRADE_IN
             ):
@@ -7127,15 +7290,17 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
             list_price = item.resolve_list_price(override)
 
             if kind == ShopReceiptKind.TRADE_IN:
-                if unit_price <= 0:
+                if unit_price <= 0 and not from_combo:
                     errors.append(
                         f"Enter the amount owed for “{item.name}”."
                     )
                     continue
             elif not price_editable:
                 unit_price = list_price
-            elif unit_price < item.minimum_selling_price and (
-                unit_price > 0 or list_price > 0
+            elif (
+                not from_combo
+                and unit_price < item.minimum_selling_price
+                and (unit_price > 0 or list_price > 0)
             ):
                 # A typed 0 on a deliberately free item (list price 0) is
                 # allowed; any other price below the floor is not.
@@ -7156,6 +7321,7 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
             if kind != ShopReceiptKind.TRADE_IN and (
                 item_tracks_stock
                 and kind != ShopReceiptKind.QUOTATION
+                and bool(getattr(pos_settings, "block_negative_stock", True))
                 and stock.quantity < qty
             ):
                 errors.append(

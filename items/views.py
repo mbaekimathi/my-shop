@@ -55,7 +55,31 @@ EMPTY_FORM = {
     "shop_prices": {},
     "sold_shops": {},
     "track_serial_number": False,
+    "item_type": "single",
+    "combo_components": [],
 }
+
+
+def _combo_components_from_post(post) -> list:
+    """Echo the posted combo rows so a rejected form re-renders them."""
+    ids = post.getlist("combo_item_id")
+    names = post.getlist("combo_item_name")
+    prices = post.getlist("combo_item_price")
+    qtys = post.getlist("combo_qty")
+    rows = []
+    for index, raw_id in enumerate(ids):
+        item_id = str(raw_id or "").strip()
+        if not item_id.isdigit():
+            continue
+        rows.append(
+            {
+                "id": int(item_id),
+                "name": names[index] if index < len(names) else "",
+                "price": prices[index] if index < len(prices) else "",
+                "qty": qtys[index] if index < len(qtys) else "1",
+            }
+        )
+    return rows
 
 
 @active_employee_required
@@ -207,6 +231,9 @@ def _form_data_from_post(post, profile) -> dict:
     pricing_mode = (post.get("pricing_mode") or "single").strip().lower()
     if pricing_mode not in ("single", "individual"):
         pricing_mode = "single"
+    item_type = (post.get("item_type") or "single").strip().lower()
+    if item_type not in ("single", "combo"):
+        item_type = "single"
     return {
         "category": post.get("category", "").strip().upper(),
         "name": post.get("name", "").strip().upper(),
@@ -218,6 +245,8 @@ def _form_data_from_post(post, profile) -> dict:
         "sold_shops": _sold_shops_from_post(post, shops),
         "track_serial_number": (post.get("track_serial_number") or "").strip().lower()
         in ("1", "true", "on", "yes"),
+        "item_type": item_type,
+        "combo_components": _combo_components_from_post(post),
     }
 
 
@@ -229,6 +258,20 @@ def _form_data_from_item(item: Item) -> dict:
     ).values_list("shop_id", "price", "is_sold"):
         shop_prices[str(shop_id)] = str(price)
         sold_shops[str(shop_id)] = is_sold
+    combo_components = []
+    if getattr(item, "is_combo", False):
+        for leg in item.combo_components.select_related("component"):
+            component = leg.component
+            if component is None:
+                continue
+            combo_components.append(
+                {
+                    "id": component.pk,
+                    "name": component.name,
+                    "price": f"{component.resolve_list_price(None):.2f}",
+                    "qty": format(leg.qty.normalize(), "f"),
+                }
+            )
     return {
         "category": item.category,
         "name": item.name,
@@ -239,6 +282,8 @@ def _form_data_from_item(item: Item) -> dict:
         "shop_prices": shop_prices,
         "sold_shops": sold_shops,
         "track_serial_number": item.track_serial_number,
+        "item_type": "combo" if getattr(item, "is_combo", False) else "single",
+        "combo_components": combo_components,
     }
 
 
@@ -296,6 +341,11 @@ def item_management(request, profile, meta, module, page_sidebar):
     open_edit_modal = False
     edit_item = None
     caps = module_capabilities(profile, "item-management")
+    from shops.services import get_company_pos_settings
+
+    combo_items_enabled = getattr(
+        get_company_pos_settings(), "enable_combo_items", True
+    )
 
     if request.method == "POST":
         action = (request.POST.get("action") or "register").strip()
@@ -506,6 +556,7 @@ def item_management(request, profile, meta, module, page_sidebar):
             "open_register_modal": open_register_modal,
             "open_edit_modal": open_edit_modal,
             "edit_item": edit_item,
+            "combo_items_enabled": combo_items_enabled,
             "module_permissions": caps,
             "item_discounts_url": item_management_url(profile.role, "discounts"),
             "item_images_url": item_management_url(profile.role, "images"),
@@ -1520,6 +1571,22 @@ def _stock_shelf_post(
             "unit": request.POST.get("unit"),
             "opening_qty": request.POST.get("opening_qty"),
             "low_stock_threshold": request.POST.get("low_stock_threshold"),
+            "portion_item_ids": (
+                request.POST.getlist("portion_item_id")
+                if any(
+                    key in request.POST
+                    for key in ("portion_item_id", "portion_qty", "portion_links")
+                )
+                else None
+            ),
+            "portion_qtys": (
+                request.POST.getlist("portion_qty")
+                if any(
+                    key in request.POST
+                    for key in ("portion_item_id", "portion_qty", "portion_links")
+                )
+                else None
+            ),
             "image": request.FILES.get("image"),
         }
         registered = []
@@ -1643,6 +1710,184 @@ def _stock_shelf_post(
             row.pk for row in result.get("movements", []) if row.pk
         ]
         return _next(shelf_shop, print_ids=movement_ids)
+
+    if action == "request_bulk":
+        """Shelf transfer page: one post either sends every filled line to
+        the To shop (shelf_flow=transfer) or records a one-way shelf trade
+        with a person (shelf_flow=trade_out / trade_in)."""
+        from decimal import Decimal
+
+        from shops.services import get_company_stock_settings
+
+        from .models import (
+            ShelfItem,
+            ShelfStockMovementType,
+            StockOutReason,
+        )
+        from .shelf_stock_services import (
+            record_shelf_movement,
+            transfer_shelf_item,
+        )
+        from .store_stock_services import _parse_buying_price
+
+        flow = (request.POST.get("shelf_flow") or "").strip().lower()
+        if flow not in ("transfer", "trade_out", "trade_in"):
+            messages.error(request, "Pick transfer, trade out or trade in.")
+            return _next(shelf_shop)
+
+        lines = []
+        for key, raw in request.POST.items():
+            if not str(key).startswith("shelf_qty_"):
+                continue
+            line_id = str(key)[len("shelf_qty_"):].strip()
+            if not line_id.isdigit() or not str(raw or "").strip():
+                continue
+            lines.append(
+                {
+                    "shelf_item_id": line_id,
+                    "qty": raw,
+                    "price": request.POST.get(f"shelf_price_{line_id}"),
+                }
+            )
+        if not lines:
+            messages.error(request, "Enter a quantity on at least one item.")
+            return _next(shelf_shop)
+
+        stock_req = get_company_stock_settings()
+        note = (request.POST.get("note") or "").strip()[:255]
+        to_shop = None
+        person_name = person_phone = ""
+        if flow == "transfer":
+            to_shop = shops_by_id.get(requested_from_id)
+            if to_shop is None or not _shop_shelf_mode_enabled(to_shop):
+                messages.error(
+                    request, "Pick the shelf shop receiving this transfer."
+                )
+                return _next(shelf_shop)
+            if (
+                getattr(stock_req, "shelf_require_note_on_request", False)
+                and not note
+            ):
+                messages.error(request, "Enter a transfer note.")
+                return _next(shelf_shop)
+        else:
+            person_name = (request.POST.get("person_name") or "").strip()
+            person_phone = (request.POST.get("person_phone") or "").strip()
+            if flow == "trade_in" and getattr(
+                stock_req, "shelf_require_supplier_on_in", False
+            ):
+                if not person_name:
+                    messages.error(request, "Enter the other person's name.")
+                    return _next(shelf_shop)
+                if not person_phone:
+                    messages.error(
+                        request, "Enter the other person's phone number."
+                    )
+                    return _next(shelf_shop)
+
+        move_mode = (
+            ShelfStockMovementType.IN
+            if flow == "trade_in"
+            else ShelfStockMovementType.OUT
+        )
+        kind = "" if flow == "transfer" else flow
+        done = 0
+        total = Decimal("0")
+        movement_ids = []
+        portions = []
+        for line in lines:
+            item = (
+                ShelfItem.objects.filter(
+                    pk=line["shelf_item_id"], is_archived=False
+                )
+                .select_related("shop")
+                .first()
+            )
+            label = (
+                item.name if item is not None else f"Item {line['shelf_item_id']}"
+            )
+            try:
+                if (
+                    item is None
+                    or item.is_suspended
+                    or item.shop_id not in shelf_scope_ids
+                ):
+                    raise ValidationError(
+                        "Shelf item not found in your shop scope."
+                    )
+                if flow == "transfer":
+                    if item.shop_id == to_shop.pk:
+                        raise ValidationError(
+                            f"Pick another shop — it is already at {to_shop.name}."
+                        )
+                    _src, _target, movement, _in_leg = transfer_shelf_item(
+                        from_shop=item.shop,
+                        to_shop=to_shop,
+                        shelf_item_id=item.pk,
+                        qty=line["qty"],
+                        actor=profile,
+                        note=note,
+                    )
+                else:
+                    value = _parse_buying_price(line["price"], label)
+                    if (
+                        flow == "trade_in"
+                        and getattr(
+                            stock_req, "shelf_require_buying_price_on_in", False
+                        )
+                        and value is None
+                    ):
+                        raise ValidationError("Enter the unit value.")
+                    movement = record_shelf_movement(
+                        shop=item.shop,
+                        shelf_item_id=item.pk,
+                        mode=move_mode,
+                        qty=line["qty"],
+                        actor=profile,
+                        note=note,
+                        supplier_name=person_name,
+                        supplier_phone=person_phone,
+                        buying_price=value,
+                        reason=kind,
+                    )
+                    for portion_movement in getattr(
+                        movement, "portion_movements", None
+                    ) or []:
+                        portions.append(
+                            f"{portion_movement.item.name} "
+                            f"×{portion_movement.quantity.normalize():f}"
+                        )
+            except ValidationError as exc:
+                for message in getattr(exc, "messages", [str(exc)]):
+                    messages.error(request, f"{label}: {message}")
+            else:
+                done += 1
+                total += movement.quantity
+                movement_ids.append(movement.pk)
+        if done:
+            if flow == "transfer":
+                messages.success(
+                    request,
+                    f"Sent {done} shelf line{'' if done == 1 else 's'} "
+                    f"({total.normalize():f} units) to {to_shop.name}.",
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Recorded {done} shelf trade line"
+                    f"{'' if done == 1 else 's'} "
+                    f"({total.normalize():f} units)."
+                    + (
+                        f" Portions stocked in: {', '.join(portions)}."
+                        if portions
+                        else ""
+                    ),
+                )
+        return _next(
+            shelf_shop,
+            print_ids=movement_ids,
+            print_to=to_shop.name if to_shop is not None else "",
+        )
 
     if shelf_shop is None:
         shelf_shop = _resolve_post_shop()
@@ -2731,6 +2976,9 @@ def _build_item_report_rows(
     """
     Build item report rows for a period, including shop transfer in/out.
 
+    Only items with activity inside the period are listed — a row whose
+    whole activity is a carried start/close balance is hidden.
+
     closing = current - after_in + after_out + after_sale
               - after_transfer_in + after_transfer_out - after_return
     starting = closing - in + out + sale - transfer_in + transfer_out - return
@@ -2840,7 +3088,6 @@ def _build_item_report_rows(
         )
         for item in items:
             shop_rows = []
-            has_data = False
             for shop_id in ordered_shop_ids:
                 key = (item.pk, shop_id)
                 period = period_moves.get(key) or {"in": 0, "out": 0}
@@ -2869,10 +3116,8 @@ def _build_item_report_rows(
                     stock_transfer_out=stock_transfer_out,
                     stock_return=stock_return,
                 )
-                if (
-                    starting
-                    or closing
-                    or stock_in
+                if not (
+                    stock_in
                     or stock_out
                     or stock_sale
                     or stock_transfer_in
@@ -2880,7 +3125,7 @@ def _build_item_report_rows(
                     or stock_return
                     or stock_trade
                 ):
-                    has_data = True
+                    continue  # untouched at this shop in the period
                 shop_rows.append(
                     row_payload(
                         item,
@@ -2896,7 +3141,7 @@ def _build_item_report_rows(
                         closing=closing,
                     )
                 )
-            if not has_data:
+            if not shop_rows:
                 continue
             shop_rows[0]["is_item_start"] = True
             rows.extend(shop_rows)
@@ -2994,9 +3239,7 @@ def _build_item_report_rows(
             stock_return=stock_return,
         )
         if not (
-            starting
-            or closing
-            or stock_in
+            stock_in
             or stock_out
             or stock_sale
             or stock_transfer_in
@@ -3004,7 +3247,7 @@ def _build_item_report_rows(
             or stock_return
             or stock_trade
         ):
-            continue
+            continue  # untouched in the period — hide carried balances
         rows.append(
             row_payload(
                 item,
@@ -6086,6 +6329,8 @@ def _build_shelf_report(shops, *, day_start, day_end, type_filter=""):
         .order_by("shop__name", "name")
     ):
         agg = sums.get(item.pk) or {}
+        if not any(agg.values()):
+            continue  # untouched in the filtered period
         rows.append(
             {
                 "item": item,
@@ -6820,7 +7065,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 except (TypeError, ValueError):
                     timeline_current_stock = stock_total
         if is_item_movement_summary:
-            # TYPE=All: include idle stock items across shops (like the stock report).
+            # TYPE=All: include idle stock items across shops (the report
+            # tab hides them; the summary keeps the current-stock board).
             # Specific type filters: only items with matching transactions.
             show_all_items = _event_filters_are_all(event_filters)
             extra_items = None
@@ -8638,6 +8884,456 @@ def stock_activity_audits(request, profile, meta, module):
     )
 
 
+def _build_shop_store_analytics(*, shop_ids, start, end, role=None):
+    """Shop store analytics — trade-out usage per item valued at buying price.
+
+    Trade outs are StockMovementLine rows on OUT movements tagged
+    reason=trade_out (POS trade receipts and manual stock outs alike),
+    plus shelf trade outs (ShelfStockMovement OUT rows with the same
+    reason — shelf items trade off the shelf through the request panel's
+    trade flow). Each line is valued at its stamped unit cost, falling
+    back to the recorded buying price; shelf items carry no price on the
+    OUT row so they are valued at the item's most recent stock-in buying
+    price. Suppliers are attributed per item from the item's most recent
+    stock-in that recorded a supplier — in-scope shops first, then any
+    shop — shelf items the same way (the stock-in name/phone is the
+    supplier; the person on the trade out is the receiver) — so the
+    per-supplier totals are the amounts supposed to be given to
+    suppliers.
+    """
+    from shops.models import Shop
+    from shops.services import _money_ksh, _qty_label
+
+    from .models import (
+        ShelfStockMovement,
+        ShelfStockMovementType,
+        StockMovementLine,
+        StockMovementType,
+        StockOutReason,
+        Supplier,
+    )
+
+    result = {
+        "trade_item_rows": [],
+        "trade_supplier_rows": [],
+        "trade_totals": {
+            "items": 0,
+            "quantity_label": "0",
+            "value_label": _money_ksh(0),
+            "suppliers": 0,
+        },
+    }
+    shop_ids = [int(sid) for sid in shop_ids or []]
+    if not shop_ids or start >= end:
+        return result
+
+    shop_id_set = set(shop_ids)
+    shop_names = dict(
+        Shop.objects.filter(pk__in=shop_ids).values_list("pk", "name")
+    )
+
+    items = {}
+    for line in (
+        StockMovementLine.objects.filter(
+            movement__movement_type=StockMovementType.OUT,
+            movement__shop_id__in=shop_ids,
+            movement__created_at__gte=start,
+            movement__created_at__lt=end,
+            reason=StockOutReason.TRADE_OUT,
+        )
+        .values(
+            "item_id",
+            "item_name",
+            "movement__shop_id",
+            "quantity",
+            "unit_cost",
+            "buying_price",
+        )
+    ):
+        qty = Decimal(str(line["quantity"] or 0))
+        unit = Decimal(str(line["unit_cost"] or 0))
+        if unit <= 0:
+            unit = Decimal(str(line["buying_price"] or 0))
+        key = line["item_id"] or f"~{(line['item_name'] or 'item').strip().lower()}"
+        row = items.get(key)
+        if row is None:
+            row = items[key] = {
+                "name": (line["item_name"] or "").strip() or "Deleted item",
+                "quantity": Decimal("0"),
+                "value": Decimal("0"),
+                "shops": {},
+            }
+        row["quantity"] += qty
+        row["value"] += (unit * qty).quantize(Decimal("0.01"))
+        shop_name = shop_names.get(line["movement__shop_id"], "Shop")
+        row["shops"][shop_name] = row["shops"].get(shop_name, Decimal("0")) + qty
+
+    # Shelf trade outs — ShelfItem has no Item row, so key by the shelf
+    # id. The OUT movement carries no price (value is FIFO-computed
+    # below), and the person recorded on it is the trade receiver, not
+    # the supplier — supplier attribution comes from stock-in rows.
+    shelf_trade_move_ids = set()
+    for move in (
+        ShelfStockMovement.objects.filter(
+            movement_type=ShelfStockMovementType.OUT,
+            shelf_item__shop_id__in=shop_ids,
+            created_at__gte=start,
+            created_at__lt=end,
+            reason=StockOutReason.TRADE_OUT,
+        )
+        .order_by("-created_at", "-id")
+        .values(
+            "id",
+            "shelf_item_id",
+            "shelf_item__name",
+            "shelf_item__shop_id",
+            "quantity",
+        )
+    ):
+        sid = move["shelf_item_id"]
+        shelf_trade_move_ids.add(move["id"])
+        key = f"shelf:{sid}"
+        row = items.get(key)
+        if row is None:
+            row = items[key] = {
+                "name": (move["shelf_item__name"] or "").strip()
+                or "Deleted shelf item",
+                "is_shelf": True,
+                "quantity": Decimal("0"),
+                "value": Decimal("0"),
+                "shops": {},
+            }
+        qty = Decimal(str(move["quantity"] or 0))
+        row["quantity"] += qty
+        shop_name = shop_names.get(move["shelf_item__shop_id"], "Shop")
+        row["shops"][shop_name] = row["shops"].get(shop_name, Decimal("0")) + qty
+
+    if not items:
+        return result
+
+    # Latest recorded supplier per item — an in-scope shop's stock-in wins,
+    # then any shop's most recent supplier line.
+    supplier_by_item = {}
+    item_ids = [key for key in items if isinstance(key, int)]
+    if item_ids:
+        first_any = {}
+        first_scoped = {}
+        for sup in (
+            StockMovementLine.objects.filter(
+                movement__movement_type=StockMovementType.IN,
+                item_id__in=item_ids,
+            )
+            .exclude(supplier_name="")
+            .order_by("-movement__created_at", "-id")
+            .values(
+                "item_id",
+                "movement__shop_id",
+                "supplier_name",
+                "supplier_phone_country_code",
+                "supplier_phone_number",
+            )
+        ):
+            iid = sup["item_id"]
+            first_any.setdefault(iid, sup)
+            if sup["movement__shop_id"] in shop_id_set:
+                first_scoped.setdefault(iid, sup)
+        supplier_by_item = {
+            iid: first_scoped.get(iid) or sup for iid, sup in first_any.items()
+        }
+
+    # Shelf items: value each trade out at FIFO cost — replay the item's
+    # movement history so outbound qty draws down the oldest priced batch
+    # first (a price-less in inherits the last batch price seen). The
+    # latest stock-in name/phone is the supplier — an in-scope shop's
+    # rows win, then any shop's most recent.
+    shelf_item_ids = [
+        int(key.split(":", 1)[1]) for key in items if str(key).startswith("shelf:")
+    ]
+    shelf_supplier_in = {}
+    if shelf_item_ids:
+        moves_by_item = {}
+        for move in (
+            ShelfStockMovement.objects.filter(shelf_item_id__in=shelf_item_ids)
+            .order_by("shelf_item_id", "created_at", "id")
+            .values(
+                "id",
+                "shelf_item_id",
+                "shelf_item__shop_id",
+                "movement_type",
+                "quantity",
+                "buying_price",
+                "supplier_name",
+                "supplier_phone",
+            )
+        ):
+            moves_by_item.setdefault(move["shelf_item_id"], []).append(move)
+
+        for sid, moves in moves_by_item.items():
+            # Fallback supplier attribution: the latest IN row that
+            # recorded one — in-scope shop first, then any shop.
+            latest_any = None
+            latest_scoped = None
+            for move in reversed(moves):
+                if not (
+                    move["movement_type"] == ShelfStockMovementType.IN
+                    and (move["supplier_name"] or "").strip()
+                ):
+                    continue
+                if latest_any is None:
+                    latest_any = move
+                if (
+                    latest_scoped is None
+                    and move["shelf_item__shop_id"] in shop_id_set
+                ):
+                    latest_scoped = move
+                if latest_any is not None and latest_scoped is not None:
+                    break
+            shelf_supplier_in[sid] = latest_scoped or latest_any
+
+            # FIFO valuation: inbound qtys push a (qty, price) batch and
+            # outbound draws the oldest batch down first; only the
+            # in-period trade outs count toward the row's value.
+            batches = []
+            last_known = Decimal("0")
+            row = items.get(f"shelf:{sid}")
+            for move in moves:
+                qty = Decimal(str(move["quantity"] or 0))
+                if qty <= 0:
+                    continue
+                if move["movement_type"] == ShelfStockMovementType.OUT:
+                    left = qty
+                    while left > 0 and batches:
+                        take = min(left, batches[0][0])
+                        batches[0][0] -= take
+                        left -= take
+                        if (
+                            move["id"] in shelf_trade_move_ids
+                            and row is not None
+                        ):
+                            row["value"] += take * batches[0][1]
+                        if batches[0][0] <= 0:
+                            batches.pop(0)
+                    continue
+                price = move["buying_price"]
+                if price is not None and Decimal(str(price)) > 0:
+                    last_known = Decimal(str(price))
+                batches.append([qty, last_known])
+            if row is not None:
+                row["value"] = row["value"].quantize(Decimal("0.01"))
+
+    # Supplier attribution per row key: items use their stock-in
+    # supplier; shelf items too — the name/phone recorded at stock-in,
+    # not the receiver named on the trade out.
+    supplier_by_key = dict(supplier_by_item)
+    for sid in shelf_item_ids:
+        stock_in = shelf_supplier_in.get(sid)
+        if stock_in is not None:
+            supplier_by_key[f"shelf:{sid}"] = {
+                "supplier_name": stock_in["supplier_name"],
+                "supplier_phone_country_code": "",
+                "supplier_phone_number": (
+                    stock_in["supplier_phone"] or ""
+                ).strip(),
+            }
+
+    supplier_ids_by_key = {}
+    if role is not None:
+        from employees.analytics_services import supplier_account_url
+
+        supplier_ids_by_key = {
+            (
+                (s.name or "").strip().casefold(),
+                (s.phone_country_code or "").strip(),
+                (s.phone_number or "").strip(),
+            ): s.pk
+            for s in Supplier.objects.only(
+                "pk", "name", "phone_country_code", "phone_number"
+            )
+        }
+
+    suppliers = {}
+    for key, row in items.items():
+        sup = supplier_by_key.get(key)
+        if sup and (sup["supplier_name"] or "").strip():
+            name = (sup["supplier_name"] or "").strip()
+            dial = (sup["supplier_phone_country_code"] or "").strip()
+            phone = (sup["supplier_phone_number"] or "").strip()
+            skey = (name.casefold(), dial, phone)
+        else:
+            name = "Supplier not recorded"
+            dial = phone = ""
+            skey = None
+        bucket = suppliers.get(skey)
+        if bucket is None:
+            bucket = suppliers[skey] = {
+                "name": name,
+                "dial": dial,
+                "phone": phone,
+                "item_keys": set(),
+                "quantity": Decimal("0"),
+                "value": Decimal("0"),
+            }
+        bucket["item_keys"].add(key)
+        bucket["quantity"] += row["quantity"]
+        bucket["value"] += row["value"]
+
+    supplier_rows = []
+    for skey, bucket in suppliers.items():
+        supplier_id = supplier_ids_by_key.get(skey) if skey else None
+        supplier_rows.append(
+            {
+                "name": bucket["name"],
+                "phone": f"{bucket['dial']} {bucket['phone']}".strip(),
+                "account_href": (
+                    supplier_account_url(role, "stock", supplier_id)
+                    if role is not None and supplier_id
+                    else ""
+                ),
+                "items": len(bucket["item_keys"]),
+                "quantity_label": _qty_label(bucket["quantity"]),
+                "value": bucket["value"],
+                "value_label": _money_ksh(bucket["value"]),
+            }
+        )
+    supplier_rows.sort(key=lambda r: (-r["value"], r["name"].casefold()))
+
+    item_rows = []
+    for key, row in items.items():
+        qty = row["quantity"]
+        avg = (row["value"] / qty).quantize(Decimal("0.01")) if qty else Decimal("0")
+        sup = supplier_by_key.get(key)
+        supplier_name = (
+            (sup["supplier_name"] or "").strip()
+            if sup and (sup["supplier_name"] or "").strip()
+            else ""
+        )
+        item_rows.append(
+            {
+                "name": row["name"],
+                "is_shelf": row.get("is_shelf", False),
+                "supplier": supplier_name,
+                "shops_label": ", ".join(
+                    f"{name} ×{_qty_label(shop_qty)}"
+                    for name, shop_qty in sorted(row["shops"].items())
+                ),
+                "quantity_label": _qty_label(qty),
+                "avg_price_label": _money_ksh(avg),
+                "value": row["value"],
+                "value_label": _money_ksh(row["value"]),
+            }
+        )
+    item_rows.sort(key=lambda r: (-r["value"], r["name"].casefold()))
+
+    total_qty = sum((row["quantity"] for row in items.values()), Decimal("0"))
+    total_value = sum((row["value"] for row in items.values()), Decimal("0"))
+    return {
+        "trade_item_rows": item_rows,
+        "trade_supplier_rows": supplier_rows,
+        "trade_totals": {
+            "items": len(item_rows),
+            "quantity_label": _qty_label(total_qty),
+            "value_label": _money_ksh(total_value),
+            "suppliers": sum(
+                1 for row in supplier_rows if row["name"] != "Supplier not recorded"
+            ),
+        },
+    }
+
+
+def stock_shop_analytics(request, profile, meta, module):
+    """Shop store analytics — trade-out usage per item + supplier amounts."""
+    from employees.models import FULL_STOCK_WORKFLOW_ROLES
+    from employees.module_permissions import require_module_permission
+    from employees.workspace import sidebar_for_stock_management, stock_management_url
+
+    denied = require_module_permission(
+        request, profile, "stock-management", "shop-analytics"
+    )
+    if denied is not None:
+        return denied
+
+    if profile.role not in FULL_STOCK_WORKFLOW_ROLES:
+        return _stock_redirect(request.path, "view")
+
+    range_type, day_start, day_end, filter_context = _report_range_bounds(request)
+    filter_shops = list(actionable_shops_for_profile(profile))
+    shops_by_id = {shop.pk: shop for shop in filter_shops}
+
+    try:
+        shop_filter_id = int(request.GET.get("shop_id") or 0)
+    except (TypeError, ValueError):
+        shop_filter_id = 0
+    if shop_filter_id and shop_filter_id not in shops_by_id:
+        shop_filter_id = 0
+
+    if shop_filter_id:
+        shop = shops_by_id.get(shop_filter_id)
+        active_shop_ids = (
+            [shop_filter_id] if shop is not None and _shop_stock_tracking_enabled(shop) else []
+        )
+    else:
+        active_shop_ids = [
+            shop.pk for shop in filter_shops if _shop_stock_tracking_enabled(shop)
+        ]
+
+    data = _build_shop_store_analytics(
+        shop_ids=active_shop_ids,
+        start=day_start,
+        end=day_end,
+        role=profile.role,
+    )
+
+    range_labels = {
+        "day": "Single day",
+        "period": "Period",
+        "month": "Month",
+        "year": "Year",
+    }
+    page_sidebar = sidebar_for_stock_management(
+        profile.role,
+        active_mode="shop-analytics",
+        shop_ids=[shop_filter_id] if shop_filter_id else [],
+        profile=profile,
+    )
+    meta = {
+        **meta,
+        "title": "Shop store analytics",
+        "headline": "Shop store analytics",
+        "summary": (
+            "Trade-out usage per item at buying price — the amounts "
+            "supposed to be given to suppliers."
+        ),
+    }
+
+    return render(
+        request,
+        "items/stock_shop_analytics.html",
+        {
+            "profile": profile,
+            "meta": meta,
+            "module": module,
+            "role_label": profile.get_role_display(),
+            "status_label": profile.get_status_display(),
+            "page_sidebar": page_sidebar,
+            "headline": "Shop store analytics",
+            "lead": meta["summary"],
+            "stock_mode": "shop-analytics",
+            "stock_view_url": stock_management_url(profile.role, "view"),
+            "filter_shops": filter_shops,
+            "selected_shop_id": shop_filter_id,
+            "report_range": filter_context["report_range"],
+            "report_range_label": range_labels.get(range_type, "Day"),
+            "report_period_label": filter_context.get("report_period_label") or "",
+            "report_date_value": filter_context["report_date_value"],
+            "report_date_from": filter_context["report_date_from"],
+            "report_date_to": filter_context["report_date_to"],
+            "report_month_value": filter_context["report_month_value"],
+            "report_year_value": filter_context["report_year_value"],
+            **data,
+        },
+    )
+
+
 @require_http_methods(["GET"])
 def stock_request_audits(request, profile, meta, module):
     from urllib.parse import urlencode
@@ -8800,6 +9496,8 @@ def _shelf_view_matrix(shops):
     from decimal import Decimal
     from collections import OrderedDict
 
+    from shops.services import _money_ksh
+
     from .models import (
         ShelfItem,
         ShelfStockMovement,
@@ -8825,31 +9523,33 @@ def _shelf_view_matrix(shops):
         if price is not None:
             last_price[shelf_item_id] = price
 
-    def _avg_unit_cost(movements):
-        """Weighted-average cost of the on-hand stock: inbound qtys pool at
-        their buying price, outbound qtys draw the pool down at the running
-        average — the same basis ShopStock.average_cost tracks for items."""
-        pool_qty = Decimal("0")
-        pool_cost = Decimal("0")
+    def _fifo_unit_cost(movements):
+        """FIFO cost of the on-hand stock: inbound movements push a
+        (qty, price) batch and outbound draws the oldest batch down first.
+        A price-less in inherits the last batch price seen. Returns the
+        oldest surviving batch's price — the cost the next unit out
+        leaves at."""
+        batches = []
+        last_known = Decimal("0")
         for mtype, qty, price in movements:
-            qty = qty or Decimal("0")
+            qty = Decimal(qty or 0)
+            if qty <= 0:
+                continue
             if mtype == ShelfStockMovementType.OUT:
-                if pool_qty > 0:
-                    take = min(qty, pool_qty)
-                    pool_cost -= take * (pool_cost / pool_qty)
-                    pool_qty -= take
-                    if pool_qty <= 0:
-                        pool_qty = Decimal("0")
-                        pool_cost = Decimal("0")
-            else:
-                if price is not None and price > 0:
-                    pool_cost += qty * price
-                elif pool_qty > 0:
-                    pool_cost += qty * (pool_cost / pool_qty)
-                pool_qty += qty
-        if pool_qty <= 0:
-            return Decimal("0")
-        return (pool_cost / pool_qty).quantize(Decimal("0.01"))
+                left = qty
+                while left > 0 and batches:
+                    take = min(left, batches[0][0])
+                    batches[0][0] -= take
+                    left -= take
+                    if batches[0][0] <= 0:
+                        batches.pop(0)
+                continue
+            if price is not None and Decimal(str(price)) > 0:
+                last_known = Decimal(str(price))
+            batches.append([qty, last_known])
+        while batches and batches[0][0] <= 0:
+            batches.pop(0)
+        return batches[0][1].quantize(Decimal("0.01")) if batches else Decimal("0")
     shop_index = {shop.pk: idx for idx, shop in enumerate(shops)}
     merged = OrderedDict()
     for item in items:
@@ -8872,19 +9572,23 @@ def _shelf_view_matrix(shops):
             entry["unit"] = item.unit
         threshold = item.low_stock_threshold or Decimal("0")
         price = last_price.get(item.pk)
-        unit_cost = _avg_unit_cost(movement_map.get(item.pk, []))
+        unit_cost = _fifo_unit_cost(movement_map.get(item.pk, []))
         entry["cells"][shop_index[item.shop_id]] = {
             "id": item.pk,
             "qty": item.quantity,
             "display": _qty_display(item.quantity),
             "empty": item.quantity == 0,
             "is_low": threshold > 0 and item.quantity <= threshold,
+            "has_alert": threshold > 0,
             "threshold_display": _qty_display(threshold),
             "last_buying_price": price,
             "last_buying_price_display": (
                 str(price) if price is not None else ""
             ),
             "unit_cost": unit_cost,
+            "unit_cost_display": (
+                _money_ksh(unit_cost) if unit_cost > 0 else ""
+            ),
         }
         entry["total"] += item.quantity
 
@@ -8898,6 +9602,30 @@ def _shelf_view_matrix(shops):
         entry["has_low"] = any(
             cell is not None and cell["is_low"] for cell in entry["cells"]
         )
+        low_shops = [
+            shops[idx].name
+            for idx, cell in enumerate(entry["cells"])
+            if cell is not None and cell["is_low"]
+        ]
+        if low_shops:
+            entry["health"] = "low"
+            entry["health_label"] = "Low now"
+            entry["health_title"] = (
+                f"Low at {', '.join(low_shops)} — at or below the "
+                "low stock alert."
+            )
+        elif any(
+            cell is not None and cell["has_alert"] for cell in entry["cells"]
+        ):
+            entry["health"] = "ok"
+            entry["health_label"] = "Watching"
+            entry["health_title"] = (
+                "Low stock alerts set — above the alert level."
+            )
+        else:
+            entry["health"] = "off"
+            entry["health_label"] = "Off"
+            entry["health_title"] = "No low-stock alert set."
         entry["search_text"] = (
             f'{entry["name"]} {entry["category"]} {entry["unit"]}'
         ).lower()
@@ -8952,6 +9680,7 @@ def stock_management(request, profile, meta, module, page_sidebar):
         "online-stock-take",
         "request-audits",
         "activity-audits",
+        "shop-analytics",
     ):
         mode = "view"
 
@@ -9006,6 +9735,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
 
     if mode == "activity-audits":
         return stock_activity_audits(request, profile, meta, module)
+
+    if mode == "shop-analytics":
+        return stock_shop_analytics(request, profile, meta, module)
 
     if mode == "request-audits":
         return stock_request_audits(request, profile, meta, module)
@@ -9089,9 +9821,18 @@ def stock_management(request, profile, meta, module, page_sidebar):
         or ""
     ).strip()
 
+    sidebar_mode = mode
+    if (
+        mode == "request"
+        and shelf_tab
+        and (request.GET.get("flow") or "").strip().lower()
+        in ("trade_out", "trade_in")
+    ):
+        sidebar_mode = "shelf-trade"
+
     page_sidebar = sidebar_for_stock_management(
         profile.role,
-        active_mode=mode,
+        active_mode=sidebar_mode,
         shop_ids=selected_shop_ids,
         requested_from_shop_id=requested_from_id if mode == "request" else "",
         profile=profile,
@@ -9550,6 +10291,26 @@ def stock_management(request, profile, meta, module, page_sidebar):
             )
             shelf_transfer_shops = list(shelf_register_shops)
 
+    # Shelf transfer / trade page (mode=request on the shelf tab, or a
+    # shelf-only shop's request page): the To-shop picker lists the other
+    # shelf-mode shops — the tracked-stock shops the item flow offers can't
+    # take shelf transfers.
+    shelf_to_options = []
+    shelf_to_shop = None
+    if mode == "request" and can_shelf_stock:
+        selected_id = selected_shop.pk if selected_shop is not None else None
+        shelf_to_options = [
+            shop for shop in shelf_register_shops if shop.pk != selected_id
+        ]
+        shelf_to_shop = next(
+            (
+                shop
+                for shop in shelf_to_options
+                if str(shop.pk) == requested_from_id
+            ),
+            None,
+        )
+
     # IT support item pages are item-stock only — shelf stock is managed from
     # the Shelf stock tab. shelf_only stays so a shelf-only shop still shows
     # its "tracks shelf stock" placeholder instead of an empty matrix.
@@ -9584,6 +10345,13 @@ def stock_management(request, profile, meta, module, page_sidebar):
     # The sidebar's Shelf stock tab (tab=shelf) flips the whole page to shelf
     # data regardless of whether the tab bar can render.
     stock_tab = "shelf" if shelf_tab else "items"
+    # Request mode on a shelf surface runs the transfer/trade flow picker —
+    # the shelf matrix cells take a qty (+ unit value for trade in).
+    shelf_flow_panel = bool(
+        can_shelf_stock
+        and mode == "request"
+        and (stock_tab == "shelf" or shelf_only)
+    )
     stock_tab_items_url = ""
     stock_tab_shelf_url = ""
     shelf_tabs_enabled = False
@@ -9651,6 +10419,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
         shelf_transfer_shops = []
         shelf_matrix_shops = []
         shelf_matrix_groups = []
+        shelf_to_options = []
+        shelf_to_shop = None
+        shelf_flow_panel = False
 
     items_by_category = []
     item_count = Item.objects.filter(is_suspended=False).count()
@@ -9819,7 +10590,12 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "verify_login_code_url": request.path,
         }
 
-    from .shelf_stock_services import SHELF_UNIT_CHOICES, shelf_categories
+    from .shelf_stock_services import (
+        SHELF_UNIT_CHOICES,
+        portion_item_options,
+        shelf_categories,
+        shelf_portions_enabled,
+    )
 
     return render(
         request,
@@ -9871,6 +10647,8 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "shelf_register_shops": shelf_register_shops,
             "shelf_unit_choices": SHELF_UNIT_CHOICES,
             "shelf_categories": shelf_categories(),
+            "shelf_portion_items": portion_item_options(),
+            "shelf_portions_enabled": shelf_portions_enabled(),
             "shelf_shop": shelf_shop,
             "shelf_only": shelf_only,
             "shelf_scope_pick": shelf_scope_pick,
@@ -9885,6 +10663,9 @@ def stock_management(request, profile, meta, module, page_sidebar):
             "shelf_items": shelf_items,
             "shelf_movements": shelf_movements,
             "shelf_transfer_shops": shelf_transfer_shops,
+            "shelf_to_options": shelf_to_options,
+            "shelf_to_shop": shelf_to_shop,
+            "shelf_flow_panel": shelf_flow_panel,
             "shelf_shop_field": True,
             "shelf_needs_staff_id": False,
             "online_stock_take_url": stock_management_url(
