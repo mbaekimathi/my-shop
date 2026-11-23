@@ -8303,18 +8303,18 @@ def _session_activity_totals(
 ) -> dict:
     """Cash/M-Pesa sales and paid outflows inside a day session window.
 
-    Cashbox expected cash = opening cash + cash sales − pending receipts
-    cleared in later sessions + credit/trade collections + customer
-    prepayments (cash) − return refunds − expenses paid − owner drawings
-    (cash) − suppliers paid − trade-in payouts. M-Pesa/card follow the same
-    shape. Owner drawings are equity, not operating expense.
+    Cashbox expected cash = opening cash + cash sales + credit/trade
+    collections + customer prepayments (cash) − return refunds − expenses
+    paid − owner drawings (cash) − suppliers paid − trade-in payouts.
+    M-Pesa/card follow the same shape. Owner drawings are equity, not
+    operating expense.
 
     Sales use original tender (including later-returned receipts). A pending
-    receipt confirmed in a *different* session keeps its sale on the printing
-    session's ledger but its money moves to the collecting till — so it is
-    deducted from this session's expectation and shows as excess (positive
-    variance) in the session that cleared it. Refunds are subtracted on the
-    day the return happened.
+    receipt confirmed in a *different* session keeps its sale AND its money
+    expectation on the printing session — that session shows the amount as
+    a deficit — while the collecting session holds the cash above Expected,
+    showing it as excess. Refunds are subtracted on the day the return
+    happened.
     """
     from .models import ExpenseCategory
 
@@ -8370,9 +8370,10 @@ def _session_activity_totals(
             mpesa_sales += mpesa
             card_sales += card
             cleared_at = sale.get("confirmed_payment_at")
-            # Pending receipt confirmed outside this window — the money was
-            # collected into another session's till, so it leaves this
-            # session's expectation (the sale itself stays on this ledger).
+            # Pending receipt confirmed outside this window — collected
+            # into another session's till. The tender stays in this
+            # session's Expected (the deficit it must answer for); the
+            # figure only labels how much was cleared elsewhere.
             if cleared_at is not None and not (opened <= cleared_at < closed):
                 elsewhere_cash += cash
                 elsewhere_mpesa += mpesa
@@ -8494,11 +8495,11 @@ def _session_activity_totals(
     opening_credit = Decimal(session.opening_credit or 0)
     # Cleared-pending money is collected into this till but stays outside
     # Expected — it belongs to an earlier session's sale, so it surfaces as
-    # excess (positive variance) rather than a silent expectation.
+    # excess (positive variance). The printing session keeps the tender in
+    # its own Expected instead — that is its deficit for the same receipt.
     expected_cash = (
         opening_cash
         + cash_sales
-        - elsewhere_cash
         + credit_cash
         + trade_collected_cash
         + prepayments_cash
@@ -8511,7 +8512,6 @@ def _session_activity_totals(
     expected_mpesa = (
         opening_mpesa
         + mpesa_sales
-        - elsewhere_mpesa
         + credit_mpesa
         + trade_collected_mpesa
         + prepayments_mpesa
@@ -8522,7 +8522,6 @@ def _session_activity_totals(
     expected_card = (
         opening_card
         + card_sales
-        - elsewhere_card
         + credit_card
         + trade_collected_card
         + prepayments_card
@@ -9520,6 +9519,107 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
             }
         )
 
+    # Pending sales this session printed but a later session cleared — the
+    # money went into that till, so this session's expectation stands as a
+    # deficit owed by the printing cashier. `cleared_by` names the cashier
+    # whose session collected it.
+    cleared_elsewhere_rows = []
+    elsewhere_qs = (
+        ShopReceipt.objects.filter(
+            kind=ShopReceiptKind.SALE,
+            settled_from_credit=False,
+            settled_from_trade=False,
+            status__in=counted,
+            confirmed_payment_at__isnull=False,
+            **window,
+        )
+        .exclude(
+            confirmed_payment_at__gte=window["created_at__gte"],
+            confirmed_payment_at__lt=window["created_at__lt"],
+        )
+        .select_related("created_by__user")
+        .prefetch_related("lines")
+        .order_by("confirmed_payment_at", "pk")
+    )
+    elsewhere_receipts = list(elsewhere_qs)
+    clearing_sessions = []
+    if elsewhere_receipts:
+        from django.db.models import Q
+
+        from .models import ShopDaySession
+
+        earliest_cleared = min(
+            receipt.confirmed_payment_at for receipt in elsewhere_receipts
+        )
+        clearing_sessions = list(
+            ShopDaySession.objects.filter(
+                Q(closed_at__gt=earliest_cleared) | Q(closed_at__isnull=True),
+                shop_id=session.shop_id,
+            )
+            .select_related("opened_by__user")
+            .order_by("opened_at")
+        )
+
+    def _clearing_cashier_name(cleared_at):
+        # Earliest session whose window ends after the payment stamp — its
+        # activity window reaches back to the previous close, so it holds
+        # any stamp between its predecessor's close and its own.
+        for row in clearing_sessions:
+            if row.closed_at is None or cleared_at < row.closed_at:
+                break
+        else:
+            return "—"
+        owner = row.opened_by
+        if owner is None or owner.user_id is None:
+            return "—"
+        user = owner.user
+        return (
+            f"{user.first_name or ''} {user.last_name or ''}".strip()
+            or user.username
+        )
+
+    for receipt in elsewhere_receipts:
+        seller = ""
+        if receipt.created_by_id:
+            user = receipt.created_by.user
+            seller = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+            )
+        lines = list(receipt.lines.all())
+        labels = [
+            f"{(line.item_name or '').strip() or 'Item'}"
+            f" ×{_qty_label(line.quantity)}"
+            for line in lines[:2]
+        ]
+        extra = len(lines) - len(labels)
+        items_label = ", ".join(labels)
+        if extra > 0:
+            items_label += f" +{extra} more"
+        cash, mpesa, card = _receipt_original_tender(
+            receipt.cash_amount,
+            receipt.mpesa_amount,
+            receipt.return_payment_events,
+            card_amount=receipt.card_amount,
+        )
+        cleared_elsewhere_rows.append(
+            {
+                "at": receipt.confirmed_payment_at,
+                "printed_at": receipt.created_at,
+                "number": receipt_tally_code(receipt),
+                "items_label": items_label or "—",
+                "seller": seller or "—",
+                "cleared_by": _clearing_cashier_name(
+                    receipt.confirmed_payment_at
+                ),
+                "client": (receipt.client_name or "").strip(),
+                "cash": cash,
+                "mpesa": mpesa,
+                "card": card,
+                "total": cash + mpesa + card,
+            }
+        )
+
     # Trade settlement payments inside the session window — trade-out
     # collections are money in, trade-in payouts are money out.
     trade_pay_rows = []
@@ -9650,6 +9750,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         "credit_sales": _kind_totals(ShopReceiptKind.CREDIT),
         "credit_payments": credit_payments,
         "cleared_pending": cleared_pending_rows,
+        "cleared_elsewhere": cleared_elsewhere_rows,
         "trade_payments": trade_payment_rows,
         "gifts": _kind_totals(ShopReceiptKind.GIFT),
         "expenses": expense_rows,
@@ -10431,14 +10532,6 @@ def build_shop_day_report_pdf(
             summary.get("sales_total"),
         ),
         _money_row(
-            f"Pending cleared in later sessions ({summary.get('cleared_elsewhere_count') or 0})",
-            summary.get("cleared_elsewhere_cash"),
-            summary.get("cleared_elsewhere_mpesa"),
-            summary.get("cleared_elsewhere_card"),
-            summary.get("cleared_elsewhere_total"),
-            minus=True,
-        ),
-        _money_row(
             f"Credit payments collected ({summary.get('credit_collected_count') or 0})",
             summary.get("credit_collected_cash"),
             summary.get("credit_collected_mpesa"),
@@ -10531,8 +10624,18 @@ def build_shop_day_report_pdf(
             )
         )
         strong_rows.update({len(rows) - 1, len(rows)})
-    # Collected on behalf of earlier sessions — sits above Expected as the
-    # excess, outside the build-up.
+    # Cross-session pending clears, per cashier: what this session printed
+    # but another collected stays in Expected (the deficit); what this till
+    # collected for an earlier session sits above Expected (the excess).
+    rows.append(
+        _money_row(
+            f"Deficit — pending cleared in later sessions ({summary.get('cleared_elsewhere_count') or 0})",
+            summary.get("cleared_elsewhere_cash"),
+            summary.get("cleared_elsewhere_mpesa"),
+            summary.get("cleared_elsewhere_card"),
+            summary.get("cleared_elsewhere_total"),
+        )
+    )
     rows.append(
         _money_row(
             f"Excess — cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
@@ -10861,6 +10964,44 @@ def build_shop_day_report_pdf(
         footer=["Total", "", "", "", _fmt(cleared_total)],
         dense=True,
         empty_note="No earlier pending receipts cleared this session.",
+        section="day_report_sec_cleared",
+    )
+
+    # -- Pending cleared in later sessions (printed here, collected there) --
+    elsewhere_rows = details.get("cleared_elsewhere") or []
+    elsewhere_total = sum(
+        (Decimal(row.get("total") or 0) for row in elsewhere_rows),
+        Decimal("0.00"),
+    )
+    _detail_table(
+        "Pending cleared in later sessions",
+        ["Cleared", "Receipt", "Cleared by", "Items", "Amount"],
+        [
+            [
+                _p(_time(row["at"]), cell_sm),
+                Paragraph(
+                    f"<b>{_esc(row['number'])}</b>"
+                    f"<br/><font size='6.8' color='#5b6b7c'>Printed "
+                    f"{_esc(timezone.localtime(row['printed_at']).strftime('%d %b %Y · %H:%M'))}</font>",
+                    cell_sm,
+                ),
+                _p(row["cleared_by"], cell_sm),
+                _p(row["items_label"], cell_sm),
+                _p(_fmt(row["total"]), cell_sm_right),
+            ]
+            for row in elsewhere_rows
+        ],
+        [
+            doc.width * 0.09,
+            doc.width * 0.30,
+            doc.width * 0.17,
+            doc.width * 0.30,
+            doc.width * 0.14,
+        ],
+        aligns=["l", "l", "l", "l", "r"],
+        footer=["Total", "", "", "", _fmt(elsewhere_total)],
+        dense=True,
+        empty_note="No pending receipts cleared in later sessions.",
         section="day_report_sec_cleared",
     )
 

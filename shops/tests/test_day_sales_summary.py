@@ -951,14 +951,18 @@ class ClearedPendingCollectionTests(TestCase):
         first.refresh_from_db()
         first_summary = day_session_balance_summary(first)
         self.assertEqual(first_summary["cleared_pending_total"], Decimal("0"))
-        # Printed inside session one — the sale stays on its ledger, but the
-        # money was collected elsewhere so it leaves its expected till.
+        # Printed inside session one — the sale AND the money expectation
+        # stay on its ledger: the till expected it, so the amount cleared
+        # into a later session's till is this cashier's deficit.
         self.assertEqual(first_summary["cash_sales"], Decimal("100"))
-        self.assertEqual(first_summary["cleared_elsewhere_total"], Decimal("100"))
+        self.assertEqual(
+            first_summary["cleared_elsewhere_total"], Decimal("100")
+        )
         self.assertEqual(
             first_summary["expected_cash"],
-            Decimal(first.opening_cash or 0),
+            Decimal(first.opening_cash or 0) + Decimal("100"),
         )
+        self.assertEqual(first_summary["cash_variance"], Decimal("-100"))
 
         summary = day_session_balance_summary(second)
         self.assertEqual(summary["cleared_pending_total"], Decimal("100"))
@@ -967,12 +971,20 @@ class ClearedPendingCollectionTests(TestCase):
             summary["expected_cash"], Decimal(second.opening_cash or 0)
         )
 
+        first_details = day_session_report_details(first)
+        elsewhere = first_details["cleared_elsewhere"]
+        self.assertEqual(len(elsewhere), 1)
+        self.assertEqual(elsewhere[0]["cleared_by"], "Cleared Cashier")
+        self.assertEqual(elsewhere[0]["seller"], "Cleared Cashier")
+        self.assertEqual(elsewhere[0]["total"], Decimal("100"))
+
         details = day_session_report_details(second)
         rows = details["cleared_pending"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["printed_at"], pending.created_at)
         self.assertEqual(rows[0]["at"], pending.confirmed_payment_at)
         self.assertEqual(rows[0]["total"], Decimal("100"))
+        self.assertEqual(rows[0]["seller"], "Cleared Cashier")
 
         listed = list_shop_day_sessions(self.shop)
         second_row = next(r for r in listed if r["session"].pk == second.pk)

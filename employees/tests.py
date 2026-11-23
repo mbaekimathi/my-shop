@@ -1553,6 +1553,7 @@ class AnalyticsDaySessionReportTests(TestCase):
                 "Sales & profit",
                 "Money flow",
                 "Cleared pending receipts",
+                "Pending cleared in later sessions",
                 "Customer prepayments",
                 "Credit payments collected",
                 "Trade settlements",
@@ -1570,9 +1571,9 @@ class AnalyticsDaySessionReportTests(TestCase):
         flow_labels = [r[0] for r in page["tables"][1]["rows"]]
         self.assertIn("Counted closing", flow_labels)
         self.assertIn("Variance", flow_labels)
-        items = page["tables"][8]
+        items = page["tables"][9]
         self.assertEqual(items["rows"][0][0], "Charger")
-        sellers = page["tables"][9]
+        sellers = page["tables"][10]
         self.assertEqual(sellers["rows"][0][0], "870066")
         self.assertEqual(sellers["rows"][0][1], "1")
         self.assertEqual(sellers["rows"][0][3], "KSh 250.00")
