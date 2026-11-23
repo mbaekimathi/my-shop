@@ -10465,3 +10465,12 @@ body.ax-credit-due-open {
 .ax--day-report .ax-card--actual .ax-card-head h3::before {
   background: linear-gradient(180deg, var(--teal), color-mix(in srgb, var(--teal) 70%, var(--text-strong)));
 }
+
+/* Expected vs actual matrix — column headers tinted to match the sides. */
+.ax--day-report .ax-card--expected .ax-table th:nth-child(2) {
+  color: var(--info-text);
+}
+
+.ax--day-report .ax-card--expected .ax-table th:nth-child(3) {
+  color: color-mix(in srgb, var(--teal) 55%, var(--text-strong));
+}

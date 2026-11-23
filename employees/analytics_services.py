@@ -12105,7 +12105,7 @@ def build_day_session_report_page(
         summary=summary, channels=channels
     )
 
-    def _money_cell(value, *, minus=False, tone=""):
+    def _money_cell(value, *, minus=False, tone="", title=""):
         if value is None:
             return {"kind": "money", "label": "—"}
         amount = Decimal(value)
@@ -12115,6 +12115,8 @@ def build_day_session_report_page(
         cell = {"kind": "money", "label": label}
         if tone:
             cell["tone"] = tone
+        if title:
+            cell["title"] = title
         return cell
 
     def _channel_values(prefix):
@@ -12359,102 +12361,88 @@ def build_day_session_report_page(
         "Variance = counted − expected."
     )
 
-    # Sales & profit overview — the headlining expected vs actual rollup.
-    # Expected sales counts every sale kind (counted + uncounted pending +
-    # credit + gifts); actual sales is the money that reached the till.
-    sp_scope = {
-        "pending": "pending receipts only",
-        "confirmed": "confirmed receipts only",
-    }.get(report_mode, "all receipt statuses")
-    counted_sub = f"collected at the till · {sp_scope}"
-    if sales_profit["pending_counted"]:
-        counted_sub += (
-            f" · includes {sales_profit['pending_counted']} pending"
-            f"{'s' if sales_profit['pending_counted'] != 1 else ''}"
-        )
-    expected_rows = [
-        {"group_header": True, "label": "Sales"},
-        [
-            {"label": "Counted sales", "sub": counted_sub},
-            str(sales_profit["sales_count"]),
-            _money_cell(sales_profit["counted_sales"]),
-        ],
-        [
-            {
-                "label": "Pending receipts",
-                "sub": "awaiting confirmation — not counted above",
-            },
-            str(sales_profit["pending_count"]),
-            _money_cell(sales_profit["pending_total"]),
-        ],
-    ]
+    # Sales & profit as an Expected-vs-Actual matrix: each metric on a row,
+    # the expectation and the reality side by side, the difference column
+    # carrying what's still to collect / unpaid / the profit gap.
+    sales_sub = (
+        f"{sales_profit['sales_count']} receipts · "
+        f"counted {_money_ksh(sales_profit['counted_sales'])}"
+    )
+    if sales_profit["pending_count"]:
+        sales_sub += f" + pending {_money_ksh(sales_profit['pending_total'])}"
     if getattr(pos, "enable_credit", False):
-        expected_rows.append(
-            [
-                {
-                    "label": "Credit sales",
-                    "sub": "collected later — outside the till",
-                },
-                str(sales_profit["credit_count"]),
-                _money_cell(sales_profit["credit_total"]),
-            ]
-        )
+        sales_sub += f" + credit {_money_ksh(sales_profit['credit_total'])}"
     if getattr(pos, "enable_gift", True):
-        expected_rows.append(
-            [
-                {
-                    "label": "Gift issues",
-                    "sub": "free issues — outside the till",
-                },
-                str(sales_profit["gift_count"]),
-                _money_cell(sales_profit["gift_total"]),
-            ]
-        )
-    expected_rows += [
-        {
-            "total_row": True,
-            "cells": [
-                "Expected sales",
-                "",
-                _money_cell(sales_profit["expected_sales"]),
-            ],
-        },
-        {"group_header": True, "label": "Costs"},
+        sales_sub += f" + gifts {_money_ksh(sales_profit['gift_total'])}"
+    expected_actual_rows = [
+        [
+            {"label": "Sales", "sub": sales_sub},
+            _money_cell(sales_profit["expected_sales"]),
+            _money_cell(sales_profit["actual_sales"]),
+            _money_cell(
+                sales_profit["outstanding"],
+                tone=(
+                    "warn" if sales_profit["outstanding"] > _zero() else "good"
+                ),
+                title="Still to collect",
+            ),
+        ],
         [
             {
                 "label": "Expenses",
                 "sub": (
-                    f"paid {_money_ksh(sales_profit['expenses_paid'])}"
-                    f" · unpaid {_money_ksh(sales_profit['expenses_unpaid'])}"
+                    f"{sales_profit['expense_count']} docs · "
+                    "difference is unpaid"
                 ),
             },
-            str(sales_profit["expense_count"]),
-            _money_cell(sales_profit["expenses_total"], minus=True),
+            _money_cell(sales_profit["expenses_total"]),
+            _money_cell(sales_profit["expenses_paid"]),
+            _money_cell(
+                sales_profit["expenses_unpaid"],
+                tone=(
+                    "warn"
+                    if sales_profit["expenses_unpaid"] > _zero()
+                    else "good"
+                ),
+                title="Unpaid expenses",
+            ),
         ],
         [
             {
                 "label": "Stock bought",
                 "sub": (
-                    f"paid {_money_ksh(sales_profit['stock_paid'])}"
-                    f" · unpaid {_money_ksh(sales_profit['stock_unpaid'])}"
+                    f"{sales_profit['stock_doc_count']} docs · "
+                    "difference is unpaid"
                 ),
             },
-            str(sales_profit["stock_doc_count"]),
-            _money_cell(sales_profit["stock_total"], minus=True),
+            _money_cell(sales_profit["stock_total"]),
+            _money_cell(sales_profit["stock_paid"]),
+            _money_cell(
+                sales_profit["stock_unpaid"],
+                tone=(
+                    "warn"
+                    if sales_profit["stock_unpaid"] > _zero()
+                    else "good"
+                ),
+                title="Unpaid stock",
+            ),
         ],
         [
             {
                 "label": "Customer prepayments",
-                "sub": "money received ahead of orders",
+                "sub": (
+                    f"{sales_profit['prepayments_count']} received · "
+                    "money ahead of orders"
+                ),
             },
-            str(sales_profit["prepayments_count"]),
             _money_cell(sales_profit["prepayments_total"]),
+            _money_cell(sales_profit["prepayments_total"]),
+            _money_cell(_zero(), title="Received in full"),
         ],
         {
             "total_row": True,
             "cells": [
-                "Expected profit",
-                "",
+                "Profit",
                 _money_cell(
                     sales_profit["expected_profit"],
                     tone=(
@@ -12463,36 +12451,6 @@ def build_day_session_report_page(
                         else "bad"
                     ),
                 ),
-            ],
-        },
-    ]
-    actual_rows = [
-        [
-            {
-                "label": "Actual sales",
-                "sub": "money that reached the till",
-            },
-            "",
-            _money_cell(sales_profit["actual_sales"]),
-        ],
-        [
-            {
-                "label": "Still to collect",
-                "sub": "expected sales − actual sales",
-            },
-            "",
-            _money_cell(
-                sales_profit["outstanding"],
-                tone=(
-                    "warn" if sales_profit["outstanding"] > _zero() else "good"
-                ),
-            ),
-        ],
-        {
-            "total_row": True,
-            "cells": [
-                "Actual profit",
-                "",
                 _money_cell(
                     sales_profit["actual_profit"],
                     tone=(
@@ -12501,58 +12459,38 @@ def build_day_session_report_page(
                         else "bad"
                     ),
                 ),
+                _money_cell(
+                    sales_profit["profit_gap"],
+                    title="Expected − actual gap",
+                ),
             ],
         },
-        [
-            {
-                "label": "Unpaid obligations",
-                "sub": "unpaid expenses + unpaid stock",
-            },
-            "",
-            _money_cell(sales_profit["unpaid_obligations"]),
-        ],
-        [
-            {
-                "label": "Expected − actual gap",
-                "sub": "profit riding on uncollected sales and unpaid costs",
-            },
-            "",
-            _money_cell(sales_profit["profit_gap"]),
-        ],
-    ]
-    sp_columns = [
-        "Entry",
-        {"label": "Docs", "money": True},
-        {"label": "Amount", "money": True},
     ]
 
     tables = [
         _table(
-            "Expected",
-            sp_columns,
-            expected_rows,
+            "Expected vs actual",
+            [
+                "Entry",
+                {"label": "Expected", "money": True},
+                {"label": "Actual", "money": True},
+                {"label": "Difference", "money": True, "total": True},
+            ],
+            expected_actual_rows,
             empty="",
             footnote=(
                 "Expected sales = counted sales + uncounted pending "
-                "receipts + credit sales + gift issues. Expected profit = "
-                "expected sales − expenses (paid + unpaid) − stock bought "
-                "(paid + unpaid) + customer prepayments."
+                "receipts + credit sales + gift issues; actual sales = "
+                "money that reached the till (the difference is still to "
+                "collect). Expected profit = expected sales − all "
+                "expenses and stock bought + prepayments; actual profit "
+                "charges paid costs only — cost differences are the "
+                "unpaid amounts. Credit and gift value never enters "
+                "Expected in till."
             ),
             section="day_report_sec_sales_profit",
             card_class="ax-card--expected",
-        ),
-        _table(
-            "Actual",
-            sp_columns,
-            actual_rows,
-            empty="",
-            footnote=(
-                "Actual sales = money that reached the till. Actual "
-                "profit = counted sales − paid costs + prepayments. "
-                "Credit and gift value never enters Expected in till."
-            ),
-            section="day_report_sec_sales_profit",
-            card_class="ax-card--actual",
+            wide=True,
         ),
         _table(
             "Money flow",
