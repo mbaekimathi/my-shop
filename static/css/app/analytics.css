@@ -10585,3 +10585,78 @@ body.ax-credit-due-open {
   border-radius: 10px;
   background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
 }
+
+/* ---- Day report: mobile auto-fit ---------------------------------------
+   The centred report column already shrinks with the viewport; these rules
+   make the pieces inside it fit small screens without sideways scroll. */
+
+/* The Details strip shares the same centred column on every screen. */
+.ax.ax--day-report .ax-details {
+  width: min(58rem, 100%);
+  margin-inline: auto;
+  justify-self: center;
+}
+
+@media (max-width: 899px) {
+  /* Amounts stay on one line; only the row labels wrap. */
+  .ax.ax--day-report .ax-table .ax-money,
+  .ax.ax--day-report .ax-table .ax-money.is-good,
+  .ax.ax--day-report .ax-table .ax-money.is-bad,
+  .ax.ax--day-report .ax-table .ax-money.is-warn {
+    white-space: nowrap;
+  }
+
+  /* Four-column ledgers fit common phone widths — no sideways scroll. */
+  .ax.ax--day-report .ax-table--moneyflow,
+  .ax.ax--day-report .ax-card--expected .ax-table {
+    min-width: 20rem;
+  }
+
+  .ax.ax--day-report .ax-table--cleared {
+    min-width: 21.5rem;
+  }
+
+  /* Details toggle: label on the first line, description below. */
+  .ax.ax--day-report .ax-details-summary {
+    flex-wrap: wrap;
+    row-gap: 0.12rem;
+  }
+
+  .ax.ax--day-report .ax-details-count {
+    flex-basis: 100%;
+    padding-left: 1.45rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .ax.ax--day-report .ax-top {
+    padding: 0.8rem 0.85rem;
+  }
+
+  .ax.ax--day-report .ax-table {
+    font-size: 0.76rem;
+  }
+
+  .ax.ax--day-report .ax-table th,
+  .ax.ax--day-report .ax-table td {
+    padding: 0.34rem 0.42rem;
+  }
+
+  .ax.ax--day-report .ax-details-summary {
+    padding: 0.65rem 0.75rem;
+  }
+
+  .ax.ax--day-report .ax-details-count {
+    padding-left: 0;
+    font-size: 0.66rem;
+  }
+}
+
+@media (max-width: 899px) {
+  /* These tables fit without scrolling — hide the sideways-scroll hint. */
+  .ax.ax--day-report .ax-card--expected .ax-scroll-hint,
+  .ax.ax--day-report .ax-card:has(.ax-table--moneyflow) .ax-scroll-hint,
+  .ax.ax--day-report .ax-card:has(.ax-table--cleared) .ax-scroll-hint {
+    display: none;
+  }
+}
