@@ -1,0 +1,937 @@
+/* ============================================================
+   Day report — fresh layout (.dr)
+   Scoped entirely to the day-session report page rendered by
+   employees/partials/day_report.html. Token-based so the dark
+   theme keeps working; no other page is affected.
+   ============================================================ */
+
+.dr {
+  display: grid;
+  gap: 1.1rem;
+  width: min(74rem, 100%);
+  margin-inline: auto;
+  justify-self: center;
+}
+
+/* ---------- Header ---------- */
+
+.dr-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.dr-head-main {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.dr-head-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.dr-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.2rem, 2.4vw, 1.55rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--text-strong);
+}
+
+.dr-period {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 9%, var(--surface));
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.dr-lead {
+  margin: 0;
+  max-width: 46rem;
+  color: var(--mist-dim);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+/* ---------- Actions ---------- */
+
+.dr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.4rem;
+  padding: 0.4rem 1.05rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease,
+    border-color 0.15s ease, background 0.15s ease;
+}
+
+.dr-btn svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.dr-btn--primary {
+  border-color: color-mix(in srgb, var(--teal) 70%, var(--line));
+  background: var(--teal);
+  color: var(--surface);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--teal) 26%, transparent);
+}
+
+.dr-btn--primary:hover {
+  background: color-mix(in srgb, var(--teal) 85%, var(--text-strong));
+  transform: translateY(-1px);
+}
+
+.dr-btn--ghost {
+  border-color: var(--ghost-border);
+  background: var(--surface);
+  color: var(--text-strong);
+}
+
+.dr-btn--ghost:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+  transform: translateY(-1px);
+}
+
+.dr-btn:focus-visible,
+.dr-details-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- Alerts ---------- */
+
+.dr-alerts {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dr-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.55rem;
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--info-border);
+  border-left: 4px solid var(--info);
+  border-radius: 10px;
+  background: var(--info-bg);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.dr-alert strong {
+  color: var(--info-text);
+}
+
+.dr-alert span {
+  color: var(--mist-dim);
+}
+
+.dr-alert.is-warn {
+  border-color: var(--warning-border);
+  border-left-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.dr-alert.is-warn strong {
+  color: var(--warning-text);
+}
+
+.dr-alert.is-bad,
+.dr-alert.is-error {
+  border-color: var(--danger-border);
+  border-left-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.dr-alert.is-bad strong,
+.dr-alert.is-error strong {
+  color: var(--danger-text);
+}
+
+.dr-alert.is-good,
+.dr-alert.is-ok {
+  border-color: var(--success-border);
+  border-left-color: var(--success);
+  background: var(--success-bg);
+}
+
+.dr-alert.is-good strong,
+.dr-alert.is-ok strong {
+  color: var(--success-text);
+}
+
+/* ---------- Session meta strip ---------- */
+
+.dr-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.6rem;
+  margin: 0;
+}
+
+.dr-meta-item {
+  position: relative;
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.65rem 0.85rem 0.65rem 1.05rem;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.dr-meta-item::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: color-mix(in srgb, var(--mist-dim) 40%, transparent);
+}
+
+.dr-meta-item.is-good::before {
+  background: var(--success);
+}
+
+.dr-meta-item.is-warn::before {
+  background: var(--warning);
+}
+
+.dr-meta-item.is-bad::before {
+  background: var(--danger);
+}
+
+.dr-meta-label {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.dr-meta-value {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.3;
+}
+
+.dr-meta-hint {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-style: normal;
+  color: var(--mist-dim);
+}
+
+/* ---------- Report cards ---------- */
+
+.dr-body {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.dr-card {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.dr-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem 1rem;
+  padding: 0.8rem 1.1rem 0.65rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+}
+
+.dr-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+}
+
+.dr-card-title::before {
+  content: "";
+  width: 4px;
+  height: 0.95rem;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--teal), var(--accent-deep));
+  flex-shrink: 0;
+}
+
+.dr-card-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.dr-card-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.dr-card-legend i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+.dr-card-legend .is-in i {
+  background: var(--teal);
+}
+
+.dr-card-legend .is-out i {
+  background: var(--danger);
+}
+
+.dr-card-legend .is-sum i {
+  background: var(--info);
+}
+
+/* ---------- Tables ---------- */
+
+.dr-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.dr-table th {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.dr-table th.is-num {
+  text-align: right;
+}
+
+.dr-table td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  vertical-align: middle;
+  color: var(--text);
+}
+
+.dr-table td.is-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dr-table th.dr-th--lead,
+.dr-table td.dr-cell--lead {
+  padding-left: 1.1rem;
+}
+
+.dr-table th:last-child,
+.dr-table td:last-child {
+  padding-right: 1.1rem;
+}
+
+.dr-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.dr-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--teal) 4%, var(--surface));
+}
+
+@media (min-width: 721px) {
+  /* Non-label columns hug their content; the lead column flexes. */
+  .dr-table th:not(.dr-th--lead),
+  .dr-table td:not(.dr-cell--lead) {
+    width: 1%;
+    white-space: nowrap;
+  }
+
+  .dr-table td:not(.dr-cell--lead):not(.is-num) {
+    text-align: left;
+  }
+}
+
+/* ---------- Cells ---------- */
+
+.dr-cell-name {
+  display: block;
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.3;
+}
+
+.dr-cell-sub {
+  display: block;
+  margin-top: 0.05rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+  line-height: 1.3;
+}
+
+.dr-link {
+  display: inline-grid;
+  gap: 0.05rem;
+  color: var(--teal);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.dr-link:hover {
+  text-decoration: underline;
+}
+
+.dr-money {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.dr-money.is-good {
+  color: var(--success-text);
+}
+
+.dr-money.is-bad {
+  color: var(--danger-text);
+}
+
+.dr-money.is-warn {
+  color: var(--warning-text);
+}
+
+.dr-tone--good {
+  color: var(--success-text);
+  font-weight: 600;
+}
+
+.dr-tone--bad {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+
+.dr-tone--warn {
+  color: var(--warning-text);
+  font-weight: 600;
+}
+
+.dr-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.16rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: var(--mist-dim);
+}
+
+.dr-status::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.dr-status.is-good {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.dr-status.is-warn {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.dr-status.is-bad {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.dr-status.is-info {
+  border-color: var(--info-border);
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.dr-cell-none {
+  color: var(--mist-dim);
+}
+
+/* ---------- Group + total rows ---------- */
+
+.dr-table tbody tr.dr-row--group td {
+  padding: 0.4rem 1.1rem;
+  border-left: 3px solid color-mix(in srgb, var(--teal) 55%, var(--line));
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.dr-table tbody tr.dr-row--group:hover td {
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.dr-table tbody tr.dr-row--total td {
+  border-top: 2px solid var(--line);
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--surface-2) 60%, var(--surface));
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+/* ---------- Money flow semantics ----------
+   Row classes come through from the report builder
+   (ax-flow-row--in/out/opening/expected/closing/variance/note/excess). */
+
+.ax-flow-row td.dr-cell--lead::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  vertical-align: 0.06em;
+  background: color-mix(in srgb, var(--mist-dim) 55%, transparent);
+}
+
+.ax-flow-row--in td.dr-cell--lead::before {
+  background: var(--teal);
+}
+
+.ax-flow-row--out td.dr-cell--lead {
+  color: color-mix(in srgb, var(--danger-text) 75%, var(--text-strong));
+}
+
+.ax-flow-row--out td.dr-cell--lead::before {
+  background: var(--danger);
+}
+
+.ax-flow-row--opening td.dr-cell--lead::before {
+  background: var(--accent-deep);
+}
+
+.ax-flow-row--expected td {
+  background: var(--info-bg);
+  box-shadow: inset 0 1px 0 var(--info-border);
+  font-weight: 800;
+}
+
+.ax-flow-row--expected td.dr-cell--lead {
+  color: var(--info-text);
+}
+
+.ax-flow-row--expected td.dr-cell--lead::before {
+  background: var(--info);
+}
+
+.ax-flow-row--closing td {
+  box-shadow: inset 0 1px 0 var(--line);
+  font-weight: 800;
+}
+
+.ax-flow-row--closing td.dr-cell--lead::before {
+  background: var(--accent-deep);
+}
+
+.ax-flow-row--variance td {
+  box-shadow: inset 0 1px 0 var(--line);
+  font-weight: 800;
+}
+
+.ax-flow-row--variance.is-good td {
+  background: var(--success-bg);
+}
+
+.ax-flow-row--variance.is-good td.dr-cell--lead::before {
+  background: var(--success);
+}
+
+.ax-flow-row--variance.is-bad td {
+  background: var(--danger-bg);
+}
+
+.ax-flow-row--variance.is-bad td.dr-cell--lead {
+  color: var(--danger-text);
+}
+
+.ax-flow-row--variance.is-bad td.dr-cell--lead::before {
+  background: var(--danger);
+}
+
+.ax-flow-row--note td,
+.ax-flow-row--excess td {
+  color: var(--mist-dim);
+  font-size: 0.78rem;
+}
+
+.ax-flow-row--note td.dr-cell--lead::before,
+.ax-flow-row--excess td.dr-cell--lead::before {
+  width: 0.35rem;
+  height: 0.35rem;
+  border: 1.5px solid color-mix(in srgb, var(--mist-dim) 60%, transparent);
+  background: transparent;
+}
+
+.ax-flow-row--excess td.dr-cell--lead::before {
+  border-color: var(--teal);
+}
+
+/* ---------- Empty + footnote ---------- */
+
+.dr-empty {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  border: 1px dashed color-mix(in srgb, var(--line) 90%, transparent);
+  border-width: 0 0 0 3px;
+  border-left-color: var(--line);
+  font-size: 0.8rem;
+  color: var(--mist-dim);
+}
+
+.dr-footnote {
+  margin: 0;
+  padding: 0.55rem 1.1rem 0.75rem;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 75%, transparent);
+  background: color-mix(in srgb, var(--panel-muted) 55%, var(--surface));
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--mist-dim);
+}
+
+/* ---------- Details fold ---------- */
+
+.dr-details {
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.dr-details-toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+  padding: 0.8rem 1.1rem;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.dr-details-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.dr-details-toggle svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--mist-dim);
+  transition: transform 0.18s ease;
+}
+
+.dr-details[open] .dr-details-toggle svg {
+  transform: rotate(90deg);
+}
+
+.dr-details-toggle:hover {
+  background: color-mix(in srgb, var(--teal) 4%, var(--surface));
+}
+
+.dr-details-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.dr-details-count {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+}
+
+.dr-body--details {
+  padding: 1.1rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 35%, var(--surface));
+}
+
+/* ---------- Tablet ---------- */
+
+@media (max-width: 1000px) {
+  .dr {
+    width: 100%;
+  }
+
+  .dr-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dr-actions {
+    width: 100%;
+  }
+}
+
+/* ---------- Mobile — tables stack into rows ---------- */
+
+@media (max-width: 720px) {
+  .dr {
+    gap: 0.85rem;
+  }
+
+  .dr-head {
+    padding-bottom: 0.75rem;
+  }
+
+  .dr-actions .dr-btn {
+    flex: 1 1 auto;
+  }
+
+  .dr-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .dr-meta-item {
+    padding: 0.55rem 0.7rem 0.55rem 0.9rem;
+    border-radius: 12px;
+  }
+
+  .dr-meta-value {
+    font-size: 0.85rem;
+  }
+
+  .dr-card-head {
+    padding: 0.7rem 0.9rem 0.55rem;
+  }
+
+  /* Stacked layout: hide the header row, each body row reads as a
+     mini record — first cell is the record title, the rest are
+     label : value lines. */
+  .dr-table thead {
+    display: none;
+  }
+
+  .dr-table,
+  .dr-table tbody,
+  .dr-table tr,
+  .dr-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .dr-table tbody tr {
+    padding: 0.35rem 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  }
+
+  .dr-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .dr-table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.28rem 0.9rem;
+    border: 0;
+    text-align: right;
+  }
+
+  .dr-table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+    text-align: left;
+  }
+
+  .dr-table td.is-num {
+    text-align: right;
+  }
+
+  /* Record title — no column label, full-width band. */
+  .dr-table td.dr-cell--lead {
+    display: block;
+    padding: 0.4rem 0.9rem;
+    margin-bottom: 0.15rem;
+    background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+    font-weight: 700;
+    color: var(--text-strong);
+    text-align: left;
+  }
+
+  .dr-table td.dr-cell--lead::before {
+    content: none;
+  }
+
+  .dr-table td.dr-cell--lead .dr-cell-sub {
+    font-weight: 600;
+  }
+
+  /* Keep the flow direction dot next to the title on mobile — the
+     data-label pseudo was switched off above, so re-declare it here. */
+  .ax-flow-row td.dr-cell--lead::before {
+    content: "";
+    display: inline-block;
+    width: 0.45rem;
+    height: 0.45rem;
+    margin-right: 0.45rem;
+    border-radius: 50%;
+    vertical-align: 0.06em;
+  }
+
+  .dr-table tbody tr:hover td {
+    background: transparent;
+  }
+
+  .dr-table tbody tr:hover td.dr-cell--lead {
+    background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  }
+
+  .dr-table tbody tr.dr-row--group {
+    padding: 0;
+  }
+
+  .dr-table tbody tr.dr-row--group td {
+    display: block;
+    padding: 0.45rem 0.9rem;
+    text-align: left;
+  }
+
+  .dr-table tbody tr.dr-row--group td::before {
+    content: none;
+  }
+
+  .dr-table tbody tr.dr-row--total td {
+    border-top: 0;
+  }
+
+  .dr-table tbody tr.dr-row--total td.dr-cell--lead {
+    box-shadow: inset 0 2px 0 var(--line);
+  }
+
+  .dr-empty,
+  .dr-footnote {
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+
+  .dr-body--details {
+    padding: 0.85rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .dr-meta {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+  }
+
+  .dr-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dr-actions .dr-btn {
+    width: 100%;
+  }
+}
+
+/* ---------- Motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .dr-btn,
+  .dr-details-toggle svg {
+    transition: none;
+  }
+
+  .dr-btn:hover {
+    transform: none;
+  }
+}

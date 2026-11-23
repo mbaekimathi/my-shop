@@ -4,8 +4,19 @@
 {% block title %}{{ meta.title }} — {{ company_name|default:"MY-SHOP" }}{% endblock %}
 
 {% block workspace_content %}
+{% if page.day_session_layout %}
+{# Day session report — fresh dr-* layout, same page payload. #}
 <section
-  class="ax{% if page.ledger_layout %} ax--ledger{% endif %}{% if page.list_table_layout %} ax--list-table{% endif %}{% if page.sessions_layout %} ax--sessions{% endif %}{% if page.day_session_layout %} ax--day-report{% endif %}"
+  class="dr"
+  data-animate="rise"
+  data-analytics
+  data-ax-section="{{ section_slug }}"
+>
+  {% include "employees/partials/day_report.html" %}
+</section>
+{% else %}
+<section
+  class="ax{% if page.ledger_layout %} ax--ledger{% endif %}{% if page.list_table_layout %} ax--list-table{% endif %}{% if page.sessions_layout %} ax--sessions{% endif %}"
   data-animate="rise"
   data-analytics
   data-ax-section="{{ section_slug }}"
@@ -507,6 +518,7 @@
   {% endif %}
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}
 
 {% block workspace_overlays %}

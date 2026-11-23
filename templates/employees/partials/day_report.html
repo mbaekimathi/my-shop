@@ -1,0 +1,85 @@
+{% comment %}
+Day report — fresh layout, scoped under .dr.
+Same `page` payload as the shared analytics template (headline, period_label,
+lead, back/print/edit actions, alerts, metrics, primary_tables/detail_tables).
+{% endcomment %}
+<header class="dr-head">
+  <div class="dr-head-main">
+    <div class="dr-head-line">
+      <h2 class="dr-title">{{ page.headline }}</h2>
+      <span class="dr-period">{{ page.period_label }}</span>
+    </div>
+    {% if page.lead %}<p class="dr-lead">{{ page.lead }}</p>{% endif %}
+  </div>
+  <div class="dr-actions">
+    {% if page.back_href %}
+    <a class="dr-btn dr-btn--ghost" href="{{ page.back_href }}">
+      <i data-lucide="arrow-left" aria-hidden="true"></i>
+      {{ page.back_label|default:"Back" }}
+    </a>
+    {% endif %}
+    {% if page.edit_session %}
+    <button type="button" class="dr-btn dr-btn--ghost" data-modal-open="edit-day-session">
+      <i data-lucide="pencil" aria-hidden="true"></i>
+      Edit session
+    </button>
+    {% endif %}
+    {% if page.receipts_print_modal %}
+    <button type="button" class="dr-btn dr-btn--primary" data-modal-open="print-receipts">
+      <i data-lucide="printer" aria-hidden="true"></i>
+      Print / download
+    </button>
+    {% elif page.download_href %}
+    <a class="dr-btn dr-btn--primary" href="{{ page.download_href }}">
+      <i data-lucide="download" aria-hidden="true"></i>
+      Download PDF
+    </a>
+    {% endif %}
+  </div>
+</header>
+
+{% if page.alerts %}
+<div class="dr-alerts" aria-label="Report notices">
+  {% for alert in page.alerts %}
+  <p class="dr-alert is-{{ alert.level }}" role="status">
+    <strong>{{ alert.title }}</strong>
+    <span>{{ alert.detail }}</span>
+  </p>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if page.metrics %}
+<dl class="dr-meta" aria-label="Session details">
+  {% for metric in page.metrics %}
+  <div class="dr-meta-item{% if metric.tone and metric.tone != "neutral" %} is-{{ metric.tone }}{% endif %}">
+    <dt class="dr-meta-label">{{ metric.label }}</dt>
+    <dd class="dr-meta-value">
+      {{ metric.value }}
+      {% if metric.hint %}<small class="dr-meta-hint">{{ metric.hint }}</small>{% endif %}
+    </dd>
+  </div>
+  {% endfor %}
+</dl>
+{% endif %}
+
+<div class="dr-body">
+  {% for table in page.primary_tables|default:page.tables %}
+  {% include "employees/partials/day_report_table.html" %}
+  {% endfor %}
+</div>
+
+{% if page.detail_tables %}
+<details class="dr-details">
+  <summary class="dr-details-toggle">
+    <i data-lucide="chevron-right" aria-hidden="true"></i>
+    <span class="dr-details-label">More detail</span>
+    <span class="dr-details-count">{{ page.detail_tables|length }} report{% if page.detail_tables|length != 1 %}s{% endif %} — items, sellers, expenses, stock &amp; more</span>
+  </summary>
+  <div class="dr-body dr-body--details">
+    {% for table in page.detail_tables %}
+    {% include "employees/partials/day_report_table.html" %}
+    {% endfor %}
+  </div>
+</details>
+{% endif %}

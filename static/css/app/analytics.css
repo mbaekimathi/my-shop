@@ -9877,7 +9877,7 @@ body.ax-credit-due-open {
 .ax.ax--day-report .ax-kpis,
 .ax.ax--day-report .ax-alerts,
 .ax.ax--day-report .ax-grid--tables {
-  width: min(58rem, 100%);
+  width: min(80rem, 100%);
   margin-inline: auto;
   justify-self: center;
 }
@@ -9993,7 +9993,7 @@ body.ax-credit-due-open {
 
 .ax.ax--day-report .ax-top {
   width: 100%;
-  max-width: min(58rem, 100%);
+  max-width: min(80rem, 100%);
   margin-inline: auto;
   justify-self: center;
   padding: 0 0 0.7rem;
@@ -10592,7 +10592,7 @@ body.ax-credit-due-open {
 
 /* The Details strip shares the same centred column on every screen. */
 .ax.ax--day-report .ax-details {
-  width: min(58rem, 100%);
+  width: min(80rem, 100%);
   margin-inline: auto;
   justify-self: center;
 }
