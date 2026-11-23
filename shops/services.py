@@ -10642,36 +10642,40 @@ def build_shop_day_report_pdf(
     collected_for_names = _party_names(
         details.get("cleared_pending") or [], "seller"
     )
-    deficit_label = (
-        f"Deficit — pending cleared in later sessions "
-        f"({summary.get('cleared_elsewhere_count') or 0})"
-    )
-    if elsewhere_names:
-        deficit_label += f" — collected by {elsewhere_names}"
-    excess_label = (
-        f"Excess — cleared pending receipts "
-        f"({summary.get('cleared_pending_count') or 0})"
-    )
-    if collected_for_names:
-        excess_label += f" — collected for {collected_for_names}"
-    rows.append(
-        _money_row(
-            deficit_label,
-            summary.get("cleared_elsewhere_cash"),
-            summary.get("cleared_elsewhere_mpesa"),
-            summary.get("cleared_elsewhere_card"),
-            summary.get("cleared_elsewhere_total"),
+    # Only the side that applies shows: the deficit on the printing
+    # session's report, the excess on the collecting session's report.
+    if summary.get("cleared_elsewhere_count"):
+        deficit_label = (
+            f"Deficit — pending cleared in later sessions "
+            f"({summary.get('cleared_elsewhere_count') or 0})"
         )
-    )
-    rows.append(
-        _money_row(
-            excess_label,
-            summary.get("cleared_pending_cash"),
-            summary.get("cleared_pending_mpesa"),
-            summary.get("cleared_pending_card"),
-            summary.get("cleared_pending_total"),
+        if elsewhere_names:
+            deficit_label += f" — collected by {elsewhere_names}"
+        rows.append(
+            _money_row(
+                deficit_label,
+                summary.get("cleared_elsewhere_cash"),
+                summary.get("cleared_elsewhere_mpesa"),
+                summary.get("cleared_elsewhere_card"),
+                summary.get("cleared_elsewhere_total"),
+            )
         )
-    )
+    if summary.get("cleared_pending_count"):
+        excess_label = (
+            f"Excess — cleared pending receipts "
+            f"({summary.get('cleared_pending_count') or 0})"
+        )
+        if collected_for_names:
+            excess_label += f" — collected for {collected_for_names}"
+        rows.append(
+            _money_row(
+                excess_label,
+                summary.get("cleared_pending_cash"),
+                summary.get("cleared_pending_mpesa"),
+                summary.get("cleared_pending_card"),
+                summary.get("cleared_pending_total"),
+            )
+        )
     credit_payments = details.get("credit_payments") or {}
     credit_pay_rows = credit_payments.get("rows") or []
     credit_payments_sec = getattr(

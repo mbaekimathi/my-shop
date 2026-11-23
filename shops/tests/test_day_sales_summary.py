@@ -1007,12 +1007,22 @@ class ClearedPendingCollectionTests(TestCase):
             any("collected by Cleared Cashier" in row for row in first_flow),
             first_flow,
         )
+        # The excess side must not leak onto the printer's page.
+        self.assertFalse(
+            any("Excess — cleared pending" in row for row in first_flow),
+            first_flow,
+        )
         second_page = build_day_session_report_page(
             profile=self.profile, request=request, session=second
         )["page"]
         second_flow = [r[0] for r in second_page["tables"][1]["rows"]]
         self.assertTrue(
             any("collected for Cleared Cashier" in row for row in second_flow),
+            second_flow,
+        )
+        # And the deficit side stays off the collector's page.
+        self.assertFalse(
+            any("Deficit — pending cleared" in row for row in second_flow),
             second_flow,
         )
 
