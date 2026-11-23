@@ -4418,6 +4418,55 @@
   border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--line));
 }
 
+.stock-panel--report .stock-report-table tr.is-day-row td {
+  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
+  font-size: 0.82rem;
+  color: var(--text-soft);
+  border-top: 0;
+}
+
+.stock-panel--report .stock-report-table tr.is-day-row[hidden] {
+  display: none !important;
+}
+
+.stock-panel--report .stock-report-day-label {
+  display: inline-block;
+  padding-left: 1.4rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stock-panel--report .stock-report-day-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  margin-right: 0.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.stock-panel--report .stock-report-day-toggle:hover {
+  background: var(--panel-muted);
+  color: var(--text-strong);
+}
+
+.stock-panel--report .stock-report-day-toggle svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  transition: transform 0.15s ease;
+}
+
+.stock-panel--report .stock-report-day-toggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
 .stock-panel--report .stock-matrix-qty,
 .stock-panel--report .stock-report-table .stock-matrix-qty.is-empty,
 .stock-panel--report .stock-report-table .stock-matrix-qty--total {

@@ -237,6 +237,7 @@
                 {% if movement_item_group_by_shop %}
                 <th scope="col" data-col="shop">Shop</th>
                 {% endif %}
+                <th scope="col" data-col="num" class="is-center" title="Stock at the start of this period">Start</th>
                 <th scope="col" data-col="num" class="is-center">Events</th>
                 <th scope="col" data-col="num" class="is-center" title="Stock in">In</th>
                 <th scope="col" data-col="num" class="is-center" title="Stock out">Out</th>
@@ -245,6 +246,7 @@
                 <th scope="col" data-col="num" class="is-center" title="Trade out, exchange, return, or trade sale">Trade</th>
                 <th scope="col" data-col="num" class="is-center" title="Stock sale">Sale</th>
                 <th scope="col" data-col="num" class="is-center" title="Returned">Return</th>
+                <th scope="col" data-col="num" class="is-center" title="Stock at the end of this period">Close</th>
                 <th scope="col" data-col="num" class="is-center" title="Current total quantity on hand">Stock</th>
                 <th scope="col" data-col="time">Last</th>
                 <th scope="col" data-col="action"><span class="visually-hidden">Actions</span></th>
@@ -259,6 +261,9 @@
                 class="{% if row.is_suspended %}is-suspended {% endif %}{% if row.is_deleted %}is-deleted {% endif %}{% if movement_item_group_by_shop %}{% if row.is_item_total %}is-item-total{% elif row.is_item_start %}is-item-start{% else %}is-shop-follow{% endif %}{% endif %}"
               >
                 <td data-label="Item">
+                  {% if row.day_rows %}
+                  <button type="button" class="stock-report-day-toggle" data-day-toggle="{{ forloop.counter }}" aria-expanded="false" title="Show daily breakdown"><i data-lucide="chevron-right" aria-hidden="true"></i></button>
+                  {% endif %}
                   {% if not movement_item_group_by_shop or row.is_item_start %}
                   <strong>{{ row.item_name }}</strong>
                   {% if row.is_deleted %}<span class="stock-item-badge stock-item-badge--deleted">Deleted</span>{% elif row.is_suspended %}<span class="stock-item-badge">Suspended</span>{% endif %}
@@ -270,6 +275,16 @@
                 {% if movement_item_group_by_shop %}
                 <td data-label="Shop">{% if row.is_item_total %}<strong>Total</strong>{% else %}{{ row.shop_name }}{% endif %}</td>
                 {% endif %}
+                <td data-label="Start">
+                  {% if row.starting_stock is not None %}
+                  {% if row.shop_id and not row.is_item_total %}
+                  {% stock_qty row.starting_stock row.item_id row.item_category row.shop_id as shown_start %}
+                  {% else %}
+                  {% stock_qty row.starting_stock row.item_id row.item_category as shown_start %}
+                  {% endif %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_start == 'Hidden' %} is-hidden{% elif row.starting_stock == 0 %} is-empty{% endif %}">{{ shown_start }}</span>
+                  {% else %}—{% endif %}
+                </td>
                 <td data-label="Events">{{ row.event_count }}</td>
                 <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in{% if row.units_in == 0 %} is-empty{% endif %}">{{ row.units_in }}</span></td>
                 <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out{% if row.units_out == 0 %} is-empty{% endif %}">{{ row.units_out }}</span></td>
@@ -278,6 +293,16 @@
                 <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade{% if row.units_trade == 0 %} is-empty{% endif %}">{{ row.units_trade }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if row.units_sale == 0 %} is-empty{% endif %}">{{ row.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if row.units_return == 0 %} is-empty{% endif %}">{{ row.units_return }}</span></td>
+                <td data-label="Close">
+                  {% if row.closing_stock is not None %}
+                  {% if row.shop_id and not row.is_item_total %}
+                  {% stock_qty row.closing_stock row.item_id row.item_category row.shop_id as shown_close %}
+                  {% else %}
+                  {% stock_qty row.closing_stock row.item_id row.item_category as shown_close %}
+                  {% endif %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_close == 'Hidden' %} is-hidden{% elif row.closing_stock == 0 %} is-empty{% endif %}">{{ shown_close }}</span>
+                  {% else %}—{% endif %}
+                </td>
                 <td data-label="Current stock">
                   {% if row.shop_id and not row.is_item_total %}
                   {% stock_qty row.current_stock row.item_id row.item_category row.shop_id as shown_stock %}
@@ -305,6 +330,45 @@
                   {% endif %}
                 </td>
               </tr>
+              {% for day in row.day_rows %}
+              <tr class="is-day-row" data-day-row="{{ forloop.parentloop.counter }}" hidden>
+                <td data-label="Item"><span class="stock-report-day-label">{{ day.report_date|date:"d M Y" }}</span></td>
+                {% if movement_item_group_by_shop %}
+                <td data-label="Shop"></td>
+                {% endif %}
+                <td data-label="Start">
+                  {% if day.starting_stock is not None %}
+                  {% if row.shop_id %}
+                  {% stock_qty day.starting_stock row.item_id row.item_category row.shop_id as shown_day_start %}
+                  {% else %}
+                  {% stock_qty day.starting_stock row.item_id row.item_category as shown_day_start %}
+                  {% endif %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_day_start == 'Hidden' %} is-hidden{% elif day.starting_stock == 0 %} is-empty{% endif %}">{{ shown_day_start }}</span>
+                  {% else %}—{% endif %}
+                </td>
+                <td data-label="Events">{{ day.event_count }}</td>
+                <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in{% if day.units_in == 0 %} is-empty{% endif %}">{{ day.units_in }}</span></td>
+                <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out{% if day.units_out == 0 %} is-empty{% endif %}">{{ day.units_out }}</span></td>
+                <td data-label="Transfer in"><span class="stock-matrix-qty stock-report-qty--transfer-in{% if day.units_transfer_in == 0 %} is-empty{% endif %}">{{ day.units_transfer_in }}</span></td>
+                <td data-label="Transfer out"><span class="stock-matrix-qty stock-report-qty--transfer-out{% if day.units_transfer_out == 0 %} is-empty{% endif %}">{{ day.units_transfer_out }}</span></td>
+                <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade{% if day.units_trade == 0 %} is-empty{% endif %}">{{ day.units_trade }}</span></td>
+                <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale{% if day.units_sale == 0 %} is-empty{% endif %}">{{ day.units_sale }}</span></td>
+                <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return{% if day.units_return == 0 %} is-empty{% endif %}">{{ day.units_return }}</span></td>
+                <td data-label="Close">
+                  {% if day.closing_stock is not None %}
+                  {% if row.shop_id %}
+                  {% stock_qty day.closing_stock row.item_id row.item_category row.shop_id as shown_day_close %}
+                  {% else %}
+                  {% stock_qty day.closing_stock row.item_id row.item_category as shown_day_close %}
+                  {% endif %}
+                  <span class="stock-matrix-qty stock-matrix-qty--total{% if shown_day_close == 'Hidden' %} is-hidden{% elif day.closing_stock == 0 %} is-empty{% endif %}">{{ shown_day_close }}</span>
+                  {% else %}—{% endif %}
+                </td>
+                <td data-label="Current stock"></td>
+                <td data-label="Last activity">{% if day.last_at %}{{ day.last_at|time:"H:i" }}{% else %}—{% endif %}</td>
+                <td data-label="Actions"></td>
+              </tr>
+              {% endfor %}
               {% endfor %}
             </tbody>
             {% if movement_item_rows %}
@@ -314,6 +378,7 @@
                 {% if movement_item_group_by_shop %}
                 <td data-label="Shop"></td>
                 {% endif %}
+                <td data-label="Start">{% stock_level_total movement_item_totals.starting_stock as shown_start_total %}<span class="stock-matrix-qty stock-matrix-qty--total{% if shown_start_total == 'Hidden' %} is-hidden{% endif %}">{{ shown_start_total }}</span></td>
                 <td data-label="Events">{{ movement_item_totals.event_count }}</td>
                 <td data-label="In"><span class="stock-matrix-qty stock-report-qty--in">{{ movement_item_totals.units_in }}</span></td>
                 <td data-label="Out"><span class="stock-matrix-qty stock-report-qty--out">{{ movement_item_totals.units_out }}</span></td>
@@ -322,6 +387,7 @@
                 <td data-label="Trade"><span class="stock-matrix-qty stock-report-qty--trade">{{ movement_item_totals.units_trade }}</span></td>
                 <td data-label="Sold"><span class="stock-matrix-qty stock-report-qty--sale">{{ movement_item_totals.units_sale }}</span></td>
                 <td data-label="Returned"><span class="stock-matrix-qty stock-report-qty--return">{{ movement_item_totals.units_return }}</span></td>
+                <td data-label="Close">{% stock_level_total movement_item_totals.closing_stock as shown_close_total %}<span class="stock-matrix-qty stock-matrix-qty--total{% if shown_close_total == 'Hidden' %} is-hidden{% endif %}">{{ shown_close_total }}</span></td>
                 <td data-label="Current stock">{% stock_level_total movement_item_totals.current_stock as shown_total %}<span class="stock-matrix-qty stock-matrix-qty--total{% if shown_total == 'Hidden' %} is-hidden{% endif %}">{{ shown_total }}</span></td>
                 <td data-label="Last activity"></td>
                 <td data-label="Actions"></td>
@@ -1207,6 +1273,22 @@
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !modal.hidden) setOpen(false);
+    });
+  })();
+
+  (() => {
+    // Period summary: per-day breakdown expanders.
+    document.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-day-toggle]");
+      if (!toggle) return;
+      const key = toggle.getAttribute("data-day-toggle");
+      const open = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", open ? "false" : "true");
+      document
+        .querySelectorAll(`tr[data-day-row="${key}"]`)
+        .forEach((row) => {
+          row.hidden = open;
+        });
     });
   })();
 </script>

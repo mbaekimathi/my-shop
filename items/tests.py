@@ -773,6 +773,263 @@ class ItemStockReportRowsTests(TestCase):
         }
         self.assertNotIn("ALL FILTER IDLE", filtered_names)
 
+    def _movements_summary_rows(self, events, period_start, period_end, shop_ids):
+        from items.views import _group_movement_events_by_item, _shop_stock_at_bounds
+
+        return _group_movement_events_by_item(
+            events,
+            shop_ids,
+            shops_by_id={self.shop_a.pk: self.shop_a, self.shop_b.pk: self.shop_b},
+            day_start=period_start,
+            day_end=period_end,
+            stock_at_bounds_item_shop=(
+                lambda ids, sids: _shop_stock_at_bounds(
+                    ids, sids, period_start, period_end
+                )
+            ),
+        )
+
+    def test_movements_item_summary_period_bounds_and_days(self):
+        from datetime import datetime, time
+
+        from items.models import (
+            ShopStock,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+        )
+        from items.views import (
+            _build_movement_timeline,
+            _filter_item_summary_movement_events,
+        )
+
+        tz = timezone.get_current_timezone()
+        day1 = timezone.localdate() - timedelta(days=4)
+        day2 = day1 + timedelta(days=2)
+        period_start = timezone.make_aware(
+            datetime.combine(day1, time.min), tz
+        )
+        period_end = timezone.make_aware(
+            datetime.combine(day2 + timedelta(days=1), time.min), tz
+        )
+
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(
+            quantity=10
+        )
+        self._stock_in(
+            shop=self.shop_a,
+            qty=5,
+            at=period_start + timedelta(hours=10),
+        )
+        out = StockMovement.objects.create(
+            movement_type=StockMovementType.OUT,
+            shop=self.shop_a,
+            created_by=self.profile,
+        )
+        StockMovement.objects.filter(pk=out.pk).update(
+            created_at=period_start + timedelta(days=2, hours=11)
+        )
+        StockMovementLine.objects.create(
+            movement=out, item=self.item, quantity=3
+        )
+        # ShopStock is manual in tests — land it on the true closing balance.
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(
+            quantity=12
+        )
+
+        shop_ids = [self.shop_a.pk, self.shop_b.pk]
+        events, *_ = _build_movement_timeline(
+            shop_ids=shop_ids,
+            day_start=period_start,
+            day_end=period_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[],
+        )
+        events = _filter_item_summary_movement_events(events)
+        rows = self._movements_summary_rows(
+            events, period_start, period_end, shop_ids
+        )
+        by_shop = {
+            row["shop_name"]: row
+            for row in rows
+            if not row.get("is_item_total")
+        }
+        row_a = by_shop[self.shop_a.name]
+        self.assertEqual(row_a["starting_stock"], 10)
+        self.assertEqual(row_a["closing_stock"], 12)
+        self.assertEqual(row_a["units_in"], 5)
+        self.assertEqual(row_a["units_out"], 3)
+
+        day_rows = row_a["day_rows"]
+        self.assertEqual(
+            [day["report_date"] for day in day_rows], [day1, day2]
+        )
+        self.assertEqual(day_rows[0]["starting_stock"], 10)
+        self.assertEqual(day_rows[0]["closing_stock"], 15)
+        self.assertEqual(day_rows[0]["units_in"], 5)
+        self.assertEqual(day_rows[1]["starting_stock"], 15)
+        self.assertEqual(day_rows[1]["closing_stock"], 12)
+        self.assertEqual(day_rows[1]["units_out"], 3)
+
+        row_b = by_shop[self.shop_b.name]
+        self.assertEqual(row_b["starting_stock"], 8)
+        self.assertEqual(row_b["closing_stock"], 8)
+        self.assertEqual(row_b["day_rows"], [])
+
+        total = rows[-1]
+        self.assertTrue(total["is_item_total"])
+        self.assertEqual(total["starting_stock"], 18)
+        self.assertEqual(total["closing_stock"], 20)
+
+    def test_movements_summary_page_start_close_and_days(self):
+        from datetime import datetime, time
+
+        from items.models import ShopStock
+
+        tz = timezone.get_current_timezone()
+        day1 = timezone.localdate() - timedelta(days=4)
+        day2 = day1 + timedelta(days=2)
+        day1_end = day2 + timedelta(days=1)
+
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(
+            quantity=10
+        )
+        self._stock_in(
+            shop=self.shop_a,
+            qty=5,
+            at=timezone.make_aware(
+                datetime.combine(day1, time(10, 0)), tz
+            ),
+        )
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(
+            quantity=15
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(
+            "/it-support/stock-management/",
+            {
+                "mode": "movements",
+                "range": "period",
+                "item_mode": "all",
+                "view_by": "item",
+                "date_from": day1.isoformat(),
+                "date_to": day1_end.isoformat(),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        row = next(
+            row
+            for row in response.context["movement_item_rows"]
+            if row.get("item_id") == self.item.pk
+            and row.get("shop_id") == self.shop_a.pk
+        )
+        self.assertEqual(row["starting_stock"], 10)
+        self.assertEqual(row["closing_stock"], 15)
+        self.assertEqual(
+            [day["report_date"] for day in row["day_rows"]], [day1]
+        )
+        self.assertEqual(row["day_rows"][0]["closing_stock"], 15)
+
+    def test_movements_summary_type_filter_keeps_true_day_balances(self):
+        from datetime import datetime, time
+
+        from items.models import (
+            ShopStock,
+            StockMovement,
+            StockMovementLine,
+            StockMovementType,
+        )
+        from items.views import (
+            _build_movement_timeline,
+            _filter_item_summary_movement_events,
+            _filter_movement_events,
+        )
+
+        tz = timezone.get_current_timezone()
+        day1 = timezone.localdate() - timedelta(days=4)
+        day2 = day1 + timedelta(days=2)
+        period_start = timezone.make_aware(
+            datetime.combine(day1, time.min), tz
+        )
+        period_end = timezone.make_aware(
+            datetime.combine(day2 + timedelta(days=1), time.min), tz
+        )
+
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(
+            quantity=10
+        )
+        self._stock_in(
+            shop=self.shop_a,
+            qty=5,
+            at=period_start + timedelta(hours=10),
+        )
+        out = StockMovement.objects.create(
+            movement_type=StockMovementType.OUT,
+            shop=self.shop_a,
+            created_by=self.profile,
+        )
+        StockMovement.objects.filter(pk=out.pk).update(
+            created_at=period_start + timedelta(days=2, hours=11)
+        )
+        StockMovementLine.objects.create(
+            movement=out, item=self.item, quantity=3
+        )
+        ShopStock.objects.filter(item=self.item, shop=self.shop_a).update(
+            quantity=12
+        )
+
+        shop_ids = [self.shop_a.pk, self.shop_b.pk]
+        all_events, *_ = _build_movement_timeline(
+            shop_ids=shop_ids,
+            day_start=period_start,
+            day_end=period_end,
+            item_mode="all",
+            selected_categories=[],
+            selected_item_ids=[],
+            report_items=[],
+        )
+        shown_events = _filter_item_summary_movement_events(
+            _filter_movement_events(all_events, "out")
+        )
+        balance_events = _filter_item_summary_movement_events(all_events)
+        from items.views import (
+            _group_movement_events_by_item,
+            _shop_stock_at_bounds,
+        )
+
+        rows = _group_movement_events_by_item(
+            shown_events,
+            shop_ids,
+            shops_by_id={self.shop_a.pk: self.shop_a, self.shop_b.pk: self.shop_b},
+            day_start=period_start,
+            day_end=period_end,
+            stock_at_bounds_item_shop=(
+                lambda ids, sids: _shop_stock_at_bounds(
+                    ids, sids, period_start, period_end
+                )
+            ),
+            balance_events=balance_events,
+        )
+        by_shop = {
+            row["shop_name"]: row
+            for row in rows
+            if not row.get("is_item_total")
+        }
+        row_a = by_shop[self.shop_a.name]
+        self.assertEqual(row_a["units_out"], 3)
+        self.assertEqual(row_a["units_in"], 0)
+        self.assertEqual(row_a["starting_stock"], 10)
+        self.assertEqual(row_a["closing_stock"], 12)
+        # Only the day with an out event is listed; its balances stay true.
+        self.assertEqual(
+            [day["report_date"] for day in row_a["day_rows"]], [day2]
+        )
+        self.assertEqual(row_a["day_rows"][0]["starting_stock"], 15)
+        self.assertEqual(row_a["day_rows"][0]["closing_stock"], 12)
+
     def test_all_event_filter_includes_stock_in_and_out(self):
         from items.models import StockMovement, StockMovementLine, StockMovementType
         from items.views import _build_movement_timeline
@@ -4240,6 +4497,7 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(data["filled_count"], 1)
         self.assertEqual(data["lines"][0]["item_id"], shelf_item.pk)
+        self.assertEqual(data["system"][str(shelf_item.pk)], "8")
 
     def test_shelf_print_page_lists_shelf_items_only(self):
         from shops.services import set_company_pos_setting
@@ -4389,6 +4647,120 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "IT STOCK ITEM")
         self.assertContains(page, "Saved")
+
+    def test_online_stock_take_sync_includes_live_system_map(self):
+        from items.models import Item, ShopStock
+
+        extra = Item.objects.create(
+            category="TOOLS",
+            name="IT EXTRA ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(shop=self.shop, item=self.item, quantity=4)
+        ShopStock.objects.create(shop=self.shop, item=extra, quantity=9)
+
+        page = self.client.get(
+            f"{self.url}?mode=online-stock-take"
+            f"&shop_id={self.shop.pk}&sync=1",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        data = page.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["system"][str(self.item.pk)], "4")
+        self.assertEqual(data["system"][str(extra.pk)], "9")
+
+    def test_online_stock_take_report_orders_excess_then_short_then_match(self):
+        from items.models import Item, OnlineStockTakeSavedCount, ShopStock
+
+        excess = Item.objects.create(
+            category="TOOLS",
+            name="ZZ EXCESS ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        short = Item.objects.create(
+            category="TOOLS",
+            name="ZZ SHORT ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        match = Item.objects.create(
+            category="TOOLS",
+            name="ZZ MATCH ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        for item in (excess, short, match):
+            ShopStock.objects.create(shop=self.shop, item=item, quantity=10)
+
+        # Excess is counted first, so the natural -updated_at line order is
+        # match/short/excess — the report must still lead with excess.
+        for item, qty in ((excess, "16"), (short, "4"), (match, "10")):
+            page = self.client.post(
+                f"{self.url}?mode=online-stock-take",
+                {
+                    "mode": "online-stock-take",
+                    "shop_id": str(self.shop.pk),
+                    "item_id": str(item.pk),
+                    "qty": qty,
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+            self.assertTrue(page.json()["ok"])
+
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "action": "save_count",
+                "shop_id": str(self.shop.pk),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertTrue(page.json()["ok"])
+        saved = OnlineStockTakeSavedCount.objects.get()
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "saved": saved.pk,
+                "paper": "a4",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        body = page.content.decode()
+        excess_at = body.find("ZZ EXCESS ITEM")
+        short_at = body.find("ZZ SHORT ITEM")
+        match_at = body.find("ZZ MATCH ITEM")
+        self.assertGreater(excess_at, -1)
+        self.assertGreater(short_at, -1)
+        self.assertGreater(match_at, -1)
+        self.assertLess(excess_at, short_at)
+        self.assertLess(short_at, match_at)
+
+        # Same ordering on a live (unsaved) print of the day.
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "shop_id": self.shop.pk,
+                "paper": "a4",
+            },
+        )
+        body = page.content.decode()
+        self.assertLess(
+            body.find("ZZ EXCESS ITEM"), body.find("ZZ SHORT ITEM")
+        )
+        self.assertLess(
+            body.find("ZZ SHORT ITEM"), body.find("ZZ MATCH ITEM")
+        )
 
     def test_online_stock_take_save_count_rejects_empty_count(self):
         from items.models import OnlineStockTakeSavedCount

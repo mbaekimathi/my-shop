@@ -396,6 +396,33 @@ def _store_buying_prices(rows, shop_ids=None):
     return prices
 
 
+def _shelf_stock_bounds(item_ids, shop_ids, day_start, day_end):
+    """(start, end) per (shelf_item, its shop) at each period bound."""
+    starts = _shelf_system_qty(item_ids, shop_ids, day_end=day_start)
+    ends = _shelf_system_qty(item_ids, shop_ids, day_end=day_end)
+    pairs = dict(
+        ShelfItem.objects.filter(pk__in=item_ids).values_list("pk", "shop_id")
+    )
+    return (
+        {
+            (item_id, shop_id): starts.get(item_id, 0)
+            for item_id, shop_id in pairs.items()
+        },
+        {
+            (item_id, shop_id): ends.get(item_id, 0)
+            for item_id, shop_id in pairs.items()
+        },
+    )
+
+
+def _store_stock_bounds(item_ids, day_start, day_end):
+    """(start, end) central-store qty per item at each period bound."""
+    return (
+        _store_system_qty(item_ids, day_end=day_start),
+        _store_system_qty(item_ids, day_end=day_end),
+    )
+
+
 def _store_movement_events(
     *,
     day_start,
@@ -910,6 +937,7 @@ def build_movement_ledger_page(
         selected_categories=selected_categories,
         selected_item_ids=selected_item_ids,
     )
+    unfiltered_movement_events = movement_events
     if not _event_filters_are_all(event_filters):
         movement_events = _filter_movement_events(movement_events, event_filters)
 
@@ -944,6 +972,8 @@ def build_movement_ledger_page(
         "units_sale": 0,
         "units_return": 0,
         "units_trade": 0,
+        "starting_stock": 0,
+        "closing_stock": 0,
     }
     units_in = units_out = units_request = 0
     units_sale = units_transfer_in = units_transfer_out = units_return = 0
@@ -1036,6 +1066,29 @@ def build_movement_ledger_page(
         extra_items = None
         if show_all_items and group_by_shop:
             extra_items = scope_items or _source_items(source, scope_shop_ids)
+        balance_events = None
+        if not show_all_items:
+            # Start/close/day balances chain off the unfiltered events so a
+            # type filter can't skew them.
+            balance_events = _filter_item_summary_movement_events(
+                unfiltered_movement_events
+            )
+            if search_q:
+                balance_events = _filter_movement_events_by_search(
+                    balance_events, search_q
+                )
+        if source == "shelf":
+            bounds_item_shop = (
+                lambda ids, sids: _shelf_stock_bounds(
+                    ids, sids, day_start, day_end
+                )
+            )
+            bounds_item = None
+        else:
+            bounds_item_shop = None
+            bounds_item = lambda ids: _store_stock_bounds(
+                ids, day_start, day_end
+            )
         movement_item_rows = _group_movement_events_by_item(
             summary_events,
             scope_shop_ids,
@@ -1046,6 +1099,11 @@ def build_movement_ledger_page(
             stock_by_item=stock_by_item,
             stock_by_item_shop=stock_by_item_shop or None,
             suspended_ids=suspended_ids,
+            day_start=day_start,
+            day_end=day_end,
+            stock_at_bounds_item=bounds_item,
+            stock_at_bounds_item_shop=bounds_item_shop,
+            balance_events=balance_events,
         )
         if search_q:
             movement_item_rows = _filter_movement_item_rows_by_search(
@@ -1067,6 +1125,12 @@ def build_movement_ledger_page(
             movement_item_totals["units_sale"] += row["units_sale"]
             movement_item_totals["units_return"] += row["units_return"]
             movement_item_totals["units_trade"] += row.get("units_trade", 0)
+            movement_item_totals["starting_stock"] += (
+                row.get("starting_stock") or 0
+            )
+            movement_item_totals["closing_stock"] += (
+                row.get("closing_stock") or 0
+            )
         movement_events = summary_events
 
     report_params = _movements_report_params(

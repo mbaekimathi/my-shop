@@ -2326,6 +2326,55 @@ def _current_stock_by_item_shop(item_ids, shop_ids):
     return totals
 
 
+def _shop_stock_at_bounds(item_ids, shop_ids, day_start, day_end):
+    """
+    (start_lookup, end_lookup): ShopStock qty per (item, shop) at each bound.
+
+    Rewinds the live ShopStock total with the same movement sources used by
+    _build_item_report_rows: stock in/out, fulfilled transfers, receipt
+    sales, and returns. A bound at/after "now" just returns live stock.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    current = _current_stock_by_item_shop(item_ids, shop_ids)
+    now = timezone.now()
+    far_future = now + timedelta(days=3650)
+
+    def rewind(bound):
+        if bound is None or bound >= now:
+            return dict(current)
+        moves = _movement_qty_by_item_shop(
+            item_ids, shop_ids, bound, far_future
+        )
+        transfers = _transfer_qty_by_item_shop(
+            item_ids, shop_ids, bound, far_future
+        )
+        sales = _receipt_sale_qty_by_item_shop(
+            item_ids, shop_ids, bound, far_future
+        )
+        returns = _return_qty_by_item_shop(
+            item_ids, shop_ids, bound, far_future
+        )
+        at_bound = {}
+        for key, on_hand in current.items():
+            move = moves.get(key) or {"in": 0, "out": 0}
+            transfer = transfers.get(key) or {"in": 0, "out": 0}
+            at_bound[key] = (
+                on_hand
+                - move["in"]
+                + move["out"]
+                + _qty_num(sales.get(key))
+                - transfer["in"]
+                + transfer["out"]
+                - _qty_num(returns.get(key))
+            )
+        return at_bound
+
+    return rewind(day_start), rewind(day_end)
+
+
 LOW_STOCK_ITEM_ONLY = (
     "id",
     "name",
@@ -4996,6 +5045,9 @@ def _blank_movement_item_row(
         "units_return": 0,
         "units_trade": 0,
         "current_stock": 0,
+        "starting_stock": None,
+        "closing_stock": None,
+        "day_rows": [],
         "last_at": happened_at,
         "detail_url": "",
     }
@@ -5029,6 +5081,130 @@ def _apply_movement_event_to_row(row, event, *, transfer_only=""):
         row["last_at"] = event["happened_at"]
 
 
+def _movement_item_event_key(event):
+    """Grouping key shared by display rows and balance buckets."""
+    item_id = event.get("item_id")
+    if item_id is not None:
+        return item_id
+    item_name = event.get("item_name") or "—"
+    return f"name:{item_name.strip().lower()}"
+
+
+def _movement_event_shop_targets(event, shop_id_set):
+    """(shop_id, transfer_only) pairs a summary event contributes to."""
+    if event.get("event_type") in ("request", "transfer_fulfilled"):
+        direction = event.get("transfer_direction")
+        # Match _timeline_event_from_movement_line: shop/source = sender,
+        # destination = receiver (requested_from_shop).
+        source_id = event.get("source_shop_id") or event.get("shop_id")
+        dest_id = event.get("destination_shop_id")
+        targets = []
+        if direction in ("in", "both") and dest_id in shop_id_set:
+            targets.append((dest_id, "in"))
+        if direction in ("out", "both") and source_id in shop_id_set:
+            targets.append((source_id, "out"))
+        if not targets:
+            fallback_id = event.get("shop_id")
+            if fallback_id in shop_id_set:
+                targets.append((fallback_id, ""))
+        return targets
+    shop_id = event.get("shop_id")
+    if shop_id in shop_id_set:
+        return [(shop_id, "")]
+    return []
+
+
+def _movement_row_net(row):
+    """Signed stock delta of a summary row's unit columns."""
+    return (
+        row["units_in"]
+        + row["units_transfer_in"]
+        + row["units_return"]
+        - row["units_out"]
+        - row["units_transfer_out"]
+        - row["units_sale"]
+    )
+
+
+def _movement_item_day_rows(pairs, balance_pairs, row_start):
+    """
+    Per-day sub-rows for one summary row.
+
+    Unit columns come from ``pairs`` — the row's displayed (possibly
+    type-filtered) events bucketed by local day. Start/close chain off
+    ``balance_pairs`` — the unfiltered event set — so the balances stay
+    true even when a type filter hides some movement kinds.
+    """
+    if not pairs:
+        return []
+    display_days = {}
+    for event, transfer_only in pairs:
+        day = _local_report_date(event.get("happened_at"))
+        if day is None:
+            continue
+        bucket = display_days.get(day)
+        if bucket is None:
+            bucket = _blank_movement_item_row(
+                item_id=None,
+                item_name="",
+                item_category="",
+                happened_at=None,
+            )
+            display_days[day] = bucket
+        _apply_movement_event_to_row(bucket, event, transfer_only=transfer_only)
+    if not display_days:
+        return []
+
+    balance_days = {}
+    for event, transfer_only in balance_pairs or []:
+        day = _local_report_date(event.get("happened_at"))
+        if day is None:
+            continue
+        bucket = balance_days.get(day)
+        if bucket is None:
+            bucket = _blank_movement_item_row(
+                item_id=None,
+                item_name="",
+                item_category="",
+                happened_at=None,
+            )
+            balance_days[day] = bucket
+        _apply_movement_event_to_row(bucket, event, transfer_only=transfer_only)
+    balance_net = [
+        (day, _movement_row_net(bucket))
+        for day, bucket in sorted(balance_days.items())
+    ]
+
+    day_rows = []
+    for day in sorted(display_days):
+        bucket = display_days[day]
+        start = close = None
+        if row_start is not None:
+            start = row_start + sum(
+                net for bday, net in balance_net if bday < day
+            )
+            close = start + sum(
+                net for bday, net in balance_net if bday == day
+            )
+        day_rows.append(
+            {
+                "report_date": day,
+                "event_count": bucket["event_count"],
+                "units_in": bucket["units_in"],
+                "units_out": bucket["units_out"],
+                "units_transfer_in": bucket["units_transfer_in"],
+                "units_transfer_out": bucket["units_transfer_out"],
+                "units_sale": bucket["units_sale"],
+                "units_return": bucket["units_return"],
+                "units_trade": bucket["units_trade"],
+                "last_at": bucket["last_at"],
+                "starting_stock": start,
+                "closing_stock": close,
+            }
+        )
+    return day_rows
+
+
 def _group_movement_events_by_item(
     events,
     shop_ids,
@@ -5040,11 +5216,100 @@ def _group_movement_events_by_item(
     stock_by_item=None,
     stock_by_item_shop=None,
     suspended_ids=None,
+    day_start=None,
+    day_end=None,
+    stock_at_bounds_item=None,
+    stock_at_bounds_item_shop=None,
+    balance_events=None,
 ):
+    from datetime import timedelta
+
     if group_by_shop is None:
         group_by_shop = len(shop_ids) > 1
     shops_by_id = shops_by_id or {}
     shop_id_set = set(shop_ids)
+    multi_day = bool(
+        day_start and day_end and (day_end - day_start) > timedelta(days=1)
+    )
+    if balance_events is None:
+        balance_events = events
+
+    def _resolve_bounds(item_ids):
+        """(start_item, end_item, start_shop, end_shop) bound lookups."""
+        ids = [pk for pk in item_ids if pk]
+        start_item = end_item = start_shop = end_shop = None
+        if ids and stock_at_bounds_item_shop is not None:
+            start_shop, end_shop = stock_at_bounds_item_shop(ids, shop_ids)
+        if ids and stock_at_bounds_item is not None:
+            start_item, end_item = stock_at_bounds_item(ids)
+        return start_item, end_item, start_shop, end_shop
+
+    def _row_bounds(bounds, item_id, shop_id=None):
+        """(starting, closing) for a summary row — None when unknown."""
+        start_item, end_item, start_shop, end_shop = bounds
+        if not item_id:
+            return None, None
+        if shop_id is not None:
+            if start_shop is not None or end_shop is not None:
+                return (
+                    (start_shop or {}).get((item_id, shop_id)),
+                    (end_shop or {}).get((item_id, shop_id)),
+                )
+            return (
+                (start_item or {}).get(item_id),
+                (end_item or {}).get(item_id),
+            )
+        if start_item is not None or end_item is not None:
+            return (
+                (start_item or {}).get(item_id),
+                (end_item or {}).get(item_id),
+            )
+        if start_shop is not None or end_shop is not None:
+            start_total = end_total = 0
+            found = False
+            for sid in shop_id_set:
+                if (item_id, sid) in (start_shop or {}):
+                    start_total += start_shop[(item_id, sid)]
+                    found = True
+                if (item_id, sid) in (end_shop or {}):
+                    end_total += end_shop[(item_id, sid)]
+                    found = True
+            if found:
+                return start_total, end_total
+        return None, None
+
+    def _balance_pair_map():
+        """Balance event pairs keyed like the summary rows, when provided."""
+        if not multi_day or balance_events is events:
+            return None
+        pairs_map = {}
+        for event in balance_events:
+            key = _movement_item_event_key(event)
+            if group_by_shop:
+                for sid, transfer_only in _movement_event_shop_targets(
+                    event, shop_id_set
+                ):
+                    pairs_map.setdefault((key, sid), []).append(
+                        (event, transfer_only)
+                    )
+            else:
+                pairs_map.setdefault(key, []).append((event, ""))
+        return pairs_map
+
+    def _attach_period_fields(row, bounds, item_id, shop_id, bal_key):
+        start, close = _row_bounds(bounds, item_id, shop_id)
+        row["starting_stock"] = start
+        row["closing_stock"] = close
+        pairs = row.pop("_pairs", [])
+        if not multi_day:
+            return
+        if balance_map is not None:
+            balance_pairs = balance_map.get(bal_key, [])
+        else:
+            balance_pairs = pairs
+        row["day_rows"] = _movement_item_day_rows(pairs, balance_pairs, start)
+
+    balance_map = _balance_pair_map()
 
     if not group_by_shop:
         groups = {}
@@ -5052,7 +5317,7 @@ def _group_movement_events_by_item(
             item_id = event.get("item_id")
             item_name = event.get("item_name") or "—"
             item_category = event.get("item_category") or ""
-            key = item_id if item_id is not None else f"name:{item_name.strip().lower()}"
+            key = _movement_item_event_key(event)
             row = groups.get(key)
             if row is None:
                 row = _blank_movement_item_row(
@@ -5063,6 +5328,8 @@ def _group_movement_events_by_item(
                 )
                 groups[key] = row
             _apply_movement_event_to_row(row, event)
+            if multi_day:
+                row.setdefault("_pairs", []).append((event, ""))
         item_ids = [row["item_id"] for row in groups.values() if row.get("item_id")]
         if suspended_ids is None:
             suspended_ids = _suspended_item_ids(item_ids)
@@ -5070,12 +5337,14 @@ def _group_movement_events_by_item(
             stock_by_item = _current_stock_by_item(
                 [i for i in item_ids if i not in suspended_ids], shop_ids
             )
-        for row in groups.values():
+        bounds = _resolve_bounds(item_ids)
+        for key, row in groups.items():
             item_id = row.get("item_id")
             row["is_deleted"] = item_id is None
             if item_id:
                 row["current_stock"] = stock_by_item.get(item_id, 0)
                 row["is_suspended"] = item_id in suspended_ids
+            _attach_period_fields(row, bounds, item_id, None, key)
         return sorted(
             groups.values(),
             key=lambda row: (row["item_name"].lower(), row.get("item_id") or 0),
@@ -5100,7 +5369,7 @@ def _group_movement_events_by_item(
         item_id = event.get("item_id")
         item_name = event.get("item_name") or "—"
         item_category = event.get("item_category") or ""
-        item_key = item_id if item_id is not None else f"name:{item_name.strip().lower()}"
+        item_key = _movement_item_event_key(event)
         group = items.get(item_key)
         if group is None:
             group = {
@@ -5110,29 +5379,11 @@ def _group_movement_events_by_item(
                 "shops": {},
             }
             items[item_key] = group
+            group["key"] = item_key
 
-        event_type = event.get("event_type")
-        targets = []
-        if event_type in ("request", "transfer_fulfilled"):
-            direction = event.get("transfer_direction")
-            # Match _timeline_event_from_movement_line: shop/source = sender,
-            # destination = receiver (requested_from_shop).
-            source_id = event.get("source_shop_id") or event.get("shop_id")
-            dest_id = event.get("destination_shop_id")
-            if direction in ("in", "both") and dest_id in shop_id_set:
-                targets.append((dest_id, "in"))
-            if direction in ("out", "both") and source_id in shop_id_set:
-                targets.append((source_id, "out"))
-            if not targets:
-                fallback_id = event.get("shop_id")
-                if fallback_id in shop_id_set:
-                    targets.append((fallback_id, ""))
-        else:
-            dest_id = event.get("shop_id")
-            if dest_id in shop_id_set:
-                targets.append((dest_id, ""))
-
-        for shop_id, transfer_only in targets:
+        for shop_id, transfer_only in _movement_event_shop_targets(
+            event, shop_id_set
+        ):
             row = group["shops"].get(shop_id)
             if row is None:
                 shop = shops_by_id.get(shop_id)
@@ -5146,6 +5397,8 @@ def _group_movement_events_by_item(
                 )
                 group["shops"][shop_id] = row
             _apply_movement_event_to_row(row, event, transfer_only=transfer_only)
+            if multi_day:
+                row.setdefault("_pairs", []).append((event, transfer_only))
 
     event_item_ids = [
         group["item_id"] for group in items.values() if group.get("item_id")
@@ -5174,7 +5427,10 @@ def _group_movement_events_by_item(
                 "item_name": item.name,
                 "item_category": item.category,
                 "shops": {},
+                "key": item.pk,
             }
+
+    bounds = _resolve_bounds(stock_item_ids)
 
     rows = []
     for group in sorted(
@@ -5200,6 +5456,13 @@ def _group_movement_events_by_item(
                 row["current_stock"] = stock_by_shop.get(
                     (group["item_id"], shop_id), 0
                 )
+            _attach_period_fields(
+                row,
+                bounds,
+                group["item_id"],
+                shop_id,
+                (group.get("key"), shop_id),
+            )
             shop_rows.append(row)
         if require_events:
             if not any(row["event_count"] for row in shop_rows):
@@ -5237,6 +5500,18 @@ def _group_movement_events_by_item(
         total["units_return"] = sum(row["units_return"] for row in shop_rows)
         total["units_trade"] = sum(row.get("units_trade", 0) for row in shop_rows)
         total["current_stock"] = sum(row["current_stock"] for row in shop_rows)
+        starts = [
+            row["starting_stock"]
+            for row in shop_rows
+            if row["starting_stock"] is not None
+        ]
+        closes = [
+            row["closing_stock"]
+            for row in shop_rows
+            if row["closing_stock"] is not None
+        ]
+        total["starting_stock"] = sum(starts) if starts else None
+        total["closing_stock"] = sum(closes) if closes else None
         rows.append(total)
     return rows
 
@@ -5961,6 +6236,7 @@ def _stock_report_document(
             item_summary_headers.append("Shop")
         item_summary_headers.extend(
             [
+                "Starting",
                 "Events",
                 "In",
                 "Out",
@@ -5969,6 +6245,7 @@ def _stock_report_document(
                 "Trade",
                 "Sale",
                 "Return",
+                "Closing",
                 "Stock",
                 "Last date",
                 "Last time",
@@ -5997,6 +6274,11 @@ def _stock_report_document(
                 line.append(row.get("shop_name") or "")
             line.extend(
                 [
+                    (
+                        row.get("starting_stock")
+                        if row.get("starting_stock") is not None
+                        else ""
+                    ),
                     row.get("event_count") or 0,
                     row.get("units_in") or 0,
                     row.get("units_out") or 0,
@@ -6005,6 +6287,11 @@ def _stock_report_document(
                     row.get("units_trade") or 0,
                     row.get("units_sale") or 0,
                     row.get("units_return") or 0,
+                    (
+                        row.get("closing_stock")
+                        if row.get("closing_stock") is not None
+                        else ""
+                    ),
                     row.get("current_stock") or 0,
                     last_date,
                     last_time,
@@ -6961,6 +7248,8 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
         "units_sale": 0,
         "units_return": 0,
         "units_trade": 0,
+        "starting_stock": 0,
+        "closing_stock": 0,
     }
 
     timeline_page = 1
@@ -6994,6 +7283,7 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
             report_items=report_items,
             event_filter=event_filters,
         )
+        unfiltered_movement_events = movement_events
         if not _event_filters_are_all(event_filters):
             movement_events = _filter_movement_events(movement_events, event_filters)
         if show_timeline:
@@ -7074,12 +7364,31 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 extra_items = (
                     report_items if item_mode != "all" else (all_items or report_items)
                 )
+            balance_events = None
+            if not show_all_items:
+                # Start/close/day balances stay true under a type filter —
+                # chain them off the unfiltered event set.
+                balance_events = _filter_item_summary_movement_events(
+                    unfiltered_movement_events
+                )
+                if search_q:
+                    balance_events = _filter_movement_events_by_search(
+                        balance_events, search_q
+                    )
             movement_item_rows = _group_movement_events_by_item(
                 movement_events,
                 shop_ids_for_query,
                 shops_by_id=shops_by_id,
                 extra_items=extra_items,
                 require_events=not show_all_items,
+                day_start=day_start,
+                day_end=day_end,
+                stock_at_bounds_item_shop=(
+                    lambda ids, sids: _shop_stock_at_bounds(
+                        ids, sids, day_start, day_end
+                    )
+                ),
+                balance_events=balance_events,
             )
             if search_q:
                 movement_item_rows = _filter_movement_item_rows_by_search(
@@ -7097,6 +7406,12 @@ def stock_report(request, profile, meta, module, *, page_mode="report"):
                 movement_item_totals["units_sale"] += row["units_sale"]
                 movement_item_totals["units_return"] += row["units_return"]
                 movement_item_totals["units_trade"] += row.get("units_trade", 0)
+                movement_item_totals["starting_stock"] += (
+                    row.get("starting_stock") or 0
+                )
+                movement_item_totals["closing_stock"] += (
+                    row.get("closing_stock") or 0
+                )
 
         # Paginate timeline HTML only (PDF download keeps the full set).
         is_download = (request.GET.get("download") or "").strip() == "1"

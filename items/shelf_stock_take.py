@@ -342,8 +342,15 @@ def build_shelf_online_take_sync(*, shop, count_date=None) -> dict:
             "revision": "0:",
             "lines": [],
             "filled_count": 0,
+            "system": {},
         }
 
+    system_by_item = {
+        str(row.pk): _qty_label(_quantize(row.quantity))
+        for row in ShelfItem.objects.filter(shop=shop, is_archived=False).only(
+            "id", "quantity"
+        )
+    }
     entries = list(
         ShelfOnlineStockTakeEntry.objects.filter(shop=shop, count_date=count_date)
         .exclude(physical_qty__isnull=True)
@@ -402,6 +409,7 @@ def build_shelf_online_take_sync(*, shop, count_date=None) -> dict:
         "revision": revision,
         "lines": lines,
         "filled_count": len(lines),
+        "system": system_by_item,
     }
 
 

@@ -194,13 +194,37 @@
     return true;
   };
 
+  const applySystemMap = (systemMap) => {
+    if (!systemMap || typeof systemMap !== "object" || !list) return false;
+    let changed = false;
+    Object.entries(systemMap).forEach(([itemId, qty]) => {
+      const row = findRow(itemId);
+      if (!row || isRowDirty(row)) return;
+      const input = row.querySelector("[data-online-take-qty]");
+      if (!input) return;
+      const liveQty = String(qty ?? "");
+      if (input.value.trim() !== "") {
+        row.setAttribute("data-live-system-qty", liveQty);
+        return;
+      }
+      if ((row.getAttribute("data-system-qty") || "") === liveQty) return;
+      applySystemQty(row, liveQty, liveQty);
+      syncRow(row);
+      changed = true;
+    });
+    return changed;
+  };
+
   const applySyncPayload = (data, { fromPoll = false } = {}) => {
     if (!data?.ok || !list) return;
     const revision = String(data.revision || "");
-    if (revision && revision === syncRevision && fromPoll) return;
+    let changed = applySystemMap(data.system);
+    if (revision && revision === syncRevision && fromPoll) {
+      if (changed) syncSummary();
+      return;
+    }
 
     const lines = Array.isArray(data.lines) ? data.lines : null;
-    let changed = false;
 
     if (lines) {
       const remoteIds = new Set(

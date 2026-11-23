@@ -1,3 +1,46 @@
+import logging
+import time
+
+logger = logging.getLogger("myshop.slow_requests")
+
+
+class RequestDurationLogMiddleware:
+    """Log requests that hold a worker too long.
+
+    Hosted LiteSpeed/Passenger caps the app at a handful of LSAPI children,
+    so requests slower than SLOW_REQUEST_MS (default 2000ms) are what trigger
+    the "max children process limit" warnings. Each line carries the resolved
+    URL route so the pinning endpoint is identifiable; warnings land on stderr
+    next to the LSAPI messages. X-Request-Ms exposes the same timing per
+    response for spot checks in devtools.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from django.conf import settings
+
+        start = time.monotonic()
+        response = self.get_response(request)
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        response["X-Request-Ms"] = str(int(elapsed_ms))
+        threshold_ms = getattr(settings, "SLOW_REQUEST_MS", 2000) or 0
+        if elapsed_ms >= threshold_ms:
+            match = getattr(request, "resolver_match", None)
+            route = getattr(match, "route", "") or request.path
+            logger.warning(
+                "slow request %.0fms %s %s -> %s (%s)",
+                elapsed_ms,
+                request.method,
+                request.path,
+                response.status_code,
+                route,
+            )
+        return response
+
+
 class NoCacheHtmlMiddleware:
     """Prevent browsers from serving stale HTML when assets or templates change."""
 

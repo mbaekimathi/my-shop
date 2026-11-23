@@ -85,6 +85,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "core.middleware.RequestDurationLogMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.gzip.GZipMiddleware",
@@ -370,6 +371,11 @@ SERVE_MEDIA_IN_PRODUCTION = resolve_bool(
 )
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Requests slower than this are logged by RequestDurationLogMiddleware —
+# on LiteSpeed/Passenger each slow request holds one of the few LSAPI
+# children, so these warnings pinpoint what triggers "max children" errors.
+SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "2000"))
 
 LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO" if not DEBUG else "DEBUG")
 LOGGING = {

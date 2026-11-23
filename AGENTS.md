@@ -125,6 +125,25 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   emits only days with activity. The movements page's TYPE=All item
   summary is the exception — it still lists idle stock as a
   current-stock board (`extra_items` → `_group_movement_events_by_item`).
+- The movements **period summary** (`view_by=item`, and the shared
+  ledger pages built by `items/movement_page.py`) carries **Start** /
+  **Close** columns: the true stock balance at the filtered period
+  bounds, rewound from live stock — shop rows via
+  `_shop_stock_at_bounds` (same movement sources as
+  `_build_item_report_rows`: in/out, fulfilled transfers, receipt
+  sales, returns); shelf rows via `_shelf_stock_bounds`
+  (`_shelf_system_qty` rewind keyed to the item's owning shop);
+  central-store rows via `_store_stock_bounds`. Rows without
+  computable bounds (name-only/deleted items) show "—". For
+  multi-day ranges each row also gets expandable per-day sub-rows
+  (`row["day_rows"]`, days with activity only, toggled by
+  `data-day-toggle` in the item cell): unit columns come from the
+  row's displayed events while day start/close chain off
+  `balance_events` (the unfiltered set), so balances stay true under
+  a Type filter. `movement_item_totals` sums
+  `starting_stock`/`closing_stock` for the footer, and the PDF/print
+  summary (`_stock_report_document` `item_summary_*`) includes the
+  Starting/Closing columns too.
 - The shop floor catalog (`my_shop_catalog` → `build_shop_catalog_page`) lists
   sellable items only; shelf-only mode returns an empty catalog.
 - **Block negative stock** (`CompanyPosSettings.block_negative_stock`, default
@@ -291,14 +310,28 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `?estimate=1` (print-modal page count) and `?download=1` —
   `_movement_report_output_flags` → `_online_take_report_response`
   (`items/views.py`), `report`/`actual` document keys,
-  `report_numeric_from=3`. The cart's Print button opens the shared receipts
+  `report_numeric_from=3`. `_count_row_cells` orders report rows **excess →
+  short → match** (`_COUNT_KIND_ORDER`) for both the live sheet and saved
+  snapshots. The cart's Print button opens the shared receipts
   print modal (`receipts_print_url` = `request.path` — the modal JS reuses
   `window.location.search` for mode/shop_id/date/stock). POST
   `action=save_count` returns `{ok, saved}` and the JS prepends/replaces the
   row in the saved list. Mirrored on the shelf page (`stock=shelf`) which
-  shares the template/JS. Tests: `items/tests.py::ItSupportItemStockPagesTests`
+  shares the template/JS.
+- **Live system qty on uncounted rows**: both sync payloads carry a `system`
+  map of every countable item's live book qty (`build_online_stock_take_sync`
+  covers all non-suspended `Item`s at the shop, `build_shelf_online_take_sync`
+  all non-archived `ShelfItem`s). The poll's `applySystemMap` applies it every
+  cycle — before the revision early-return, so plain stock moves (sales,
+  stock-ins) refresh uncounted rows' `data-system-qty` even when no count
+  lines changed. Counted rows keep their frozen `data-system-qty` (variance
+  stays vs the at-count qty) and only get `data-live-system-qty` refreshed —
+  which is also what a cleared count restores. Dirty/being-typed rows are
+  skipped. Tests: `items/tests.py::ItSupportItemStockPagesTests`
   (`test_online_stock_take_save_count_snapshot_list_and_outputs`,
   `test_online_stock_take_past_day_is_view_only`,
+  `test_online_stock_take_sync_includes_live_system_map`,
+  `test_online_stock_take_report_orders_excess_then_short_then_match`,
   `test_shelf_online_stock_take_save_count`).
 
 ## Compulsory stock fields (Stock Management → Settings)

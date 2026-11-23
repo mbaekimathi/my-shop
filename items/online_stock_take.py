@@ -225,7 +225,11 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
 def build_online_stock_take_sync(
     *, shop, count_date: date | None = None
 ) -> dict:
-    """Lightweight payload of current filled counts for cross-device live sync."""
+    """Lightweight payload of current filled counts for cross-device live sync.
+
+    ``system`` maps every active item's live book qty at this shop so
+    uncounted rows on the page keep comparing against current stock.
+    """
     count_date = count_date or timezone.localdate()
     if shop is None:
         return {
@@ -234,6 +238,7 @@ def build_online_stock_take_sync(
             "revision": "0:",
             "lines": [],
             "filled_count": 0,
+            "system": {},
         }
 
     entries = list(
@@ -251,8 +256,14 @@ def build_online_stock_take_sync(
     item_ids = [row.item_id for row in entries]
     stock_map = {
         row.item_id: _quantize(row.quantity)
-        for row in ShopStock.objects.filter(shop=shop, item_id__in=item_ids).only(
+        for row in ShopStock.objects.filter(shop=shop).only(
             "item_id", "quantity"
+        )
+    }
+    system_by_item = {
+        str(pk): _qty_label(stock_map.get(pk, _ZERO))
+        for pk in Item.objects.filter(is_suspended=False).values_list(
+            "id", flat=True
         )
     }
     item_meta = {
@@ -301,6 +312,7 @@ def build_online_stock_take_sync(
         "revision": revision,
         "lines": lines,
         "filled_count": len(lines),
+        "system": system_by_item,
     }
 
 
@@ -515,9 +527,18 @@ _COUNT_HEADERS = [
 _COUNT_NUMERIC_FROM = 3
 
 
+_COUNT_KIND_ORDER = {"excess": 0, "short": 1, "match": 2}
+
+
 def _count_row_cells(lines) -> list:
+    ordered = sorted(
+        lines or [],
+        key=lambda line: _COUNT_KIND_ORDER.get(
+            line.get("variance_kind"), len(_COUNT_KIND_ORDER)
+        ),
+    )
     rows = []
-    for line in lines or []:
+    for line in ordered:
         rows.append(
             [
                 line.get("name") or "Item",
