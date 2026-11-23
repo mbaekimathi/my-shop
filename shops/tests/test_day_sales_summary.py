@@ -1002,7 +1002,10 @@ class ClearedPendingCollectionTests(TestCase):
         first_page = build_day_session_report_page(
             profile=self.profile, request=request, session=first
         )["page"]
-        first_flow = [r[0] for r in first_page["tables"][1]["rows"]]
+        first_flow = [
+            r["cells"][0] if isinstance(r, dict) else r[0]
+            for r in first_page["tables"][1]["rows"]
+        ]
         self.assertTrue(
             any("collected by Cleared Cashier" in row for row in first_flow),
             first_flow,
@@ -1015,7 +1018,10 @@ class ClearedPendingCollectionTests(TestCase):
         second_page = build_day_session_report_page(
             profile=self.profile, request=request, session=second
         )["page"]
-        second_flow = [r[0] for r in second_page["tables"][1]["rows"]]
+        second_flow = [
+            r["cells"][0] if isinstance(r, dict) else r[0]
+            for r in second_page["tables"][1]["rows"]
+        ]
         self.assertTrue(
             any("collected for Cleared Cashier" in row for row in second_flow),
             second_flow,

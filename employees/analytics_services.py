@@ -12120,12 +12120,17 @@ def build_day_session_report_page(
             "card": summary.get(f"{prefix}_card"),
         }
 
-    def _flow_row(label, by_channel, total, *, minus=False):
+    def _flow_row(label, by_channel, total, *, minus=False, row_class=""):
         cells = [label]
         for key, _label in channel_cols:
             cells.append(_money_cell(by_channel.get(key), minus=minus))
         cells.append(_money_cell(total, minus=minus))
-        return cells
+        classes = ["ax-flow-row"]
+        if minus:
+            classes.append("ax-flow-row--out")
+        if row_class:
+            classes.append(row_class)
+        return {"cells": cells, "row_class": " ".join(classes)}
 
     flow_columns = [{"label": "Flow"}]
     flow_columns += [
@@ -12137,6 +12142,7 @@ def build_day_session_report_page(
             "Opening float",
             _channel_values("opening"),
             summary.get("opening_total"),
+            row_class="ax-flow-row--opening",
         ),
         _flow_row(
             f"Sales collected ({sales_count} receipts)",
@@ -12146,6 +12152,7 @@ def build_day_session_report_page(
                 "card": summary.get("card_sales"),
             },
             summary.get("sales_total"),
+            row_class="ax-flow-row--in",
         ),
         _flow_row(
             f"Credit payments collected ({summary.get('credit_collected_count') or 0})",
@@ -12155,6 +12162,7 @@ def build_day_session_report_page(
                 "card": summary.get("credit_collected_card"),
             },
             summary.get("credit_collected_total"),
+            row_class="ax-flow-row--in",
         ),
         _flow_row(
             f"Trade payments collected ({summary.get('trade_collected_count') or 0})",
@@ -12164,11 +12172,13 @@ def build_day_session_report_page(
                 "card": summary.get("trade_collected_card"),
             },
             summary.get("trade_collected_total"),
+            row_class="ax-flow-row--in",
         ),
         _flow_row(
             f"Customer prepayments ({summary.get('prepayments_count') or 0})",
             _channel_values("prepayments"),
             summary.get("prepayments_total"),
+            row_class="ax-flow-row--in",
         ),
         _flow_row(
             "Returns paid",
@@ -12216,6 +12226,7 @@ def build_day_session_report_page(
             "Expected in till",
             _channel_values("expected"),
             summary.get("expected_total"),
+            row_class="ax-flow-row--expected",
         ),
     ]
     if not is_open:
@@ -12224,6 +12235,7 @@ def build_day_session_report_page(
                 "Counted closing",
                 _channel_values("closing"),
                 summary.get("closing_total"),
+                row_class="ax-flow-row--closing",
             )
         )
         variance_cells = ["Variance"]
@@ -12238,7 +12250,17 @@ def build_day_session_report_page(
         variance_cells.append(
             _money_cell(total_variance, tone=_variance_tone(total_variance))
         )
-        flow_rows.append(variance_cells)
+        variance_class = (
+            "is-good" if _variance_tone(total_variance) == "good" else "is-bad"
+        )
+        flow_rows.append(
+            {
+                "cells": variance_cells,
+                "row_class": (
+                    f"ax-flow-row ax-flow-row--variance {variance_class}"
+                ),
+            }
+        )
     # Cross-session pending clears, per cashier: receipts this session
     # printed but a later session collected stay in this Expected — the
     # deficit — while money collected here on another session's behalf sits
@@ -12276,6 +12298,7 @@ def build_day_session_report_page(
                     "card": summary.get("cleared_elsewhere_card"),
                 },
                 summary.get("cleared_elsewhere_total"),
+                row_class="ax-flow-row--deficit",
             )
         )
     if summary.get("cleared_pending_count"):
@@ -12294,6 +12317,7 @@ def build_day_session_report_page(
                     "card": summary.get("cleared_pending_card"),
                 },
                 summary.get("cleared_pending_total"),
+                row_class="ax-flow-row--excess",
             )
         )
     credit_payments = details.get("credit_payments") or {}
@@ -12519,6 +12543,7 @@ def build_day_session_report_page(
             empty="No money movement recorded this day.",
             footnote=money_footnote,
             section="day_report_sec_money_flow",
+            table_class="ax-table--moneyflow",
         ),
     ]
 

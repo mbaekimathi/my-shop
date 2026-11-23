@@ -660,13 +660,11 @@
             {% else %}
             {% with row=entry.row cells=entry.cells %}
             <tr
+              class="{% if row.receipt_id %}ax-receipt-row{% elif row.total_row or table.shop_grid and forloop.last %}ax-row--total{% endif %}{% if row.row_class %} {{ row.row_class }}{% endif %}"
               {% if row.receipt_id %}
-              class="ax-receipt-row"
               data-receipt-id="{{ row.receipt_id }}"
               data-shop-id="{{ row.shop_id }}"
               tabindex="0"
-              {% elif row.total_row or table.shop_grid and forloop.last %}
-              class="ax-row--total"
               {% endif %}
               {% if table.searchable %}
               data-search-text="{% if row.search_text %}{{ row.search_text }}{% elif cells.0.label %}{{ cells.0.label }}{% if cells.0.sub %} {{ cells.0.sub }}{% endif %}{% elif cells.0 %}{{ cells.0 }}{% endif %}"

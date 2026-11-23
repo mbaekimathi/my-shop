@@ -1568,7 +1568,10 @@ class AnalyticsDaySessionReportTests(TestCase):
                 "Stocked out",
             ],
         )
-        flow_labels = [r[0] for r in page["tables"][1]["rows"]]
+        flow_labels = [
+            r["cells"][0] if isinstance(r, dict) else r[0]
+            for r in page["tables"][1]["rows"]
+        ]
         self.assertIn("Counted closing", flow_labels)
         self.assertIn("Variance", flow_labels)
         items = page["tables"][9]
