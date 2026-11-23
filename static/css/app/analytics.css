@@ -10720,6 +10720,7 @@ body.ax-credit-due-open {
 
   .ax.ax--day-report .ax-table td::before {
     content: attr(data-label);
+    display: block;
     flex: 0 1 auto;
     font-size: 0.58rem;
     font-weight: 700;
@@ -10735,6 +10736,14 @@ body.ax-credit-due-open {
   .ax.ax--day-report .ax-table td > *:last-child {
     margin-left: auto;
     text-align: right;
+  }
+
+  /* The desktop "hug content" rule (min-width:700) crushes every
+     non-label column to width:1% — undo it in stacked mode. */
+  .ax.ax--day-report .ax-table tbody tr th:not(:first-child),
+  .ax.ax--day-report .ax-table tbody tr td:not(:first-child) {
+    width: auto;
+    white-space: normal;
   }
 
   /* First cell becomes the row title — its column label is redundant. */
