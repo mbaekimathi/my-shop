@@ -12464,7 +12464,6 @@ def build_day_session_report_page(
                 "Cleared",
                 "Receipt",
                 "Cleared by",
-                "Items",
                 {"label": "Amount", "money": True},
             ],
             [
@@ -12475,7 +12474,6 @@ def build_day_session_report_page(
                         "sub": f"Printed {_printed_label(row['printed_at'])}",
                     },
                     row["cleared_by"],
-                    row["items_label"],
                     _money_ksh(row["total"]),
                 ]
                 for row in cleared_elsewhere

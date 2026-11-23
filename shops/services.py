@@ -9538,7 +9538,6 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
             confirmed_payment_at__lt=window["created_at__lt"],
         )
         .select_related("created_by__user")
-        .prefetch_related("lines")
         .order_by("confirmed_payment_at", "pk")
     )
     elsewhere_receipts = list(elsewhere_qs)
@@ -9586,16 +9585,6 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 f"{user.first_name or ''} {user.last_name or ''}".strip()
                 or user.username
             )
-        lines = list(receipt.lines.all())
-        labels = [
-            f"{(line.item_name or '').strip() or 'Item'}"
-            f" ×{_qty_label(line.quantity)}"
-            for line in lines[:2]
-        ]
-        extra = len(lines) - len(labels)
-        items_label = ", ".join(labels)
-        if extra > 0:
-            items_label += f" +{extra} more"
         cash, mpesa, card = _receipt_original_tender(
             receipt.cash_amount,
             receipt.mpesa_amount,
@@ -9607,7 +9596,6 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 "at": receipt.confirmed_payment_at,
                 "printed_at": receipt.created_at,
                 "number": receipt_tally_code(receipt),
-                "items_label": items_label or "—",
                 "seller": seller or "—",
                 "cleared_by": _clearing_cashier_name(
                     receipt.confirmed_payment_at
@@ -11006,7 +10994,7 @@ def build_shop_day_report_pdf(
     )
     _detail_table(
         "Pending cleared in later sessions",
-        ["Cleared", "Receipt", "Cleared by", "Items", "Amount"],
+        ["Cleared", "Receipt", "Cleared by", "Amount"],
         [
             [
                 _p(_time(row["at"]), cell_sm),
@@ -11017,20 +11005,18 @@ def build_shop_day_report_pdf(
                     cell_sm,
                 ),
                 _p(row["cleared_by"], cell_sm),
-                _p(row["items_label"], cell_sm),
                 _p(_fmt(row["total"]), cell_sm_right),
             ]
             for row in elsewhere_rows
         ],
         [
-            doc.width * 0.09,
-            doc.width * 0.30,
-            doc.width * 0.17,
-            doc.width * 0.30,
-            doc.width * 0.14,
+            doc.width * 0.11,
+            doc.width * 0.47,
+            doc.width * 0.24,
+            doc.width * 0.18,
         ],
-        aligns=["l", "l", "l", "l", "r"],
-        footer=["Total", "", "", "", _fmt(elsewhere_total)],
+        aligns=["l", "l", "l", "r"],
+        footer=["Total", "", "", _fmt(elsewhere_total)],
         dense=True,
         empty_note="No pending receipts cleared in later sessions.",
         section="day_report_sec_cleared",
