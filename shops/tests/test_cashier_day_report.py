@@ -594,9 +594,10 @@ class CashierDayReportScopeTests(TestCase):
         self.assertIn("1,160", profit[2]["label"])
 
         labels = [m["label"] for m in response.context["page"]["metrics"]]
-        self.assertIn("Expected sales", labels)
-        self.assertIn("Expected profit", labels)
-        self.assertIn("Actual profit", labels)
+        self.assertIn("Cashier", labels)
+        self.assertIn("Status", labels)
+        self.assertIn("Session start", labels)
+        self.assertIn("Session end", labels)
 
     def test_sales_profit_pending_uncounted_in_confirmed_mode(self):
         """With the "confirmed" pick, still-pending receipts add to expected."""

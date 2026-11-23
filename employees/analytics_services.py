@@ -11970,9 +11970,6 @@ def build_day_session_report_page(
     shelf_stock_sec = day_report_section_enabled(
         profile, "day_report_sec_shelf_stock"
     )
-    sales_profit_sec = day_report_section_enabled(
-        profile, "day_report_sec_sales_profit"
-    )
     sales_profit = day_session_sales_profit(
         summary=summary,
         details=details,
@@ -11980,8 +11977,20 @@ def build_day_session_report_page(
         shelf_stock=shelf_stock_sec,
     )
 
+    # Header strip stays identity-only — every figure lives in the
+    # Expected vs actual / Money flow tables below.
     metrics = [
         _metric("Cashier", opened_by),
+        _metric(
+            "Status",
+            "Open" if is_open else "Closed",
+            hint=(
+                "Live preview — still counting"
+                if is_open
+                else ""
+            ),
+            tone="warn" if is_open else "good",
+        ),
         _metric("Session start", f"{opened_local:%d %b %Y · %H:%M}"),
         _metric(
             "Session end",
@@ -11990,116 +11999,9 @@ def build_day_session_report_page(
                 if closed_local
                 else "Still open"
             ),
-            hint=(
-                "Live preview — still counting"
-                if is_open
-                else (f"Closed by {closed_by}" if closed_by != "—" else "")
-            ),
-            tone="warn" if is_open else "good",
+            hint=(f"Closed by {closed_by}" if closed_by != "—" else ""),
         ),
     ]
-    if day_report_section_enabled(profile, "day_report_sec_money_flow"):
-        sales_hint = f"{sales_count} receipt{'s' if sales_count != 1 else ''}"
-        if sales_scope_label:
-            sales_hint += f" · {sales_scope_label.lower()}"
-        metrics.append(
-            _metric(
-                "Sales generated",
-                _money_ksh(summary.get("sales_total")),
-                hint=sales_hint,
-            )
-        )
-    if sales_profit_sec:
-        metrics.append(
-            _metric(
-                "Expected sales",
-                _money_ksh(sales_profit["expected_sales"]),
-                hint="counted + pending + credit + gifts",
-            )
-        )
-    if day_report_section_enabled(profile, "day_report_sec_prepayments"):
-        prepay_count = int(summary.get("prepayments_count") or 0)
-        metrics.append(
-            _metric(
-                "Customer prepayments",
-                _money_ksh(summary.get("prepayments_total")),
-                hint=(
-                    f"{prepay_count} payment"
-                    f"{'s' if prepay_count != 1 else ''} received"
-                ),
-            )
-        )
-    if day_report_section_enabled(profile, "day_report_sec_expenses"):
-        unpaid_expenses = sales_profit["expenses_unpaid"]
-        metrics.append(
-            _metric(
-                "Expenses paid",
-                _money_ksh(summary.get("expenses_paid")),
-            )
-        )
-    stock_head_groups = (
-        (details.get("stock_purchases") or [] if item_stock_sec else [])
-        + (details.get("shelf_purchases") or [] if shelf_stock_sec else [])
-    )
-    if stock_head_groups:
-        stock_unpaid = sales_profit["stock_unpaid"]
-        metrics.append(
-            _metric(
-                "Stock purchased — paid",
-                _money_ksh(summary.get("suppliers_paid")),
-            )
-        )
-    if day_report_section_enabled(
-        profile, "day_report_sec_not_till"
-    ) and getattr(pos, "enable_credit", False):
-        metrics.append(
-            _metric(
-                "Unpaid credit sales",
-                _money_ksh(
-                    (details.get("credit_sales") or {}).get("due")
-                ),
-            )
-        )
-    if day_report_section_enabled(
-        profile, "day_report_sec_gift"
-    ) and getattr(pos, "enable_gift", True):
-        metrics.append(
-            _metric(
-                "Gift items issued",
-                _money_ksh((details.get("gifts") or {}).get("total")),
-            )
-        )
-    if day_report_section_enabled(profile, "day_report_sec_expenses"):
-        metrics.append(
-            _metric("Unpaid expenses", _money_ksh(unpaid_expenses))
-        )
-    if stock_head_groups:
-        metrics.append(
-            _metric("Unpaid stock purchased", _money_ksh(stock_unpaid))
-        )
-    if sales_profit_sec:
-        metrics += [
-            _metric(
-                "Expected profit",
-                _money_ksh(sales_profit["expected_profit"]),
-                hint="expected sales − all costs + prepayments",
-                tone=(
-                    "good"
-                    if sales_profit["expected_profit"] >= _zero()
-                    else "bad"
-                ),
-            ),
-            _metric(
-                "Actual profit",
-                _money_ksh(sales_profit["actual_profit"]),
-                hint="counted sales − paid costs + prepayments",
-                tone=(
-                    "good"
-                    if sales_profit["actual_profit"] >= _zero()
-                    else "bad"
-                ),
-            ),
-        ]
 
     channel_cols = day_report_channel_columns(
         summary=summary, channels=channels

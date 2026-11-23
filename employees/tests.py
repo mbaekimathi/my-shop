@@ -1582,8 +1582,8 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertEqual(sellers["rows"][0][3], "KSh 250.00")
         metric_labels = [m["label"] for m in page["metrics"]]
         self.assertIn("Cashier", metric_labels)
+        self.assertIn("Status", metric_labels)
         self.assertIn("Session start", metric_labels)
-        self.assertIn("Sales generated", metric_labels)
         end = next(
             m for m in page["metrics"] if m["label"] == "Session end"
         )
@@ -1606,7 +1606,7 @@ class AnalyticsDaySessionReportTests(TestCase):
         )["page"]
         metric_labels = [m["label"] for m in page["metrics"]]
         self.assertIn("Cashier", metric_labels)
-        self.assertIn("Sales generated", metric_labels)
+        self.assertIn("Status", metric_labels)
         end = next(
             m for m in page["metrics"] if m["label"] == "Session end"
         )
