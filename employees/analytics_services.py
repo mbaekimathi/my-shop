@@ -9731,6 +9731,9 @@ def _day_balance_data(filters) -> dict:
         cash_sales = _zero()
         mpesa_sales = _zero()
         card_sales = _zero()
+        elsewhere_cash = _zero()
+        elsewhere_mpesa = _zero()
+        elsewhere_card = _zero()
         for sale in sales_by_shop.get(session.shop_id, []):
             when = sale["created_at"]
             if window_start <= when < window_end:
@@ -9743,6 +9746,13 @@ def _day_balance_data(filters) -> dict:
                 cash_sales += cash
                 mpesa_sales += mpesa
                 card_sales += card
+                cleared_at = sale.get("confirmed_payment_at")
+                if cleared_at is not None and not (
+                    window_start <= cleared_at < window_end
+                ):
+                    elsewhere_cash += cash
+                    elsewhere_mpesa += mpesa
+                    elsewhere_card += card
 
         cash_refunds = _zero()
         mpesa_refunds = _zero()
@@ -9836,11 +9846,14 @@ def _day_balance_data(filters) -> dict:
         opening_mpesa = Decimal(session.opening_mpesa or 0)
         opening_card = Decimal(getattr(session, "opening_card", None) or 0)
         # Cleared-pending money stays outside Expected — it belongs to an
-        # earlier session's sale, so it surfaces as excess on the session
-        # that collected it (and a matching deficit on the printer's side).
+        # earlier session's sale, so it sits aside above Expected on the
+        # session that collected it. Receipts this session printed but a
+        # later session collected are deducted from this Expected (the
+        # money moved to the collecting till).
         expected_cash = (
             opening_cash
             + cash_sales
+            - elsewhere_cash
             + credit_cash
             + trade_in_cash
             - cash_refunds
@@ -9852,6 +9865,7 @@ def _day_balance_data(filters) -> dict:
         expected_mpesa = (
             opening_mpesa
             + mpesa_sales
+            - elsewhere_mpesa
             + credit_mpesa
             + trade_in_mpesa
             - mpesa_refunds
@@ -9861,6 +9875,7 @@ def _day_balance_data(filters) -> dict:
         expected_card = (
             opening_card
             + card_sales
+            - elsewhere_card
             + credit_card
             + trade_in_card
             - card_refunds
@@ -12137,6 +12152,24 @@ def build_day_session_report_page(
             row_class="ax-flow-row--expected",
         ),
     ]
+    # Pending receipts this session printed but a later session collected:
+    # the money moved to that till, so it is deducted from this Expected —
+    # the deficit is cleared, the notice row below names the collector.
+    if summary.get("cleared_elsewhere_count"):
+        flow_rows.insert(
+            -1,
+            _flow_row(
+                f"Pending cleared in later sessions "
+                f"({summary.get('cleared_elsewhere_count') or 0})",
+                {
+                    "cash": summary.get("cleared_elsewhere_cash"),
+                    "mpesa": summary.get("cleared_elsewhere_mpesa"),
+                    "card": summary.get("cleared_elsewhere_card"),
+                },
+                summary.get("cleared_elsewhere_total"),
+                minus=True,
+            ),
+        )
     if not is_open:
         flow_rows.append(
             _flow_row(
@@ -12170,10 +12203,10 @@ def build_day_session_report_page(
             }
         )
     # Cross-session pending clears, per cashier: receipts this session
-    # printed but a later session collected stay in this Expected — the
-    # deficit — while money collected here on another session's behalf sits
-    # above Expected — the excess. Neither row is part of the build-up.
-    # Each names the cashier on the other side of the hand-off.
+    # printed but a later session collected were deducted from Expected in
+    # the build-up — the deficit is cleared, the note only names who
+    # collected the money; money collected here on another session's behalf
+    # sits aside above Expected. Neither row is part of the build-up.
     def _party_names(rows, key):
         names = []
         for row in rows:
@@ -12188,37 +12221,37 @@ def build_day_session_report_page(
     collected_for_names = _party_names(
         details.get("cleared_pending") or [], "seller"
     )
-    # Only the side that applies shows: the deficit on the printing
-    # session's page, the excess on the collecting session's page.
+    # Only the side that applies shows: the collected-by notice on the
+    # printing session's page, the set-aside on the collecting session's.
     if summary.get("cleared_elsewhere_count"):
-        deficit_label = (
-            f"Deficit — pending cleared in later sessions "
+        note_label = (
+            f"Pending cleared in later sessions "
             f"({summary.get('cleared_elsewhere_count') or 0})"
         )
         if elsewhere_names:
-            deficit_label += f" — collected by {elsewhere_names}"
+            note_label += f" — collected by {elsewhere_names}"
         flow_rows.append(
             _flow_row(
-                deficit_label,
+                note_label,
                 {
                     "cash": summary.get("cleared_elsewhere_cash"),
                     "mpesa": summary.get("cleared_elsewhere_mpesa"),
                     "card": summary.get("cleared_elsewhere_card"),
                 },
                 summary.get("cleared_elsewhere_total"),
-                row_class="ax-flow-row--deficit",
+                row_class="ax-flow-row--note",
             )
         )
     if summary.get("cleared_pending_count"):
-        excess_label = (
-            f"Excess — cleared pending receipts "
+        aside_label = (
+            f"Set aside — cleared pending receipts "
             f"({summary.get('cleared_pending_count') or 0})"
         )
         if collected_for_names:
-            excess_label += f" — collected for {collected_for_names}"
+            aside_label += f" — collected for {collected_for_names}"
         flow_rows.append(
             _flow_row(
-                excess_label,
+                aside_label,
                 {
                     "cash": summary.get("cleared_pending_cash"),
                     "mpesa": summary.get("cleared_pending_mpesa"),
@@ -12257,9 +12290,10 @@ def build_day_session_report_page(
     money_footnote = (
         "Expected in till = opening + sales + credit and trade collections "
         "+ prepayments − returns − expenses − stock bought − drawings − "
-        "trade-in payouts. A pending receipt cleared in another session "
-        "stays in this Expected — the deficit; money cleared here for an "
-        "earlier session sits outside Expected — the excess. "
+        "trade-in payouts − pending cleared in later sessions. A pending "
+        "receipt cleared in another session leaves this Expected — the "
+        "Collected-by note names who has the money; money cleared here "
+        "for an earlier session sits outside Expected — set aside. "
         "Variance = counted − expected."
     )
 
@@ -12443,8 +12477,8 @@ def build_day_session_report_page(
                 f"{len(cleared_pending)} receipt"
                 f"{'s' if len(cleared_pending) != 1 else ''} · "
                 f"{_money_ksh(cleared_total)} — printed in an earlier "
-                "session, confirmed and collected into this till; held "
-                "above Expected as excess."
+                "session, confirmed and collected into this till; set "
+                "aside above Expected."
             )
             if cleared_pending
             else "",
@@ -12484,8 +12518,8 @@ def build_day_session_report_page(
                 f"{len(cleared_elsewhere)} receipt"
                 f"{'s' if len(cleared_elsewhere) != 1 else ''} · "
                 f"{_money_ksh(elsewhere_total)} — printed in this session, "
-                "confirmed and collected into a later till; this cashier's "
-                "deficit."
+                "confirmed and collected into a later till; that cashier "
+                "holds the money and this Expected is reduced by it."
             )
             if cleared_elsewhere
             else "",

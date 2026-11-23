@@ -951,22 +951,23 @@ class ClearedPendingCollectionTests(TestCase):
         first.refresh_from_db()
         first_summary = day_session_balance_summary(first)
         self.assertEqual(first_summary["cleared_pending_total"], Decimal("0"))
-        # Printed inside session one — the sale AND the money expectation
-        # stay on its ledger: the till expected it, so the amount cleared
-        # into a later session's till is this cashier's deficit.
+        # Printed inside session one — the sale stays on its ledger, but
+        # the money moved to the later till: the cleared amount is
+        # deducted from this Expected so the deficit clears, and the
+        # report only notes who collected it.
         self.assertEqual(first_summary["cash_sales"], Decimal("100"))
         self.assertEqual(
             first_summary["cleared_elsewhere_total"], Decimal("100")
         )
         self.assertEqual(
             first_summary["expected_cash"],
-            Decimal(first.opening_cash or 0) + Decimal("100"),
+            Decimal(first.opening_cash or 0),
         )
-        self.assertEqual(first_summary["cash_variance"], Decimal("-100"))
+        self.assertEqual(first_summary["cash_variance"], Decimal("0"))
 
         summary = day_session_balance_summary(second)
         self.assertEqual(summary["cleared_pending_total"], Decimal("100"))
-        # Collected into this till but outside Expected — the excess.
+        # Collected into this till but outside Expected — set aside.
         self.assertEqual(
             summary["expected_cash"], Decimal(second.opening_cash or 0)
         )
@@ -1010,9 +1011,9 @@ class ClearedPendingCollectionTests(TestCase):
             any("collected by Cleared Cashier" in row for row in first_flow),
             first_flow,
         )
-        # The excess side must not leak onto the printer's page.
+        # The set-aside side must not leak onto the printer's page.
         self.assertFalse(
-            any("Excess — cleared pending" in row for row in first_flow),
+            any("Set aside — cleared pending" in row for row in first_flow),
             first_flow,
         )
         second_page = build_day_session_report_page(
@@ -1026,9 +1027,9 @@ class ClearedPendingCollectionTests(TestCase):
             any("collected for Cleared Cashier" in row for row in second_flow),
             second_flow,
         )
-        # And the deficit side stays off the collector's page.
+        # And the collected-by note stays off the collector's page.
         self.assertFalse(
-            any("Deficit — pending cleared" in row for row in second_flow),
+            any("collected by" in row for row in second_flow),
             second_flow,
         )
 

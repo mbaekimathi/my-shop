@@ -1535,28 +1535,32 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `day_session_balance_summary`, `list_shop_day_sessions` and
   `_day_balance_data` so the Cashiers list and the session drill-down
   reconcile.
-- **Cleared pending = printer's deficit, collector's excess**: a pending
-  SALE receipt keeps its expected *sale* AND its money expectation on the
-  printing session's ledger (`created_at` never moves — items sold,
-  sellers, sales count, Expected sales and Expected in till all stay with
-  the cashier who printed it), while `cleared_pending_*` never feeds the
-  collecting session's `expected_*`. Net effect: the printing cashier's
-  session shows a **deficit** (negative variance — the money it should
-  have collected) and the collecting session shows the same amount as
-  **excess** (positive variance). `_session_activity_totals` sums the
-  out-of-window tender into `cleared_elsewhere_*` for display only, and
+- **Cleared pending = money moves to the collecting till**: a pending
+  SALE receipt keeps its expected *sale* on the printing session's
+  ledger (`created_at` never moves — items sold, sellers, sales count
+  and Expected sales all stay with the cashier who printed it), but
+  its tender is deducted from the printing session's `expected_*`
+  (`cleared_elsewhere_*` is subtracted in `_session_activity_totals`),
+  while `cleared_pending_*` never feeds the collecting session's
+  `expected_*`. Net effect: the printing session's variance is clean
+  (the deficit is cleared — the money is owed by the collecting till)
+  and the collecting session shows the same amount **set aside**
+  (positive variance — extra money held for the printer). The money
+  flow shows a minus row "Pending cleared in later sessions" inside
+  the build-up plus a post-Variance note row naming the collector
+  ("… — collected by X") on the printer's report, and "Set aside —
+  cleared pending receipts (… — collected for X)" on the collector's.
   `day_session_report_details` returns `cleared_elsewhere` rows —
   per-receipt print/clear timestamps, the printer (`seller`) and the
   collecting session's cashier (`cleared_by`, resolved as the
   `opened_by` of the session whose activity window holds
-  `confirmed_payment_at`). Both surface as post-Variance memo rows
-  ("Deficit — pending cleared in later sessions" / "Excess — cleared
-  pending receipts") plus detail tables under `day_report_sec_cleared` on
-  the page and the A4 PDF; the collecting side's table keeps "Sold by" =
-  the printing cashier. Same-session confirms stay ordinary sales;
-  an entered `paid_at` inside the printing window lands back on the
-  printer (no deficit/excess). `_day_balance_data` applies the same
-  expected rules so shop-level day balances agree.
+  `confirmed_payment_at`) — as detail tables under
+  `day_report_sec_cleared` on the page and the A4 PDF; the collecting
+  side's table keeps "Sold by" = the printing cashier. Same-session
+  confirms stay ordinary sales; an entered `paid_at` inside the
+  printing window lands back on the printer (nothing moves).
+  `_day_balance_data` applies the same expected rules so shop-level
+  day balances agree.
 - How-many-paid / conversion data: `settled_from_credit` + the paid stamp
   on the receipt, `ClientCreditAccountEvent` audit rows (meta.cleared),
   the analytics Paid cash/M-Pesa/card/total columns, and the
