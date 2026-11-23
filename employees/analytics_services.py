@@ -12287,6 +12287,19 @@ def build_day_session_report_page(
             return "—"
         return {"label": name or "—", "sub": phone}
 
+    receipt_status_tone = {
+        ShopReceiptStatus.ACTIVE: "warn",
+        ShopReceiptStatus.PARTIAL_RETURN: "warn",
+        ShopReceiptStatus.CANCELLED: "bad",
+    }
+
+    def _receipt_status_cell(status, label):
+        return {
+            "kind": "status",
+            "label": label or "—",
+            "tone": receipt_status_tone.get(status, "good"),
+        }
+
     money_footnote = (
         "Expected in till = opening + sales + credit and trade collections "
         "+ prepayments − returns − expenses − stock bought − drawings − "
@@ -12404,6 +12417,28 @@ def build_day_session_report_page(
             ],
         },
     ]
+    if getattr(pos, "enable_gift", True):
+        expected_actual_rows.insert(
+            1,
+            [
+                {
+                    "label": "Gifts issued",
+                    "sub": (
+                        f"{sales_profit['gift_count']} docs · "
+                        "free — no payment collected"
+                    ),
+                },
+                _money_cell(sales_profit["gift_total"]),
+                _money_cell(None),
+                _money_cell(
+                    sales_profit["gift_total"],
+                    title=(
+                        "Free issue — never collected; "
+                        "inside Expected sales"
+                    ),
+                ),
+            ],
+        )
 
     tables = [
         _table(
@@ -12471,7 +12506,7 @@ def build_day_session_report_page(
                 "Cleared",
                 "Receipt",
                 "Sold by",
-                "Items",
+                "Status",
                 {"label": "Amount", "money": True},
             ],
             [
@@ -12482,7 +12517,7 @@ def build_day_session_report_page(
                         "sub": f"Printed {_printed_label(row['printed_at'])}",
                     },
                     row["seller"],
-                    row["items_label"],
+                    _receipt_status_cell(row["status"], row["status_label"]),
                     _money_ksh(row["total"]),
                 ]
                 for row in cleared_pending
@@ -12514,6 +12549,7 @@ def build_day_session_report_page(
                 "Cleared",
                 "Receipt",
                 "Cleared by",
+                "Status",
                 {"label": "Amount", "money": True},
             ],
             [
@@ -12524,6 +12560,7 @@ def build_day_session_report_page(
                         "sub": f"Printed {_printed_label(row['printed_at'])}",
                     },
                     row["cleared_by"],
+                    _receipt_status_cell(row["status"], row["status_label"]),
                     _money_ksh(row["total"]),
                 ]
                 for row in cleared_elsewhere
@@ -12732,10 +12769,6 @@ def build_day_session_report_page(
     not_till_by_key = {
         line["key"]: line for line in not_till.get("lines") or []
     }
-    credit_gift_tone = {
-        ShopReceiptStatus.ACTIVE: "warn",
-        ShopReceiptStatus.CANCELLED: "bad",
-    }
 
     def _receipt_rows(kind):
         rows = []
@@ -12746,11 +12779,7 @@ def build_day_session_report_page(
                 [
                     {"label": row["number"], "sub": _time(row["at"])},
                     row["seller"],
-                    {
-                        "kind": "status",
-                        "label": row["status_label"],
-                        "tone": credit_gift_tone.get(row["status"], "good"),
-                    },
+                    _receipt_status_cell(row["status"], row["status_label"]),
                     _money_ksh(row["total"]),
                 ]
             )
