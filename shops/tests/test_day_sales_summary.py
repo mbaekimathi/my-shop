@@ -951,12 +951,21 @@ class ClearedPendingCollectionTests(TestCase):
         first.refresh_from_db()
         first_summary = day_session_balance_summary(first)
         self.assertEqual(first_summary["cleared_pending_total"], Decimal("0"))
-        # Printed inside session one — stays on its ledger.
+        # Printed inside session one — the sale stays on its ledger, but the
+        # money was collected elsewhere so it leaves its expected till.
         self.assertEqual(first_summary["cash_sales"], Decimal("100"))
+        self.assertEqual(first_summary["cleared_elsewhere_total"], Decimal("100"))
+        self.assertEqual(
+            first_summary["expected_cash"],
+            Decimal(first.opening_cash or 0),
+        )
 
         summary = day_session_balance_summary(second)
         self.assertEqual(summary["cleared_pending_total"], Decimal("100"))
-        self.assertEqual(summary["expected_cash"], Decimal("1100"))
+        # Collected into this till but outside Expected — the excess.
+        self.assertEqual(
+            summary["expected_cash"], Decimal(second.opening_cash or 0)
+        )
 
         details = day_session_report_details(second)
         rows = details["cleared_pending"]

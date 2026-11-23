@@ -8149,7 +8149,9 @@ def _session_cleared_pending_sales(*, shop_id, start, end, counted_statuses=None
 
     These are receipts a previous session showed as pending — the money is
     tendered when the receipt clears (`confirmed_payment_at`), so it lands in
-    the session that collected it, not the session that printed it.
+    the session that collected it, not the session that printed it. The
+    collecting session holds it above Expected (excess); the printing
+    session keeps the sale but drops the money expectation.
     """
     from .models import ShopReceipt
 
@@ -8301,14 +8303,18 @@ def _session_activity_totals(
 ) -> dict:
     """Cash/M-Pesa sales and paid outflows inside a day session window.
 
-    Cashbox expected cash = opening cash + cash sales + cleared pending
-    receipts + credit/trade collections + customer prepayments (cash)
-    − return refunds − expenses paid − owner drawings (cash)
-    − suppliers paid − trade-in payouts. M-Pesa/card follow the same shape.
-    Owner drawings are equity, not operating expense.
+    Cashbox expected cash = opening cash + cash sales − pending receipts
+    cleared in later sessions + credit/trade collections + customer
+    prepayments (cash) − return refunds − expenses paid − owner drawings
+    (cash) − suppliers paid − trade-in payouts. M-Pesa/card follow the same
+    shape. Owner drawings are equity, not operating expense.
 
-    Sales use original tender (including later-returned receipts). Refunds are
-    subtracted on the day the return happened.
+    Sales use original tender (including later-returned receipts). A pending
+    receipt confirmed in a *different* session keeps its sale on the printing
+    session's ledger but its money moves to the collecting till — so it is
+    deducted from this session's expectation and shows as excess (positive
+    variance) in the session that cleared it. Refunds are subtracted on the
+    day the return happened.
     """
     from .models import ExpenseCategory
 
@@ -8317,6 +8323,10 @@ def _session_activity_totals(
     cash_sales = Decimal("0.00")
     mpesa_sales = Decimal("0.00")
     card_sales = Decimal("0.00")
+    elsewhere_cash = Decimal("0.00")
+    elsewhere_mpesa = Decimal("0.00")
+    elsewhere_card = Decimal("0.00")
+    elsewhere_count = 0
     cash_refunds = Decimal("0.00")
     mpesa_refunds = Decimal("0.00")
     card_refunds = Decimal("0.00")
@@ -8359,6 +8369,15 @@ def _session_activity_totals(
             cash_sales += cash
             mpesa_sales += mpesa
             card_sales += card
+            cleared_at = sale.get("confirmed_payment_at")
+            # Pending receipt confirmed outside this window — the money was
+            # collected into another session's till, so it leaves this
+            # session's expectation (the sale itself stays on this ledger).
+            if cleared_at is not None and not (opened <= cleared_at < closed):
+                elsewhere_cash += cash
+                elsewhere_mpesa += mpesa
+                elsewhere_card += card
+                elsewhere_count += 1
 
     for event in refunds or []:
         when = event.get("at")
@@ -8473,10 +8492,13 @@ def _session_activity_totals(
     opening_mpesa = Decimal(session.opening_mpesa or 0)
     opening_card = Decimal(getattr(session, "opening_card", None) or 0)
     opening_credit = Decimal(session.opening_credit or 0)
+    # Cleared-pending money is collected into this till but stays outside
+    # Expected — it belongs to an earlier session's sale, so it surfaces as
+    # excess (positive variance) rather than a silent expectation.
     expected_cash = (
         opening_cash
         + cash_sales
-        + cleared_cash
+        - elsewhere_cash
         + credit_cash
         + trade_collected_cash
         + prepayments_cash
@@ -8489,7 +8511,7 @@ def _session_activity_totals(
     expected_mpesa = (
         opening_mpesa
         + mpesa_sales
-        + cleared_mpesa
+        - elsewhere_mpesa
         + credit_mpesa
         + trade_collected_mpesa
         + prepayments_mpesa
@@ -8500,7 +8522,7 @@ def _session_activity_totals(
     expected_card = (
         opening_card
         + card_sales
-        + cleared_card
+        - elsewhere_card
         + credit_card
         + trade_collected_card
         + prepayments_card
@@ -8556,6 +8578,11 @@ def _session_activity_totals(
         "mpesa_refunds": mpesa_refunds,
         "card_refunds": card_refunds,
         "sales_total": cash_sales + mpesa_sales + card_sales,
+        "cleared_elsewhere_cash": elsewhere_cash,
+        "cleared_elsewhere_mpesa": elsewhere_mpesa,
+        "cleared_elsewhere_card": elsewhere_card,
+        "cleared_elsewhere_total": elsewhere_cash + elsewhere_mpesa + elsewhere_card,
+        "cleared_elsewhere_count": elsewhere_count,
         "cleared_pending_cash": cleared_cash,
         "cleared_pending_mpesa": cleared_mpesa,
         "cleared_pending_card": cleared_card,
@@ -8673,6 +8700,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             created_at__lt=max_closed,
         ).values(
             "created_at",
+            "confirmed_payment_at",
             "cash_amount",
             "mpesa_amount",
             "card_amount",
@@ -8825,6 +8853,7 @@ def day_session_balance_summary(
     sales = list(
         sales_qs.values(
             "created_at",
+            "confirmed_payment_at",
             "cash_amount",
             "mpesa_amount",
             "card_amount",
@@ -10402,11 +10431,12 @@ def build_shop_day_report_pdf(
             summary.get("sales_total"),
         ),
         _money_row(
-            f"Cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
-            summary.get("cleared_pending_cash"),
-            summary.get("cleared_pending_mpesa"),
-            summary.get("cleared_pending_card"),
-            summary.get("cleared_pending_total"),
+            f"Pending cleared in later sessions ({summary.get('cleared_elsewhere_count') or 0})",
+            summary.get("cleared_elsewhere_cash"),
+            summary.get("cleared_elsewhere_mpesa"),
+            summary.get("cleared_elsewhere_card"),
+            summary.get("cleared_elsewhere_total"),
+            minus=True,
         ),
         _money_row(
             f"Credit payments collected ({summary.get('credit_collected_count') or 0})",
@@ -10501,6 +10531,17 @@ def build_shop_day_report_pdf(
             )
         )
         strong_rows.update({len(rows) - 1, len(rows)})
+    # Collected on behalf of earlier sessions — sits above Expected as the
+    # excess, outside the build-up.
+    rows.append(
+        _money_row(
+            f"Excess — cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
+            summary.get("cleared_pending_cash"),
+            summary.get("cleared_pending_mpesa"),
+            summary.get("cleared_pending_card"),
+            summary.get("cleared_pending_total"),
+        )
+    )
     credit_payments = details.get("credit_payments") or {}
     credit_pay_rows = credit_payments.get("rows") or []
     credit_payments_sec = getattr(

@@ -1529,12 +1529,30 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   picks up pending SALE receipts printed before the session and confirmed
   inside it (`created_at < start <= confirmed_payment_at`), and
   `_session_trade_payments` parses `trade_settlements` events the same way
-  (trade-out collected = money in, trade-in payout = money out). All three
-  feed `credit_collected_*` / `cleared_pending_*` / `trade_collected_*` /
+  (trade-out collected = money in, trade-in payout = money out). Credit
+  and trade money feeds `credit_collected_*` / `trade_collected_*` /
   `trade_paid_*` in `_session_activity_totals` → `expected_*` — wired into
   `day_session_balance_summary`, `list_shop_day_sessions` and
   `_day_balance_data` so the Cashiers list and the session drill-down
   reconcile.
+- **Cleared pending = excess in the clearing session**: a pending SALE
+  receipt keeps its expected *sale* on the printing session's ledger
+  (`created_at` never moves — items sold, sellers, sales count and
+  Expected sales all stay with the cashier who printed it), but its
+  money moves wholesale to the collecting session: `_session_activity_totals`
+  sums the tender of in-window receipts whose `confirmed_payment_at` fell
+  outside the window into `cleared_elsewhere_*` and **deducts** it from
+  `expected_*` (money-flow row "Pending cleared in later sessions"), while
+  `cleared_pending_*` no longer feeds `expected_*` at all — so the
+  printing cashier's balance is cleared and the collecting session shows
+  the money as **excess** (positive variance), surfaced as a post-Variance
+  "Excess — cleared pending receipts" memo row on the page + A4 PDF and
+  listed by the "Cleared pending receipts" detail table (Sold by = the
+  printing cashier). Same-session confirms stay ordinary sales
+  (`confirmed_payment_at` inside the window → never elsewhere/cleared);
+  an entered `paid_at` inside the printing window also lands back on the
+  printer. `_day_balance_data` applies the same rules so shop-level day
+  balances agree.
 - How-many-paid / conversion data: `settled_from_credit` + the paid stamp
   on the receipt, `ClientCreditAccountEvent` audit rows (meta.cleared),
   the analytics Paid cash/M-Pesa/card/total columns, and the
@@ -1544,8 +1562,9 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   totals + `receipts_converted`) from the window's PAYMENT_* events,
   `cleared_pending` (printed + cleared timestamps per receipt) and
   `trade_payments`; `build_day_session_report_page` adds matching
-  money-flow rows (Credit payments collected / Cleared pending receipts /
-  Trade payments collected / Trade-in payouts) plus detail tables —
+  money-flow rows (Credit payments collected / Excess — cleared pending
+  receipts / Trade payments collected / Trade-in payouts) plus detail
+  tables —
   credit payments get a Printed column and their own
   `day_report_sec_credit_payments` toggle, cleared-pending + trade
   settlements sit under `day_report_sec_cleared` ("Cleared pending &

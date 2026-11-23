@@ -9635,7 +9635,6 @@ def _day_balance_data(filters) -> dict:
     refunds_by_shop: dict[int, list] = defaultdict(list)
     expenses_by_shop: dict[int, list] = defaultdict(list)
     suppliers_by_shop: dict[int, list] = defaultdict(list)
-    cleared_by_shop: dict[int, list] = defaultdict(list)
     credit_by_shop: dict[int, list] = defaultdict(list)
     trade_by_shop: dict[int, list] = defaultdict(list)
     if activity_sessions:
@@ -9670,38 +9669,13 @@ def _day_balance_data(filters) -> dict:
         for row in day_sales_qs.values(
             "shop_id",
             "created_at",
-            "cash_amount",
-            "mpesa_amount",
-            "card_amount",
-            "return_payment_events",
-        ):
-            sales_by_shop[row["shop_id"]].append(row)
-        cleared_qs = ShopReceipt.objects.filter(
-            shop_id__in=shop_ids,
-            kind=ShopReceiptKind.SALE,
-            settled_from_credit=False,
-            settled_from_trade=False,
-            status__in=(
-                ShopReceiptStatus.CONFIRMED,
-                ShopReceiptStatus.PARTIAL_RETURN,
-            ),
-            created_at__lt=max_closed,
-            confirmed_payment_at__gte=min_opened,
-            confirmed_payment_at__lt=max_closed,
-        )
-        cleared_qs = _apply_analytics_receipt_status(
-            cleared_qs, filters.get("receipt_status")
-        )
-        for row in cleared_qs.values(
-            "shop_id",
-            "created_at",
             "confirmed_payment_at",
             "cash_amount",
             "mpesa_amount",
             "card_amount",
             "return_payment_events",
         ):
-            cleared_by_shop[row["shop_id"]].append(row)
+            sales_by_shop[row["shop_id"]].append(row)
         from shops.services import (
             _session_credit_collections,
             _session_trade_payments,
@@ -9753,6 +9727,9 @@ def _day_balance_data(filters) -> dict:
         cash_sales = _zero()
         mpesa_sales = _zero()
         card_sales = _zero()
+        elsewhere_cash = _zero()
+        elsewhere_mpesa = _zero()
+        elsewhere_card = _zero()
         for sale in sales_by_shop.get(session.shop_id, []):
             when = sale["created_at"]
             if window_start <= when < window_end:
@@ -9765,6 +9742,15 @@ def _day_balance_data(filters) -> dict:
                 cash_sales += cash
                 mpesa_sales += mpesa
                 card_sales += card
+                cleared_at = sale.get("confirmed_payment_at")
+                # Confirmed in a later session — the money was collected
+                # into that session's till, not this one.
+                if cleared_at is not None and not (
+                    window_start <= cleared_at < window_end
+                ):
+                    elsewhere_cash += cash
+                    elsewhere_mpesa += mpesa
+                    elsewhere_card += card
 
         cash_refunds = _zero()
         mpesa_refunds = _zero()
@@ -9806,28 +9792,6 @@ def _day_balance_data(filters) -> dict:
             when = payment["created_at"]
             if window_start <= when < window_end:
                 suppliers_paid += Decimal(payment["amount_paid"] or 0)
-
-        cleared_cash = _zero()
-        cleared_mpesa = _zero()
-        cleared_card = _zero()
-        for row in cleared_by_shop.get(session.shop_id, []):
-            when = row.get("confirmed_payment_at")
-            created = row.get("created_at")
-            if (
-                when is not None
-                and created is not None
-                and window_start <= when < window_end
-                and created < window_start
-            ):
-                cash, mpesa, card = _receipt_original_tender(
-                    row.get("cash_amount"),
-                    row.get("mpesa_amount"),
-                    row.get("return_payment_events"),
-                    card_amount=row.get("card_amount"),
-                )
-                cleared_cash += cash
-                cleared_mpesa += mpesa
-                cleared_card += card
 
         credit_cash = _zero()
         credit_mpesa = _zero()
@@ -9879,10 +9843,13 @@ def _day_balance_data(filters) -> dict:
         opening_cash = Decimal(session.opening_cash or 0)
         opening_mpesa = Decimal(session.opening_mpesa or 0)
         opening_card = Decimal(getattr(session, "opening_card", None) or 0)
+        # Cleared-pending money stays outside Expected — it belongs to an
+        # earlier session's sale, so it surfaces as excess on the session
+        # that collected it.
         expected_cash = (
             opening_cash
             + cash_sales
-            + cleared_cash
+            - elsewhere_cash
             + credit_cash
             + trade_in_cash
             - cash_refunds
@@ -9894,7 +9861,7 @@ def _day_balance_data(filters) -> dict:
         expected_mpesa = (
             opening_mpesa
             + mpesa_sales
-            + cleared_mpesa
+            - elsewhere_mpesa
             + credit_mpesa
             + trade_in_mpesa
             - mpesa_refunds
@@ -9904,7 +9871,7 @@ def _day_balance_data(filters) -> dict:
         expected_card = (
             opening_card
             + card_sales
-            + cleared_card
+            - elsewhere_card
             + credit_card
             + trade_in_card
             - card_refunds
@@ -12196,13 +12163,14 @@ def build_day_session_report_page(
             summary.get("sales_total"),
         ),
         _flow_row(
-            f"Cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
+            f"Pending cleared in later sessions ({summary.get('cleared_elsewhere_count') or 0})",
             {
-                "cash": summary.get("cleared_pending_cash"),
-                "mpesa": summary.get("cleared_pending_mpesa"),
-                "card": summary.get("cleared_pending_card"),
+                "cash": summary.get("cleared_elsewhere_cash"),
+                "mpesa": summary.get("cleared_elsewhere_mpesa"),
+                "card": summary.get("cleared_elsewhere_card"),
             },
-            summary.get("cleared_pending_total"),
+            summary.get("cleared_elsewhere_total"),
+            minus=True,
         ),
         _flow_row(
             f"Credit payments collected ({summary.get('credit_collected_count') or 0})",
@@ -12296,6 +12264,19 @@ def build_day_session_report_page(
             _money_cell(total_variance, tone=_variance_tone(total_variance))
         )
         flow_rows.append(variance_cells)
+    # Money collected clearing earlier sessions' pending receipts sits in
+    # this till above Expected — the excess, not part of the build-up.
+    flow_rows.append(
+        _flow_row(
+            f"Excess — cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
+            {
+                "cash": summary.get("cleared_pending_cash"),
+                "mpesa": summary.get("cleared_pending_mpesa"),
+                "card": summary.get("cleared_pending_card"),
+            },
+            summary.get("cleared_pending_total"),
+        )
+    )
     credit_payments = details.get("credit_payments") or {}
     credit_pay_rows = credit_payments.get("rows") or []
     credit_payments_sec = getattr(
@@ -12323,9 +12304,11 @@ def build_day_session_report_page(
         return {"label": name or "—", "sub": phone}
 
     money_footnote = (
-        "Expected in till = opening + sales + cleared pending + credit and "
-        "trade collections + prepayments − returns − expenses − stock "
-        "bought − drawings − trade-in payouts. "
+        "Expected in till = opening + sales − pending cleared in later "
+        "sessions + credit and trade collections + prepayments − returns − "
+        "expenses − stock bought − drawings − trade-in payouts. Pending "
+        "receipts cleared into this session sit outside Expected — the "
+        "money shows as excess. "
         "Variance = counted − expected."
     )
 
@@ -12557,7 +12540,8 @@ def build_day_session_report_page(
                 f"{len(cleared_pending)} receipt"
                 f"{'s' if len(cleared_pending) != 1 else ''} · "
                 f"{_money_ksh(cleared_total)} — printed in an earlier "
-                "session, confirmed and collected into this till."
+                "session, confirmed and collected into this till; held "
+                "above Expected as excess."
             )
             if cleared_pending
             else "",
