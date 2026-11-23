@@ -13364,6 +13364,21 @@ def build_day_session_report_page(
         for t in tables
         if day_report_section_enabled(profile, t.get("section"))
     ]
+    # The essentials stay on the page; everything else folds into the
+    # collapsed "Details" disclosure so the report opens lean.
+    primary_titles = {
+        "Expected vs actual",
+        "Money flow",
+        "Cleared pending receipts",
+        "Pending cleared in later sessions",
+        "Pending & cancelled sales",
+    }
+    primary_tables = [
+        t for t in tables if t.get("title") in primary_titles
+    ]
+    detail_tables = [
+        t for t in tables if t.get("title") not in primary_titles
+    ]
 
     alerts = []
     if is_open:
@@ -13398,6 +13413,8 @@ def build_day_session_report_page(
         "metrics": metrics,
         "insights": [],
         "tables": tables,
+        "primary_tables": primary_tables,
+        "detail_tables": detail_tables,
     }
     if allow_edit:
         from .module_permissions import employee_may

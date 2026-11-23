@@ -10474,3 +10474,63 @@ body.ax-credit-due-open {
 .ax--day-report .ax-card--expected .ax-table th:nth-child(3) {
   color: color-mix(in srgb, var(--teal) 55%, var(--text-strong));
 }
+
+/* Details disclosure — the long tail of report tables folds under one
+   expandable strip so the day report opens lean. */
+.ax--day-report .ax-details {
+  border: 1px dashed color-mix(in srgb, var(--line) 85%, var(--mist-dim));
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface) 94%, transparent),
+      color-mix(in srgb, var(--panel-muted) 55%, var(--surface)));
+  overflow: hidden;
+}
+
+.ax--day-report .ax-details-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 0.9rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-weight: 800;
+  font-size: 0.78rem;
+  color: var(--text-strong);
+}
+
+.ax--day-report .ax-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ax--day-report .ax-details-summary i {
+  width: 0.9rem;
+  height: 0.9rem;
+  color: var(--accent-deep);
+  transition: transform 0.18s ease;
+}
+
+.ax--day-report .ax-details[open] > .ax-details-summary i {
+  transform: rotate(90deg);
+}
+
+.ax--day-report .ax-details-label {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ax--day-report .ax-details-count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+}
+
+.ax--day-report .ax-details-summary:hover {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.ax--day-report .ax-details-grid {
+  padding: 0.75rem;
+  border-top: 1px solid var(--line);
+}
