@@ -117,6 +117,7 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
     if shop is None:
         return {
             "filled_lines": [],
+            "lines": [],
             "groups": [],
             "item_count": 0,
             "filled_count": 0,
@@ -150,6 +151,7 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
     }
 
     groups: OrderedDict[str, list] = OrderedDict()
+    lines = []
     filled_lines = []
     filled = 0
     match_count = 0
@@ -185,6 +187,7 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
             **variance,
         }
         groups.setdefault(category, []).append(line)
+        lines.append(line)
         if physical is not None:
             filled += 1
             if variance["variance_kind"] == "match":
@@ -202,9 +205,12 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
             row["item_id"],
         )
     )
+    # Flat A-Z sheet — the page is one report-style table, not category cards.
+    lines.sort(key=lambda row: ((row["name"] or "").lower(), row["item_id"]))
 
     return {
         "filled_lines": filled_lines,
+        "lines": lines,
         "groups": [
             {
                 "category": category,
@@ -518,31 +524,33 @@ def saved_count_summary(record) -> dict:
 
 _COUNT_HEADERS = [
     "Item",
-    "Category",
     "Counted by",
     "System qty",
     "Counted qty",
     "Variance",
 ]
-_COUNT_NUMERIC_FROM = 3
+_COUNT_NUMERIC_FROM = 2
 
 
 _COUNT_KIND_ORDER = {"excess": 0, "short": 1, "match": 2}
 
 
-def _count_row_cells(lines) -> list:
-    ordered = sorted(
+def _ordered_count_lines(lines) -> list:
+    """Report order — excess first, then short, then match."""
+    return sorted(
         lines or [],
         key=lambda line: _COUNT_KIND_ORDER.get(
             line.get("variance_kind"), len(_COUNT_KIND_ORDER)
         ),
     )
+
+
+def _count_row_cells(lines) -> list:
     rows = []
-    for line in ordered:
+    for line in _ordered_count_lines(lines):
         rows.append(
             [
                 line.get("name") or "Item",
-                (line.get("category") or "").strip() or "—",
                 (line.get("updated_by_label") or "").strip() or "—",
                 str(line.get("system_qty") or "0"),
                 str(line.get("physical_qty") or "0"),
@@ -617,6 +625,7 @@ def build_online_take_count_document(
     count_date = count_date or timezone.localdate()
     period_label = count_date.strftime("%d %b %Y")
     shop_label = getattr(shop, "name", "") or "—"
+    ordered_lines = _ordered_count_lines(lines)
     rows = _count_row_cells(lines)
     subtitle = (
         "Physical count vs the book qty frozen when each item was counted"
@@ -646,6 +655,11 @@ def build_online_take_count_document(
         "report_headers": _COUNT_HEADERS,
         "report_rows": rows,
         "report_numeric_from": _COUNT_NUMERIC_FROM,
+        "kind_label": kind_label,
+        "count_lines": ordered_lines,
+        "counters": counters,
+        "saved_label": saved_label,
+        "subtitle": subtitle,
     }
     return {
         "filename": filename,
@@ -657,6 +671,8 @@ def build_online_take_count_document(
         "view_label": "Counted items",
         "generated_at": generated_at,
         "item_count": counters["filled_count"],
+        "count_lines": ordered_lines,
+        "counters": counters,
         "report_table_title": "Counted items",
         "report_table_subtitle": subtitle,
         "report_numeric_from": _COUNT_NUMERIC_FROM,
@@ -664,3 +680,524 @@ def build_online_take_count_document(
         "report_rows": rows,
         "pdf_params": pdf_params,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stock count PDF — dedicated modern A4 layout for screen + print viewing.
+
+
+def build_online_take_count_pdf(document: dict) -> bytes:
+    """Branded A4 PDF for a count sheet (live or saved snapshot).
+
+    Built for reading on phones/tablets as much as print: few columns, roomy
+    9pt body type, colour-coded variance, KPI cards and a sign-off block.
+    """
+    from io import BytesIO
+    from pathlib import Path
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.platypus import (
+        KeepTogether,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    from core.pdf_fonts import (
+        MANROPE_PDF,
+        MANROPE_PDF_BOLD,
+        register_manrope_pdf_fonts,
+    )
+
+    register_manrope_pdf_fonts()
+
+    params = document.get("pdf_params") or {}
+    lines = document.get("count_lines") or []
+    counters = document.get("counters") or {}
+    kind_label = (document.get("event_filter_label") or "Stock count").strip()
+    period_label = params.get("period_label") or "—"
+    shop_label = params.get("shop_label") or "—"
+    subtitle = params.get("subtitle") or ""
+    saved_label = params.get("saved_label") or ""
+    company_name = (params.get("company_name") or "MY-SHOP").strip() or "MY-SHOP"
+    generated = params.get("generated_at")
+    if generated is None:
+        generated = timezone.localtime(timezone.now())
+    stamp = generated.strftime("%d %b %Y · %H:%M")
+
+    resolved_logo = ""
+    logo_path = params.get("logo_path") or ""
+    if logo_path and Path(logo_path).is_file():
+        resolved_logo = logo_path
+
+    page_size = A4
+    width, height = page_size
+    left_m = 12 * mm
+    right_m = 12 * mm
+    top_m = 24 * mm
+    bottom_m = 15 * mm
+
+    ink = colors.HexColor("#0f172a")
+    muted = colors.HexColor("#5b6b7c")
+    mist = colors.HexColor("#8b98a9")
+    line = colors.HexColor("#e2e8f0")
+    line_strong = colors.HexColor("#cbd5e1")
+    soft = colors.HexColor("#f8fafc")
+    accent = colors.HexColor("#0f766e")
+    match_c = colors.HexColor("#15803d")
+    excess_c = colors.HexColor("#b45309")
+    short_c = colors.HexColor("#b91c1c")
+    kind_colors = {
+        "match": match_c,
+        "excess": excess_c,
+        "short": short_c,
+    }
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=page_size,
+        leftMargin=left_m,
+        rightMargin=right_m,
+        topMargin=top_m,
+        bottomMargin=bottom_m,
+        title=f"{company_name} — {kind_label} {period_label}",
+        author=company_name,
+        subject=f"{kind_label} — {shop_label} — {period_label}",
+    )
+
+    styles = getSampleStyleSheet()
+
+    def _esc(text) -> str:
+        return (
+            str(text if text is not None else "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    kicker_style = ParagraphStyle(
+        "CountKicker",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=6.4,
+        textColor=accent,
+        leading=8,
+        spaceAfter=0,
+    )
+    section_title = ParagraphStyle(
+        "CountSection",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=11,
+        textColor=ink,
+        leading=13,
+        spaceAfter=1,
+    )
+    section_sub = ParagraphStyle(
+        "CountSectionSub",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=7.6,
+        textColor=muted,
+        leading=9.6,
+        spaceAfter=3,
+    )
+    cell = ParagraphStyle(
+        "CountCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF,
+        fontSize=8.6,
+        textColor=ink,
+        leading=10.6,
+    )
+    cell_bold = ParagraphStyle(
+        "CountCellBold", parent=cell, fontName=MANROPE_PDF_BOLD
+    )
+    cell_right = ParagraphStyle(
+        "CountCellRight", parent=cell_bold, alignment=TA_RIGHT
+    )
+    cell_var = ParagraphStyle(
+        "CountCellVariance",
+        parent=cell_bold,
+        alignment=TA_RIGHT,
+    )
+    head_cell = ParagraphStyle(
+        "CountHeadCell",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=colors.white,
+        leading=8.4,
+        alignment=TA_LEFT,
+    )
+    head_cell_right = ParagraphStyle(
+        "CountHeadCellRight", parent=head_cell, alignment=TA_RIGHT
+    )
+    meta_label = ParagraphStyle(
+        "CountMetaLabel",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=6,
+        textColor=mist,
+        leading=7.4,
+    )
+    meta_value = ParagraphStyle(
+        "CountMetaValue",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=8.6,
+        textColor=ink,
+        leading=10.4,
+    )
+    kpi_label = ParagraphStyle(
+        "CountKpiLabel",
+        parent=meta_label,
+        textColor=muted,
+    )
+    kpi_value = ParagraphStyle(
+        "CountKpiValue",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=15,
+        textColor=ink,
+        leading=17,
+    )
+    sign_label = ParagraphStyle(
+        "CountSignLabel",
+        parent=styles["Normal"],
+        fontName=MANROPE_PDF_BOLD,
+        fontSize=7,
+        textColor=muted,
+        leading=9,
+    )
+
+    class _NumberedCanvas(pdf_canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            pdf_canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            page_count = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_chrome(page_count)
+                pdf_canvas.Canvas.showPage(self)
+            pdf_canvas.Canvas.save(self)
+
+        def _draw_chrome(self, page_count: int):
+            header_h = 17 * mm
+            page_no = self._pageNumber
+
+            # Accent rail along the very top edge.
+            self.setFillColor(accent)
+            self.rect(0, height - 2.6 * mm, width, 2.6 * mm, fill=1, stroke=0)
+
+            # Header: logo + brand left, report meta right.
+            text_x = left_m
+            if resolved_logo:
+                try:
+                    logo_box = 10 * mm
+                    self.setFillColor(colors.white)
+                    self.setStrokeColor(line)
+                    self.setLineWidth(0.6)
+                    self.roundRect(
+                        left_m,
+                        height - header_h + 2.6 * mm,
+                        logo_box,
+                        logo_box,
+                        1.4 * mm,
+                        fill=1,
+                        stroke=1,
+                    )
+                    self.drawImage(
+                        resolved_logo,
+                        left_m + 0.8 * mm,
+                        height - header_h + 3.4 * mm,
+                        width=logo_box - 1.6 * mm,
+                        height=logo_box - 1.6 * mm,
+                        preserveAspectRatio=True,
+                        mask="auto",
+                        anchor="c",
+                    )
+                    text_x = left_m + logo_box + 3 * mm
+                except Exception:
+                    text_x = left_m
+
+            self.setFillColor(ink)
+            self.setFont(MANROPE_PDF_BOLD, 11)
+            self.drawString(text_x, height - 9.6 * mm, company_name)
+            self.setFillColor(accent)
+            self.setFont(MANROPE_PDF_BOLD, 6.4)
+            self.drawString(
+                text_x,
+                height - 13.4 * mm,
+                f"{kind_label.upper()} REPORT",
+            )
+
+            self.setFillColor(mist)
+            self.setFont(MANROPE_PDF_BOLD, 6.2)
+            self.drawRightString(
+                width - right_m, height - 8.4 * mm, "COUNT DAY"
+            )
+            self.setFillColor(ink)
+            self.setFont(MANROPE_PDF_BOLD, 9)
+            self.drawRightString(
+                width - right_m, height - 13 * mm, period_label
+            )
+
+            self.setStrokeColor(line)
+            self.setLineWidth(0.7)
+            self.line(
+                left_m,
+                height - header_h - 1.2 * mm,
+                width - right_m,
+                height - header_h - 1.2 * mm,
+            )
+
+            # Footer: contact + paging.
+            self.setStrokeColor(line)
+            self.line(left_m, 10.5 * mm, width - right_m, 10.5 * mm)
+            self.setFillColor(accent)
+            self.circle(
+                left_m + 1.1 * mm, 6.4 * mm, 0.9 * mm, fill=1, stroke=0
+            )
+            contact_bits = [
+                bit
+                for bit in (
+                    params.get("company_phone"),
+                    params.get("company_email"),
+                    params.get("company_location"),
+                )
+                if bit
+            ]
+            contact_line = (
+                "  ·  ".join(contact_bits[:2]) if contact_bits else ""
+            )
+            left_note = f"Generated {stamp}"
+            if contact_line:
+                left_note = f"{left_note}  ·  {contact_line}"
+            self.setFillColor(muted)
+            self.setFont(MANROPE_PDF, 6.6)
+            self.drawString(left_m + 4 * mm, 6.4 * mm, left_note)
+            self.drawString(
+                left_m + 4 * mm,
+                3.6 * mm,
+                f"{kind_label}  ·  {shop_label}",
+            )
+            self.setFillColor(ink)
+            self.setFont(MANROPE_PDF_BOLD, 7.2)
+            self.drawRightString(
+                width - right_m, 6.4 * mm, f"{page_no} / {page_count}"
+            )
+
+    story: list = []
+
+    # ---- Meta strip -------------------------------------------------------
+    meta_cells = [
+        ("SHOP", shop_label),
+        ("COUNT DAY", period_label),
+        ("STATUS", saved_label or "Live count"),
+        ("GENERATED", stamp),
+    ]
+    meta_table = Table(
+        [
+            [
+                [
+                    Paragraph(_esc(label), meta_label),
+                    Paragraph(_esc(value), meta_value),
+                ]
+                for label, value in meta_cells
+            ]
+        ],
+        colWidths=[doc.width / len(meta_cells)] * len(meta_cells),
+    )
+    meta_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), soft),
+                ("BOX", (0, 0), (-1, -1), 0.6, line),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4, line),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.append(meta_table)
+    story.append(Spacer(1, 3 * mm))
+
+    # ---- KPI cards ---------------------------------------------------------
+    kpi_data = [
+        (
+            "COUNTED",
+            f"{counters.get('filled_count', 0)}"
+            f" / {counters.get('item_count', 0)}",
+            accent,
+        ),
+        ("MATCH", str(counters.get("match_count", 0)), match_c),
+        ("EXCESS", str(counters.get("excess_count", 0)), excess_c),
+        ("SHORT", str(counters.get("short_count", 0)), short_c),
+    ]
+    kpi_cols = []
+    for label, value, _color in kpi_data:
+        kpi_cols.append(
+            [
+                Paragraph(_esc(label), kpi_label),
+                Paragraph(_esc(value), kpi_value),
+            ]
+        )
+    kpi_table = Table(
+        [kpi_cols], colWidths=[doc.width / len(kpi_cols)] * len(kpi_cols)
+    )
+    kpi_cmds = [
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("BOX", (0, 0), (-1, -1), 0.6, line),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, line),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]
+    for idx, (_label, _value, color) in enumerate(kpi_data):
+        kpi_cmds.append(("LINEABOVE", (idx, 0), (idx, 0), 1.8, color))
+    kpi_table.setStyle(TableStyle(kpi_cmds))
+    story.append(kpi_table)
+    story.append(Spacer(1, 4 * mm))
+
+    # ---- Counted items table ------------------------------------------------
+    story.append(
+        KeepTogether(
+            [
+                Paragraph(_esc("COUNT SHEET"), kicker_style),
+                Paragraph(_esc("Counted items"), section_title),
+                Paragraph(_esc(subtitle), section_sub),
+            ]
+        )
+    )
+
+    head = [
+        Paragraph("ITEM", head_cell),
+        Paragraph("COUNTED BY", head_cell),
+        Paragraph("SYSTEM QTY", head_cell_right),
+        Paragraph("COUNTED QTY", head_cell_right),
+        Paragraph("VARIANCE", head_cell_right),
+    ]
+    body = [head]
+    row_kinds = []
+    for entry in lines:
+        body.append(
+            [
+                Paragraph(_esc(entry.get("name") or "Item"), cell_bold),
+                Paragraph(
+                    _esc((entry.get("updated_by_label") or "").strip() or "—"),
+                    cell,
+                ),
+                Paragraph(_esc(entry.get("system_qty") or "0"), cell_right),
+                Paragraph(_esc(entry.get("physical_qty") or "0"), cell_right),
+                Paragraph(
+                    _esc(
+                        (entry.get("variance_label") or "").strip() or "—"
+                    ),
+                    cell_var,
+                ),
+            ]
+        )
+        row_kinds.append(entry.get("variance_kind"))
+
+    if len(body) == 1:
+        body.append(
+            [
+                Paragraph("No items counted for this day.", cell),
+                Paragraph("—", cell),
+                Paragraph("—", cell_right),
+                Paragraph("—", cell_right),
+                Paragraph("—", cell_var),
+            ]
+        )
+        row_kinds.append(None)
+
+    col_widths = [
+        doc.width * 0.30,
+        doc.width * 0.20,
+        doc.width * 0.15,
+        doc.width * 0.15,
+        doc.width * 0.20,
+    ]
+    table = Table(body, colWidths=col_widths, repeatRows=1)
+    cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), ink),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.6, accent),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, soft]),
+        ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, line),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.6),
+    ]
+    for r, kind in enumerate(row_kinds, start=1):
+        color = kind_colors.get(kind)
+        if color is not None:
+            cmds.append(("TEXTCOLOR", (4, r), (4, r), color))
+    table.setStyle(TableStyle(cmds))
+    story.append(table)
+    story.append(Spacer(1, 6 * mm))
+
+    # ---- Sign-off ------------------------------------------------------------
+    sign = Table(
+        [
+            ["", "", ""],
+            [
+                Paragraph("COUNTED BY", sign_label),
+                Paragraph("REVIEWED BY", sign_label),
+                Paragraph("DATE SIGNED", sign_label),
+            ],
+        ],
+        colWidths=[doc.width * 0.36, doc.width * 0.36, doc.width * 0.28],
+    )
+    sign.setStyle(
+        TableStyle(
+            [
+                ("LINEBELOW", (0, 0), (-1, 0), 0.6, line_strong),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ]
+        )
+    )
+    story.append(
+        KeepTogether(
+            [
+                Paragraph(
+                    _esc(
+                        "Variance compares the physical count to the book "
+                        "qty frozen when each item was counted."
+                    ),
+                    section_sub,
+                ),
+                sign,
+            ]
+        )
+    )
+
+    doc.build(story, canvasmaker=_NumberedCanvas)
+    return buffer.getvalue()

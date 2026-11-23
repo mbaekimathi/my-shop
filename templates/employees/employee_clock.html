@@ -49,8 +49,19 @@
 
   <div class="clock-hero__dial" aria-hidden="true">
     <div class="clock-dial" data-clock-dial style="--p: {{ clock.open_progress }}">
+      <svg class="clock-dial__ring" viewBox="0 0 120 120">
+        <defs>
+          <linearGradient id="clock-ring-grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" style="stop-color: var(--teal)" />
+            <stop offset="100%" style="stop-color: var(--accent)" />
+          </linearGradient>
+        </defs>
+        <circle class="clock-dial__track" cx="60" cy="60" r="52" />
+        <circle class="clock-dial__prog" cx="60" cy="60" r="52" />
+      </svg>
       <div class="clock-dial__core">
         <i data-lucide="{% if open_entry %}timer{% else %}moon{% endif %}"></i>
+        {% if open_entry %}<strong class="clock-dial__pct" data-clock-pct>{% widthratio clock.open_progress 1 100 %}%</strong>{% endif %}
         <span>{% if open_entry %}Live{% else %}Idle{% endif %}</span>
       </div>
     </div>
@@ -59,30 +70,30 @@
 </section>
 
 <section class="clock-stats" data-animate="rise" data-delay="1" aria-label="Hours worked summary">
-  <article class="clock-stat">
+  <article class="clock-stat clock-stat--teal">
     <i data-lucide="sun" aria-hidden="true"></i>
     <div><strong>{{ clock.today_label }}</strong><span>Today</span></div>
   </article>
-  <article class="clock-stat">
+  <article class="clock-stat clock-stat--amber">
     <i data-lucide="calendar-days" aria-hidden="true"></i>
     <div>
       <strong>{{ clock.week_label }}</strong>
       <span>This week · {{ clock.week_days }} day{{ clock.week_days|pluralize }}</span>
     </div>
   </article>
-  <article class="clock-stat">
+  <article class="clock-stat clock-stat--blue">
     <i data-lucide="bar-chart-3" aria-hidden="true"></i>
     <div><strong>{{ clock.avg_label|default:"—" }}</strong><span>Avg per day this week</span></div>
   </article>
-  <article class="clock-stat">
+  <article class="clock-stat clock-stat--flame">
     <i data-lucide="flame" aria-hidden="true"></i>
     <div><strong>{{ clock.streak }}</strong><span>day{{ clock.streak|pluralize:"s" }} streak</span></div>
   </article>
-  <article class="clock-stat">
+  <article class="clock-stat clock-stat--violet">
     <i data-lucide="alarm-clock" aria-hidden="true"></i>
     <div><strong>{{ clock.usual_in|default:"—" }}</strong><span>Usual clock-in</span></div>
   </article>
-  <article class="clock-stat">
+  <article class="clock-stat clock-stat--green">
     <i data-lucide="hourglass" aria-hidden="true"></i>
     <div><strong>{{ clock.longest_label }}</strong><span>Longest shift · 30d</span></div>
   </article>
@@ -114,6 +125,16 @@
       role="img"
       aria-label="Hours worked per day, last 14 days"
     >
+      <defs>
+        <linearGradient id="clock-bar-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" style="stop-color: var(--teal); stop-opacity: 0.95" />
+          <stop offset="1" style="stop-color: var(--teal); stop-opacity: 0.35" />
+        </linearGradient>
+        <linearGradient id="clock-bar-grad-today" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" style="stop-color: var(--accent); stop-opacity: 0.95" />
+          <stop offset="1" style="stop-color: var(--accent); stop-opacity: 0.45" />
+        </linearGradient>
+      </defs>
       <line
         class="clock-bars__track"
         x1="0" y1="{{ clock.trend.track_y }}"
@@ -234,10 +255,13 @@
     if (elapsedEl) {
       let elapsed = parseInt(elapsedEl.getAttribute("data-clock-elapsed") || "0", 10) || 0;
       const dial = document.querySelector("[data-clock-dial]");
+      const pctEl = dial?.querySelector("[data-clock-pct]");
       const tick = () => {
         elapsed += 1;
         elapsedEl.textContent = fmtElapsed(elapsed);
-        dial?.style.setProperty("--p", Math.min(1, elapsed / (8 * 3600)).toFixed(4));
+        const p = Math.min(1, elapsed / (8 * 3600));
+        dial?.style.setProperty("--p", p.toFixed(4));
+        if (pctEl) pctEl.textContent = `${Math.round(p * 100)}%`;
       };
       elapsedEl.textContent = fmtElapsed(elapsed);
       setInterval(tick, 1000);

@@ -835,3 +835,315 @@ class CashierDaySummaryContextTests(TestCase):
         response = self.client.get(url, {"status": "pending"})
         self.assertContains(response, "Pending sales")
         self.assertContains(response, "KSh 100")
+
+
+
+
+class ClearedPendingCollectionTests(TestCase):
+    """Receipts printed in one session but paid after it closed land on the
+    session that was open when the money moved."""
+
+    def setUp(self):
+        _invalidate_pos_settings_cache()
+        self.user = User.objects.create_user(
+            username="200410",
+            password="pass",
+            email="cleared@test.local",
+            first_name="Cleared",
+            last_name="Cashier",
+            is_active=True,
+        )
+        self.profile = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="200410",
+            phone_country_code="+254",
+            phone_number="700000410",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="Cleared Shop",
+            location="Nairobi",
+            email="cleared-shop@test.local",
+            phone_number="0700000410",
+            login_code="200410",
+            password_hash=make_password("pass"),
+            created_by=self.profile,
+        )
+        self.profile.assigned_shops.add(self.shop)
+        self.item = Item.objects.create(
+            name="Cleared Item",
+            category="Parts",
+            description="Cleared fixture",
+            minimum_selling_price=Decimal("50.00"),
+            shop_price=Decimal("100.00"),
+            stock=10,
+            track_serial_number=False,
+            created_by=self.profile,
+        )
+        ShopStock.objects.create(
+            shop=self.shop,
+            item=self.item,
+            quantity=10,
+            average_cost=Decimal("40.00"),
+        )
+
+    def _open_payload(self):
+        return {
+            "cash_amount": "1000",
+            "mpesa_amount": "500",
+            "credit_amount": "0",
+            "stock_confirmed": True,
+            "login_code": "200410",
+        }
+
+    def _sale_payload(self, **extra):
+        payload = {
+            "kind": ShopReceiptKind.SALE,
+            "payment_method": ShopPaymentMethod.CASH,
+            "cash_amount": "100",
+            "mpesa_amount": "0",
+            "login_code": "200410",
+            "lines": [{"id": self.item.pk, "qty": 1, "price": "100"}],
+        }
+        payload.update(extra)
+        return payload
+
+    def _reopen(self):
+        from shops.services import (
+            close_shop_day,
+            get_open_shop_day,
+            open_shop_day,
+        )
+
+        close_shop_day(shop=self.shop, payload=self._open_payload())
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        return get_open_shop_day(self.shop)
+
+    def test_pending_cleared_in_next_session_lands_on_new_till(self):
+        from shops.services import (
+            confirm_shop_receipt,
+            day_session_balance_summary,
+            day_session_report_details,
+            get_open_shop_day,
+            list_shop_day_sessions,
+            open_shop_day,
+        )
+
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        first = get_open_shop_day(self.shop)
+        pending = complete_shop_checkout(
+            shop=self.shop,
+            profile=self.profile,
+            payload=self._sale_payload(),
+        )["receipt"]
+
+        second = self._reopen()
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=pending.pk,
+            actor=self.profile,
+        )
+        self.assertTrue(result["ok"])
+        pending.refresh_from_db()
+        self.assertIsNotNone(pending.confirmed_payment_at)
+
+        first.refresh_from_db()
+        first_summary = day_session_balance_summary(first)
+        self.assertEqual(first_summary["cleared_pending_total"], Decimal("0"))
+        # Printed inside session one — stays on its ledger.
+        self.assertEqual(first_summary["cash_sales"], Decimal("100"))
+
+        summary = day_session_balance_summary(second)
+        self.assertEqual(summary["cleared_pending_total"], Decimal("100"))
+        self.assertEqual(summary["expected_cash"], Decimal("1100"))
+
+        details = day_session_report_details(second)
+        rows = details["cleared_pending"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["printed_at"], pending.created_at)
+        self.assertEqual(rows[0]["at"], pending.confirmed_payment_at)
+        self.assertEqual(rows[0]["total"], Decimal("100"))
+
+        listed = list_shop_day_sessions(self.shop)
+        second_row = next(r for r in listed if r["session"].pk == second.pk)
+        self.assertEqual(second_row["cleared_pending_total"], Decimal("100"))
+
+    def test_credit_collected_in_next_session_lands_on_new_till(self):
+        from shops.services import (
+            confirm_shop_receipt,
+            day_session_balance_summary,
+            day_session_report_details,
+            get_open_shop_day,
+            open_shop_day,
+        )
+        from shops.models import Client
+
+        client = Client.objects.create(
+            full_name="Credit Client",
+            phone_number="0700111222",
+            phone_normalized="254700111222",
+            created_by=self.profile,
+        )
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        first = get_open_shop_day(self.shop)
+        credit = ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=ShopReceiptKind.CREDIT,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number="CR-CLEARED-1",
+            client=client,
+            client_name=client.full_name,
+            client_phone=client.phone_number,
+            total=Decimal("80.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.profile,
+        )
+
+        second = self._reopen()
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=credit.pk,
+            actor=self.profile,
+            amount="80",
+            payment_method="cash",
+        )
+        self.assertTrue(result["ok"])
+        credit.refresh_from_db()
+        self.assertEqual(credit.kind, ShopReceiptKind.SALE)
+        self.assertTrue(credit.settled_from_credit)
+
+        first.refresh_from_db()
+        first_summary = day_session_balance_summary(first)
+        # The settled-credit receipt is never an ordinary sale for session one.
+        self.assertEqual(first_summary["sales_total"], Decimal("0"))
+        self.assertEqual(first_summary["credit_collected_total"], Decimal("0"))
+
+        summary = day_session_balance_summary(second)
+        self.assertEqual(summary["sales_total"], Decimal("0"))
+        self.assertEqual(summary["credit_collected_total"], Decimal("80"))
+        self.assertEqual(summary["expected_cash"], Decimal("1080"))
+
+        details = day_session_report_details(second)
+        rows = details["credit_payments"]["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["printed_at"], credit.created_at)
+        self.assertEqual(rows[0]["amount"], Decimal("80"))
+        self.assertTrue(rows[0]["cleared"])
+
+    def test_clientless_credit_confirm_counts_in_next_session(self):
+        from shops.services import (
+            confirm_shop_receipt,
+            day_session_balance_summary,
+            day_session_report_details,
+            open_shop_day,
+        )
+
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        credit = ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=ShopReceiptKind.CREDIT,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number="CR-CLIENTLESS-1",
+            total=Decimal("60.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.profile,
+        )
+
+        second = self._reopen()
+        result = confirm_shop_receipt(
+            shop=self.shop,
+            receipt_id=credit.pk,
+            actor=self.profile,
+            amount="60",
+            payment_method="mpesa",
+        )
+        self.assertTrue(result["ok"])
+
+        summary = day_session_balance_summary(second)
+        self.assertEqual(summary["credit_collected_total"], Decimal("60"))
+        self.assertEqual(summary["credit_collected_mpesa"], Decimal("60"))
+        self.assertEqual(summary["expected_mpesa"], Decimal("560"))
+
+        details = day_session_report_details(second)
+        rows = details["credit_payments"]["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["channel_label"], "M-Pesa")
+        self.assertEqual(rows[0]["printed_at"], credit.created_at)
+
+    def test_trade_settlement_counts_in_paying_session(self):
+        from shops.services import (
+            day_session_balance_summary,
+            day_session_report_details,
+            get_open_shop_day,
+            open_shop_day,
+        )
+        from shops.trade_settlement import record_trade_payment
+
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        first = get_open_shop_day(self.shop)
+        trade = ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=ShopReceiptKind.TRADE_OUT,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number="TR-CLEARED-1",
+            total=Decimal("120.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.profile,
+        )
+
+        second = self._reopen()
+        trade.refresh_from_db()
+        record_trade_payment(
+            trade,
+            amount=Decimal("120"),
+            payment_method="cash",
+            actor=self.profile,
+        )
+        trade.refresh_from_db()
+        self.assertTrue(trade.settled_from_trade)
+
+        first.refresh_from_db()
+        first_summary = day_session_balance_summary(first)
+        self.assertEqual(first_summary["sales_total"], Decimal("0"))
+        self.assertEqual(first_summary["trade_collected_total"], Decimal("0"))
+
+        summary = day_session_balance_summary(second)
+        self.assertEqual(summary["sales_total"], Decimal("0"))
+        self.assertEqual(summary["trade_collected_total"], Decimal("120"))
+        self.assertEqual(summary["expected_cash"], Decimal("1120"))
+
+        details = day_session_report_details(second)
+        rows = details["trade_payments"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["amount"], Decimal("120"))
+        self.assertEqual(rows[0]["printed_at"], trade.created_at)
+
+    def test_trade_in_payout_reduces_expected_till(self):
+        from shops.services import (
+            day_session_balance_summary,
+            open_shop_day,
+        )
+        from shops.trade_settlement import record_trade_payment
+
+        open_shop_day(shop=self.shop, payload=self._open_payload())
+        trade = ShopReceipt.objects.create(
+            shop=self.shop,
+            kind=ShopReceiptKind.TRADE_IN,
+            status=ShopReceiptStatus.ACTIVE,
+            receipt_number="TR-IN-1",
+            total=Decimal("70.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.profile,
+        )
+        second = self._reopen()
+        trade.refresh_from_db()
+        record_trade_payment(
+            trade,
+            amount=Decimal("70"),
+            payment_method="cash",
+            actor=self.profile,
+        )
+        summary = day_session_balance_summary(second)
+        self.assertEqual(summary["trade_paid_total"], Decimal("70"))
+        self.assertEqual(summary["expected_cash"], Decimal("930"))

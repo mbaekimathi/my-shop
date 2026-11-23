@@ -310,14 +310,30 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `?estimate=1` (print-modal page count) and `?download=1` —
   `_movement_report_output_flags` → `_online_take_report_response`
   (`items/views.py`), `report`/`actual` document keys,
-  `report_numeric_from=3`. `_count_row_cells` orders report rows **excess →
-  short → match** (`_COUNT_KIND_ORDER`) for both the live sheet and saved
-  snapshots. The cart's Print button opens the shared receipts
-  print modal (`receipts_print_url` = `request.path` — the modal JS reuses
-  `window.location.search` for mode/shop_id/date/stock). POST
-  `action=save_count` returns `{ok, saved}` and the JS prepends/replaces the
-  row in the saved list. Mirrored on the shelf page (`stock=shelf`) which
-  shares the template/JS.
+  `report_numeric_from=2`. `_count_row_cells` orders report rows **excess →
+  short → match** (`_COUNT_KIND_ORDER`, shared with `_ordered_count_lines`)
+  for both the live sheet and saved snapshots; columns are
+  Item / Counted by / System qty / Counted qty / Variance (no Category).
+  `?download=1` uses the dedicated `build_online_take_count_pdf`
+  (`items/online_stock_take.py`) — a modern single-A4 report (accent rail,
+  meta strip, KPI cards, colour-coded variance, sign-off block, ~9pt body
+  type for phone/tablet reading) fed by the document's `count_lines` +
+  `counters`, **not** the shared `build_stock_report_pdf`. The cart's Print
+  button opens the shared receipts print modal (`receipts_print_url` =
+  `request.path` — the modal JS reuses `window.location.search` for
+  mode/shop_id/date/stock). POST `action=save_count` returns `{ok, saved}`
+  and the JS prepends/replaces the row in the saved list. Mirrored on the
+  shelf page (`stock=shelf`) which shares the template/JS.
+- The page itself is a flat report table, not category cards: the catalog
+  also returns `lines` (all items A–Z by name; `groups` is still built but
+  the template doesn't use it). Search filters rows in place via
+  `data-search` (still matches category text even though no category is
+  shown) and toggles the `data-online-take-empty-search` no-results row.
+  The summary is four stat cards (`data-online-take-filled`/`match`/`excess`/
+  `short` + `data-online-take-progress` bar on the counted card); variance
+  renders as colour pills (`is-match`/`is-excess`/`is-short` on
+  `.online-take-variance`, row left-rail via `is-*` on `.online-take-row`);
+  saved rows use `.ost-chip` count pills.
 - **Live system qty on uncounted rows**: both sync payloads carry a `system`
   map of every countable item's live book qty (`build_online_stock_take_sync`
   covers all non-suspended `Item`s at the shop, `build_shelf_online_take_sync`
@@ -555,6 +571,21 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `build_shop_day_report_pdf`. Session links carry a `?back=` URL so "Back
   to cashiers" restores the filters. Tests:
   `AnalyticsDaySessionReportTests`.
+- The report opens with a **"Sales & profit" overview** table
+  (`day_report_sec_sales_profit`, first in `DAY_REPORT_SECTION_TOGGLES`)
+  computed by `day_session_sales_profit(summary=…, details=…,
+  item_stock=…, shelf_stock=…)` (`shops/services.py` — shared by the page
+  and the PDF so the figures always agree): Expected sales = counted till
+  sales + still-pending receipts the status pick leaves uncounted
+  (`details["pending_sales"]` — ACTIVE sale receipts not in
+  `counted_statuses`) + credit sales + gift issues; Actual sales =
+  `summary["sales_total"]`. Expected profit = expected sales − expenses
+  (paid + unpaid) − stock bought (paid + unpaid) + customer prepayments;
+  actual profit charges paid costs only. Group-header rows split Sales vs
+  Costs & profit; component rows carry paid · unpaid breakdowns in their
+  sub-labels, and the same table renders on screen, the `?paper=` sheet
+  and the A4 PDF (plus Expected sales / Expected profit / Actual profit
+  metrics in the KPI strip).
 - The session report page reuses the receipts **print popup**
   (`page.receipts_print_modal` + `receipts_print_url` = its own path, title/
   lead via `receipts_print_title`/`receipts_print_lead`):
@@ -1486,27 +1517,43 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   PAYMENT event). Collection money also lands on the paid day via
   `ClientCreditAccountEvent` PAYMENT_* `occurred_at` — the confirm /
   kind-change flows now pass the entered `paid_at` as `occurred_at` too.
-- **Not in the till**: session/day till math excludes settled credits'
-  channel amounts — `day_session_balance_summary`,
+- **Paid session owns the till money**: the settled sale itself stays out
+  of ordinary session sales — `day_session_balance_summary`,
   `list_shop_day_sessions`, `_day_balance_data` all filter
-  `settled_from_credit=False`. Collections are account-level (analytics /
-  STK) and never enter a cashier's session till, so counting them on the
-  receipt's `created_at` day inflated the issue session's expected till.
+  `settled_from_credit=False` (and `settled_from_trade=False`) so a
+  receipt issued in session A and cleared in session B is never
+  double-counted. The *collection* lands in the session open when the
+  money moved: `_session_credit_collections` sums PAYMENT_* events by
+  `occurred_at` (client-less credits fall back to the receipt's
+  `confirmed_payment_at` + channel amounts), `_session_cleared_pending_sales`
+  picks up pending SALE receipts printed before the session and confirmed
+  inside it (`created_at < start <= confirmed_payment_at`), and
+  `_session_trade_payments` parses `trade_settlements` events the same way
+  (trade-out collected = money in, trade-in payout = money out). All three
+  feed `credit_collected_*` / `cleared_pending_*` / `trade_collected_*` /
+  `trade_paid_*` in `_session_activity_totals` → `expected_*` — wired into
+  `day_session_balance_summary`, `list_shop_day_sessions` and
+  `_day_balance_data` so the Cashiers list and the session drill-down
+  reconcile.
 - How-many-paid / conversion data: `settled_from_credit` + the paid stamp
   on the receipt, `ClientCreditAccountEvent` audit rows (meta.cleared),
   the analytics Paid cash/M-Pesa/card/total columns, and the
   "… now recorded as a sale" conversion notes in pay responses.
-- The session day report surfaces the collections in its money-flow area:
+- The session day report shows the collections as till money:
   `day_session_report_details` returns `credit_payments` (rows + per-channel
-  totals + `receipts_converted`) from the window's PAYMENT_* events;
-  `build_day_session_report_page` adds a "Credit payments collected —
-  outside till" memo row + a per-payment table (Time/Receipt/Channel/
-  Outcome/Collected by/Amount, outcome = Converted to sale / Paid in full /
-  Part payment), and `build_shop_day_report_pdf` prints the same memo row +
-  detail table — all inside `day_report_sec_money_flow`, gated on
-  `pos.enable_credit`.
+  totals + `receipts_converted`) from the window's PAYMENT_* events,
+  `cleared_pending` (printed + cleared timestamps per receipt) and
+  `trade_payments`; `build_day_session_report_page` adds matching
+  money-flow rows (Credit payments collected / Cleared pending receipts /
+  Trade payments collected / Trade-in payouts) plus detail tables —
+  credit payments get a Printed column and their own
+  `day_report_sec_credit_payments` toggle, cleared-pending + trade
+  settlements sit under `day_report_sec_cleared` ("Cleared pending &
+  settlements"). `build_shop_day_report_pdf` prints the same rows and
+  tables; credit bits stay gated on `pos.enable_credit`.
 - Tests: `shops/tests/test_credit_settlement.py`
-  (`SettledSaleRevenueDayTests`).
+  (`SettledSaleRevenueDayTests`),
+  `shops/tests/test_day_sales_summary.py::ClearedPendingCollectionTests`.
 
 ## Receipt tally codes (dual kind codes on conversion)
 - `ShopReceipt.converted_from_kind` records the immediate source kind when a

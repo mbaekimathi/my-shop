@@ -542,7 +542,7 @@ class SettledSaleRevenueDayTests(TestCase):
 
         self.assertEqual(issue_day["summary_board"]["hero"]["value"], "KSh 0.00")
 
-    def test_settled_channels_stay_out_of_session_till(self):
+    def test_settled_collection_lands_in_paying_session_till(self):
         from shops.services import (
             day_session_balance_summary,
             get_open_shop_day,
@@ -570,8 +570,11 @@ class SettledSaleRevenueDayTests(TestCase):
         self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
         self.assertEqual(receipt.cash_amount, Decimal("80.00"))
         summary = day_session_balance_summary(session)
+        # The settled credit is not an ordinary sale, but the cash collected
+        # lands in the till of the session that received it.
         self.assertEqual(summary["cash_sales"], Decimal("0.00"))
-        self.assertEqual(summary["expected_cash"], Decimal("1000.00"))
+        self.assertEqual(summary["credit_collected_total"], Decimal("80.00"))
+        self.assertEqual(summary["expected_cash"], Decimal("1080.00"))
 
     def test_credit_payments_listed_in_day_report_details(self):
         from shops.services import (

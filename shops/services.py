@@ -8144,6 +8144,149 @@ def _collect_return_payment_events_for_shops(
     return events_by_shop
 
 
+def _session_cleared_pending_sales(*, shop_id, start, end, counted_statuses=None):
+    """Pending sales printed before `start` and confirmed inside [start, end).
+
+    These are receipts a previous session showed as pending — the money is
+    tendered when the receipt clears (`confirmed_payment_at`), so it lands in
+    the session that collected it, not the session that printed it.
+    """
+    from .models import ShopReceipt
+
+    qs = ShopReceipt.objects.filter(
+        shop_id=shop_id,
+        kind=ShopReceiptKind.SALE,
+        settled_from_credit=False,
+        settled_from_trade=False,
+        status__in=(
+            ShopReceiptStatus.CONFIRMED,
+            ShopReceiptStatus.PARTIAL_RETURN,
+        ),
+        created_at__lt=start,
+        confirmed_payment_at__gte=start,
+        confirmed_payment_at__lt=end,
+    )
+    if counted_statuses is not None:
+        qs = qs.filter(status__in=counted_statuses)
+    return qs
+
+
+def _session_credit_collections(*, shop_id, start, end):
+    """Money collected against credit receipts inside [start, end).
+
+    Client-linked credits log a PAYMENT_* account event per collection.
+    Credits with no client only stamp ``confirmed_payment_at`` on each
+    collection, so their running paid total attributes to whichever session
+    holds the latest payment.
+    """
+    from django.db.models import Q
+
+    from .models import (
+        ClientCreditAccountEvent,
+        ClientCreditAccountEventKind,
+        ShopReceipt,
+    )
+
+    channel_for = {
+        ClientCreditAccountEventKind.PAYMENT_CASH: "cash",
+        ClientCreditAccountEventKind.PAYMENT_MPESA: "mpesa",
+        ClientCreditAccountEventKind.PAYMENT_CARD: "card",
+    }
+    rows = []
+    for event in (
+        ClientCreditAccountEvent.objects.filter(
+            shop_id=shop_id,
+            kind__in=tuple(channel_for),
+            occurred_at__gte=start,
+            occurred_at__lt=end,
+        )
+        .select_related("receipt", "client", "actor__user")
+        .order_by("occurred_at", "pk")
+    ):
+        rows.append(
+            {
+                "at": event.occurred_at,
+                "channel": channel_for[event.kind],
+                "amount": _money_or_zero(event.amount),
+                "receipt": event.receipt,
+                "event": event,
+            }
+        )
+    for receipt in ShopReceipt.objects.filter(
+        Q(kind=ShopReceiptKind.CREDIT)
+        | Q(kind=ShopReceiptKind.SALE, settled_from_credit=True),
+        shop_id=shop_id,
+        client__isnull=True,
+        amount_paid__gt=0,
+        confirmed_payment_at__gte=start,
+        confirmed_payment_at__lt=end,
+    ):
+        cash, mpesa, card = _receipt_original_tender(
+            receipt.cash_amount,
+            receipt.mpesa_amount,
+            receipt.return_payment_events,
+            card_amount=receipt.card_amount,
+        )
+        rows.append(
+            {
+                "at": receipt.confirmed_payment_at,
+                "channel": "",
+                "amount": cash + mpesa + card,
+                "cash": cash,
+                "mpesa": mpesa,
+                "card": card,
+                "receipt": receipt,
+                "event": None,
+            }
+        )
+    rows.sort(key=lambda row: row["at"])
+    return rows
+
+
+def _session_trade_payments(*, shop_id, start, end):
+    """Cash/M-Pesa/card settlement events on trade receipts inside [start, end).
+
+    Trade-out collections are money into the till; trade-in payouts are money
+    out (the shop pays the customer for the goods traded in).
+    """
+    from .models import ShopReceipt
+
+    rows = []
+    for receipt in (
+        ShopReceipt.objects.filter(shop_id=shop_id, created_at__lt=end)
+        .exclude(trade_settlements=[])
+        .select_related("created_by__user")
+    ):
+        direction = (
+            "out" if receipt.kind == ShopReceiptKind.TRADE_IN else "in"
+        )
+        for event in receipt.trade_settlements or []:
+            if not isinstance(event, dict) or event.get("type") != "payment":
+                continue
+            happened_at = _parse_return_payment_at(event.get("at"))
+            if happened_at is None or not (start <= happened_at < end):
+                continue
+            amount = _money_or_zero(event.get("amount"))
+            if amount <= 0:
+                continue
+            method = str(event.get("method") or "").strip().lower()
+            if method not in ("cash", "mpesa", "card"):
+                method = "cash"
+            rows.append(
+                {
+                    "at": happened_at,
+                    "channel": method,
+                    "amount": amount,
+                    "direction": direction,
+                    "receipt": receipt,
+                    "by_id": event.get("by_id"),
+                    "ref": (event.get("mpesa_receipt_number") or "").strip(),
+                }
+            )
+    rows.sort(key=lambda row: row["at"])
+    return rows
+
+
 def _session_activity_totals(
     session,
     *,
@@ -8152,12 +8295,16 @@ def _session_activity_totals(
     supplier_payments=None,
     refunds=None,
     prepayments=None,
+    cleared_sales=None,
+    credit_collections=None,
+    trade_payments=None,
 ) -> dict:
     """Cash/M-Pesa sales and paid outflows inside a day session window.
 
-    Cashbox expected cash = opening cash + cash sales + customer prepayments
-    (cash) − return refunds − expenses paid − owner drawings (cash)
-    − suppliers paid. M-Pesa/card follow the same shape.
+    Cashbox expected cash = opening cash + cash sales + cleared pending
+    receipts + credit/trade collections + customer prepayments (cash)
+    − return refunds − expenses paid − owner drawings (cash)
+    − suppliers paid − trade-in payouts. M-Pesa/card follow the same shape.
     Owner drawings are equity, not operating expense.
 
     Sales use original tender (including later-returned receipts). Refunds are
@@ -8173,6 +8320,22 @@ def _session_activity_totals(
     cash_refunds = Decimal("0.00")
     mpesa_refunds = Decimal("0.00")
     card_refunds = Decimal("0.00")
+    cleared_cash = Decimal("0.00")
+    cleared_mpesa = Decimal("0.00")
+    cleared_card = Decimal("0.00")
+    cleared_count = 0
+    credit_cash = Decimal("0.00")
+    credit_mpesa = Decimal("0.00")
+    credit_card = Decimal("0.00")
+    credit_count = 0
+    trade_collected_cash = Decimal("0.00")
+    trade_collected_mpesa = Decimal("0.00")
+    trade_collected_card = Decimal("0.00")
+    trade_collected_count = 0
+    trade_paid_cash = Decimal("0.00")
+    trade_paid_mpesa = Decimal("0.00")
+    trade_paid_card = Decimal("0.00")
+    trade_paid_count = 0
     expenses_paid = Decimal("0.00")
     drawings_paid = Decimal("0.00")
     drawings_cash = Decimal("0.00")
@@ -8205,6 +8368,67 @@ def _session_activity_totals(
             cash_refunds += _money_or_zero(event.get("cash"))
             mpesa_refunds += _money_or_zero(event.get("mpesa"))
             card_refunds += _money_or_zero(event.get("card"))
+
+    for row in cleared_sales or []:
+        # Cleared in this window but printed before it — otherwise the
+        # receipt is already a normal in-window sale.
+        when = row.get("at") or row.get("confirmed_payment_at")
+        created = row.get("created_at")
+        if when is None or created is None:
+            continue
+        if opened <= when < closed and created < opened:
+            cash, mpesa, card = _receipt_original_tender(
+                row.get("cash_amount"),
+                row.get("mpesa_amount"),
+                row.get("return_payment_events"),
+                card_amount=row.get("card_amount"),
+            )
+            cleared_cash += cash
+            cleared_mpesa += mpesa
+            cleared_card += card
+            cleared_count += 1
+
+    for row in credit_collections or []:
+        when = row.get("at")
+        if when is None or not (opened <= when < closed):
+            continue
+        credit_count += 1
+        if row.get("channel"):
+            # Single-channel account event.
+            amount = _money_or_zero(row.get("amount"))
+            if row["channel"] == "mpesa":
+                credit_mpesa += amount
+            elif row["channel"] == "card":
+                credit_card += amount
+            else:
+                credit_cash += amount
+        else:
+            credit_cash += _money_or_zero(row.get("cash"))
+            credit_mpesa += _money_or_zero(row.get("mpesa"))
+            credit_card += _money_or_zero(row.get("card"))
+
+    for row in trade_payments or []:
+        when = row.get("at")
+        if when is None or not (opened <= when < closed):
+            continue
+        channel = row.get("channel") or "cash"
+        amount = _money_or_zero(row.get("amount"))
+        if row.get("direction") == "out":
+            trade_paid_count += 1
+            if channel == "mpesa":
+                trade_paid_mpesa += amount
+            elif channel == "card":
+                trade_paid_card += amount
+            else:
+                trade_paid_cash += amount
+        else:
+            trade_collected_count += 1
+            if channel == "mpesa":
+                trade_collected_mpesa += amount
+            elif channel == "card":
+                trade_collected_card += amount
+            else:
+                trade_collected_cash += amount
 
     for expense in expenses or []:
         when = expense["created_at"]
@@ -8252,17 +8476,37 @@ def _session_activity_totals(
     expected_cash = (
         opening_cash
         + cash_sales
+        + cleared_cash
+        + credit_cash
+        + trade_collected_cash
         + prepayments_cash
         - cash_refunds
         - expenses_paid
         - drawings_cash
         - suppliers_paid
+        - trade_paid_cash
     )
     expected_mpesa = (
-        opening_mpesa + mpesa_sales + prepayments_mpesa - mpesa_refunds - drawings_mpesa
+        opening_mpesa
+        + mpesa_sales
+        + cleared_mpesa
+        + credit_mpesa
+        + trade_collected_mpesa
+        + prepayments_mpesa
+        - mpesa_refunds
+        - drawings_mpesa
+        - trade_paid_mpesa
     )
     expected_card = (
-        opening_card + card_sales + prepayments_card - card_refunds - drawings_card
+        opening_card
+        + card_sales
+        + cleared_card
+        + credit_card
+        + trade_collected_card
+        + prepayments_card
+        - card_refunds
+        - drawings_card
+        - trade_paid_card
     )
     # Till tracks physical channels only (cash + M-Pesa + card). Credit sales
     # are receivables, not money in the drawer.
@@ -8312,6 +8556,28 @@ def _session_activity_totals(
         "mpesa_refunds": mpesa_refunds,
         "card_refunds": card_refunds,
         "sales_total": cash_sales + mpesa_sales + card_sales,
+        "cleared_pending_cash": cleared_cash,
+        "cleared_pending_mpesa": cleared_mpesa,
+        "cleared_pending_card": cleared_card,
+        "cleared_pending_total": cleared_cash + cleared_mpesa + cleared_card,
+        "cleared_pending_count": cleared_count,
+        "credit_collected_cash": credit_cash,
+        "credit_collected_mpesa": credit_mpesa,
+        "credit_collected_card": credit_card,
+        "credit_collected_total": credit_cash + credit_mpesa + credit_card,
+        "credit_collected_count": credit_count,
+        "trade_collected_cash": trade_collected_cash,
+        "trade_collected_mpesa": trade_collected_mpesa,
+        "trade_collected_card": trade_collected_card,
+        "trade_collected_total": (
+            trade_collected_cash + trade_collected_mpesa + trade_collected_card
+        ),
+        "trade_collected_count": trade_collected_count,
+        "trade_paid_cash": trade_paid_cash,
+        "trade_paid_mpesa": trade_paid_mpesa,
+        "trade_paid_card": trade_paid_card,
+        "trade_paid_total": trade_paid_cash + trade_paid_mpesa + trade_paid_card,
+        "trade_paid_count": trade_paid_count,
         "expenses": expenses_paid,
         "expenses_paid": expenses_paid,
         "drawings_paid": drawings_paid,
@@ -8402,6 +8668,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             shop=shop,
             kind=ShopReceiptKind.SALE,
             settled_from_credit=False,
+            settled_from_trade=False,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
         ).values(
@@ -8457,6 +8724,34 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             created_at__lt=max_closed,
         ).values("created_at", "cash_amount", "mpesa_amount", "card_amount")
     )
+    cleared_sales = list(
+        ShopReceipt.objects.filter(
+            shop=shop,
+            kind=ShopReceiptKind.SALE,
+            settled_from_credit=False,
+            settled_from_trade=False,
+            status__in=(
+                ShopReceiptStatus.CONFIRMED,
+                ShopReceiptStatus.PARTIAL_RETURN,
+            ),
+            created_at__lt=max_closed,
+            confirmed_payment_at__gte=min_opened,
+            confirmed_payment_at__lt=max_closed,
+        ).values(
+            "created_at",
+            "confirmed_payment_at",
+            "cash_amount",
+            "mpesa_amount",
+            "card_amount",
+            "return_payment_events",
+        )
+    )
+    credit_collections = _session_credit_collections(
+        shop_id=shop.pk, start=min_opened, end=max_closed
+    )
+    trade_payments = _session_trade_payments(
+        shop_id=shop.pk, start=min_opened, end=max_closed
+    )
 
     rows = []
     for session in sessions:
@@ -8467,6 +8762,9 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             supplier_payments=supplier_payments,
             refunds=refunds,
             prepayments=prepayments,
+            cleared_sales=cleared_sales,
+            credit_collections=credit_collections,
+            trade_payments=trade_payments,
         )
         rows.append(
             {
@@ -8512,12 +8810,13 @@ def day_session_balance_summary(
 
     closed = _session_window_end(session)
     window_start = session_activity_start(session)
-    # Settled credits are excluded — their channels were collected later at
-    # account level (Paid columns / credit events), never through this till.
+    # Settled credits/trades are excluded — their money lands via in-window
+    # collection/settlement events, not the receipt's print time.
     sales_qs = ShopReceipt.objects.filter(
         shop_id=session.shop_id,
         kind=ShopReceiptKind.SALE,
         settled_from_credit=False,
+        settled_from_trade=False,
         created_at__gte=window_start,
         created_at__lt=closed,
     )
@@ -8576,6 +8875,21 @@ def day_session_balance_summary(
                 amount_paid__gt=0,
             ).values("created_at", "amount_paid")
         )
+    cleared_sales = list(
+        _session_cleared_pending_sales(
+            shop_id=session.shop_id,
+            start=window_start,
+            end=closed,
+            counted_statuses=counted_statuses,
+        ).values(
+            "created_at",
+            "confirmed_payment_at",
+            "cash_amount",
+            "mpesa_amount",
+            "card_amount",
+            "return_payment_events",
+        )
+    )
     return _session_activity_totals(
         session,
         sales=sales,
@@ -8583,6 +8897,13 @@ def day_session_balance_summary(
         supplier_payments=supplier_payments,
         refunds=refunds,
         prepayments=_prepayment_window_values(
+            shop_id=session.shop_id, start=window_start, end=closed
+        ),
+        cleared_sales=cleared_sales,
+        credit_collections=_session_credit_collections(
+            shop_id=session.shop_id, start=window_start, end=closed
+        ),
+        trade_payments=_session_trade_payments(
             shop_id=session.shop_id, start=window_start, end=closed
         ),
     )
@@ -8602,11 +8923,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         StockOutReason,
     )
 
-    from .models import (
-        ClientCreditAccountEvent,
-        ClientCreditAccountEventKind,
-        ShopReceipt,
-    )
+    from .models import ShopReceipt
 
     if session is None:
         return {}
@@ -8881,6 +9198,9 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
     item_totals = {}
     seller_totals = {}
     flagged_receipts = []
+    pending_sales_count = 0
+    pending_sales_counted = 0
+    pending_sales_total = Decimal("0.00")
     receipts = (
         ShopReceipt.objects.filter(kind=ShopReceiptKind.SALE, **window)
         .select_related("created_by__user")
@@ -8895,6 +9215,15 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 f"{user.first_name or ''} {user.last_name or ''}".strip()
                 or user.username
             )
+        if receipt.status == ShopReceiptStatus.ACTIVE:
+            # Pending (unconfirmed) receipts — expected-sales extras when the
+            # status pick leaves them uncounted; already in the till figure
+            # otherwise.
+            if receipt.status in counted:
+                pending_sales_counted += 1
+            else:
+                pending_sales_count += 1
+                pending_sales_total += Decimal(receipt.total or 0)
         if receipt.status in counted:
             seller_agg = seller_totals.setdefault(
                 receipt.created_by_id or 0,
@@ -8989,13 +9318,13 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         )
 
     # Credit collections during the session window — account-level payments
-    # that settled (or part-paid) credit notes. Fully paid ones converted to
-    # sales; the money never passed through this session's till, so it is
-    # reported for reference only (see the money-flow memo row).
-    credit_pay_channel = {
-        ClientCreditAccountEventKind.PAYMENT_CASH: ("cash", "Cash"),
-        ClientCreditAccountEventKind.PAYMENT_MPESA: ("mpesa", "M-Pesa"),
-        ClientCreditAccountEventKind.PAYMENT_CARD: ("card", "Card"),
+    # that settled (or part-paid) credit notes, plus collections on credits
+    # with no client account. The money lands in this session's till (see the
+    # money-flow row); fully paid credits converted to sales.
+    credit_channel_labels = {
+        "cash": "Cash",
+        "mpesa": "M-Pesa",
+        "card": "Card",
     }
     credit_payment_rows = []
     credit_pay_totals = {
@@ -9004,61 +9333,100 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         "card": Decimal("0.00"),
     }
     converted_receipt_ids = set()
-    for event in (
-        ClientCreditAccountEvent.objects.filter(
-            shop_id=session.shop_id,
-            kind__in=tuple(credit_pay_channel),
-            occurred_at__gte=window["created_at__gte"],
-            occurred_at__lt=window["created_at__lt"],
-        )
-        .select_related("receipt", "client", "actor__user")
-        .order_by("occurred_at", "pk")
+    for collection in _session_credit_collections(
+        shop_id=session.shop_id,
+        start=window["created_at__gte"],
+        end=window["created_at__lt"],
     ):
-        channel, channel_label = credit_pay_channel[event.kind]
-        amount = _money_or_zero(event.amount)
-        credit_pay_totals[channel] += amount
-        receipt = event.receipt
+        receipt = collection["receipt"]
         converted = bool(
             receipt is not None and receipt.settled_from_credit
         )
         if converted:
             converted_receipt_ids.add(receipt.pk)
-        meta = event.meta or {}
-        due_after = None
-        raw_due = meta.get("due_after")
-        if raw_due not in (None, ""):
-            try:
-                due_after = Decimal(str(raw_due)).quantize(Decimal("0.01"))
-            except (InvalidOperation, TypeError, ValueError):
-                due_after = None
-        collected_by = ""
-        if event.actor_id and event.actor.user_id:
-            actor_user = event.actor.user
-            collected_by = (
-                f"{actor_user.first_name or ''} "
-                f"{actor_user.last_name or ''}".strip()
-                or actor_user.username
+        event = collection["event"]
+        if event is not None:
+            channel = collection["channel"]
+            amount = collection["amount"]
+            credit_pay_totals[channel] += amount
+            meta = event.meta or {}
+            due_after = None
+            raw_due = meta.get("due_after")
+            if raw_due not in (None, ""):
+                try:
+                    due_after = Decimal(str(raw_due)).quantize(Decimal("0.01"))
+                except (InvalidOperation, TypeError, ValueError):
+                    due_after = None
+            collected_by = ""
+            if event.actor_id and event.actor.user_id:
+                actor_user = event.actor.user
+                collected_by = (
+                    f"{actor_user.first_name or ''} "
+                    f"{actor_user.last_name or ''}".strip()
+                    or actor_user.username
+                )
+            client_label = (
+                (event.client.full_name or "").strip()
+                if event.client_id
+                else ""
             )
-        client_label = (
-            (event.client.full_name or "").strip() if event.client_id else ""
-        )
-        if not client_label and receipt is not None:
-            client_label = (receipt.client_name or "").strip()
+            if not client_label and receipt is not None:
+                client_label = (receipt.client_name or "").strip()
+            credit_payment_rows.append(
+                {
+                    "at": collection["at"],
+                    "number": (
+                        receipt_tally_code(receipt)
+                        if receipt is not None
+                        else "—"
+                    ),
+                    "printed_at": (
+                        receipt.created_at if receipt is not None else None
+                    ),
+                    "client": client_label or "—",
+                    "channel": channel,
+                    "channel_label": credit_channel_labels[channel],
+                    "ref": (meta.get("mpesa_receipt_number") or "").strip(),
+                    "by": collected_by or "—",
+                    "converted": converted,
+                    "cleared": bool(meta.get("cleared")),
+                    "due_after": due_after,
+                    "amount": amount,
+                }
+            )
+            continue
+        # Client-less credit — no account events; the row is the receipt's
+        # running paid total attributed to its latest payment.
+        cash = collection["cash"]
+        mpesa = collection["mpesa"]
+        card = collection["card"]
+        credit_pay_totals["cash"] += cash
+        credit_pay_totals["mpesa"] += mpesa
+        credit_pay_totals["card"] += card
+        used_channels = [
+            credit_channel_labels[key]
+            for key, value in (
+                ("cash", cash),
+                ("mpesa", mpesa),
+                ("card", card),
+            )
+            if value > 0
+        ]
+        paid_total, due_total = _credit_paid_and_due(receipt)
         credit_payment_rows.append(
             {
-                "at": event.occurred_at,
-                "number": (
-                    receipt_tally_code(receipt) if receipt is not None else "—"
-                ),
-                "client": client_label or "—",
-                "channel": channel,
-                "channel_label": channel_label,
-                "ref": (meta.get("mpesa_receipt_number") or "").strip(),
-                "by": collected_by or "—",
+                "at": collection["at"],
+                "number": receipt_tally_code(receipt),
+                "printed_at": receipt.created_at,
+                "client": (receipt.client_name or "").strip() or "—",
+                "channel": "",
+                "channel_label": " + ".join(used_channels) or "—",
+                "ref": (receipt.mpesa_receipt_number or "").strip(),
+                "by": "—",
                 "converted": converted,
-                "cleared": bool(meta.get("cleared")),
-                "due_after": due_after,
-                "amount": amount,
+                "cleared": due_total <= 0,
+                "due_after": due_total if due_total > 0 else None,
+                "amount": paid_total,
             }
         )
     credit_payments = {
@@ -9070,6 +9438,102 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         "card": credit_pay_totals["card"],
         "total": sum(credit_pay_totals.values(), Decimal("0.00")),
     }
+
+    # Pending sales printed before this session and confirmed inside it —
+    # their money lands in this till, listed with the day they were printed.
+    cleared_pending_rows = []
+    for receipt in (
+        _session_cleared_pending_sales(
+            shop_id=session.shop_id,
+            start=window["created_at__gte"],
+            end=window["created_at__lt"],
+            counted_statuses=counted_statuses,
+        )
+        .select_related("created_by__user")
+        .prefetch_related("lines")
+        .order_by("confirmed_payment_at", "pk")
+    ):
+        seller = ""
+        if receipt.created_by_id:
+            user = receipt.created_by.user
+            seller = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+            )
+        lines = list(receipt.lines.all())
+        labels = [
+            f"{(line.item_name or '').strip() or 'Item'}"
+            f" ×{_qty_label(line.quantity)}"
+            for line in lines[:2]
+        ]
+        extra = len(lines) - len(labels)
+        items_label = ", ".join(labels)
+        if extra > 0:
+            items_label += f" +{extra} more"
+        cash, mpesa, card = _receipt_original_tender(
+            receipt.cash_amount,
+            receipt.mpesa_amount,
+            receipt.return_payment_events,
+            card_amount=receipt.card_amount,
+        )
+        cleared_pending_rows.append(
+            {
+                "at": receipt.confirmed_payment_at,
+                "printed_at": receipt.created_at,
+                "number": receipt_tally_code(receipt),
+                "items_label": items_label or "—",
+                "seller": seller or "—",
+                "client": (receipt.client_name or "").strip(),
+                "cash": cash,
+                "mpesa": mpesa,
+                "card": card,
+                "total": cash + mpesa + card,
+            }
+        )
+
+    # Trade settlement payments inside the session window — trade-out
+    # collections are money in, trade-in payouts are money out.
+    trade_pay_rows = []
+    trade_payer_ids = set()
+    for payment in _session_trade_payments(
+        shop_id=session.shop_id,
+        start=window["created_at__gte"],
+        end=window["created_at__lt"],
+    ):
+        if payment["by_id"]:
+            trade_payer_ids.add(payment["by_id"])
+        trade_pay_rows.append(payment)
+    trade_payer_names = {}
+    if trade_payer_ids:
+        from employees.models import EmployeeProfile
+
+        for profile in EmployeeProfile.objects.filter(
+            pk__in=trade_payer_ids
+        ).select_related("user"):
+            if profile.user_id:
+                trade_payer_names[profile.pk] = (
+                    f"{profile.user.first_name or ''} "
+                    f"{profile.user.last_name or ''}".strip()
+                    or profile.user.username
+                )
+    trade_payment_rows = []
+    for payment in trade_pay_rows:
+        receipt = payment["receipt"]
+        trade_payment_rows.append(
+            {
+                "at": payment["at"],
+                "number": receipt_tally_code(receipt),
+                "printed_at": receipt.created_at,
+                "client": (receipt.client_name or "").strip() or "—",
+                "channel_label": CHANNEL_LABELS.get(
+                    payment["channel"], payment["channel"]
+                ),
+                "direction": payment["direction"],
+                "ref": payment["ref"],
+                "by": trade_payer_names.get(payment["by_id"]) or "—",
+                "amount": payment["amount"],
+            }
+        )
 
     prepayment_rows = []
     from .models import CustomerPrepayment
@@ -9145,12 +9609,19 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
 
     return {
         "sales_count": sales_count,
+        "pending_sales": {
+            "count": pending_sales_count,
+            "counted": pending_sales_counted,
+            "total": pending_sales_total,
+        },
         "items_sold": items_sold,
         "sellers": sellers,
         "flagged_receipts": flagged_receipts,
         "credit_gift_receipts": credit_gift_receipts,
         "credit_sales": _kind_totals(ShopReceiptKind.CREDIT),
         "credit_payments": credit_payments,
+        "cleared_pending": cleared_pending_rows,
+        "trade_payments": trade_payment_rows,
         "gifts": _kind_totals(ShopReceiptKind.GIFT),
         "expenses": expense_rows,
         "drawings": drawing_rows,
@@ -9209,6 +9680,111 @@ def day_report_not_till_lines(*, summary, details, pos=None, shop=None):
             }
         )
     return {"lines": lines, "slips": slips}
+
+
+def day_session_sales_profit(
+    *, summary, details, item_stock=True, shelf_stock=True
+) -> dict:
+    """Expected vs actual sales & profit rollup for the day report.
+
+    Expected sales = counted till sales + pending receipts the status pick
+    leaves uncounted + credit sales + gift issues. Actual sales = the money
+    that reached the till (``summary["sales_total"]``). Expected profit
+    charges every expense and stock purchase (paid + unpaid) and adds
+    customer prepayments; actual profit charges paid costs only. Credit and
+    gift figures are sale value — never till money.
+
+    `item_stock`/`shelf_stock` mirror the report's stock-section toggles —
+    an off section's purchases are left out of both paid and unpaid stock,
+    matching ``suppliers_paid`` in the money flow.
+    """
+
+    def _money(value):
+        try:
+            return Decimal(value or 0)
+        except (InvalidOperation, TypeError, ValueError):
+            return Decimal("0.00")
+
+    pending = details.get("pending_sales") or {}
+    credit = details.get("credit_sales") or {}
+    gifts = details.get("gifts") or {}
+    expense_rows = details.get("expenses") or []
+    expenses_unpaid = sum(
+        (
+            max(
+                _money(row.get("amount")) - _money(row.get("paid")),
+                Decimal("0.00"),
+            )
+            for row in expense_rows
+        ),
+        Decimal("0.00"),
+    )
+    stock_groups = []
+    if item_stock:
+        stock_groups += list(details.get("stock_purchases") or [])
+    if shelf_stock:
+        stock_groups += list(details.get("shelf_purchases") or [])
+    stock_unpaid = Decimal("0.00")
+    for group in stock_groups:
+        group_value = sum(
+            (
+                _money(line.get("total"))
+                for line in group.get("lines") or []
+                if line.get("total") is not None
+            ),
+            Decimal("0.00"),
+        )
+        stock_unpaid += max(
+            group_value - _money(group.get("paid")), Decimal("0.00")
+        )
+
+    expenses_paid = _money(summary.get("expenses_paid"))
+    stock_paid = _money(summary.get("suppliers_paid"))
+    prepayments_total = _money(summary.get("prepayments_total"))
+    actual_sales = _money(summary.get("sales_total"))
+    expected_sales = (
+        actual_sales
+        + _money(pending.get("total"))
+        + _money(credit.get("total"))
+        + _money(gifts.get("total"))
+    )
+    expenses_total = expenses_paid + expenses_unpaid
+    stock_total = stock_paid + stock_unpaid
+    expected_profit = (
+        expected_sales - expenses_total - stock_total + prepayments_total
+    )
+    actual_profit = (
+        actual_sales - expenses_paid - stock_paid + prepayments_total
+    )
+    return {
+        "sales_count": int(details.get("sales_count") or 0),
+        "counted_sales": actual_sales,
+        "pending_count": int(pending.get("count") or 0),
+        "pending_counted": int(pending.get("counted") or 0),
+        "pending_total": _money(pending.get("total")),
+        "credit_count": int(credit.get("count") or 0),
+        "credit_total": _money(credit.get("total")),
+        "credit_due": _money(credit.get("due")),
+        "gift_count": int(gifts.get("count") or 0),
+        "gift_total": _money(gifts.get("total")),
+        "expected_sales": expected_sales,
+        "actual_sales": actual_sales,
+        "outstanding": expected_sales - actual_sales,
+        "expense_count": len(expense_rows),
+        "expenses_paid": expenses_paid,
+        "expenses_unpaid": expenses_unpaid,
+        "expenses_total": expenses_total,
+        "stock_doc_count": len(stock_groups),
+        "stock_paid": stock_paid,
+        "stock_unpaid": stock_unpaid,
+        "stock_total": stock_total,
+        "prepayments_count": int(summary.get("prepayments_count") or 0),
+        "prepayments_total": prepayments_total,
+        "expected_profit": expected_profit,
+        "actual_profit": actual_profit,
+        "profit_gap": expected_profit - actual_profit,
+        "unpaid_obligations": expenses_unpaid + stock_unpaid,
+    }
 
 
 def _summary_channel_touched(summary: dict, key: str) -> bool:
@@ -9562,6 +10138,7 @@ def build_shop_day_report_pdf(
         + (summary.get("cash_refunds") or 0)
         + (summary.get("mpesa_refunds") or 0)
         + (summary.get("card_refunds") or 0)
+        + (summary.get("trade_paid_total") or 0)
     )
     closing_label = "Expected closing" if is_open else "Counted closing"
     closing_value = (
@@ -9600,6 +10177,179 @@ def build_shop_day_report_pdf(
     )
     story.append(kpi_table)
     story.append(Spacer(1, 10))
+
+    # ---- Sales & profit overview ------------------------------------------
+    if _sec("day_report_sec_sales_profit"):
+        sp = day_session_sales_profit(
+            summary=summary,
+            details=details,
+            item_stock=_sec("day_report_sec_item_stock"),
+            shelf_stock=_sec("day_report_sec_shelf_stock"),
+        )
+        sp_section_style = ParagraphStyle(
+            "DaySpSection", parent=cell_sm_strong, textColor=muted
+        )
+        sp_scope = (
+            sales_scope_label.lower()
+            if sales_scope_label
+            else "all receipt statuses"
+        )
+        counted_sub = f"collected at the till · {sp_scope}"
+        if sp["pending_counted"]:
+            counted_sub += (
+                f" · includes {sp['pending_counted']} pending"
+                f"{'s' if sp['pending_counted'] != 1 else ''}"
+            )
+        sp_rows = []
+        sp_spans = []
+        sp_strong = []
+
+        def _sp_section(label):
+            sp_rows.append(
+                [Paragraph(_esc(label), sp_section_style), "", ""]
+            )
+            sp_spans.append(len(sp_rows) - 1)
+
+        def _sp_row(label, docs, amount, *, strong=False, sub="", minus=False):
+            html = _esc(label)
+            if sub:
+                html += (
+                    "<br/><font size='6.8' color='#5b6b7c'>"
+                    + _esc(sub)
+                    + "</font>"
+                )
+            style_l = cell_sm_strong if strong else cell_sm
+            style_r = cell_sm_strong_right if strong else cell_sm_right
+            value = _fmt(amount)
+            if minus and amount is not None and Decimal(amount) != 0:
+                value = f"−{value}"
+            sp_rows.append(
+                [
+                    Paragraph(html, style_l),
+                    Paragraph(_esc(docs), style_r),
+                    Paragraph(value, style_r),
+                ]
+            )
+            if strong:
+                sp_strong.append(len(sp_rows) - 1)
+
+        _sp_section("Sales")
+        _sp_row(
+            "Counted sales",
+            str(sp["sales_count"]),
+            sp["counted_sales"],
+            sub=counted_sub,
+        )
+        _sp_row(
+            "Pending receipts",
+            str(sp["pending_count"]),
+            sp["pending_total"],
+            sub="awaiting confirmation — not counted above",
+        )
+        if getattr(pos, "enable_credit", False):
+            _sp_row(
+                "Credit sales",
+                str(sp["credit_count"]),
+                sp["credit_total"],
+                sub="collected later — outside the till",
+            )
+        if getattr(pos, "enable_gift", True):
+            _sp_row(
+                "Gift issues",
+                str(sp["gift_count"]),
+                sp["gift_total"],
+                sub="free issues — outside the till",
+            )
+        _sp_row("Expected sales", "", sp["expected_sales"], strong=True)
+        _sp_row(
+            "Actual sales",
+            "",
+            sp["actual_sales"],
+            sub="money that reached the till",
+        )
+        _sp_row(
+            "Still to collect",
+            "",
+            sp["outstanding"],
+            sub="expected sales − actual sales",
+        )
+        _sp_section("Costs & profit")
+        _sp_row(
+            "Expenses",
+            str(sp["expense_count"]),
+            sp["expenses_total"],
+            sub=(
+                f"paid {_fmt(sp['expenses_paid'])}"
+                f" · unpaid {_fmt(sp['expenses_unpaid'])}"
+            ),
+            minus=True,
+        )
+        _sp_row(
+            "Stock bought",
+            str(sp["stock_doc_count"]),
+            sp["stock_total"],
+            sub=(
+                f"paid {_fmt(sp['stock_paid'])}"
+                f" · unpaid {_fmt(sp['stock_unpaid'])}"
+            ),
+            minus=True,
+        )
+        _sp_row(
+            "Customer prepayments",
+            str(sp["prepayments_count"]),
+            sp["prepayments_total"],
+            sub="money received ahead of orders",
+        )
+        _sp_row("Expected profit", "", sp["expected_profit"], strong=True)
+        _sp_row("Actual profit", "", sp["actual_profit"], strong=True)
+        _sp_row(
+            "Unpaid obligations",
+            "",
+            sp["unpaid_obligations"],
+            sub="unpaid expenses + unpaid stock",
+        )
+        _sp_row(
+            "Expected − actual gap",
+            "",
+            sp["profit_gap"],
+            sub="profit riding on uncollected sales and unpaid costs",
+        )
+
+        sp_head = [
+            Paragraph("Sales & profit", head_cell),
+            Paragraph("Docs", head_cell_right),
+            Paragraph("Amount", head_cell_right),
+        ]
+        sp_table = Table(
+            [sp_head, *sp_rows],
+            colWidths=[doc.width * 0.6, doc.width * 0.12, doc.width * 0.28],
+            repeatRows=1,
+        )
+        sp_commands = [
+            ("BACKGROUND", (0, 0), (-1, 0), head_fill),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.75, head_fill),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, line),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.75, line),
+            ("LINEBELOW", (0, -1), (-1, -1), 0.75, line),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, surface]),
+        ]
+        for index in sp_spans:
+            sp_commands += [
+                ("SPAN", (0, index + 1), (-1, index + 1)),
+                ("BACKGROUND", (0, index + 1), (-1, index + 1), surface),
+            ]
+        for index in sp_strong:
+            sp_commands.append(
+                ("BACKGROUND", (0, index + 1), (-1, index + 1), accent_soft)
+            )
+        sp_table.setStyle(TableStyle(sp_commands))
+        story.append(sp_table)
+        story.append(Spacer(1, 10))
 
     # ---- Money summary table ------------------------------------------------
     channel_cols = day_report_channel_columns(
@@ -9652,6 +10402,27 @@ def build_shop_day_report_pdf(
             summary.get("sales_total"),
         ),
         _money_row(
+            f"Cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
+            summary.get("cleared_pending_cash"),
+            summary.get("cleared_pending_mpesa"),
+            summary.get("cleared_pending_card"),
+            summary.get("cleared_pending_total"),
+        ),
+        _money_row(
+            f"Credit payments collected ({summary.get('credit_collected_count') or 0})",
+            summary.get("credit_collected_cash"),
+            summary.get("credit_collected_mpesa"),
+            summary.get("credit_collected_card"),
+            summary.get("credit_collected_total"),
+        ),
+        _money_row(
+            f"Trade payments collected ({summary.get('trade_collected_count') or 0})",
+            summary.get("trade_collected_cash"),
+            summary.get("trade_collected_mpesa"),
+            summary.get("trade_collected_card"),
+            summary.get("trade_collected_total"),
+        ),
+        _money_row(
             f"Customer prepayments ({summary.get('prepayments_count') or 0})",
             summary.get("prepayments_cash"),
             summary.get("prepayments_mpesa"),
@@ -9691,6 +10462,14 @@ def build_shop_day_report_pdf(
             minus=True,
         ),
         _money_row(
+            f"Trade-in payouts ({summary.get('trade_paid_count') or 0})",
+            summary.get("trade_paid_cash"),
+            summary.get("trade_paid_mpesa"),
+            summary.get("trade_paid_card"),
+            summary.get("trade_paid_total"),
+            minus=True,
+        ),
+        _money_row(
             "Expected in till",
             summary.get("expected_cash"),
             summary.get("expected_mpesa"),
@@ -9727,17 +10506,6 @@ def build_shop_day_report_pdf(
     credit_payments_sec = getattr(
         pos, "enable_credit", False
     ) and _sec("day_report_sec_credit_payments")
-    if credit_pay_rows and credit_payments_sec:
-        # Memo row — account-level collections; not part of this till.
-        rows.append(
-            _money_row(
-                "Credit payments collected — outside till",
-                credit_payments.get("cash"),
-                credit_payments.get("mpesa"),
-                credit_payments.get("card"),
-                credit_payments.get("total"),
-            )
-        )
 
     money_table = Table([head, *rows], colWidths=col_widths, repeatRows=1)
     money_style = [
@@ -9947,6 +10715,13 @@ def build_shop_day_report_pdf(
             receipt_sub = pay["client"]
             if pay["ref"]:
                 receipt_sub += f" · Ref {pay['ref']}"
+            printed_label = (
+                timezone.localtime(pay["printed_at"]).strftime(
+                    "%d %b %Y · %H:%M"
+                )
+                if pay.get("printed_at")
+                else "—"
+            )
             credit_pay_rows_pdf.append(
                 [
                     _p(_time(pay["at"]), cell_sm),
@@ -9956,6 +10731,7 @@ def build_shop_day_report_pdf(
                         f"{_esc(receipt_sub)}</font>",
                         cell_sm,
                     ),
+                    _p(printed_label, cell_sm),
                     _p(pay["channel_label"], cell_sm),
                     Paragraph(
                         f"<font color='{outcome_color}'><b>"
@@ -9978,27 +10754,136 @@ def build_shop_day_report_pdf(
                 f"{'s' if converted_count != 1 else ''} converted to sales"
             )
         credit_pay_note += (
-            ". Collected on credit accounts — outside this session's till."
+            ". Collected into this session's till — part of Expected in till."
         )
         _detail_table(
             "Credit payments collected",
-            [time_head, "Receipt", "Channel", "Outcome", "Collected by", "Amount"],
+            [
+                time_head,
+                "Receipt",
+                "Printed",
+                "Channel",
+                "Outcome",
+                "Collected by",
+                "Amount",
+            ],
             credit_pay_rows_pdf,
             [
                 doc.width * 0.07,
-                doc.width * 0.30,
-                doc.width * 0.10,
-                doc.width * 0.22,
+                doc.width * 0.25,
+                doc.width * 0.13,
+                doc.width * 0.09,
+                doc.width * 0.20,
+                doc.width * 0.12,
                 doc.width * 0.14,
-                doc.width * 0.17,
             ],
-            aligns=["l", "l", "l", "l", "l", "r"],
+            aligns=["l", "l", "l", "l", "l", "l", "r"],
             dense=True,
             empty_note="No credit payments collected this day.",
             section="day_report_sec_credit_payments",
         )
         if credit_pay_rows_pdf:
             story.append(Paragraph(_esc(credit_pay_note), note_style))
+
+    # -- Cleared pending receipts (printed earlier, collected now) ----------
+    cleared_rows = details.get("cleared_pending") or []
+    cleared_total = sum(
+        (Decimal(row.get("total") or 0) for row in cleared_rows),
+        Decimal("0.00"),
+    )
+    _detail_table(
+        "Cleared pending receipts",
+        ["Cleared", "Receipt", "Sold by", "Items", "Amount"],
+        [
+            [
+                _p(_time(row["at"]), cell_sm),
+                Paragraph(
+                    f"<b>{_esc(row['number'])}</b>"
+                    f"<br/><font size='6.8' color='#5b6b7c'>Printed "
+                    f"{_esc(timezone.localtime(row['printed_at']).strftime('%d %b %Y · %H:%M'))}</font>",
+                    cell_sm,
+                ),
+                _p(row["seller"], cell_sm),
+                _p(row["items_label"], cell_sm),
+                _p(_fmt(row["total"]), cell_sm_right),
+            ]
+            for row in cleared_rows
+        ],
+        [
+            doc.width * 0.09,
+            doc.width * 0.30,
+            doc.width * 0.17,
+            doc.width * 0.30,
+            doc.width * 0.14,
+        ],
+        aligns=["l", "l", "l", "l", "r"],
+        footer=["Total", "", "", "", _fmt(cleared_total)],
+        dense=True,
+        empty_note="No earlier pending receipts cleared this session.",
+        section="day_report_sec_cleared",
+    )
+
+    # -- Trade settlements (collections in, payouts out) --------------------
+    trade_pay_rows_pdf = details.get("trade_payments") or []
+    trade_rows_pdf = []
+    for pay in trade_pay_rows_pdf:
+        if pay["direction"] == "in":
+            flow_label, flow_color = "Collected", "#0f766e"
+        else:
+            flow_label, flow_color = "Paid out", "#b45309"
+        receipt_sub = pay["client"]
+        if pay["ref"]:
+            receipt_sub += f" · Ref {pay['ref']}"
+        receipt_sub += (
+            f" · Printed "
+            f"{timezone.localtime(pay['printed_at']).strftime('%d %b %Y · %H:%M')}"
+        )
+        trade_rows_pdf.append(
+            [
+                _p(_time(pay["at"]), cell_sm),
+                Paragraph(
+                    f"<b>{_esc(pay['number'])}</b>"
+                    f"<br/><font size='6.8' color='#5b6b7c'>"
+                    f"{_esc(receipt_sub)}</font>",
+                    cell_sm,
+                ),
+                _p(pay["channel_label"], cell_sm),
+                Paragraph(
+                    f"<font color='{flow_color}'><b>"
+                    f"{_esc(flow_label)}</b></font>",
+                    cell_sm,
+                ),
+                _p(pay["by"], cell_sm),
+                _p(_fmt(pay["amount"]), cell_sm_right),
+            ]
+        )
+    _detail_table(
+        "Trade settlements",
+        [time_head, "Receipt", "Channel", "Flow", "Settled by", "Amount"],
+        trade_rows_pdf,
+        [
+            doc.width * 0.07,
+            doc.width * 0.36,
+            doc.width * 0.11,
+            doc.width * 0.14,
+            doc.width * 0.15,
+            doc.width * 0.17,
+        ],
+        aligns=["l", "l", "l", "l", "l", "r"],
+        dense=True,
+        empty_note="No trade settlements this day.",
+        section="day_report_sec_cleared",
+    )
+    if trade_rows_pdf and _sec("day_report_sec_cleared"):
+        story.append(
+            Paragraph(
+                _esc(
+                    "Trade collections are part of Expected in till; "
+                    "trade-in payouts subtract from it."
+                ),
+                note_style,
+            )
+        )
 
     # -- Customer prepayments (money in ahead of orders) ---------------------
     prepay_rows = details.get("prepayments") or []

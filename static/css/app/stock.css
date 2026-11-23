@@ -9613,361 +9613,89 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   }
 }
 
-/* ?? Online stock take page ?? */
+/* ---------- Online stock take — modern count report ---------- */
 .stock-panel--online-take {
   gap: 1rem;
 }
 
-.online-take-shop-bar {
+/* Toolbar */
+.online-take-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: 0.7rem 0.9rem;
   align-items: end;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-muted) 42%, var(--surface));
 }
 
 .online-take-shop-pick {
   display: grid;
-  gap: 0.35rem;
-  min-width: min(18rem, 100%);
+  gap: 0.3rem;
+  min-width: min(13rem, 100%);
 }
 
 .online-take-shop-pick > span {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--mist-dim);
 }
 
 .online-take-shop-pick select,
 .online-take-shop-pick input[type="date"] {
-  min-height: 2.6rem;
-  padding: 0.45rem 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text-strong);
-  font: inherit;
-  font-weight: 600;
-}
-
-.online-take-shop-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
-  gap: 0.75rem;
-}
-
-.online-take-shop-card {
-  display: grid;
-  gap: 0.35rem;
-  padding: 1rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  color: inherit;
-  text-decoration: none;
-  transition: border-color 160ms ease, transform 160ms ease;
-}
-
-.online-take-shop-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  transform: translateY(-1px);
-}
-
-.online-take-shop-card svg {
-  width: 1.15rem;
-  height: 1.15rem;
-  color: var(--accent);
-}
-
-.online-take-shop-card strong {
-  color: var(--text-strong);
-  font-size: 0.95rem;
-}
-
-.online-take-shop-card span {
-  color: var(--mist-dim);
-  font-size: 0.78rem;
-}
-
-.online-take-count-card,
-.online-take-empty {
-  display: grid;
-  gap: 0.9rem;
-  padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface);
-}
-
-.online-take-empty {
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-}
-
-.online-take-empty svg {
-  width: 1.6rem;
-  height: 1.6rem;
-  color: var(--accent);
-}
-
-.online-take-empty h3 {
-  margin: 0 0 0.25rem;
-  font-size: 1.05rem;
-}
-
-.online-take-empty p {
-  margin: 0 0 0.75rem;
-  color: var(--mist-dim);
-  font-size: 0.88rem;
-}
-
-.online-take-count-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  justify-content: space-between;
-  align-items: start;
-}
-
-.online-take-count-head h3 {
-  margin: 0.15rem 0 0.35rem;
-  font-size: 1.1rem;
-}
-
-.online-take-count-head p {
-  margin: 0;
-  color: var(--mist-dim);
-  font-size: 0.86rem;
-  line-height: 1.4;
-}
-
-.online-take-progress {
+  width: 100%;
+  min-height: 2.5rem;
   padding: 0.4rem 0.7rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel-muted));
-  color: var(--text-strong);
-  font-size: 0.78rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.online-take-search {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.45rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel-muted);
-}
-
-.online-take-search svg {
-  width: 1rem;
-  height: 1rem;
-  color: var(--mist-dim);
-}
-
-.online-take-search input {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text-strong);
-  font: inherit;
-  outline: none;
-}
-
-.online-take-list {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.online-take-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 5.5rem minmax(6.5rem, 8.5rem);
-  gap: 0.55rem;
-  align-items: center;
-  padding: 0.7rem 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel-muted);
-}
-
-.online-take-row.is-filled {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-}
-
-.online-take-item {
-  display: grid;
-  gap: 0.12rem;
-  min-width: 0;
-}
-
-.online-take-item strong {
-  color: var(--text-strong);
-  font-size: 0.9rem;
-  line-height: 1.25;
-}
-
-.online-take-item em,
-.online-take-system {
-  color: var(--mist-dim);
-  font-size: 0.72rem;
-  font-style: normal;
-}
-
-.online-take-qty input {
-  width: 100%;
-  min-height: 2.4rem;
-  padding: 0.35rem 0.45rem;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
   color: var(--text-strong);
   font: inherit;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-.online-take-variance {
-  display: grid;
-  gap: 0.05rem;
-  font-size: 0.72rem;
-  line-height: 1.25;
-  color: var(--mist-dim);
-}
-
-.online-take-variance strong {
-  font-size: 0.78rem;
-}
-
-.online-take-variance.is-match {
-  color: #1f7a45;
-}
-
-.online-take-variance.is-excess {
-  color: #9a6b12;
-}
-
-.online-take-variance.is-short {
-  color: #b42318;
-}
-
-.online-take-error {
-  margin: 0;
-  padding: 0.55rem 0.7rem;
-  border-radius: 10px;
-  background: color-mix(in srgb, #c44b4b 14%, var(--panel-muted));
-  color: #8f1f1f;
-  font-size: 0.84rem;
   font-weight: 650;
-}
-
-.online-take-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.online-take-results {
-  margin-top: 0.5rem;
-}
-
-@media (max-width: 720px) {
-  .online-take-row {
-    grid-template-columns: minmax(0, 1fr) 4.8rem;
-    grid-template-areas:
-      "item qty"
-      "variance variance";
-  }
-
-  .online-take-item {
-    grid-area: item;
-  }
-
-  .online-take-qty {
-    grid-area: qty;
-  }
-
-  .online-take-variance {
-    grid-area: variance;
-  }
-
-  .online-take-empty {
-    grid-template-columns: 1fr;
-  }
-
-  .online-take-actions .btn {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .stock-count-result-table-wrap {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-}
-
-/* Online stock take ? category list (not cards), live variance + autosave */
-.stock-panel--online-take {
-  gap: 0.9rem;
-}
-
-.online-take-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1rem;
-  align-items: end;
-}
-
-.online-take-shop-pick,
-.online-take-search {
-  display: grid;
-  gap: 0.28rem;
-  min-width: min(18rem, 100%);
-}
-
-.online-take-shop-pick span {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--mist-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.online-take-shop-pick select,
-.online-take-search input {
-  width: 100%;
-  min-height: 2.55rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 0.45rem 0.7rem;
-  font: inherit;
 }
 
 .online-take-search {
   position: relative;
-  flex: 1 1 16rem;
+  display: grid;
+  gap: 0.3rem;
+  flex: 1 1 15rem;
+  align-content: end;
 }
 
-.online-take-search i {
+.online-take-search i,
+.online-take-search svg {
   position: absolute;
   left: 0.75rem;
-  top: 50%;
+  bottom: 0.78rem;
   width: 1rem;
   height: 1rem;
-  transform: translateY(-50%);
   color: var(--mist);
   pointer-events: none;
 }
 
 .online-take-search input {
-  padding-left: 2.2rem;
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.7rem 0.4rem 2.2rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
 }
 
+.online-take-search input:focus,
+.online-take-shop-pick select:focus,
+.online-take-shop-pick input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 40%, transparent);
+  outline-offset: 1px;
+  border-color: color-mix(in srgb, var(--accent, #1f6f78) 55%, var(--line));
+}
+
+/* Status stack — day chip, live/sync state, autosave status */
 .online-take-status-stack {
   display: grid;
   gap: 0.2rem;
@@ -9994,6 +9722,10 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   width: 0.9rem;
   height: 0.9rem;
   color: var(--accent-deep, var(--accent));
+}
+
+.online-take-locked-chip {
+  color: var(--mist-dim);
 }
 
 .online-take-live-status {
@@ -10057,129 +9789,216 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   color: var(--danger);
 }
 
-.online-take-row.is-remote-flash {
-  background: color-mix(in srgb, var(--accent, #1f6f78) 12%, transparent);
-  transition: background 0.9s ease;
-}
-
+/* Summary stat cards */
 .online-take-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem 1.1rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
-}
-
-.online-take-categories {
   display: grid;
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.65rem;
 }
 
-.online-take-category {
+.online-take-stat {
+  position: relative;
+  display: grid;
+  gap: 0.22rem;
+  align-content: start;
+  padding: 0.7rem 0.85rem 0.75rem;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface);
   overflow: hidden;
 }
 
-.online-take-category-head {
+.online-take-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 3px;
+  background: var(--accent, #1f6f78);
+}
+
+.online-take-stat.is-match::before {
+  background: var(--ok, #2f7d4a);
+}
+
+.online-take-stat.is-excess::before {
+  background: #d4a017;
+}
+
+.online-take-stat.is-short::before {
+  background: var(--danger);
+}
+
+.online-take-stat-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
+.online-take-stat-value {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.7rem 0.9rem;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-muted) 35%, var(--surface));
+  gap: 0.3rem;
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
 }
 
-.online-take-category-head h3 {
-  margin: 0;
-  font-size: 0.95rem;
-}
-
-.online-take-category-head span {
-  font-size: 0.78rem;
+.online-take-stat-value em {
+  font-style: normal;
+  font-size: 0.85rem;
+  font-weight: 650;
   color: var(--mist-dim);
+}
+
+.online-take-stat-sub {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+}
+
+.online-take-stat-bar {
+  display: block;
+  height: 0.32rem;
+  margin-top: 0.2rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-muted) 70%, var(--line));
+  overflow: hidden;
+}
+
+.online-take-stat-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent, #1f6f78);
+  transition: width 0.4s ease;
+}
+
+/* Count sheet — one continuous report table */
+.online-take-report {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 10px 28px -14px rgba(15, 23, 42, 0.14);
+}
+
+.online-take-report-head {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1.6fr) 5.5rem 8rem minmax(8rem, 1fr) minmax(6.5rem, 0.75fr);
+  gap: 0.5rem 0.9rem;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  background: color-mix(in srgb, var(--panel-muted) 65%, var(--surface));
+  border-bottom: 1px solid var(--line);
+}
+
+.online-take-report-head .is-num {
+  text-align: right;
 }
 
 .stock-panel--online-take .online-take-list {
-  display: block;
   list-style: none;
   margin: 0;
   padding: 0;
-  gap: 0;
 }
 
-.stock-panel--online-take .online-take-list-head,
 .stock-panel--online-take .online-take-row {
   display: grid;
-  grid-template-columns: minmax(9rem, 1.45fr) 6rem 7rem minmax(7rem, 0.95fr) minmax(6.5rem, 0.85fr);
-  gap: 0.55rem 0.75rem;
+  grid-template-columns: minmax(10rem, 1.6fr) 5.5rem 8rem minmax(8rem, 1fr) minmax(6.5rem, 0.75fr);
+  gap: 0.5rem 0.9rem;
   align-items: center;
-  padding: 0.55rem 0.9rem;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  transition: background 140ms ease;
 }
 
-.stock-panel--online-take .online-take-list-head {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--mist-dim);
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-muted) 22%, transparent);
+.stock-panel--online-take .online-take-row:nth-child(even) {
+  background: color-mix(in srgb, var(--panel-muted) 30%, transparent);
 }
 
-.stock-panel--online-take .online-take-row {
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+.stock-panel--online-take .online-take-row:hover {
+  background: color-mix(in srgb, var(--accent, #1f6f78) 6%, transparent);
 }
 
 .stock-panel--online-take .online-take-row:last-child {
   border-bottom: 0;
 }
 
+.stock-panel--online-take .online-take-row[hidden] {
+  display: none;
+}
+
 .stock-panel--online-take .online-take-row.is-saving {
-  opacity: 0.72;
+  opacity: 0.65;
 }
 
 .stock-panel--online-take .online-take-row.is-match {
-  background: color-mix(in srgb, var(--ok, #2f7d4a) 6%, transparent);
+  box-shadow: inset 3px 0 0 var(--ok, #2f7d4a);
 }
 
 .stock-panel--online-take .online-take-row.is-excess {
-  background: color-mix(in srgb, #d4a017 7%, transparent);
+  box-shadow: inset 3px 0 0 #d4a017;
 }
 
 .stock-panel--online-take .online-take-row.is-short {
-  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.stock-panel--online-take .online-take-row.is-remote-flash {
+  background: color-mix(in srgb, var(--accent, #1f6f78) 14%, transparent);
+  transition: background 0.9s ease;
+}
+
+.stock-panel--online-take .online-take-row.is-cart-focus {
+  outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 55%, transparent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent, #1f6f78) 12%, var(--surface));
+}
+
+.stock-panel--online-take .online-take-item {
+  min-width: 0;
 }
 
 .stock-panel--online-take .online-take-item strong {
   display: block;
   font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.3;
   color: var(--text-strong);
+  overflow-wrap: anywhere;
 }
 
 .stock-panel--online-take .online-take-system {
-  font-variant-numeric: tabular-nums;
+  font-size: 0.88rem;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   text-align: right;
+  color: var(--mist-dim);
 }
 
 .stock-panel--online-take .online-take-qty input {
   width: 100%;
   min-height: 2.35rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
   padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-strong);
   font: inherit;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -10187,38 +10006,64 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 .stock-panel--online-take .online-take-qty input:focus {
   outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 45%, transparent);
   outline-offset: 1px;
+  border-color: color-mix(in srgb, var(--accent, #1f6f78) 55%, var(--line));
 }
 
+.stock-panel--online-take .online-take-qty input:disabled {
+  background: color-mix(in srgb, var(--panel-muted) 55%, var(--surface));
+  color: var(--mist-dim);
+}
+
+/* Variance pill */
 .stock-panel--online-take .online-take-variance {
-  font-size: 0.84rem;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.3rem;
+  max-width: 100%;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
   line-height: 1.25;
+  color: var(--mist-dim);
 }
 
 .stock-panel--online-take .online-take-variance.is-empty {
+  padding: 0;
   color: var(--mist);
+  font-weight: 600;
 }
 
 .stock-panel--online-take .online-take-variance.is-match {
   color: var(--ok, #2f7d4a);
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, transparent);
 }
 
 .stock-panel--online-take .online-take-variance.is-excess {
   color: #9a6b12;
+  background: rgba(212, 160, 23, 0.16);
 }
 
 .stock-panel--online-take .online-take-variance.is-short {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 
 .stock-panel--online-take .online-take-variance strong {
-  font-weight: 700;
+  font-weight: 800;
+}
+
+.stock-panel--online-take .online-take-variance span {
+  font-variant-numeric: tabular-nums;
 }
 
 .stock-panel--online-take .online-take-by {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 650;
-  color: var(--text-strong);
   line-height: 1.25;
+  text-align: right;
+  color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10229,182 +10074,185 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   font-weight: 600;
 }
 
-@media (max-width: 760px) {
-  .stock-panel--online-take .online-take-categories {
-    gap: 0.55rem;
-  }
-
-  .stock-panel--online-take .online-take-category {
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-    border-top: 1px solid var(--line);
-  }
-
-  .stock-panel--online-take .online-take-category-head {
-    padding: 0.45rem 0.15rem 0.35rem;
-    border-bottom: 0;
-    background: transparent;
-  }
-
-  .stock-panel--online-take .online-take-category-head h3 {
-    font-size: 0.82rem;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    color: var(--mist-dim);
-  }
-
-  .stock-panel--online-take .online-take-category-head span {
-    font-size: 0.72rem;
-  }
-
-  .stock-panel--online-take .online-take-list-head {
-    display: none;
-  }
-
-  .stock-panel--online-take .online-take-list {
-    border-top: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
-  }
-
-  /* Dense list: name | stock | count | variance / by */
-  .stock-panel--online-take .online-take-row {
-    grid-template-columns: minmax(0, 1fr) 2.4rem 4.2rem 3.1rem;
-    grid-template-areas:
-      "item system qty variance"
-      "by by by by";
-    gap: 0.12rem 0.35rem;
-    align-items: center;
-    min-height: 2.35rem;
-    padding: 0.28rem 0.05rem 0.34rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  }
-
-  .stock-panel--online-take .online-take-item {
-    grid-area: item;
-    min-width: 0;
-  }
-
-  .stock-panel--online-take .online-take-item strong {
-    font-size: 0.84rem;
-    line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .stock-panel--online-take .online-take-item em {
-    display: none;
-  }
-
-  .stock-panel--online-take .online-take-system {
-    grid-area: system;
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: var(--mist-dim);
-    text-align: right;
-  }
-
-  .stock-panel--online-take .online-take-system::before {
-    content: none;
-  }
-
-  .stock-panel--online-take .online-take-qty {
-    grid-area: qty;
-  }
-
-  .stock-panel--online-take .online-take-qty input {
-    min-height: 2rem;
-    padding: 0.15rem 0.3rem;
-    border-radius: 6px;
-    font-size: 0.88rem;
-    font-weight: 700;
-  }
-
-  .stock-panel--online-take .online-take-variance {
-    grid-area: variance;
-    font-size: 0.74rem;
-    font-weight: 700;
-    line-height: 1.1;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* Prefer compact delta on narrow screens; keep "Match" / "?" */
-  .stock-panel--online-take .online-take-variance.is-excess strong,
-  .stock-panel--online-take .online-take-variance.is-short strong {
-    display: none;
-  }
-
-  .stock-panel--online-take .online-take-variance.is-match strong {
-    font-size: 0.7rem;
-  }
-
-  .stock-panel--online-take .online-take-variance.is-excess span,
-  .stock-panel--online-take .online-take-variance.is-short span {
-    display: inline;
-  }
-
-  .stock-panel--online-take .online-take-variance.is-excess span::before,
-  .stock-panel--online-take .online-take-variance.is-short span::before {
-    content: none;
-  }
-
-  .stock-panel--online-take .online-take-variance.is-empty {
-    font-size: 0.78rem;
-    font-weight: 600;
-    opacity: 0.45;
-  }
-
-  .stock-panel--online-take .online-take-by {
-    grid-area: by;
-    font-size: 0.68rem;
-    color: var(--mist-dim);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .stock-panel--online-take .online-take-by:not([data-empty])::before {
-    content: "By ";
-    font-weight: 600;
-  }
-
-  .stock-panel--online-take .online-take-by[data-empty] {
-    display: none;
-  }
-
-  .stock-panel--online-take .online-take-summary {
-    gap: 0.45rem 0.75rem;
-    padding: 0.45rem 0.65rem;
-  }
-
-  .stock-panel--online-take .online-take-toolbar {
-    gap: 0.55rem;
-  }
+.online-take-empty-line,
+.online-take-empty-search {
+  padding: 1.4rem 1rem;
+  text-align: center;
+  font-size: 0.84rem;
+  color: var(--mist-dim);
 }
 
-.online-take-category--updated {
-  border-color: color-mix(in srgb, var(--accent, #1f6f78) 35%, var(--line));
-  box-shadow: 0 8px 20px rgba(8, 28, 34, 0.05);
+.online-take-empty-search {
+  margin: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
 }
 
-.online-take-category--updated .online-take-category-head {
-  background: color-mix(in srgb, var(--accent, #1f6f78) 10%, var(--surface));
+.online-take-empty-search b {
+  color: var(--text-strong);
 }
 
-.online-take-item em {
-  display: block;
-  margin-top: 0.12rem;
-  font-style: normal;
+/* Saved counts */
+.online-take-saved {
+  margin-top: 1.15rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.online-take-saved-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.55rem;
+}
+
+.online-take-saved-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-strong);
+}
+
+.online-take-saved-head p {
+  margin: 0;
   font-size: 0.76rem;
   color: var(--mist-dim);
 }
 
-.online-take-row.is-cart-focus {
-  outline: 2px solid color-mix(in srgb, var(--accent, #1f6f78) 55%, transparent);
-  outline-offset: -2px;
-  background: color-mix(in srgb, var(--accent, #1f6f78) 12%, var(--surface));
+.online-take-saved-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.online-take-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem 0.9rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 0.82rem;
+}
+
+.online-take-saved-main {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.online-take-saved-main strong {
+  color: var(--text-strong);
+}
+
+.online-take-saved-main em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--mist-dim);
+}
+
+.online-take-saved-stats {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.ost-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--mist-dim);
+  background: color-mix(in srgb, var(--panel-muted) 65%, transparent);
+}
+
+.ost-chip.is-count {
+  color: var(--accent-deep, var(--accent));
+  background: color-mix(in srgb, var(--accent, #1f6f78) 12%, transparent);
+}
+
+.ost-chip.is-match {
+  color: var(--ok, #2f7d4a);
+  background: color-mix(in srgb, var(--ok, #2f7d4a) 12%, transparent);
+}
+
+.ost-chip.is-excess {
+  color: #9a6b12;
+  background: rgba(212, 160, 23, 0.16);
+}
+
+.ost-chip.is-short {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+.online-take-saved-when {
+  font-size: 0.74rem;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.online-take-saved-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.online-take-saved-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.online-take-saved-link:hover {
+  border-color: color-mix(in srgb, var(--accent, #1f6f78) 45%, var(--line));
+  color: var(--accent, #1f6f78);
+}
+
+.online-take-saved-link i,
+.online-take-saved-link svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.online-take-saved-empty {
+  padding: 0.7rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
+  color: var(--mist-dim);
+  font-size: 0.8rem;
+}
+
+.online-take-saved-lock {
+  align-self: center;
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  padding: 0.14rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
 }
 
 /* Floating counted-items cart */
@@ -10702,149 +10550,135 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   color: var(--danger);
 }
 
-/* Saved counts list */
-.online-take-saved {
-  margin-top: 1.15rem;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--line);
-}
+@media (max-width: 760px) {
+  .stock-panel--online-take .online-take-toolbar {
+    gap: 0.55rem;
+    padding: 0.6rem 0.7rem;
+  }
 
-.online-take-saved-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.55rem;
-}
+  .stock-panel--online-take .online-take-shop-pick {
+    min-width: 0;
+    flex: 1 1 calc(50% - 0.3rem);
+  }
 
-.online-take-saved-head h3 {
-  margin: 0;
-  font-size: 0.95rem;
-  color: var(--text-strong);
-}
+  .stock-panel--online-take .online-take-search {
+    flex-basis: 100%;
+  }
 
-.online-take-saved-head p {
-  margin: 0;
-  font-size: 0.76rem;
-  color: var(--mist-dim);
-}
+  .stock-panel--online-take .online-take-summary {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
 
-.online-take-saved-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.4rem;
-}
+  .stock-panel--online-take .online-take-stat {
+    padding: 0.55rem 0.65rem 0.6rem;
+    border-radius: 12px;
+  }
 
-.online-take-saved-row {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  flex-wrap: wrap;
-  padding: 0.55rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--surface, #fff);
-  font-size: 0.82rem;
-}
+  .stock-panel--online-take .online-take-stat-value {
+    font-size: 1.15rem;
+  }
 
-.online-take-saved-main {
-  display: grid;
-  gap: 0.1rem;
-  min-width: 0;
-}
+  .stock-panel--online-take .online-take-report {
+    border-radius: 12px;
+  }
 
-.online-take-saved-main strong {
-  color: var(--text-strong);
-}
+  .stock-panel--online-take .online-take-report-head {
+    display: none;
+  }
 
-.online-take-saved-main em {
-  font-style: normal;
-  font-size: 0.72rem;
-  color: var(--mist-dim);
-}
+  /* Dense rows: name | stock | count | variance, counted-by underneath */
+  .stock-panel--online-take .online-take-row {
+    grid-template-columns: minmax(0, 1fr) 2.6rem 4.4rem auto;
+    grid-template-areas:
+      "item system qty variance"
+      "by by by by";
+    gap: 0.14rem 0.4rem;
+    padding: 0.34rem 0.55rem;
+  }
 
-.online-take-saved-stats {
-  display: grid;
-  gap: 0.1rem;
-  margin-left: auto;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-strong);
-}
+  .stock-panel--online-take .online-take-item {
+    grid-area: item;
+  }
 
-.online-take-saved-stats em {
-  font-style: normal;
-  font-size: 0.72rem;
-  color: var(--mist-dim);
-}
+  .stock-panel--online-take .online-take-item strong {
+    font-size: 0.85rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
-.online-take-saved-when {
-  font-size: 0.74rem;
-  color: var(--mist-dim);
-  white-space: nowrap;
-}
+  .stock-panel--online-take .online-take-system {
+    grid-area: system;
+    align-self: center;
+    font-size: 0.78rem;
+  }
 
-.online-take-saved-actions {
-  display: inline-flex;
-  gap: 0.35rem;
-}
+  .stock-panel--online-take .online-take-qty {
+    grid-area: qty;
+  }
 
-.online-take-saved-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.3rem 0.55rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface, #fff);
-  color: var(--text-strong);
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-decoration: none;
-  transition: border-color 140ms ease, color 140ms ease;
-}
+  .stock-panel--online-take .online-take-qty input {
+    min-height: 2rem;
+    padding: 0.15rem 0.3rem;
+    border-radius: 7px;
+    font-size: 0.88rem;
+  }
 
-.online-take-saved-link:hover {
-  border-color: color-mix(in srgb, var(--accent, #1f6f78) 45%, var(--line));
-  color: var(--accent, #1f6f78);
-}
+  .stock-panel--online-take .online-take-variance {
+    grid-area: variance;
+    justify-self: end;
+    padding: 0.14rem 0.42rem;
+    font-size: 0.7rem;
+  }
 
-.online-take-saved-link i,
-.online-take-saved-link svg {
-  width: 0.8rem;
-  height: 0.8rem;
-}
+  /* Compact pills on phones — delta only for excess/short */
+  .stock-panel--online-take .online-take-variance.is-excess strong,
+  .stock-panel--online-take .online-take-variance.is-short strong {
+    display: none;
+  }
 
-.online-take-saved-empty {
-  padding: 0.7rem 0.75rem;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
-  color: var(--mist-dim);
-  font-size: 0.8rem;
-}
+  .stock-panel--online-take .online-take-variance.is-empty {
+    padding: 0;
+  }
 
-.online-take-saved-lock {
-  align-self: center;
-  font-style: normal;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--mist-dim);
-  padding: 0.14rem 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
-}
+  .stock-panel--online-take .online-take-by {
+    grid-area: by;
+    text-align: left;
+    font-size: 0.68rem;
+    color: var(--mist-dim);
+  }
 
-.online-take-locked-chip {
-  color: var(--mist-dim);
-}
+  .stock-panel--online-take .online-take-by:not([data-empty])::before {
+    content: "By ";
+    font-weight: 600;
+  }
 
-@media (max-width: 720px) {
+  .stock-panel--online-take .online-take-by[data-empty] {
+    display: none;
+  }
+
+  .online-take-saved-row {
+    align-items: flex-start;
+  }
+
+  .online-take-saved-stats {
+    margin-left: 0;
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .online-take-saved-when {
+    order: 4;
+  }
+
+  .online-take-saved-actions {
+    order: 5;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+
   .online-take-cart {
     right: max(0.75rem, env(safe-area-inset-right));
     bottom: max(0.85rem, env(safe-area-inset-bottom));

@@ -1850,8 +1850,10 @@ def day_report_counted_statuses(profile) -> frozenset:
 # includes. Per-employee, stored in sidebar_prefs (missing key = on); the
 # posted toggle field is the pref key itself (day_report_sec_<section>).
 DAY_REPORT_SECTION_TOGGLES = (
+    ("day_report_sec_sales_profit", "Sales & profit"),
     ("day_report_sec_money_flow", "Money flow"),
     ("day_report_sec_prepayments", "Customer prepayments"),
+    ("day_report_sec_cleared", "Cleared pending & settlements"),
     ("day_report_sec_credit_payments", "Credit payments collected"),
     ("day_report_sec_not_till", "Credits — not in the till"),
     ("day_report_sec_gift", "Gifts — not in the till"),

@@ -97,59 +97,63 @@
 
   {% if not selected_shop %}
   <p class="stock-settings-footnote">
-    Choose a day and shop to list every item by category with current stock and a physical count field.
+    Choose a day and shop to open the live count sheet — every item with its
+    current stock and a physical count field.
   </p>
   {% else %}
 
   <div class="online-take-summary" data-online-take-summary>
-    <p class="stock-stat">
-      <strong data-online-take-filled>{{ online_catalog.filled_count }}</strong>
-      <span>/ <span data-online-take-total>{{ online_catalog.item_count }}</span> counted</span>
-    </p>
-    <p class="stock-stat">
-      <strong data-online-take-match>{{ online_catalog.match_count }}</strong>
-      <span>match</span>
-    </p>
-    <p class="stock-stat">
-      <strong data-online-take-excess>{{ online_catalog.excess_count }}</strong>
-      <span>excess</span>
-    </p>
-    <p class="stock-stat">
-      <strong data-online-take-short>{{ online_catalog.short_count }}</strong>
-      <span>short</span>
-    </p>
+    <div class="online-take-stat is-count">
+      <span class="online-take-stat-label">Counted</span>
+      <strong class="online-take-stat-value">
+        <span data-online-take-filled>{{ online_catalog.filled_count }}</span>
+        <em>/ <span data-online-take-total>{{ online_catalog.item_count }}</span></em>
+      </strong>
+      <span class="online-take-stat-bar" aria-hidden="true">
+        <i
+          data-online-take-progress
+          style="width:{% widthratio online_catalog.filled_count online_catalog.item_count 100 %}%"
+        ></i>
+      </span>
+    </div>
+    <div class="online-take-stat is-match">
+      <span class="online-take-stat-label">Match</span>
+      <strong class="online-take-stat-value" data-online-take-match>{{ online_catalog.match_count }}</strong>
+      <span class="online-take-stat-sub">counts agree</span>
+    </div>
+    <div class="online-take-stat is-excess">
+      <span class="online-take-stat-label">Excess</span>
+      <strong class="online-take-stat-value" data-online-take-excess>{{ online_catalog.excess_count }}</strong>
+      <span class="online-take-stat-sub">more than book</span>
+    </div>
+    <div class="online-take-stat is-short">
+      <span class="online-take-stat-label">Short</span>
+      <strong class="online-take-stat-value" data-online-take-short>{{ online_catalog.short_count }}</strong>
+      <span class="online-take-stat-sub">missing stock</span>
+    </div>
   </div>
 
   {% csrf_token %}
 
-  <div class="online-take-categories" data-online-take-list>
-    {% for group in online_catalog.groups %}
-    <section
-      class="online-take-category"
-      data-online-take-category
-      data-category="{{ group.category|lower }}"
-      data-category-name="{{ group.category }}"
-    >
-      <header class="online-take-category-head">
-        <h3>{{ group.category }}</h3>
-        <span><span data-online-take-category-count>{{ group.count }}</span> item{{ group.count|pluralize }}</span>
-      </header>
-      <ul class="online-take-list" role="list" data-online-take-category-list>
-        <li class="online-take-list-head" aria-hidden="true">
-          <span>Item</span>
-          <span>System qty</span>
-          <span>Physical count</span>
-          <span>Variance</span>
-          <span>Counted by</span>
-        </li>
-        {% for line in group.lines %}
-        {% include "items/partials/online_stock_take_row.html" with line=line locked=online_take_locked %}
-        {% endfor %}
-      </ul>
-    </section>
-    {% empty %}
-    <p class="stock-settings-footnote">No active items to count.</p>
-    {% endfor %}
+  <div class="online-take-report">
+    <div class="online-take-report-head" aria-hidden="true">
+      <span>Item</span>
+      <span class="is-num">System qty</span>
+      <span class="is-num">Physical count</span>
+      <span>Variance</span>
+      <span class="is-num">Counted by</span>
+    </div>
+    <ul class="online-take-list" role="list" data-online-take-list>
+      {% for line in online_catalog.lines %}
+      {% include "items/partials/online_stock_take_row.html" with line=line locked=online_take_locked %}
+      {% empty %}
+      <li class="online-take-empty-line">No active items to count.</li>
+      {% endfor %}
+    </ul>
+    <p class="online-take-empty-search" data-online-take-empty-search hidden>
+      No items match “<b data-online-take-empty-term></b>” — clear the search
+      to see the full sheet.
+    </p>
   </div>
   {% endif %}
 
@@ -172,8 +176,10 @@
           <em>{{ rec.shop.name }}{% if rec.saved_by_label %} · by {{ rec.saved_by_label }}{% endif %}</em>
         </span>
         <span class="online-take-saved-stats">
-          <b>{{ rec.filled_count }}</b>/{{ rec.item_count }} counted
-          <em>{{ rec.match_count }} match · {{ rec.excess_count }} excess · {{ rec.short_count }} short</em>
+          <span class="ost-chip is-count">{{ rec.filled_count }}/{{ rec.item_count }} counted</span>
+          <span class="ost-chip is-match">{{ rec.match_count }} match</span>
+          <span class="ost-chip is-excess">{{ rec.excess_count }} excess</span>
+          <span class="ost-chip is-short">{{ rec.short_count }} short</span>
         </span>
         <span class="online-take-saved-when">{{ rec.saved_at|date:"d M Y H:i" }}</span>
         <span class="online-take-saved-actions">
@@ -323,7 +329,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/online-stock-take.js' %}?v=9"></script>
+<script defer src="{% static 'js/online-stock-take.js' %}?v=10"></script>
 {% if receipts_print_modal %}
 <script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
 {% endif %}

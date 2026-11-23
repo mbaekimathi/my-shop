@@ -8492,7 +8492,9 @@ def _online_take_report_response(request, document, *, kind_label, paper,
             )
         )
     if want_download:
-        pdf_bytes = build_stock_report_pdf(**document["pdf_params"])
+        from items.online_stock_take import build_online_take_count_pdf
+
+        pdf_bytes = build_online_take_count_pdf(document)
         return _stock_report_pdf_response(
             filename=document["filename"], pdf_bytes=pdf_bytes
         )
@@ -8687,6 +8689,7 @@ def online_stock_take_page(request, profile, meta, module):
         if selected_shop
         else {
             "filled_lines": [],
+            "lines": [],
             "groups": [],
             "item_count": 0,
             "filled_count": 0,

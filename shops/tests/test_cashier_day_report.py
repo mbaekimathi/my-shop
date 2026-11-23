@@ -484,6 +484,173 @@ class CashierDayReportScopeTests(TestCase):
         }
         self.assertEqual(session_ids, {own.pk, colleague.pk})
 
+    def _sale(self, number, *, status, cash="0", total):
+        from shops.models import (
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+
+        return ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number=number,
+            kind=ShopReceiptKind.SALE,
+            status=status,
+            total=Decimal(total),
+            amount_paid=Decimal(total),
+            cash_amount=Decimal(cash),
+            created_by=self.next,
+        )
+
+    def _sp_row(self, table, label):
+        for row in table["rows"]:
+            if isinstance(row, dict):
+                cells = row.get("cells")
+                if cells is None:
+                    continue
+            else:
+                cells = row
+            first = cells[0]
+            text = first.get("label") if isinstance(first, dict) else first
+            if text == label:
+                return cells
+        return None
+
+    def _sp_amount(self, table, label):
+        cells = self._sp_row(table, label)
+        self.assertIsNotNone(cells, f"row {label!r} missing")
+        return cells[-1]
+
+    def test_sales_profit_overview_breakdown(self):
+        """Expected/actual sales & profit rows add up per the formulas."""
+        from shops.models import (
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+
+        session = self._open_day(self.next)
+        self._sale("SALE-CONF-1", status=ShopReceiptStatus.CONFIRMED,
+                   cash="1000", total="1000")
+        # Pending receipt — counted in the default "all" mode.
+        self._sale("SALE-PEND-1", status=ShopReceiptStatus.ACTIVE,
+                   cash="200", total="200")
+        ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="CR-SP-1",
+            kind=ShopReceiptKind.CREDIT,
+            status=ShopReceiptStatus.CONFIRMED,
+            total=Decimal("5000.00"),
+            amount_paid=Decimal("1200.00"),
+            created_by=self.next,
+        )
+        ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number="GF-SP-1",
+            kind=ShopReceiptKind.GIFT,
+            status=ShopReceiptStatus.CONFIRMED,
+            total=Decimal("800.00"),
+            created_by=self.next,
+        )
+        Expense.objects.create(
+            shop=self.shop,
+            category=ExpenseCategory.TRANSPORT,
+            name="Fuel",
+            amount=Decimal("40"),
+            amount_paid=Decimal("40"),
+            payment_status=ExpensePaymentStatus.PAID,
+            created_by=self.next,
+        )
+        Expense.objects.create(
+            shop=self.shop,
+            category=ExpenseCategory.MISC,
+            name="Supplies on account",
+            amount=Decimal("70"),
+            amount_paid=Decimal("0"),
+            payment_status=ExpensePaymentStatus.UNPAID,
+            created_by=self.next,
+        )
+
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        tables = response.context["page"]["tables"]
+        self.assertEqual(tables[0]["title"], "Sales & profit")
+        sp = tables[0]
+
+        # expected = counted 1200 + pending 0 + credit 5000 + gift 800
+        self.assertIn("1,200", self._sp_amount(sp, "Counted sales")["label"])
+        self.assertIn("0.00", self._sp_amount(sp, "Pending receipts")["label"])
+        self.assertIn("5,000", self._sp_amount(sp, "Credit sales")["label"])
+        self.assertIn("800", self._sp_amount(sp, "Gift issues")["label"])
+        self.assertIn("7,000", self._sp_amount(sp, "Expected sales")["label"])
+        self.assertIn("1,200", self._sp_amount(sp, "Actual sales")["label"])
+        self.assertIn("5,800", self._sp_amount(sp, "Still to collect")["label"])
+        # expenses 40 paid + 70 unpaid = 110; expected profit = 7000-110
+        self.assertIn("110", self._sp_amount(sp, "Expenses")["label"])
+        self.assertIn("6,890", self._sp_amount(sp, "Expected profit")["label"])
+        # actual profit = 1200 - 40
+        self.assertIn("1,160", self._sp_amount(sp, "Actual profit")["label"])
+        self.assertIn("70", self._sp_amount(sp, "Unpaid obligations")["label"])
+
+        labels = [m["label"] for m in response.context["page"]["metrics"]]
+        self.assertIn("Expected sales", labels)
+        self.assertIn("Expected profit", labels)
+        self.assertIn("Actual profit", labels)
+
+    def test_sales_profit_pending_uncounted_in_confirmed_mode(self):
+        """With the "confirmed" pick, still-pending receipts add to expected."""
+        from shops.models import (
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+
+        session = self._open_day(self.next)
+        self._sale("SALE-CONF-2", status=ShopReceiptStatus.CONFIRMED,
+                   cash="1000", total="1000")
+        self._sale("SALE-PEND-2", status=ShopReceiptStatus.ACTIVE,
+                   cash="200", total="200")
+        self.next.sidebar_prefs = {"day_report_status": "confirmed"}
+        self.next.save(update_fields=["sidebar_prefs"])
+
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        sp = response.context["page"]["tables"][0]
+        self.assertEqual(sp["title"], "Sales & profit")
+        self.assertIn("1,000", self._sp_amount(sp, "Counted sales")["label"])
+        self.assertIn("200", self._sp_amount(sp, "Pending receipts")["label"])
+        self.assertIn("1,200", self._sp_amount(sp, "Expected sales")["label"])
+        # Actual sales stays the money that reached the till.
+        self.assertIn("1,000", self._sp_amount(sp, "Actual sales")["label"])
+
+    def test_sales_profit_section_toggle_hides_table_and_metrics(self):
+        session = self._open_day(self.next)
+        self.next.sidebar_prefs = {"day_report_sec_sales_profit": False}
+        self.next.save(update_fields=["sidebar_prefs"])
+
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        titles = [t["title"] for t in response.context["page"]["tables"]]
+        self.assertNotIn("Sales & profit", titles)
+        self.assertIn("Money flow", titles)
+        labels = [m["label"] for m in response.context["page"]["metrics"]]
+        self.assertNotIn("Expected sales", labels)
+        self.assertNotIn("Expected profit", labels)
+
+    def test_day_report_pdf_builds_with_sales_profit(self):
+        """The real PDF builder renders the Sales & profit section."""
+        from shops.services import build_shop_day_report_pdf
+
+        session = self._open_day(self.next)
+        pdf = build_shop_day_report_pdf(
+            shop=self.shop, session=session, company_name="TESTCO"
+        )
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertGreater(len(pdf), 4000)
+
     def _expense_in_session(self):
         return Expense.objects.create(
             shop=self.shop,

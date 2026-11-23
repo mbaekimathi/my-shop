@@ -238,6 +238,7 @@ def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
     count_date = count_date or timezone.localdate()
     empty = {
         "filled_lines": [],
+        "lines": [],
         "groups": [],
         "item_count": 0,
         "filled_count": 0,
@@ -269,6 +270,7 @@ def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
     }
 
     groups: OrderedDict[str, list] = OrderedDict()
+    lines = []
     filled_lines = []
     filled = match_count = excess_count = short_count = 0
 
@@ -301,6 +303,7 @@ def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
             **variance,
         }
         groups.setdefault(category, []).append(line)
+        lines.append(line)
         if physical is not None:
             filled += 1
             if variance["variance_kind"] == "match":
@@ -318,9 +321,12 @@ def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
             row["item_id"],
         )
     )
+    # Flat A-Z sheet — the page is one report-style table, not category cards.
+    lines.sort(key=lambda row: ((row["name"] or "").lower(), row["item_id"]))
     return {
         **empty,
         "filled_lines": filled_lines,
+        "lines": lines,
         "groups": [
             {"category": category, "lines": lines, "count": len(lines)}
             for category, lines in groups.items()

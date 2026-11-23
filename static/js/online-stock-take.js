@@ -19,6 +19,9 @@
   const matchEl = root.querySelector("[data-online-take-match]");
   const excessEl = root.querySelector("[data-online-take-excess]");
   const shortEl = root.querySelector("[data-online-take-short]");
+  const progressEl = root.querySelector("[data-online-take-progress]");
+  const emptySearchEl = root.querySelector("[data-online-take-empty-search]");
+  const emptyTermEl = root.querySelector("[data-online-take-empty-term]");
   const shopId = root.getAttribute("data-selected-shop-id") || "";
   const dayLocked = root.hasAttribute("data-online-take-locked");
   const countDate =
@@ -452,6 +455,12 @@
     if (matchEl) matchEl.textContent = String(match);
     if (excessEl) excessEl.textContent = String(excess);
     if (shortEl) shortEl.textContent = String(short);
+    if (progressEl) {
+      const total = rows.length;
+      progressEl.style.width = total
+        ? `${Math.min(100, Math.round((filled / total) * 100))}%`
+        : "0%";
+    }
 
     if (cartBadge) {
       cartBadge.textContent = String(filled);
@@ -574,12 +583,18 @@
     }</em>
       </span>
       <span class="online-take-saved-stats">
-        <b>${escapeHtml(saved.filled_count ?? 0)}</b>/${escapeHtml(
-      saved.item_count ?? 0
-    )} counted
-        <em>${escapeHtml(saved.match_count ?? 0)} match · ${escapeHtml(
+        <span class="ost-chip is-count">${escapeHtml(
+      saved.filled_count ?? 0
+    )}/${escapeHtml(saved.item_count ?? 0)} counted</span>
+        <span class="ost-chip is-match">${escapeHtml(
+      saved.match_count ?? 0
+    )} match</span>
+        <span class="ost-chip is-excess">${escapeHtml(
       saved.excess_count ?? 0
-    )} excess · ${escapeHtml(saved.short_count ?? 0)} short</em>
+    )} excess</span>
+        <span class="ost-chip is-short">${escapeHtml(
+      saved.short_count ?? 0
+    )} short</span>
       </span>
       <span class="online-take-saved-when">${escapeHtml(
         saved.saved_at_label || ""
@@ -768,16 +783,19 @@
     const q = String(rawQuery || "")
       .trim()
       .toLowerCase();
-    list?.querySelectorAll("[data-online-take-category]").forEach((section) => {
-      let visible = 0;
-      section.querySelectorAll("[data-online-take-row]").forEach((row) => {
-        const hay = row.getAttribute("data-search") || "";
-        const show = !q || hay.includes(q);
-        row.hidden = !show;
-        if (show) visible += 1;
-      });
-      section.hidden = Boolean(q) && visible === 0;
+    let visible = 0;
+    list?.querySelectorAll("[data-online-take-row]").forEach((row) => {
+      const hay = row.getAttribute("data-search") || "";
+      const show = !q || hay.includes(q);
+      row.hidden = !show;
+      if (show) visible += 1;
     });
+    if (emptySearchEl) {
+      emptySearchEl.hidden = !(q && visible === 0);
+      if (emptyTermEl) {
+        emptyTermEl.textContent = String(rawQuery || "").trim();
+      }
+    }
     return q;
   };
 
@@ -791,8 +809,7 @@
       returnSearchAfterQty = true;
     }
     row.hidden = false;
-    const section = row.closest("[data-online-take-category]");
-    if (section) section.hidden = false;
+    if (emptySearchEl) emptySearchEl.hidden = true;
     row.scrollIntoView({ behavior: "smooth", block: "center" });
     row.classList.add("is-cart-focus");
     window.setTimeout(() => row.classList.remove("is-cart-focus"), 1400);
