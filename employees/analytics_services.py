@@ -3096,8 +3096,10 @@ def _table(
     *,
     searchable=False,
     table_class="",
+    card_class="",
     section="",
     pager=None,
+    wide=False,
 ):
     if shop_grid is None:
         shop_grid = any(
@@ -3113,8 +3115,10 @@ def _table(
         "shop_grid": bool(shop_grid),
         "searchable": bool(searchable),
         "table_class": (table_class or "").strip(),
+        "card_class": (card_class or "").strip(),
         "section": section,
         "pager": pager,
+        "wide": bool(wide),
     }
 
 
@@ -12368,7 +12372,7 @@ def build_day_session_report_page(
             f" · includes {sales_profit['pending_counted']} pending"
             f"{'s' if sales_profit['pending_counted'] != 1 else ''}"
         )
-    sp_rows = [
+    expected_rows = [
         {"group_header": True, "label": "Sales"},
         [
             {"label": "Counted sales", "sub": counted_sub},
@@ -12385,7 +12389,7 @@ def build_day_session_report_page(
         ],
     ]
     if getattr(pos, "enable_credit", False):
-        sp_rows.append(
+        expected_rows.append(
             [
                 {
                     "label": "Credit sales",
@@ -12396,7 +12400,7 @@ def build_day_session_report_page(
             ]
         )
     if getattr(pos, "enable_gift", True):
-        sp_rows.append(
+        expected_rows.append(
             [
                 {
                     "label": "Gift issues",
@@ -12406,7 +12410,7 @@ def build_day_session_report_page(
                 _money_cell(sales_profit["gift_total"]),
             ]
         )
-    sp_rows += [
+    expected_rows += [
         {
             "total_row": True,
             "cells": [
@@ -12415,28 +12419,7 @@ def build_day_session_report_page(
                 _money_cell(sales_profit["expected_sales"]),
             ],
         },
-        [
-            {
-                "label": "Actual sales",
-                "sub": "money that reached the till",
-            },
-            "",
-            _money_cell(sales_profit["actual_sales"]),
-        ],
-        [
-            {
-                "label": "Still to collect",
-                "sub": "expected sales − actual sales",
-            },
-            "",
-            _money_cell(
-                sales_profit["outstanding"],
-                tone=(
-                    "warn" if sales_profit["outstanding"] > _zero() else "good"
-                ),
-            ),
-        ],
-        {"group_header": True, "label": "Costs & profit"},
+        {"group_header": True, "label": "Costs"},
         [
             {
                 "label": "Expenses",
@@ -12482,6 +12465,29 @@ def build_day_session_report_page(
                 ),
             ],
         },
+    ]
+    actual_rows = [
+        [
+            {
+                "label": "Actual sales",
+                "sub": "money that reached the till",
+            },
+            "",
+            _money_cell(sales_profit["actual_sales"]),
+        ],
+        [
+            {
+                "label": "Still to collect",
+                "sub": "expected sales − actual sales",
+            },
+            "",
+            _money_cell(
+                sales_profit["outstanding"],
+                tone=(
+                    "warn" if sales_profit["outstanding"] > _zero() else "good"
+                ),
+            ),
+        ],
         {
             "total_row": True,
             "cells": [
@@ -12514,27 +12520,39 @@ def build_day_session_report_page(
             _money_cell(sales_profit["profit_gap"]),
         ],
     ]
+    sp_columns = [
+        "Entry",
+        {"label": "Docs", "money": True},
+        {"label": "Amount", "money": True},
+    ]
 
     tables = [
         _table(
-            "Sales & profit",
-            [
-                "Entry",
-                {"label": "Docs", "money": True},
-                {"label": "Amount", "money": True},
-            ],
-            sp_rows,
+            "Expected",
+            sp_columns,
+            expected_rows,
             empty="",
             footnote=(
                 "Expected sales = counted sales + uncounted pending "
-                "receipts + credit sales + gift issues. Actual sales = "
-                "money that reached the till. Expected profit = expected "
-                "sales − expenses (paid + unpaid) − stock bought (paid + "
-                "unpaid) + customer prepayments; actual profit charges "
-                "paid costs only. Credit and gift value never enters "
-                "Expected in till."
+                "receipts + credit sales + gift issues. Expected profit = "
+                "expected sales − expenses (paid + unpaid) − stock bought "
+                "(paid + unpaid) + customer prepayments."
             ),
             section="day_report_sec_sales_profit",
+            card_class="ax-card--expected",
+        ),
+        _table(
+            "Actual",
+            sp_columns,
+            actual_rows,
+            empty="",
+            footnote=(
+                "Actual sales = money that reached the till. Actual "
+                "profit = counted sales − paid costs + prepayments. "
+                "Credit and gift value never enters Expected in till."
+            ),
+            section="day_report_sec_sales_profit",
+            card_class="ax-card--actual",
         ),
         _table(
             "Money flow",
@@ -12544,6 +12562,7 @@ def build_day_session_report_page(
             footnote=money_footnote,
             section="day_report_sec_money_flow",
             table_class="ax-table--moneyflow",
+            wide=True,
         ),
     ]
 

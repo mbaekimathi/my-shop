@@ -10455,3 +10455,13 @@ body.ax-credit-due-open {
 .ax--day-report .ax-table--moneyflow tbody tr[class*="ax-flow-row"]:hover td {
   filter: brightness(0.965);
 }
+
+/* Expected = what the session should have made (blue accent);
+   Actual = what really landed (teal accent). */
+.ax--day-report .ax-card--expected .ax-card-head h3::before {
+  background: linear-gradient(180deg, var(--info), color-mix(in srgb, var(--info) 70%, var(--text-strong)));
+}
+
+.ax--day-report .ax-card--actual .ax-card-head h3::before {
+  background: linear-gradient(180deg, var(--teal), color-mix(in srgb, var(--teal) 70%, var(--text-strong)));
+}

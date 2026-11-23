@@ -1550,7 +1550,8 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertEqual(
             [t["title"] for t in page["tables"]],
             [
-                "Sales & profit",
+                "Expected",
+                "Actual",
                 "Money flow",
                 "Cleared pending receipts",
                 "Pending cleared in later sessions",
@@ -1570,13 +1571,13 @@ class AnalyticsDaySessionReportTests(TestCase):
         )
         flow_labels = [
             r["cells"][0] if isinstance(r, dict) else r[0]
-            for r in page["tables"][1]["rows"]
+            for r in page["tables"][2]["rows"]
         ]
         self.assertIn("Counted closing", flow_labels)
         self.assertIn("Variance", flow_labels)
-        items = page["tables"][9]
+        items = page["tables"][10]
         self.assertEqual(items["rows"][0][0], "Charger")
-        sellers = page["tables"][10]
+        sellers = page["tables"][11]
         self.assertEqual(sellers["rows"][0][0], "870066")
         self.assertEqual(sellers["rows"][0][1], "1")
         self.assertEqual(sellers["rows"][0][3], "KSh 250.00")

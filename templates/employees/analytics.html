@@ -488,7 +488,7 @@
   {% if page.tables %}
   <div class="ax-grid ax-grid--tables">
     {% for table in page.tables %}
-    <section class="ax-card{% if page.tables|length == 1 or table.shop_grid or table.searchable %} ax-card--wide{% endif %}{% if table.shop_grid %} ax-card--matrix{% endif %}">
+    <section class="ax-card{% if table.card_class %} {{ table.card_class }}{% endif %}{% if page.tables|length == 1 or table.shop_grid or table.searchable or table.wide %} ax-card--wide{% endif %}{% if table.shop_grid %} ax-card--matrix{% endif %}">
       <header class="ax-card-head">
         <div class="ax-card-head-main">
           <h3>{{ table.title }}</h3>

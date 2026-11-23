@@ -575,23 +575,25 @@ class CashierDayReportScopeTests(TestCase):
         response = client.get(self._report_url(session=session))
         self.assertEqual(response.status_code, 200)
         tables = response.context["page"]["tables"]
-        self.assertEqual(tables[0]["title"], "Sales & profit")
-        sp = tables[0]
+        self.assertEqual(tables[0]["title"], "Expected")
+        self.assertEqual(tables[1]["title"], "Actual")
+        exp = tables[0]
+        act = tables[1]
 
         # expected = counted 1200 + pending 0 + credit 5000 + gift 800
-        self.assertIn("1,200", self._sp_amount(sp, "Counted sales")["label"])
-        self.assertIn("0.00", self._sp_amount(sp, "Pending receipts")["label"])
-        self.assertIn("5,000", self._sp_amount(sp, "Credit sales")["label"])
-        self.assertIn("800", self._sp_amount(sp, "Gift issues")["label"])
-        self.assertIn("7,000", self._sp_amount(sp, "Expected sales")["label"])
-        self.assertIn("1,200", self._sp_amount(sp, "Actual sales")["label"])
-        self.assertIn("5,800", self._sp_amount(sp, "Still to collect")["label"])
+        self.assertIn("1,200", self._sp_amount(exp, "Counted sales")["label"])
+        self.assertIn("0.00", self._sp_amount(exp, "Pending receipts")["label"])
+        self.assertIn("5,000", self._sp_amount(exp, "Credit sales")["label"])
+        self.assertIn("800", self._sp_amount(exp, "Gift issues")["label"])
+        self.assertIn("7,000", self._sp_amount(exp, "Expected sales")["label"])
+        self.assertIn("1,200", self._sp_amount(act, "Actual sales")["label"])
+        self.assertIn("5,800", self._sp_amount(act, "Still to collect")["label"])
         # expenses 40 paid + 70 unpaid = 110; expected profit = 7000-110
-        self.assertIn("110", self._sp_amount(sp, "Expenses")["label"])
-        self.assertIn("6,890", self._sp_amount(sp, "Expected profit")["label"])
+        self.assertIn("110", self._sp_amount(exp, "Expenses")["label"])
+        self.assertIn("6,890", self._sp_amount(exp, "Expected profit")["label"])
         # actual profit = 1200 - 40
-        self.assertIn("1,160", self._sp_amount(sp, "Actual profit")["label"])
-        self.assertIn("70", self._sp_amount(sp, "Unpaid obligations")["label"])
+        self.assertIn("1,160", self._sp_amount(act, "Actual profit")["label"])
+        self.assertIn("70", self._sp_amount(act, "Unpaid obligations")["label"])
 
         labels = [m["label"] for m in response.context["page"]["metrics"]]
         self.assertIn("Expected sales", labels)
@@ -618,12 +620,13 @@ class CashierDayReportScopeTests(TestCase):
         response = client.get(self._report_url(session=session))
         self.assertEqual(response.status_code, 200)
         sp = response.context["page"]["tables"][0]
-        self.assertEqual(sp["title"], "Sales & profit")
+        act = response.context["page"]["tables"][1]
+        self.assertEqual(sp["title"], "Expected")
         self.assertIn("1,000", self._sp_amount(sp, "Counted sales")["label"])
         self.assertIn("200", self._sp_amount(sp, "Pending receipts")["label"])
         self.assertIn("1,200", self._sp_amount(sp, "Expected sales")["label"])
         # Actual sales stays the money that reached the till.
-        self.assertIn("1,000", self._sp_amount(sp, "Actual sales")["label"])
+        self.assertIn("1,000", self._sp_amount(act, "Actual sales")["label"])
 
     def test_sales_profit_section_toggle_hides_table_and_metrics(self):
         session = self._open_day(self.next)
@@ -634,7 +637,8 @@ class CashierDayReportScopeTests(TestCase):
         response = client.get(self._report_url(session=session))
         self.assertEqual(response.status_code, 200)
         titles = [t["title"] for t in response.context["page"]["tables"]]
-        self.assertNotIn("Sales & profit", titles)
+        self.assertNotIn("Expected", titles)
+        self.assertNotIn("Actual", titles)
         self.assertIn("Money flow", titles)
         labels = [m["label"] for m in response.context["page"]["metrics"]]
         self.assertNotIn("Expected sales", labels)
