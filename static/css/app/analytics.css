@@ -10683,6 +10683,14 @@ body.ax-credit-due-open {
     font-size: 0.74rem;
   }
 
+  /* Beat the list-table mobile min-widths that force sideways scroll. */
+  .ax.ax--day-report .ax-table--shops,
+  .ax.ax--day-report .ax-table--pl,
+  .ax.ax--day-report .ax-table--confirm-compact,
+  .ax.ax--day-report .ax-table:not(.ax-table--shops):not(.ax-table--pl):not(.ax-table--confirm-compact) {
+    min-width: 0;
+  }
+
   .ax.ax--day-report .ax-table thead {
     display: none;
   }
@@ -10746,12 +10754,28 @@ body.ax-credit-due-open {
     white-space: normal;
   }
 
-  /* First cell becomes the row title — its column label is redundant. */
+  /* Labelled cells keep flex even against data-label overrides. */
+  .ax.ax--day-report .ax-table td[data-label] {
+    display: flex;
+  }
+
+  /* First cell becomes the row title — its column label is redundant.
+     Also unpin the sticky first column the scroll layout uses. */
   .ax.ax--day-report .ax-table-wrap .ax-table tbody tr td:first-child,
   .ax.ax--day-report .ax-table-wrap .ax-table tbody tr td.ax-cell--primary {
     display: block;
+    position: static;
+    left: auto;
+    z-index: auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
     padding: 0.05rem 0 0.25rem;
+    border-bottom: 0;
     background: transparent;
+    box-shadow: none;
+    overflow: visible;
+    text-overflow: clip;
     font-weight: 700;
     color: var(--text-strong);
   }
