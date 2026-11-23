@@ -12243,9 +12243,36 @@ def build_day_session_report_page(
     # printed but a later session collected stay in this Expected — the
     # deficit — while money collected here on another session's behalf sits
     # above Expected — the excess. Neither row is part of the build-up.
+    # Each names the cashier on the other side of the hand-off.
+    def _party_names(rows, key):
+        names = []
+        for row in rows:
+            name = (row.get(key) or "").strip()
+            if name and name != "—" and name not in names:
+                names.append(name)
+        return ", ".join(names)
+
+    elsewhere_names = _party_names(
+        details.get("cleared_elsewhere") or [], "cleared_by"
+    )
+    collected_for_names = _party_names(
+        details.get("cleared_pending") or [], "seller"
+    )
+    deficit_label = (
+        f"Deficit — pending cleared in later sessions "
+        f"({summary.get('cleared_elsewhere_count') or 0})"
+    )
+    if elsewhere_names:
+        deficit_label += f" — collected by {elsewhere_names}"
+    excess_label = (
+        f"Excess — cleared pending receipts "
+        f"({summary.get('cleared_pending_count') or 0})"
+    )
+    if collected_for_names:
+        excess_label += f" — collected for {collected_for_names}"
     flow_rows.append(
         _flow_row(
-            f"Deficit — pending cleared in later sessions ({summary.get('cleared_elsewhere_count') or 0})",
+            deficit_label,
             {
                 "cash": summary.get("cleared_elsewhere_cash"),
                 "mpesa": summary.get("cleared_elsewhere_mpesa"),
@@ -12256,7 +12283,7 @@ def build_day_session_report_page(
     )
     flow_rows.append(
         _flow_row(
-            f"Excess — cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
+            excess_label,
             {
                 "cash": summary.get("cleared_pending_cash"),
                 "mpesa": summary.get("cleared_pending_mpesa"),

@@ -10627,9 +10627,36 @@ def build_shop_day_report_pdf(
     # Cross-session pending clears, per cashier: what this session printed
     # but another collected stays in Expected (the deficit); what this till
     # collected for an earlier session sits above Expected (the excess).
+    # Each row names the cashier on the other side of the hand-off.
+    def _party_names(detail_rows, key):
+        names = []
+        for row in detail_rows:
+            name = (row.get(key) or "").strip()
+            if name and name != "—" and name not in names:
+                names.append(name)
+        return ", ".join(names)
+
+    elsewhere_names = _party_names(
+        details.get("cleared_elsewhere") or [], "cleared_by"
+    )
+    collected_for_names = _party_names(
+        details.get("cleared_pending") or [], "seller"
+    )
+    deficit_label = (
+        f"Deficit — pending cleared in later sessions "
+        f"({summary.get('cleared_elsewhere_count') or 0})"
+    )
+    if elsewhere_names:
+        deficit_label += f" — collected by {elsewhere_names}"
+    excess_label = (
+        f"Excess — cleared pending receipts "
+        f"({summary.get('cleared_pending_count') or 0})"
+    )
+    if collected_for_names:
+        excess_label += f" — collected for {collected_for_names}"
     rows.append(
         _money_row(
-            f"Deficit — pending cleared in later sessions ({summary.get('cleared_elsewhere_count') or 0})",
+            deficit_label,
             summary.get("cleared_elsewhere_cash"),
             summary.get("cleared_elsewhere_mpesa"),
             summary.get("cleared_elsewhere_card"),
@@ -10638,7 +10665,7 @@ def build_shop_day_report_pdf(
     )
     rows.append(
         _money_row(
-            f"Excess — cleared pending receipts ({summary.get('cleared_pending_count') or 0})",
+            excess_label,
             summary.get("cleared_pending_cash"),
             summary.get("cleared_pending_mpesa"),
             summary.get("cleared_pending_card"),

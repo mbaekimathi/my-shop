@@ -990,6 +990,32 @@ class ClearedPendingCollectionTests(TestCase):
         second_row = next(r for r in listed if r["session"].pk == second.pk)
         self.assertEqual(second_row["cleared_pending_total"], Decimal("100"))
 
+        # Money-flow memo rows name the cashier on the other side.
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        request = RequestFactory().get("/x/")
+        request.user = self.user
+        first_page = build_day_session_report_page(
+            profile=self.profile, request=request, session=first
+        )["page"]
+        first_flow = [r[0] for r in first_page["tables"][1]["rows"]]
+        self.assertTrue(
+            any("collected by Cleared Cashier" in row for row in first_flow),
+            first_flow,
+        )
+        second_page = build_day_session_report_page(
+            profile=self.profile, request=request, session=second
+        )["page"]
+        second_flow = [r[0] for r in second_page["tables"][1]["rows"]]
+        self.assertTrue(
+            any("collected for Cleared Cashier" in row for row in second_flow),
+            second_flow,
+        )
+
     def test_credit_collected_in_next_session_lands_on_new_till(self):
         from shops.services import (
             confirm_shop_receipt,
