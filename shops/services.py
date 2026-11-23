@@ -9784,8 +9784,10 @@ def day_report_not_till_lines(*, summary, details, pos=None, shop=None):
             "counted": summary.get("closing_credit"),
             "variance": summary.get("credit_variance"),
         }
-    if pos is not None and getattr(pos, "enable_gift", True):
-        gifts = details.get("gifts") or {}
+    gifts = details.get("gifts") or {}
+    if pos is not None and (
+        getattr(pos, "enable_gift", True) or gifts.get("count")
+    ):
         lines.append(
             {
                 "key": "gift",
@@ -10370,7 +10372,7 @@ def build_shop_day_report_pdf(
                 sp["credit_total"],
                 sub="collected later — outside the till",
             )
-        if getattr(pos, "enable_gift", True):
+        if getattr(pos, "enable_gift", True) or sp["gift_count"]:
             _sp_row(
                 "Gift issues",
                 str(sp["gift_count"]),

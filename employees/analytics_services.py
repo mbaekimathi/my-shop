@@ -12323,7 +12323,7 @@ def build_day_session_report_page(
     )
     if getattr(pos, "enable_credit", False):
         sales_sub += f" + credit {_money_ksh(sales_profit['credit_total'])}"
-    if getattr(pos, "enable_gift", True):
+    if getattr(pos, "enable_gift", True) or sales_profit["gift_count"]:
         sales_sub += f" + gifts {_money_ksh(sales_profit['gift_total'])}"
     expected_actual_rows = [
         [
@@ -12417,7 +12417,7 @@ def build_day_session_report_page(
             ],
         },
     ]
-    if getattr(pos, "enable_gift", True):
+    if getattr(pos, "enable_gift", True) or sales_profit["gift_count"]:
         expected_actual_rows.insert(
             1,
             [
