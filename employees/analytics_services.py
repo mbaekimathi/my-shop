@@ -12449,6 +12449,7 @@ def build_day_session_report_page(
             if cleared_pending
             else "",
             section="day_report_sec_cleared",
+            table_class="ax-table--cleared",
         )
     )
 
@@ -12489,6 +12490,7 @@ def build_day_session_report_page(
             if cleared_elsewhere
             else "",
             section="day_report_sec_cleared",
+            table_class="ax-table--cleared",
         )
     )
 

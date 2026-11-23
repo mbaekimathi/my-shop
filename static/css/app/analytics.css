@@ -10534,3 +10534,54 @@ body.ax-credit-due-open {
   padding: 0.75rem;
   border-top: 1px solid var(--line);
 }
+
+/* ---- Day report professional polish ---------------------------------- */
+
+/* Status chip reads as a coloured pill (Open = amber, Closed = green). */
+.ax--day-report .ax-kpi.is-good strong,
+.ax--day-report .ax-kpi.is-warn strong {
+  justify-self: start;
+  padding: 0.16rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ax--day-report .ax-kpi.is-good strong {
+  background: var(--success-bg);
+  color: var(--success-text);
+  box-shadow: inset 0 0 0 1px var(--success-border);
+}
+
+.ax--day-report .ax-kpi.is-warn strong {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  box-shadow: inset 0 0 0 1px var(--warning-border);
+}
+
+/* Expected vs actual matrix — money text tinted to match each side;
+   toned cells (profit good/bad, warn diffs) keep their own colours. */
+.ax--day-report .ax-card--expected tbody td:nth-child(2) .ax-money:not(.is-good):not(.is-bad):not(.is-warn) {
+  color: color-mix(in srgb, var(--info) 62%, var(--text-strong));
+}
+
+.ax--day-report .ax-card--expected tbody td:nth-child(3) .ax-money:not(.is-good):not(.is-bad):not(.is-warn) {
+  color: color-mix(in srgb, var(--teal) 58%, var(--text-strong));
+}
+
+/* Cleared-pending tables — the counterparty cashier stands out. */
+.ax--day-report .ax-table--cleared tbody td:nth-child(3) {
+  font-weight: 700;
+  color: color-mix(in srgb, var(--teal) 62%, var(--text-strong));
+}
+
+/* Quieter empty-state placeholders. */
+.ax--day-report .ax-empty {
+  padding: 0.9rem 0.6rem;
+  text-align: center;
+  color: var(--mist-dim);
+  border: 1px dashed color-mix(in srgb, var(--line) 80%, var(--mist-dim));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-muted) 45%, var(--surface));
+}
