@@ -12300,12 +12300,14 @@ def build_day_session_report_page(
     # Sales & profit as an Expected-vs-Actual matrix: each metric on a row,
     # the expectation and the reality side by side, the difference column
     # carrying what's still to collect / unpaid / the profit gap.
+    # Expected = all sales + credit + gifts; Actual = confirmed sales only
+    # — spell every component out so the Expected−Actual difference is
+    # always attributable (pending, credit or gift value).
     sales_sub = (
         f"{sales_profit['sales_count']} receipts · "
-        f"counted {_money_ksh(sales_profit['counted_sales'])}"
+        f"confirmed {_money_ksh(sales_profit['counted_sales'])}"
+        f" + pending {_money_ksh(sales_profit['pending_total'])}"
     )
-    if sales_profit["pending_count"]:
-        sales_sub += f" + pending {_money_ksh(sales_profit['pending_total'])}"
     if getattr(pos, "enable_credit", False):
         sales_sub += f" + credit {_money_ksh(sales_profit['credit_total'])}"
     if getattr(pos, "enable_gift", True):
@@ -12408,21 +12410,34 @@ def build_day_session_report_page(
             "Expected vs actual",
             [
                 "Entry",
-                {"label": "Expected", "money": True},
-                {"label": "Actual", "money": True},
-                {"label": "Difference", "money": True, "total": True},
+                {
+                    "label": "Expected",
+                    "money": True,
+                    "title": "What the session should produce",
+                },
+                {
+                    "label": "Actual",
+                    "money": True,
+                    "title": "What really landed",
+                },
+                {
+                    "label": "Difference",
+                    "money": True,
+                    "total": True,
+                    "title": "Still to collect / unpaid",
+                },
             ],
             expected_actual_rows,
             empty="",
             footnote=(
-                "Expected sales = counted sales + uncounted pending "
-                "receipts + credit sales + gift issues; actual sales = "
-                "money that reached the till (the difference is still to "
-                "collect). Expected profit = expected sales − all "
-                "expenses and stock bought + prepayments; actual profit "
-                "charges paid costs only — cost differences are the "
-                "unpaid amounts. Credit and gift value never enters "
-                "Expected in till."
+                "Expected sales = all sales (confirmed + pending) + "
+                "credit sales + gift issues; actual sales = confirmed "
+                "sales only — money that reached the till (the "
+                "difference is still to collect). Expected profit = "
+                "expected sales − all expenses and stock bought + "
+                "prepayments; actual profit charges paid costs only — "
+                "cost differences are the unpaid amounts. Credit and "
+                "gift value never enters Expected in till."
             ),
             section="day_report_sec_sales_profit",
             card_class="ax-card--expected",
