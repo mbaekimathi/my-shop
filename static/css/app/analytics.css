@@ -10660,3 +10660,172 @@ body.ax-credit-due-open {
     display: none;
   }
 }
+
+/* ---- Day report: stacked list on small screens --------------------------
+   Under 899px every table collapses into compact label/value rows — the
+   first cell becomes the row title and each remaining cell shows its
+   column label to the left of the value. No sideways scroll anywhere. */
+@media (max-width: 899px) {
+  .ax.ax--day-report .ax-table-wrap,
+  .ax.ax--day-report .ax-table-wrap--scroll,
+  .ax.ax--day-report .ax-table-wrap--list {
+    overflow-x: visible;
+  }
+
+  .ax.ax--day-report .ax-scroll-hint {
+    display: none;
+  }
+
+  .ax.ax--day-report .ax-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    font-size: 0.74rem;
+  }
+
+  .ax.ax--day-report .ax-table thead {
+    display: none;
+  }
+
+  .ax.ax--day-report .ax-table tbody {
+    display: block;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr {
+    display: block;
+    padding: 0.55rem 0.7rem;
+    margin: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  }
+
+  .ax.ax--day-report .ax-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ax.ax--day-report .ax-table th,
+  .ax.ax--day-report .ax-table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.55rem;
+    padding: 0.14rem 0;
+    border: 0;
+    box-shadow: none;
+    white-space: normal;
+    text-align: left;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ax.ax--day-report .ax-table td::before {
+    content: attr(data-label);
+    flex: 0 1 auto;
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+    color: var(--mist-dim);
+  }
+
+  .ax.ax--day-report .ax-table td[data-label=""]::before {
+    content: none;
+  }
+
+  .ax.ax--day-report .ax-table td > *:last-child {
+    margin-left: auto;
+    text-align: right;
+  }
+
+  /* First cell becomes the row title — its column label is redundant. */
+  .ax.ax--day-report .ax-table-wrap .ax-table tbody tr td:first-child,
+  .ax.ax--day-report .ax-table-wrap .ax-table tbody tr td.ax-cell--primary {
+    display: block;
+    padding: 0.05rem 0 0.25rem;
+    background: transparent;
+    font-weight: 700;
+    color: var(--text-strong);
+  }
+
+  .ax.ax--day-report .ax-table td.ax-cell--primary::before {
+    content: none;
+  }
+
+  /* Group headers stay as slim bands across the list. */
+  .ax.ax--day-report .ax-table tbody tr.ax-row--group {
+    display: block;
+    padding: 0;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr.ax-row--group td {
+    display: block;
+    padding: 0.32rem 0.7rem;
+    font-size: 0.64rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+    border-bottom: 1px solid var(--line);
+  }
+
+  .ax.ax--day-report .ax-table tbody tr.ax-row--group td::before {
+    content: none;
+  }
+
+  /* Money-flow rows keep their colour coding as full-width bands —
+     the per-cell tints sit on the same colour so the band looks solid. */
+  .ax.ax--day-report .ax-table--moneyflow tbody tr[class*="ax-flow-row"] td {
+    box-shadow: none;
+  }
+
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--expected {
+    background: var(--info-bg);
+    font-weight: 800;
+    box-shadow: inset 0 1px 0 var(--info-border);
+  }
+
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--closing {
+    font-weight: 800;
+    box-shadow: inset 0 1px 0 var(--line);
+  }
+
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance {
+    font-weight: 800;
+    box-shadow: inset 0 2px 0 var(--line);
+  }
+
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-good,
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--excess {
+    background: var(--success-bg);
+  }
+
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-bad,
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--deficit {
+    background: var(--danger-bg);
+  }
+
+  /* Money-flow primary cells still carry their direction dot — the
+     generic ::before kill above is lower-specificity than the dot rule,
+     so it survives; the primary td is display:block so the dot sits
+     inline with the label. */
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row td.ax-cell--primary::before {
+    content: "";
+    display: inline-block;
+    margin-right: 0.3rem;
+    vertical-align: 0.08em;
+  }
+}
+
+@media (max-width: 420px) {
+  .ax.ax--day-report .ax-table {
+    font-size: 0.7rem;
+  }
+
+  .ax.ax--day-report .ax-table tbody tr {
+    padding: 0.45rem 0.55rem;
+  }
+
+  .ax.ax--day-report .ax-details-grid {
+    padding: 0.5rem;
+  }
+}
