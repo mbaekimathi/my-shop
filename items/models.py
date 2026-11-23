@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.utils import timezone
 
 
 def item_image_path(instance, filename):
@@ -858,6 +859,66 @@ class ShelfOnlineStockTakeEntry(models.Model):
     def __str__(self):
         return (
             f"Shelf online count {self.shelf_item_id} @ shop {self.shop_id} "
+            f"on {self.count_date}"
+        )
+
+
+class OnlineStockTakeSavedCount(models.Model):
+    """Saved snapshot of one shop/day online count — item or shelf stock.
+
+    The live ``OnlineStockTakeEntry`` / ``ShelfOnlineStockTakeEntry`` rows keep
+    changing as people recount; a saved count freezes the counted lines plus
+    the match/excess/short totals so the day's result stays downloadable and
+    printable later.
+    """
+
+    ITEM = "item"
+    SHELF = "shelf"
+    STOCK_KIND_CHOICES = (
+        (ITEM, "Item stock"),
+        (SHELF, "Shelf stock"),
+    )
+
+    shop = models.ForeignKey(
+        "shops.Shop",
+        on_delete=models.CASCADE,
+        related_name="online_stock_take_saves",
+    )
+    stock_kind = models.CharField(
+        max_length=8,
+        choices=STOCK_KIND_CHOICES,
+        default=ITEM,
+        db_index=True,
+    )
+    count_date = models.DateField(db_index=True)
+    item_count = models.PositiveIntegerField(default=0)
+    filled_count = models.PositiveIntegerField(default=0)
+    match_count = models.PositiveIntegerField(default=0)
+    excess_count = models.PositiveIntegerField(default=0)
+    short_count = models.PositiveIntegerField(default=0)
+    payload = models.JSONField(default=dict, blank=True)
+    saved_at = models.DateTimeField(default=timezone.now, db_index=True)
+    saved_by = models.ForeignKey(
+        "employees.EmployeeProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="online_stock_take_saves",
+    )
+    saved_by_label = models.CharField(max_length=160, blank=True, default="")
+
+    class Meta:
+        ordering = ["-saved_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shop", "stock_kind", "count_date"],
+                name="uniq_online_take_save_shop_kind_date",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"Saved {self.stock_kind} count @ shop {self.shop_id} "
             f"on {self.count_date}"
         )
 

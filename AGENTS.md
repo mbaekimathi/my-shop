@@ -167,6 +167,23 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   on cards) — untracked items show no stock number on the floor card, product
   popup, serial modal, or trade search. Tests:
   `shops/tests/test_sale_stock_tracking.py`.
+- **Enabling reconciles past sales**: `backfill_item_sale_stock`
+  (`items/services.py`) runs when a per-item toggle, "Track all", the
+  item-stock "Stock count" switch (`set_item_stock_count_enabled(..., actor=)`),
+  or a company stock-mode flip to on (`_sync_items_to_stock_mode`, non-custom
+  items only) turns tracking on. For each sale/credit/gift/trade-out line it
+  deducts the gap still owed; for trade-in lines it adds it. What already
+  moved is detected from the receipt's `source='pos'` `StoreStockMovement`
+  notes (`"{receipt_number} · {label} · {shop}"`) — a line with an
+  issue-side movement ("sale"/"credit"/"gift"/"trade out" OUT, "trade in"
+  IN) is provably deducted and skipped; otherwise `expected − actual` over
+  the receipt's return/reopen movements gives the backfill delta.
+  ShopStock can go negative, `Item.stock` floors at 0, and each adjustment
+  mirrors into StoreStock via `record_store_receipt_movement` with the same
+  note format (actor falls back to `receipt.created_by`). Toggle/Track-all
+  JSON returns `backfilled_lines`; `stock-sale-tracking.js` alerts when > 0.
+  Direct model writes (`item.deduct_stock_on_sale = …; item.save()`) bypass
+  the backfill — only the toggles/settings paths run it.
 
 ## Stock health column (store manager pages)
 - Both Company Store Manager stock lists carry a **Health** column rendering
@@ -247,6 +264,42 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `closed_by` stays NULL on auto-close.
 - `python manage.py close_overdue_stock_takes` runs the same sweep — schedule it
   (Task Scheduler / cron) if takes must close with zero site traffic.
+
+## Online stock take saved counts (`?mode=online-stock-take`)
+- The counted-items cart footer has **Save count / Download / Print**. Save
+  count flushes the debounced autosave lines then freezes the day's filled
+  lines into `OnlineStockTakeSavedCount` (`stock_kind` `item`/`shelf`, JSON
+  `payload.lines`, filled/match/excess/short counters) — one record per
+  shop/kind/day (`update_or_create` on `uniq_online_take_save_shop_kind_date`),
+  so re-saving the same day **updates** the record and re-stamps `saved_at`.
+  `record_online_stock_take_save` / `list_saved_online_stock_takes` /
+  `saved_count_summary` / `build_online_take_count_document` live in
+  `items/online_stock_take.py` (shelf counts reuse them — the payload is
+  generic).
+- **Same-day-only writes**: `_assert_editable_count_day` in
+  `save_online_stock_take_line`, `save_shelf_online_take_line` and
+  `record_online_stock_take_save` rejects any `count_date != localdate()` —
+  past/future days render view-only (`online_take_locked` context →
+  `data-online-take-locked`, disabled qty inputs, hidden Save count, "View
+  only" chip, live poll off). Each saved row links **Open**
+  (`?shop_id&date=<count_date>` — editable when `rec.is_today`, else tagged
+  "Locked"), Download (`?saved=<pk>&download=1`) and Print
+  (`?saved=<pk>&paper=a4&auto=1`).
+- A **Saved counts** list sits at the bottom of the page — the selected shop's
+  saves, or all in-scope shops when none is picked.
+- The same URL serves the live count sheet: `?shop_id&date&paper=a4|80|58`,
+  `?estimate=1` (print-modal page count) and `?download=1` —
+  `_movement_report_output_flags` → `_online_take_report_response`
+  (`items/views.py`), `report`/`actual` document keys,
+  `report_numeric_from=3`. The cart's Print button opens the shared receipts
+  print modal (`receipts_print_url` = `request.path` — the modal JS reuses
+  `window.location.search` for mode/shop_id/date/stock). POST
+  `action=save_count` returns `{ok, saved}` and the JS prepends/replaces the
+  row in the saved list. Mirrored on the shelf page (`stock=shelf`) which
+  shares the template/JS. Tests: `items/tests.py::ItSupportItemStockPagesTests`
+  (`test_online_stock_take_save_count_snapshot_list_and_outputs`,
+  `test_online_stock_take_past_day_is_view_only`,
+  `test_shelf_online_stock_take_save_count`).
 
 ## Compulsory stock fields (Stock Management → Settings)
 - `CompanyStockSettings` (singleton, cached via `get_company_stock_settings`)

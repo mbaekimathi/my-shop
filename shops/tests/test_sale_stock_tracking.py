@@ -153,6 +153,102 @@ class SaleStockTrackingTests(TestCase):
         self._checkout(self.untracked, qty="2", price="20.00")
         self.assertEqual(self._shop_qty(self.untracked), Decimal("3.000"))
 
+    def _enable_tracking_and_backfill(self, item):
+        from items.services import backfill_item_sale_stock
+
+        item.deduct_stock_on_sale = True
+        item.stock_count_enabled = True
+        item.save(update_fields=["deduct_stock_on_sale", "stock_count_enabled"])
+        return backfill_item_sale_stock(item, actor=self.profile)
+
+    def test_backfill_deducts_untracked_credit_sale(self):
+        # A tracked sale first — its POS mirror movement marks the point
+        # after which un-mirrored receipt lines are known to be untracked.
+        self._checkout(self.item, qty="1")
+        complete_shop_checkout(
+            shop=self.shop,
+            profile=self.profile,
+            payload={
+                "kind": ShopReceiptKind.CREDIT,
+                "client_name": "JANE DOE",
+                "client_phone": "0712345678",
+                "login_code": "770021",
+                "lines": [{"id": self.untracked.pk, "qty": "2", "price": "20.00"}],
+            },
+        )
+        self.assertEqual(self._shop_qty(self.untracked), Decimal("5.000"))
+
+        summary = self._enable_tracking_and_backfill(self.untracked)
+        self.assertEqual(summary["lines"], 1)
+        self.assertEqual(summary["units_out"], Decimal("2"))
+        self.assertEqual(self._shop_qty(self.untracked), Decimal("3.000"))
+        self.untracked.refresh_from_db()
+        self.assertEqual(self.untracked.stock, Decimal("3.000"))
+        movement = StoreStockMovement.objects.get(item=self.untracked)
+        self.assertEqual(movement.movement_type, "out")
+        self.assertEqual(movement.source, "pos")
+
+    def test_backfill_skips_already_deducted_lines(self):
+        self._checkout(self.item, qty="3")
+        summary = self._enable_tracking_and_backfill(self.item)
+        self.assertEqual(summary["lines"], 0)
+        self.assertEqual(self._shop_qty(self.item), Decimal("7.000"))
+        self.assertEqual(
+            StoreStockMovement.objects.filter(item=self.item).count(), 1
+        )
+
+    def test_backfill_deducts_full_qty_when_return_restocked(self):
+        # Untracked sale, then a tracked return: the restock added stock the
+        # sale never removed, so the backfill deducts the full sold qty.
+        self._checkout(self.item, qty="1")
+        result = self._checkout(self.untracked, qty="4", price="20.00")
+        line = result["receipt"].lines.get()
+        self.untracked.deduct_stock_on_sale = True
+        self.untracked.stock_count_enabled = True
+        self.untracked.save(
+            update_fields=["deduct_stock_on_sale", "stock_count_enabled"]
+        )
+        return_shop_receipt_items(
+            shop=self.shop,
+            receipt_id=result["receipt"].pk,
+            payload={
+                "login_code": "770021",
+                "reason": "Wrong item",
+                "lines": [{"line_id": line.pk, "qty": "1"}],
+            },
+        )
+        self.assertEqual(self._shop_qty(self.untracked), Decimal("6.000"))
+
+        from items.services import backfill_item_sale_stock
+
+        summary = backfill_item_sale_stock(self.untracked, actor=self.profile)
+        self.assertEqual(summary["lines"], 1)
+        self.assertEqual(self._shop_qty(self.untracked), Decimal("2.000"))
+        self.untracked.refresh_from_db()
+        self.assertEqual(self.untracked.stock, Decimal("2.000"))
+
+    def test_backfill_adds_untracked_trade_in(self):
+        self._checkout(self.item, qty="1")
+        complete_shop_checkout(
+            shop=self.shop,
+            profile=self.profile,
+            payload={
+                "kind": "trade_in",
+                "client_name": "JANE DOE",
+                "client_phone": "0712345678",
+                "login_code": "770021",
+                "lines": [{"id": self.untracked.pk, "qty": 2, "price": "100.00"}],
+            },
+        )
+        self.assertEqual(self._shop_qty(self.untracked), Decimal("5.000"))
+
+        summary = self._enable_tracking_and_backfill(self.untracked)
+        self.assertEqual(summary["lines"], 1)
+        self.assertEqual(summary["units_in"], Decimal("2"))
+        self.assertEqual(self._shop_qty(self.untracked), Decimal("7.000"))
+        self.untracked.refresh_from_db()
+        self.assertEqual(self.untracked.stock, Decimal("7.000"))
+
     def test_return_of_untracked_item_does_not_restock(self):
         result = self._checkout(self.untracked, qty="2", price="20.00")
         line = result["receipt"].lines.get()

@@ -10588,6 +10588,213 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   color: var(--danger);
 }
 
+.online-take-cart-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.online-take-cart-action {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface, #fff);
+  color: var(--text-strong);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.online-take-cart-action:hover {
+  border-color: color-mix(in srgb, var(--accent, #1f6f78) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent, #1f6f78) 8%, var(--surface, #fff));
+}
+
+.online-take-cart-action.is-primary {
+  border-color: var(--accent, #1f6f78);
+  background: var(--accent, #1f6f78);
+  color: #fff;
+}
+
+.online-take-cart-action.is-primary:hover {
+  background: color-mix(in srgb, var(--accent, #1f6f78) 85%, #111);
+}
+
+.online-take-cart-action:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.online-take-cart-action i,
+.online-take-cart-action svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.online-take-cart-save-note {
+  margin: 0.45rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--mist-dim);
+}
+
+.online-take-cart-save-note.is-error {
+  color: var(--danger);
+}
+
+/* Saved counts list */
+.online-take-saved {
+  margin-top: 1.15rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.online-take-saved-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.55rem;
+}
+
+.online-take-saved-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-strong);
+}
+
+.online-take-saved-head p {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--mist-dim);
+}
+
+.online-take-saved-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.online-take-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface, #fff);
+  font-size: 0.82rem;
+}
+
+.online-take-saved-main {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.online-take-saved-main strong {
+  color: var(--text-strong);
+}
+
+.online-take-saved-main em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--mist-dim);
+}
+
+.online-take-saved-stats {
+  display: grid;
+  gap: 0.1rem;
+  margin-left: auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.online-take-saved-stats em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--mist-dim);
+}
+
+.online-take-saved-when {
+  font-size: 0.74rem;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.online-take-saved-actions {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.online-take-saved-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: var(--text-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.online-take-saved-link:hover {
+  border-color: color-mix(in srgb, var(--accent, #1f6f78) 45%, var(--line));
+  color: var(--accent, #1f6f78);
+}
+
+.online-take-saved-link i,
+.online-take-saved-link svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.online-take-saved-empty {
+  padding: 0.7rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
+  color: var(--mist-dim);
+  font-size: 0.8rem;
+}
+
+.online-take-saved-lock {
+  align-self: center;
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+  padding: 0.14rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
+}
+
+.online-take-locked-chip {
+  color: var(--mist-dim);
+}
+
 @media (max-width: 720px) {
   .online-take-cart {
     right: max(0.75rem, env(safe-area-inset-right));

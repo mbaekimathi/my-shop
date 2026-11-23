@@ -136,6 +136,12 @@
             item_id: row.dataset.itemId || "",
             enabled: enabled ? "1" : "0",
           });
+          if (Number(data.backfilled_lines) > 0) {
+            window.alert(
+              `Stock tracking on — ${data.backfilled_lines} past receipt ` +
+                "line(s) were reconciled into stock."
+            );
+          }
           const next = Boolean(data.deduct_stock_on_sale);
           input.checked = next;
           setStateLabel(input, next);
@@ -171,6 +177,12 @@
           action: "track_all_sale_stock",
           enabled: enabled ? "1" : "0",
         });
+        if (Number(data.backfilled_lines) > 0) {
+          window.alert(
+            `Stock tracking on — ${data.backfilled_lines} past receipt ` +
+              "line(s) were reconciled into stock."
+          );
+        }
         applyEverywhere(Boolean(data.enabled));
       } catch (error) {
         trackAllInput.checked = previous;

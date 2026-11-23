@@ -7713,6 +7713,11 @@ def stock_sale_tracking(request, profile, meta, module):
                     "updated_at",
                 ]
             )
+            backfilled = {"lines": 0}
+            if enabled:
+                from .services import backfill_item_sale_stock
+
+                backfilled = backfill_item_sale_stock(item, actor=profile)
             if wants_json:
                 return JsonResponse(
                     {
@@ -7720,29 +7725,63 @@ def stock_sale_tracking(request, profile, meta, module):
                         "item_id": item.pk,
                         "deduct_stock_on_sale": item.deduct_stock_on_sale,
                         "stock_count_enabled": item.stock_count_enabled,
+                        "backfilled_lines": backfilled["lines"],
                     }
                 )
-            messages.success(request, f"Stock tracking saved for {item.name}.")
+            message = f"Stock tracking saved for {item.name}."
+            if backfilled["lines"]:
+                message += (
+                    f" {backfilled['lines']} past receipt line(s) "
+                    "reconciled into stock."
+                )
+            messages.success(request, message)
             return redirect(page_url)
 
         if action == "track_all_sale_stock":
             enabled = _truthy(request.POST.get("enabled") or "1")
+            backfill_ids = (
+                list(
+                    Item.objects.filter(
+                        is_suspended=False, deduct_stock_on_sale=False
+                    ).values_list("id", flat=True)
+                )
+                if enabled
+                else []
+            )
             updated = Item.objects.filter(is_suspended=False).update(
                 deduct_stock_on_sale=enabled,
                 stock_count_enabled=enabled,
                 sale_tracking_custom=True,
                 updated_at=timezone.now(),
             )
+            backfilled_lines = 0
+            if backfill_ids:
+                from .services import backfill_item_sale_stock
+
+                for item in Item.objects.filter(pk__in=backfill_ids):
+                    backfilled_lines += backfill_item_sale_stock(
+                        item, actor=profile
+                    )["lines"]
             if wants_json:
                 return JsonResponse(
-                    {"ok": True, "enabled": enabled, "updated": updated}
+                    {
+                        "ok": True,
+                        "enabled": enabled,
+                        "updated": updated,
+                        "backfilled_lines": backfilled_lines,
+                    }
                 )
-            messages.success(
-                request,
+            message = (
                 "Stock tracking turned on for all items."
                 if enabled
-                else "Stock tracking turned off for all items.",
+                else "Stock tracking turned off for all items."
             )
+            if backfilled_lines:
+                message += (
+                    f" {backfilled_lines} past receipt line(s) "
+                    "reconciled into stock."
+                )
+            messages.success(request, message)
             return redirect(page_url)
 
         if wants_json:
@@ -8074,6 +8113,116 @@ def stock_take_page(request, profile, meta, module):
     )
 
 
+def _resolve_saved_online_take(request, *, shops, stock_kind):
+    """?saved=<pk> → a saved count record the profile's shops may read."""
+    from items.models import OnlineStockTakeSavedCount
+
+    raw = (request.GET.get("saved") or "").strip()
+    if not raw:
+        return None
+    try:
+        saved_pk = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return (
+        OnlineStockTakeSavedCount.objects.filter(
+            pk=saved_pk, stock_kind=stock_kind, shop__in=shops
+        )
+        .select_related("shop")
+        .first()
+    )
+
+
+def _online_take_report_response(request, document, *, kind_label, paper,
+                                 want_estimate, want_download):
+    """Print sheet / A4 estimate JSON / A4 PDF download for a count document."""
+    from django.utils import timezone as dj_timezone
+
+    from .movement_page import (
+        _movement_estimate_payload,
+        _movement_print_tables,
+    )
+
+    if document is None:
+        message = "Select a shop for this stock count."
+        if want_estimate:
+            return JsonResponse({"ok": False, "error": message}, status=400)
+        return render(
+            request,
+            "items/movement_report_print.html",
+            {
+                "document": None,
+                "tables": [],
+                "paper": paper or "a4",
+                "kicker": f"Stock management · {kind_label}",
+                "count_unit": "item",
+                "title": kind_label,
+                "subtitle": message,
+                "movement_count": 0,
+                "a4_page_estimate": 1,
+                "printed_at": dj_timezone.localtime(),
+                "company_name": "",
+                "auto_print": False,
+            },
+            status=400,
+        )
+
+    if want_estimate:
+        return JsonResponse(
+            _movement_estimate_payload(
+                document,
+                document["report_rows"],
+                count_unit="item",
+                kind_label=kind_label,
+            )
+        )
+    if want_download:
+        pdf_bytes = build_stock_report_pdf(**document["pdf_params"])
+        return _stock_report_pdf_response(
+            filename=document["filename"], pdf_bytes=pdf_bytes
+        )
+    estimate = _movement_estimate_payload(
+        document,
+        document["report_rows"],
+        count_unit="item",
+        kind_label=kind_label,
+    )
+    return render(
+        request,
+        "items/movement_report_print.html",
+        {
+            "document": document,
+            "tables": _movement_print_tables(document),
+            "paper": paper or "a4",
+            "kicker": f"Stock management · {kind_label}",
+            "count_unit": "item",
+            "title": kind_label,
+            "subtitle": (
+                f"{document['shop_label']} · {document['period_label']}"
+            ),
+            "movement_count": document["item_count"],
+            "a4_page_estimate": estimate["a4_page_estimate"],
+            "printed_at": document["generated_at"],
+            "company_name": document["pdf_params"]["company_name"],
+            "company_phone": document["pdf_params"]["company_phone"],
+            "company_email": document["pdf_params"]["company_email"],
+            "company_location": document["pdf_params"]["company_location"],
+            "auto_print": (request.GET.get("auto") or "").strip() == "1",
+        },
+    )
+
+
+def _online_take_saved_counts(*, stock_kind, selected_shop, shops):
+    """Saved counts for the page list — this shop, else all in-scope shops."""
+    from items.online_stock_take import list_saved_online_stock_takes
+
+    return list_saved_online_stock_takes(
+        stock_kind=stock_kind,
+        shop=selected_shop,
+        shops=None if selected_shop is not None else shops,
+    )
+
+
 def online_stock_take_page(request, profile, meta, module):
     """Live physical count vs current stock — separate from company Stock Take."""
     from employees.workspace import sidebar_for_stock_management, stock_management_url
@@ -8118,6 +8267,34 @@ def online_stock_take_page(request, profile, meta, module):
             or getattr(profile, "employee_id", "")
             or "Employee"
         )
+        if (request.POST.get("action") or "").strip() == "save_count":
+            from items.online_stock_take import (
+                record_online_stock_take_save,
+                saved_count_summary,
+            )
+
+            catalog = build_online_stock_take_catalog(
+                shop=selected_shop, count_date=count_date
+            )
+            try:
+                record = record_online_stock_take_save(
+                    shop=selected_shop,
+                    count_date=count_date,
+                    stock_kind="item",
+                    catalog=catalog,
+                    profile=profile,
+                    saved_by_label=label,
+                )
+            except ValidationError as exc:
+                message = (
+                    exc.messages[0]
+                    if getattr(exc, "messages", None)
+                    else str(exc)
+                )
+                return JsonResponse({"ok": False, "error": message}, status=400)
+            return JsonResponse(
+                {"ok": True, "saved": saved_count_summary(record)}
+            )
         try:
             line = save_online_stock_take_line(
                 shop=selected_shop,
@@ -8149,6 +8326,45 @@ def online_stock_take_page(request, profile, meta, module):
         )
         return JsonResponse({"ok": True, **sync})
 
+    # Count sheet outputs — ?paper=a4|80|58, ?estimate=1, ?download=1
+    # (live count for the selected shop/day, or ?saved=<id> snapshot).
+    from .movement_page import _movement_report_output_flags
+    from items.online_stock_take import build_online_take_count_document
+
+    paper, wants_estimate, wants_download = _movement_report_output_flags(
+        request
+    )
+    if paper or wants_estimate or wants_download:
+        saved_record = _resolve_saved_online_take(
+            request, shops=shops, stock_kind="item"
+        )
+        if saved_record is not None:
+            document = build_online_take_count_document(
+                kind_label="Stock count",
+                filename_prefix="stock-count",
+                saved=saved_record,
+            )
+        elif selected_shop is not None:
+            document = build_online_take_count_document(
+                kind_label="Stock count",
+                filename_prefix="stock-count",
+                shop=selected_shop,
+                count_date=count_date,
+                catalog=build_online_stock_take_catalog(
+                    shop=selected_shop, count_date=count_date
+                ),
+            )
+        else:
+            document = None
+        return _online_take_report_response(
+            request,
+            document,
+            kind_label="Stock count",
+            paper=paper,
+            want_estimate=wants_estimate,
+            want_download=wants_download,
+        )
+
     catalog = (
         build_online_stock_take_catalog(
             shop=selected_shop, count_date=count_date
@@ -8171,6 +8387,8 @@ def online_stock_take_page(request, profile, meta, module):
         else {"revision": "0:"}
     )
 
+    from django.utils import timezone as dj_timezone
+
     return render(
         request,
         "items/online_stock_take.html",
@@ -8184,8 +8402,21 @@ def online_stock_take_page(request, profile, meta, module):
             "selected_shop": selected_shop,
             "online_count_date": count_date,
             "online_count_date_value": count_date_value,
+            "online_take_locked": count_date != dj_timezone.localdate(),
             "online_catalog": catalog,
             "online_sync_revision": sync_meta.get("revision") or "0:",
+            "online_saved_counts": _online_take_saved_counts(
+                stock_kind="item",
+                selected_shop=selected_shop,
+                shops=shops,
+            ),
+            "receipts_print_modal": bool(selected_shop),
+            "receipts_print_url": request.path,
+            "receipts_print_title": "Print stock count",
+            "receipts_print_lead": (
+                "Prints the counted items for this shop and day — pick a "
+                "paper size, then print or download the A4 PDF."
+            ),
         },
     )
 
@@ -8455,6 +8686,34 @@ def shelf_online_stock_take_page(request, profile, meta, module):
             or getattr(profile, "employee_id", "")
             or "Employee"
         )
+        if (request.POST.get("action") or "").strip() == "save_count":
+            from items.online_stock_take import (
+                record_online_stock_take_save,
+                saved_count_summary,
+            )
+
+            catalog = build_shelf_online_take_catalog(
+                shop=selected_shop, count_date=count_date
+            )
+            try:
+                record = record_online_stock_take_save(
+                    shop=selected_shop,
+                    count_date=count_date,
+                    stock_kind="shelf",
+                    catalog=catalog,
+                    profile=profile,
+                    saved_by_label=label,
+                )
+            except ValidationError as exc:
+                message = (
+                    exc.messages[0]
+                    if getattr(exc, "messages", None)
+                    else str(exc)
+                )
+                return JsonResponse({"ok": False, "error": message}, status=400)
+            return JsonResponse(
+                {"ok": True, "saved": saved_count_summary(record)}
+            )
         try:
             line = save_shelf_online_take_line(
                 shop=selected_shop,
@@ -8486,6 +8745,45 @@ def shelf_online_stock_take_page(request, profile, meta, module):
         )
         return JsonResponse({"ok": True, **sync})
 
+    # Count sheet outputs — ?paper=a4|80|58, ?estimate=1, ?download=1
+    # (live count for the selected shop/day, or ?saved=<id> snapshot).
+    from .movement_page import _movement_report_output_flags
+    from items.online_stock_take import build_online_take_count_document
+
+    paper, wants_estimate, wants_download = _movement_report_output_flags(
+        request
+    )
+    if paper or wants_estimate or wants_download:
+        saved_record = _resolve_saved_online_take(
+            request, shops=shops, stock_kind="shelf"
+        )
+        if saved_record is not None:
+            document = build_online_take_count_document(
+                kind_label="Shelf stock count",
+                filename_prefix="shelf-stock-count",
+                saved=saved_record,
+            )
+        elif selected_shop is not None:
+            document = build_online_take_count_document(
+                kind_label="Shelf stock count",
+                filename_prefix="shelf-stock-count",
+                shop=selected_shop,
+                count_date=count_date,
+                catalog=build_shelf_online_take_catalog(
+                    shop=selected_shop, count_date=count_date
+                ),
+            )
+        else:
+            document = None
+        return _online_take_report_response(
+            request,
+            document,
+            kind_label="Shelf stock count",
+            paper=paper,
+            want_estimate=wants_estimate,
+            want_download=wants_download,
+        )
+
     catalog = build_shelf_online_take_catalog(
         shop=selected_shop, count_date=count_date
     )
@@ -8494,6 +8792,8 @@ def shelf_online_stock_take_page(request, profile, meta, module):
         if selected_shop
         else {"revision": "0:"}
     )
+
+    from django.utils import timezone as dj_timezone
 
     return render(
         request,
@@ -8509,8 +8809,21 @@ def shelf_online_stock_take_page(request, profile, meta, module):
             "selected_shop": selected_shop,
             "online_count_date": count_date,
             "online_count_date_value": count_date_value,
+            "online_take_locked": count_date != dj_timezone.localdate(),
             "online_catalog": catalog,
             "online_sync_revision": sync_meta.get("revision") or "0:",
+            "online_saved_counts": _online_take_saved_counts(
+                stock_kind="shelf",
+                selected_shop=selected_shop,
+                shops=shops,
+            ),
+            "receipts_print_modal": bool(selected_shop),
+            "receipts_print_url": request.path,
+            "receipts_print_title": "Print shelf stock count",
+            "receipts_print_lead": (
+                "Prints the counted shelf items for this shop and day — pick "
+                "a paper size, then print or download the A4 PDF."
+            ),
         },
     )
 

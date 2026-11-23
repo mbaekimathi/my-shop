@@ -20,6 +20,7 @@
       min="0"
       placeholder="Count"
       value="{{ line.physical_qty }}"
+      {% if locked %}disabled{% endif %}
       data-online-take-qty
       aria-label="Physical count for {{ line.name }}"
     >

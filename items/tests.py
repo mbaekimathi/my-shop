@@ -4255,6 +4255,273 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertContains(page, "IT SHELF WIDGET")
         self.assertNotContains(page, "IT STOCK ITEM")
 
+    def _count_online_item(self, qty="5"):
+        return self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.item.pk),
+                "qty": qty,
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+    def test_online_stock_take_save_count_snapshot_list_and_outputs(self):
+        from items.models import OnlineStockTakeSavedCount
+
+        page = self._count_online_item("5")
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.json()["ok"])
+
+        # Saving with no more pending counts snapshots the day's count.
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "action": "save_count",
+                "shop_id": str(self.shop.pk),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        data = page.json()
+        self.assertTrue(data["ok"])
+        saved = OnlineStockTakeSavedCount.objects.get()
+        self.assertEqual(saved.stock_kind, "item")
+        self.assertEqual(saved.shop_id, self.shop.pk)
+        self.assertEqual(saved.filled_count, 1)
+        self.assertEqual(saved.item_count, 1)
+        self.assertEqual(saved.payload["lines"][0]["name"], "IT STOCK ITEM")
+        self.assertEqual(saved.payload["lines"][0]["physical_qty"], "5")
+
+        # Recount + save again the same day → the day's record is updated,
+        # not duplicated.
+        self._count_online_item("7")
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "action": "save_count",
+                "shop_id": str(self.shop.pk),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.json()["ok"])
+        self.assertEqual(OnlineStockTakeSavedCount.objects.count(), 1)
+        saved.refresh_from_db()
+        self.assertEqual(saved.payload["lines"][0]["physical_qty"], "7")
+
+        # The saved list renders on the landing page and the shop view.
+        for params in (
+            {"mode": "online-stock-take"},
+            {"mode": "online-stock-take", "shop_id": self.shop.pk},
+        ):
+            page = self.client.get(self.url, params)
+            self.assertEqual(page.status_code, 200)
+            self.assertContains(page, "Saved counts")
+            self.assertContains(page, f"&saved={saved.pk}&download=1")
+            self.assertContains(
+                page,
+                f"shop_id={saved.shop_id}&date={saved.count_date.isoformat()}",
+            )
+
+        # Live count print sheet, A4 estimate and PDF download.
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "shop_id": self.shop.pk,
+                "paper": "a4",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Counted items")
+        self.assertContains(page, "IT STOCK ITEM")
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "shop_id": self.shop.pk,
+                "estimate": "1",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.json()["ok"])
+        self.assertGreaterEqual(page.json()["a4_page_estimate"], 1)
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "shop_id": self.shop.pk,
+                "download": "1",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page["Content-Type"], "application/pdf")
+        self.assertIn("attachment", page["Content-Disposition"])
+        self.assertTrue(page.content.startswith(b"%PDF"))
+
+        # Saved snapshot prints/downloads without shop/date params.
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "saved": saved.pk,
+                "download": "1",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page["Content-Type"], "application/pdf")
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "saved": saved.pk,
+                "paper": "a4",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "IT STOCK ITEM")
+        self.assertContains(page, "Saved")
+
+    def test_online_stock_take_save_count_rejects_empty_count(self):
+        from items.models import OnlineStockTakeSavedCount
+
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "action": "save_count",
+                "shop_id": str(self.shop.pk),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 400)
+        self.assertFalse(page.json()["ok"])
+        self.assertEqual(OnlineStockTakeSavedCount.objects.count(), 0)
+
+    def test_online_stock_take_past_day_is_view_only(self):
+        from datetime import timedelta
+
+        from items.models import (
+            OnlineStockTakeEntry,
+            OnlineStockTakeSavedCount,
+        )
+
+        yesterday = timezone.localdate() - timedelta(days=1)
+
+        # Counting and saving are refused for a day other than today.
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "shop_id": str(self.shop.pk),
+                "item_id": str(self.item.pk),
+                "qty": "5",
+                "date": yesterday.isoformat(),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 400)
+        self.assertFalse(page.json()["ok"])
+        self.assertEqual(OnlineStockTakeEntry.objects.count(), 0)
+
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "action": "save_count",
+                "shop_id": str(self.shop.pk),
+                "date": yesterday.isoformat(),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 400)
+        self.assertFalse(page.json()["ok"])
+        self.assertEqual(OnlineStockTakeSavedCount.objects.count(), 0)
+
+        # The day still opens — read-only: inputs disabled, no Save count,
+        # a locked marker on the page.
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "shop_id": self.shop.pk,
+                "date": yesterday.isoformat(),
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "data-online-take-locked")
+        self.assertContains(page, "View only")
+        self.assertContains(page, "disabled")
+        self.assertNotContains(page, "data-online-take-save-count")
+
+    def test_shelf_online_stock_take_save_count(self):
+        from shops.services import set_company_pos_setting
+        from items.models import OnlineStockTakeSavedCount
+
+        set_company_pos_setting(field="stock_mode_shelf", enabled=True)
+        shelf_item = self._shelf_item()
+
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take&stock=shelf",
+            {
+                "mode": "online-stock-take",
+                "shop_id": str(self.shop.pk),
+                "item_id": str(shelf_item.pk),
+                "qty": "4",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.json()["ok"])
+
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take&stock=shelf",
+            {
+                "mode": "online-stock-take",
+                "action": "save_count",
+                "shop_id": str(self.shop.pk),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.json()["ok"])
+        saved = OnlineStockTakeSavedCount.objects.get()
+        self.assertEqual(saved.stock_kind, "shelf")
+        self.assertEqual(saved.payload["lines"][0]["name"], "IT SHELF WIDGET")
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "stock": "shelf",
+                "saved": saved.pk,
+                "download": "1",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page["Content-Type"], "application/pdf")
+
+        page = self.client.get(
+            self.url,
+            {
+                "mode": "online-stock-take",
+                "stock": "shelf",
+                "saved": saved.pk,
+                "paper": "a4",
+            },
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "IT SHELF WIDGET")
+        self.assertContains(page, "Shelf stock count")
+
 
 class StockSerialMovementsShopFilterTests(TestCase):
     def setUp(self):

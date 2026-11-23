@@ -10,7 +10,12 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from items.models import Item, OnlineStockTakeEntry, ShopStock
+from items.models import (
+    Item,
+    OnlineStockTakeEntry,
+    OnlineStockTakeSavedCount,
+    ShopStock,
+)
 
 _ZERO = Decimal("0")
 
@@ -47,6 +52,14 @@ def resolve_online_stock_take_date(raw=None) -> date:
             return datetime.strptime(text, "%Y-%m-%d").date()
         except ValueError:
             return today
+
+
+def _assert_editable_count_day(count_date: date) -> None:
+    """Counts are only writable on their own day — other days are view-only."""
+    if count_date != timezone.localdate():
+        raise ValidationError(
+            "Counts can only be updated on the day they were taken."
+        )
 
 
 def variance_payload(*, system: Decimal, physical: Decimal | None) -> dict:
@@ -315,6 +328,7 @@ def save_online_stock_take_line(
 ) -> dict:
     """Autosave one physical count for a shop/day against book qty frozen at save."""
     count_date = count_date or timezone.localdate()
+    _assert_editable_count_day(count_date)
     try:
         item_pk = int(item_id)
     except (TypeError, ValueError) as exc:
@@ -376,4 +390,256 @@ def save_online_stock_take_line(
         "count_date": count_date.isoformat(),
         "revision": sync["revision"],
         **variance,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Saved counts — a snapshot of one shop/day count kept for the record.
+
+
+def _snapshot_line(line: dict) -> dict:
+    """Flat, JSON-safe copy of one counted line for the saved payload."""
+    return {
+        "item_id": line.get("item_id"),
+        "name": line.get("name") or "",
+        "category": line.get("category") or "",
+        "system_qty": str(line.get("system_qty") or ""),
+        "physical_qty": str(line.get("physical_qty") or ""),
+        "variance": line.get("variance"),
+        "variance_kind": line.get("variance_kind"),
+        "variance_label": line.get("variance_label"),
+        "updated_by_label": (line.get("updated_by_label") or "").strip(),
+    }
+
+
+def record_online_stock_take_save(
+    *,
+    shop,
+    count_date: date,
+    stock_kind: str,
+    catalog: dict,
+    profile=None,
+    saved_by_label: str = "",
+):
+    """Freeze the shop/day counted lines into a ``OnlineStockTakeSavedCount``.
+
+    ``catalog`` is the live ``build_online_stock_take_catalog`` /
+    ``build_shelf_online_take_catalog`` payload — its ``filled_lines`` become
+    the saved lines so the record survives later recounts.
+    """
+    if shop is None:
+        raise ValidationError("Select a shop for this stock count.")
+    if stock_kind not in (
+        OnlineStockTakeSavedCount.ITEM,
+        OnlineStockTakeSavedCount.SHELF,
+    ):
+        stock_kind = OnlineStockTakeSavedCount.ITEM
+    _assert_editable_count_day(count_date)
+    filled = int(catalog.get("filled_count") or 0)
+    if filled <= 0:
+        raise ValidationError("Count at least one item before saving.")
+    lines = [
+        _snapshot_line(line) for line in (catalog.get("filled_lines") or [])
+    ]
+    record, _created = OnlineStockTakeSavedCount.objects.update_or_create(
+        shop=shop,
+        stock_kind=stock_kind,
+        count_date=count_date,
+        defaults={
+            "saved_at": timezone.now(),
+            "item_count": int(catalog.get("item_count") or 0),
+            "filled_count": filled,
+            "match_count": int(catalog.get("match_count") or 0),
+            "excess_count": int(catalog.get("excess_count") or 0),
+            "short_count": int(catalog.get("short_count") or 0),
+            "saved_by": profile,
+            "saved_by_label": (saved_by_label or "").strip()[:160],
+            "payload": {"lines": lines},
+        },
+    )
+    return record
+
+
+def list_saved_online_stock_takes(*, stock_kind, shop=None, shops=None, limit=40):
+    """Recent saved counts, newest first — one shop or the in-scope shop set.
+
+    Rows are stamped ``is_today`` so the page can mark same-day records as
+    open/updatable and older ones as locked.
+    """
+    saved = OnlineStockTakeSavedCount.objects.filter(stock_kind=stock_kind)
+    if shop is not None:
+        saved = saved.filter(shop=shop)
+    elif shops is not None:
+        saved = saved.filter(shop__in=shops)
+    today = timezone.localdate()
+    rows = list(
+        saved.select_related("shop").order_by("-saved_at", "-id")[:limit]
+    )
+    for row in rows:
+        row.is_today = row.count_date == today
+    return rows
+
+
+def saved_count_summary(record) -> dict:
+    """Compact dict for the save-count JSON response / saved-list rendering."""
+    saved_local = (
+        timezone.localtime(record.saved_at) if record.saved_at else None
+    )
+    return {
+        "id": record.pk,
+        "shop_id": record.shop_id,
+        "count_date": record.count_date.isoformat(),
+        "count_date_label": record.count_date.strftime("%d %b %Y"),
+        "is_today": record.count_date == timezone.localdate(),
+        "shop_name": getattr(record.shop, "name", "") or "",
+        "item_count": record.item_count,
+        "filled_count": record.filled_count,
+        "match_count": record.match_count,
+        "excess_count": record.excess_count,
+        "short_count": record.short_count,
+        "saved_by_label": (record.saved_by_label or "").strip(),
+        "saved_at_label": (
+            saved_local.strftime("%d %b %Y %H:%M") if saved_local else ""
+        ),
+    }
+
+
+_COUNT_HEADERS = [
+    "Item",
+    "Category",
+    "Counted by",
+    "System qty",
+    "Counted qty",
+    "Variance",
+]
+_COUNT_NUMERIC_FROM = 3
+
+
+def _count_row_cells(lines) -> list:
+    rows = []
+    for line in lines or []:
+        rows.append(
+            [
+                line.get("name") or "Item",
+                (line.get("category") or "").strip() or "—",
+                (line.get("updated_by_label") or "").strip() or "—",
+                str(line.get("system_qty") or "0"),
+                str(line.get("physical_qty") or "0"),
+                (line.get("variance_label") or "").strip() or "—",
+            ]
+        )
+    return rows
+
+
+def build_online_take_count_document(
+    *,
+    kind_label: str,
+    filename_prefix: str,
+    shop=None,
+    count_date: date | None = None,
+    catalog: dict | None = None,
+    saved=None,
+) -> dict:
+    """Print/PDF document for one shop/day count (live or a saved snapshot).
+
+    Mirrors ``_shelf_report_document``: ``_movement_print_tables`` renders the
+    report table for the a4/80mm/58mm sheet, ``pdf_params`` feeds
+    ``build_stock_report_pdf`` for the A4 download.
+    """
+    from django.utils import timezone as dj_timezone
+    from django.utils.text import slugify
+
+    from shops.services import get_company_profile
+
+    company = get_company_profile()
+    company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
+    logo_path = ""
+    if getattr(company, "logo", None):
+        try:
+            logo_path = company.logo.path
+        except Exception:
+            logo_path = ""
+
+    saved_label = ""
+    if saved is not None:
+        shop = saved.shop
+        count_date = saved.count_date
+        lines = list((saved.payload or {}).get("lines") or [])
+        counters = {
+            "item_count": saved.item_count,
+            "filled_count": saved.filled_count,
+            "match_count": saved.match_count,
+            "excess_count": saved.excess_count,
+            "short_count": saved.short_count,
+        }
+        saved_local = (
+            timezone.localtime(saved.saved_at) if saved.saved_at else None
+        )
+        saved_label = (
+            f"Saved {saved_local.strftime('%d %b %Y %H:%M')}"
+            if saved_local is not None
+            else "Saved"
+        )
+        if (saved.saved_by_label or "").strip():
+            saved_label = f"{saved_label} by {saved.saved_by_label.strip()}"
+    else:
+        catalog = catalog or {}
+        lines = list(catalog.get("filled_lines") or [])
+        counters = {
+            "item_count": catalog.get("item_count") or 0,
+            "filled_count": catalog.get("filled_count") or 0,
+            "match_count": catalog.get("match_count") or 0,
+            "excess_count": catalog.get("excess_count") or 0,
+            "short_count": catalog.get("short_count") or 0,
+        }
+
+    count_date = count_date or timezone.localdate()
+    period_label = count_date.strftime("%d %b %Y")
+    shop_label = getattr(shop, "name", "") or "—"
+    rows = _count_row_cells(lines)
+    subtitle = (
+        "Physical count vs the book qty frozen when each item was counted"
+        f" — {counters['filled_count']} of {counters['item_count']} items counted"
+        f" ({counters['match_count']} match · {counters['excess_count']} excess"
+        f" · {counters['short_count']} short)."
+    )
+    if saved_label:
+        subtitle = f"{saved_label}. {subtitle}"
+    generated_at = dj_timezone.localtime(dj_timezone.now())
+    slug = slugify(shop_label) or "shop"
+    filename = f"{filename_prefix}-{slug}-{count_date.isoformat()}.pdf"
+
+    pdf_params = {
+        "company_name": company_name,
+        "page_mode": "report",
+        "period_label": period_label,
+        "event_filter_label": kind_label,
+        "view_label": "Counted items",
+        "shop_label": shop_label,
+        "report_kind": "actual",
+        "generated_at": generated_at,
+        "logo_path": logo_path,
+        "company_phone": (getattr(company, "phone_number", None) or "").strip(),
+        "company_email": (getattr(company, "email", None) or "").strip(),
+        "company_location": (getattr(company, "location", None) or "").strip(),
+        "report_headers": _COUNT_HEADERS,
+        "report_rows": rows,
+        "report_numeric_from": _COUNT_NUMERIC_FROM,
+    }
+    return {
+        "filename": filename,
+        "page_mode": "report",
+        "report_kind": "actual",
+        "period_label": period_label,
+        "shop_label": shop_label,
+        "event_filter_label": kind_label,
+        "view_label": "Counted items",
+        "generated_at": generated_at,
+        "item_count": counters["filled_count"],
+        "report_table_title": "Counted items",
+        "report_table_subtitle": subtitle,
+        "report_numeric_from": _COUNT_NUMERIC_FROM,
+        "report_headers": _COUNT_HEADERS,
+        "report_rows": rows,
+        "pdf_params": pdf_params,
     }

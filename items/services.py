@@ -2518,6 +2518,225 @@ def sync_sale_tracking_defaults() -> int:
     )
 
 
+# POS-mirror StoreStockMovement note labels that replay a receipt line's own
+# stock effect — notes look like "{receipt_number} · {label} · {shop}".
+# "Trade exchange" and "Converted to quotation" are excluded: they move stock
+# for events outside the line's issue/return lifecycle.
+_RECEIPT_OUT_MOVEMENT_LABELS = frozenset(
+    {"sale", "credit", "gift", "trade out", "reopen"}
+)
+_RECEIPT_IN_MOVEMENT_LABELS = frozenset({"return"})
+_TRADE_IN_MOVEMENT_LABELS = frozenset({"trade in"})
+_TRADE_IN_RETURN_MOVEMENT_LABELS = frozenset({"trade-in return"})
+# Checkout deductions land in the receipt's own transaction, so a movement
+# stamped within this window counts even when the shop's name has changed.
+_RECEIPT_MOVEMENT_ISSUE_WINDOW_SECONDS = 120
+
+
+@transaction.atomic
+def backfill_item_sale_stock(item: Item, *, actor=None, since=None) -> dict:
+    """Replay the stock effect of receipt lines that never moved stock.
+
+    Sale / credit / gift / trade-out lines sold while the item's
+    ``deduct_stock_on_sale`` (or company stock tracking) was off left
+    ``ShopStock`` / ``Item.stock`` untouched; untracked trade-ins never added
+    stock either. Switching tracking on calls this to apply the missing
+    delta per line — the receipt's POS-source store movements are the ledger
+    of what already moved, so a line that provably deducted at issue is
+    skipped and only the gap is applied.
+
+    Only receipts created at/after the first ``source='pos'`` movement are
+    judged: before the per-item flag / POS mirror existed every sale
+    deducted unconditionally, so an old line without a marker deducted and
+    must not be touched. ``since`` overrides that bound for deployments
+    whose mirror feature shipped before its first tracked sale.
+
+    Returns ``{"lines": n, "units_out": Decimal, "units_in": Decimal}``.
+    """
+    from django.utils import timezone
+
+    from shops.models import ShopReceiptKind, ShopReceiptLine
+
+    from .models import StoreStockMovement, StoreStockMovementType
+    from .store_stock_services import (
+        STORE_SOURCE_POS,
+        record_store_receipt_movement,
+    )
+
+    lines = list(
+        ShopReceiptLine.objects.filter(
+            item_id=item.pk,
+            receipt__kind__in=(
+                ShopReceiptKind.SALE,
+                ShopReceiptKind.CREDIT,
+                ShopReceiptKind.GIFT,
+                ShopReceiptKind.TRADE_OUT,
+                ShopReceiptKind.TRADE_IN,
+            ),
+        )
+        .select_related("receipt__shop", "receipt__created_by")
+        .order_by("receipt__created_at", "id")
+    )
+    summary = {"lines": 0, "units_out": Decimal("0"), "units_in": Decimal("0")}
+    if not lines:
+        return summary
+
+    pos_movements = list(
+        StoreStockMovement.objects.filter(
+            item_id=item.pk, source=STORE_SOURCE_POS
+        ).only("movement_type", "quantity", "note", "created_at")
+    )
+    # The first POS-mirror movement marks when per-line deduction tracking
+    # existed at all — older receipts always deducted and are skipped. With
+    # no mirror history at all nothing can be judged; only an explicit
+    # ``since`` opens the window.
+    from django.db.models import Min
+
+    mirror_since = since
+    if mirror_since is None:
+        mirror_since = (
+            StoreStockMovement.objects.filter(
+                source=STORE_SOURCE_POS
+            ).aggregate(mn=Min("created_at"))["mn"]
+            or timezone.now()
+        )
+
+    item = Item.objects.select_for_update().get(pk=item.pk)
+    stocks_by_shop = {}
+    now = timezone.now()
+
+    for line in lines:
+        receipt = line.receipt
+        if receipt.shop_id is None or receipt.created_at < mirror_since:
+            continue
+        is_trade_in = receipt.kind == ShopReceiptKind.TRADE_IN
+        prefix = f"{receipt.receipt_number} · "
+        shop_name = receipt.shop.name or ""
+        actual = Decimal("0")
+        issued = False
+        for mv in pos_movements:
+            note = mv.note or ""
+            if not note.startswith(prefix):
+                continue
+            label, _, shop_part = note[len(prefix) :].partition(" · ")
+            label = label.strip().lower()
+            if is_trade_in:
+                accepted = (
+                    mv.movement_type == StoreStockMovementType.IN
+                    and label in _TRADE_IN_MOVEMENT_LABELS
+                ) or (
+                    mv.movement_type == StoreStockMovementType.OUT
+                    and label in _TRADE_IN_RETURN_MOVEMENT_LABELS
+                )
+            else:
+                accepted = (
+                    mv.movement_type == StoreStockMovementType.OUT
+                    and label in _RECEIPT_OUT_MOVEMENT_LABELS
+                ) or (
+                    mv.movement_type == StoreStockMovementType.IN
+                    and label in _RECEIPT_IN_MOVEMENT_LABELS
+                )
+            if not accepted:
+                continue
+            # Later writes (returns, reopens, conversions) must carry this
+            # shop's name so a same-numbered receipt at another shop can't
+            # be miscounted; issue-time writes count regardless.
+            same_shop = shop_part.strip() == shop_name
+            near_issue = (
+                abs(
+                    (mv.created_at - receipt.created_at).total_seconds()
+                )
+                <= _RECEIPT_MOVEMENT_ISSUE_WINDOW_SECONDS
+            )
+            if not (same_shop or near_issue):
+                continue
+            if (
+                not is_trade_in
+                and mv.movement_type == StoreStockMovementType.OUT
+                and label != "reopen"
+            ):
+                issued = True
+            elif (
+                is_trade_in
+                and mv.movement_type == StoreStockMovementType.IN
+            ):
+                issued = True
+            if mv.movement_type == StoreStockMovementType.OUT:
+                actual -= Decimal(mv.quantity or 0)
+            else:
+                actual += Decimal(mv.quantity or 0)
+
+        if issued:
+            continue
+
+        expected = (
+            line.remaining_quantity
+            if is_trade_in
+            else -line.remaining_quantity
+        )
+        delta = expected - actual
+        if not delta:
+            continue
+
+        stock = stocks_by_shop.get(receipt.shop_id)
+        if stock is None:
+            stock, _ = ShopStock.objects.select_for_update().get_or_create(
+                shop_id=receipt.shop_id,
+                item_id=item.pk,
+                defaults={"quantity": Decimal("0")},
+            )
+            stocks_by_shop[receipt.shop_id] = stock
+        qty = abs(delta)
+        if delta < 0:
+            stock.quantity = (stock.quantity or Decimal("0")) - qty
+            item.stock = max(
+                Decimal("0"), (item.stock or Decimal("0")) - qty
+            )
+            movement_type = StoreStockMovementType.OUT
+            summary["units_out"] += qty
+        else:
+            apply_stock_in_average_cost(
+                stock, qty=qty, unit_cost=line.unit_cost or Decimal("0")
+            )
+            stock.quantity = (stock.quantity or Decimal("0")) + qty
+            item.stock = (item.stock or Decimal("0")) + qty
+            movement_type = StoreStockMovementType.IN
+            summary["units_in"] += qty
+        stock.updated_at = now
+        stock.save(update_fields=["quantity", "average_cost", "updated_at"])
+        summary["lines"] += 1
+
+        movement_actor = actor or receipt.created_by
+        if movement_actor is not None:
+            record_store_receipt_movement(
+                actor=movement_actor,
+                item=item,
+                quantity=qty,
+                movement_type=movement_type,
+                reason=(
+                    StockOutReason.TRADE_OUT
+                    if receipt.kind == ShopReceiptKind.TRADE_OUT
+                    else (
+                        StockOutReason.TRADE_IN
+                        if is_trade_in
+                        else (
+                            StockOutReason.GIFT
+                            if receipt.kind == ShopReceiptKind.GIFT
+                            else ""
+                        )
+                    )
+                ),
+                note=(
+                    f"{receipt.receipt_number} · "
+                    f"{receipt.get_kind_display()} · {receipt.shop.name}"
+                ),
+            )
+
+    item.updated_at = now
+    item.save(update_fields=["stock", "updated_at"])
+    return summary
+
+
 def update_item(item: Item, data, files, *, editable_shop_ids=None, actor=None) -> Item:
     from items.activity_audit import log_item_edited, snapshot_item_for_audit
 

@@ -138,13 +138,26 @@ class StoreStockSaleMirrorTests(TestCase):
         self.assertEqual(stock.quantity, Decimal("16.000"))
 
     def test_toggle_flag_controls_deduction(self):
+        # A tracked sale first — the POS mirror it writes marks the point
+        # after which un-mirrored receipt lines are known to be untracked.
+        self._checkout(self.item, qty="1")
+        self.assertEqual(self._store_qty(self.item), Decimal("19.000"))
+
         set_item_stock_count_enabled(item_id=self.item.pk, enabled=False)
         self._checkout(self.item, qty="2")
-        self.assertEqual(self._store_qty(self.item), Decimal("20.000"))
+        self.assertEqual(self._store_qty(self.item), Decimal("19.000"))
 
-        set_item_stock_count_enabled(item_id=self.item.pk, enabled=True)
+        # Re-enabling reconciles the sale that sold while counting was off.
+        set_item_stock_count_enabled(
+            item_id=self.item.pk, enabled=True, actor=self.profile
+        )
+        self.assertEqual(self._store_qty(self.item), Decimal("17.000"))
+        self.assertEqual(
+            ShopStock.objects.get(shop=self.shop, item=self.item).quantity,
+            Decimal("17.000"),
+        )
         self._checkout(self.item, qty="2")
-        self.assertEqual(self._store_qty(self.item), Decimal("18.000"))
+        self.assertEqual(self._store_qty(self.item), Decimal("15.000"))
 
     def test_customer_return_restores_store_stock(self):
         result = self._checkout(self.item, qty="3")

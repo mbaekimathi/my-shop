@@ -20,6 +20,7 @@
   const excessEl = root.querySelector("[data-online-take-excess]");
   const shortEl = root.querySelector("[data-online-take-short]");
   const shopId = root.getAttribute("data-selected-shop-id") || "";
+  const dayLocked = root.hasAttribute("data-online-take-locked");
   const countDate =
     root.getAttribute("data-online-count-date") ||
     dateInput?.value ||
@@ -63,6 +64,10 @@
   const cartBadge = cart?.querySelector("[data-online-take-cart-badge]");
   const cartHeading = cart?.querySelector("[data-online-take-cart-heading]");
   const cartLines = cart?.querySelector("[data-online-take-cart-lines]");
+  const saveCountBtn = cart?.querySelector("[data-online-take-save-count]");
+  const downloadLink = cart?.querySelector("[data-online-take-download]");
+  const saveNote = cart?.querySelector("[data-online-take-save-note]");
+  const savedLines = root.querySelector("[data-online-take-saved-lines]");
 
   const readCookie = (name) => {
     const parts = `; ${document.cookie}`.split(`; ${name}=`);
@@ -507,6 +512,137 @@
     }
   };
 
+  /** Push every debounced/typed count to the server before snapshot actions. */
+  const flushPendingSaves = async () => {
+    pendingTimers.forEach((timer) => window.clearTimeout(timer));
+    pendingTimers.clear();
+    if (!list) return;
+    const rows = [...list.querySelectorAll("[data-online-take-row]")];
+    for (const row of rows) {
+      const input = row.querySelector("[data-online-take-qty]");
+      const itemId = row.getAttribute("data-item-id") || "";
+      if (!input || !itemId) continue;
+      if (input.value.trim() !== String(lastSaved.get(itemId) ?? "")) {
+        await saveRow(row);
+      }
+    }
+  };
+
+  const setSaveNote = (message, { error = false } = {}) => {
+    if (!saveNote) return;
+    saveNote.hidden = !message;
+    saveNote.textContent = message || "";
+    saveNote.classList.toggle("is-error", Boolean(error));
+  };
+
+  const renderSavedRow = (saved) => {
+    const savedId = encodeURIComponent(String(saved.id));
+    const byLabel = String(saved.saved_by_label || "").trim();
+    const isToday = Boolean(saved.is_today);
+    const li = document.createElement("li");
+    li.className = "online-take-saved-row";
+    li.setAttribute("data-saved-id", String(saved.id));
+    li.innerHTML = `
+      <span class="online-take-saved-main">
+        <strong>${escapeHtml(saved.count_date_label || "")}</strong>
+        <em>${escapeHtml(saved.shop_name || "")}${
+      byLabel ? ` · by ${escapeHtml(byLabel)}` : ""
+    }</em>
+      </span>
+      <span class="online-take-saved-stats">
+        <b>${escapeHtml(saved.filled_count ?? 0)}</b>/${escapeHtml(
+      saved.item_count ?? 0
+    )} counted
+        <em>${escapeHtml(saved.match_count ?? 0)} match · ${escapeHtml(
+      saved.excess_count ?? 0
+    )} excess · ${escapeHtml(saved.short_count ?? 0)} short</em>
+      </span>
+      <span class="online-take-saved-when">${escapeHtml(
+        saved.saved_at_label || ""
+      )}</span>
+      <span class="online-take-saved-actions">
+        ${isToday ? "" : '<em class="online-take-saved-lock">Locked</em>'}
+        <a class="online-take-saved-link" href="${escapeHtml(
+          `${baseUrl}&shop_id=${encodeURIComponent(
+            String(saved.shop_id || "")
+          )}&date=${encodeURIComponent(saved.count_date || "")}`
+        )}">
+          <i data-lucide="folder-open" aria-hidden="true"></i><span>${
+            isToday ? "Open & update" : "Open"
+          }</span>
+        </a>
+        <a class="online-take-saved-link" href="${escapeHtml(
+          `${baseUrl}&saved=${savedId}&download=1`
+        )}" download>
+          <i data-lucide="download" aria-hidden="true"></i><span>Download</span>
+        </a>
+        <a class="online-take-saved-link" href="${escapeHtml(
+          `${baseUrl}&saved=${savedId}&paper=a4&auto=1`
+        )}" target="_blank" rel="noopener">
+          <i data-lucide="printer" aria-hidden="true"></i><span>Print</span>
+        </a>
+      </span>`;
+    return li;
+  };
+
+  const saveCount = async () => {
+    if (!baseUrl || !shopId || !saveCountBtn || dayLocked) return;
+    saveCountBtn.disabled = true;
+    setSaveNote("");
+    setStatus("Saving count…");
+    try {
+      await flushPendingSaves();
+      const body = new URLSearchParams({
+        mode: "online-stock-take",
+        action: "save_count",
+        shop_id: shopId,
+        csrfmiddlewaretoken: csrf,
+      });
+      if (countDate) body.set("date", countDate);
+      const response = await fetch(baseUrl, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": csrf,
+        },
+        body,
+        credentials: "same-origin",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "Could not save this count.");
+      }
+      const saved = data.saved || {};
+      const itemsLabel =
+        Number(saved.filled_count) === 1 ? "1 item" : `${saved.filled_count ?? 0} items`;
+      setStatus(`Count saved · ${itemsLabel}`);
+      setSaveNote(
+        `Saved ${saved.saved_at_label || ""} — kept under Saved counts below.`
+      );
+      if (savedLines && saved.id != null) {
+        savedLines
+          .querySelector("[data-online-take-saved-empty]")
+          ?.remove();
+        const row = renderSavedRow(saved);
+        const existing = savedLines.querySelector(
+          `[data-saved-id="${CSS.escape(String(saved.id))}"]`
+        );
+        if (existing) existing.replaceWith(row);
+        else savedLines.prepend(row);
+        if (typeof window.lucide?.createIcons === "function") {
+          window.lucide.createIcons();
+        }
+      }
+    } catch (error) {
+      const message = error?.message || "Could not save this count.";
+      setStatus(message, { error: true });
+      setSaveNote(message, { error: true });
+    } finally {
+      saveCountBtn.disabled = false;
+    }
+  };
+
   const stopPolling = () => {
     if (pollTimer) {
       window.clearInterval(pollTimer);
@@ -567,6 +703,7 @@
   };
 
   const queueSave = (row) => {
+    if (dayLocked) return;
     const itemId = row.getAttribute("data-item-id");
     if (!itemId) return;
     const existing = pendingTimers.get(itemId);
@@ -712,6 +849,24 @@
     jumpToRow(jump.getAttribute("data-item-id"));
   });
 
+  saveCountBtn?.addEventListener("click", () => {
+    saveCount();
+  });
+
+  downloadLink?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    const href = downloadLink.getAttribute("href") || "";
+    await flushPendingSaves();
+    if (href) window.location.assign(href);
+  });
+
+  // Flush typed-but-unsaved counts before the print sheet is fetched.
+  cart?.querySelectorAll('[data-modal-open="print-receipts"]').forEach((btn) => {
+    btn.addEventListener("click", () => {
+      flushPendingSaves();
+    });
+  });
+
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && cart?.classList.contains("is-open")) {
       setCartOpen(false);
@@ -740,7 +895,7 @@
   }
   syncSummary();
 
-  if (shopId && baseUrl) {
+  if (shopId && baseUrl && !dayLocked) {
     pollTimer = window.setInterval(pollRemoteCounts, POLL_MS);
     window.setTimeout(pollRemoteCounts, 1200);
     document.addEventListener("visibilitychange", () => {

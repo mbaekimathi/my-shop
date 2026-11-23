@@ -454,12 +454,13 @@ def _resolve_item(item_id) -> Item:
     return item
 
 
-def set_item_stock_count_enabled(*, item_id, enabled: bool) -> Item:
+def set_item_stock_count_enabled(*, item_id, enabled: bool, actor=None) -> Item:
     """Toggle whether POS sales/returns move this item's StoreStock count.
 
     Kept in sync with the Sale stock tracking pick: flipping the item-stock
     page switch also flips deduct_stock_on_sale and marks the item custom so
-    the company-default sync won't switch it back.
+    the company-default sync won't switch it back. Enabling also reconciles
+    past receipt lines that never moved stock (backfill_item_sale_stock).
     """
     item = _resolve_item(item_id)
     item.stock_count_enabled = bool(enabled)
@@ -473,6 +474,10 @@ def set_item_stock_count_enabled(*, item_id, enabled: bool) -> Item:
             "updated_at",
         ]
     )
+    if enabled:
+        from .services import backfill_item_sale_stock
+
+        backfill_item_sale_stock(item, actor=actor)
     return item
 
 

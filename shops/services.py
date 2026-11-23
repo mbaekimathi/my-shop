@@ -3085,9 +3085,21 @@ def _sync_items_to_stock_mode(before: bool, row: CompanyPosSettings) -> None:
     """When the company default flips, items with no manual pick follow it."""
     if bool(row.enable_stock_tracking) == before:
         return
-    from items.services import sync_sale_tracking_defaults
+    from items.models import Item
+    from items.services import (
+        backfill_item_sale_stock,
+        sync_sale_tracking_defaults,
+    )
 
     sync_sale_tracking_defaults()
+    if not row.enable_stock_tracking:
+        return
+    # Tracking just switched on — reconcile receipt lines that sold while
+    # the default was off and never moved stock.
+    for item in Item.objects.filter(
+        sale_tracking_custom=False, is_suspended=False
+    ):
+        backfill_item_sale_stock(item)
 
 
 def set_company_pos_setting(*, field: str, enabled: bool) -> CompanyPosSettings:

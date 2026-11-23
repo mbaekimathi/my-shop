@@ -1099,7 +1099,11 @@ def store_stock_item_count_toggle(request):
         "yes",
     }
     try:
-        item = set_item_stock_count_enabled(item_id=item_id, enabled=enabled)
+        item = set_item_stock_count_enabled(
+            item_id=item_id,
+            enabled=enabled,
+            actor=get_profile_for_request(request),
+        )
     except ValidationError as exc:
         return JsonResponse(
             {"ok": False, "error": "; ".join(exc.messages)}, status=400
