@@ -9,9 +9,6 @@
   const verifyUrl = root.getAttribute("data-verify-login-url") || "";
   const mode = root.getAttribute("data-mode") || "open";
   const tillRoot = root.querySelector("[data-till-live]");
-  const closeCashInput = form?.querySelector("[data-close-cash-amount]");
-  const closeMpesaInput = form?.querySelector("[data-close-mpesa-amount]");
-  const closeCardInput = form?.querySelector("[data-close-card-amount]");
 
   let verified = false;
   let timer = null;
@@ -76,28 +73,6 @@
     setText("[data-till-drawings-mpesa]", till.drawings_mpesa);
     setText("[data-till-drawings-card]", till.drawings_card);
     setText("[data-till-suppliers]", till.suppliers_paid);
-
-    // Keep close-form suggestions in sync when the user has not typed over them.
-    if (
-      closeCashInput &&
-      (!closeCashInput.dataset.userEdited || closeCashInput.dataset.userEdited === "0")
-    ) {
-      closeCashInput.value = formatMoney(till.expected_cash);
-    }
-    if (
-      closeMpesaInput &&
-      (!closeMpesaInput.dataset.userEdited ||
-        closeMpesaInput.dataset.userEdited === "0")
-    ) {
-      closeMpesaInput.value = formatMoney(till.expected_mpesa);
-    }
-    if (
-      closeCardInput &&
-      (!closeCardInput.dataset.userEdited ||
-        closeCardInput.dataset.userEdited === "0")
-    ) {
-      closeCardInput.value = formatMoney(till.expected_card);
-    }
   };
 
   const fetchTill = async () => {
@@ -116,16 +91,6 @@
       return null;
     }
   };
-
-  closeCashInput?.addEventListener("input", () => {
-    closeCashInput.dataset.userEdited = "1";
-  });
-  closeMpesaInput?.addEventListener("input", () => {
-    closeMpesaInput.dataset.userEdited = "1";
-  });
-  closeCardInput?.addEventListener("input", () => {
-    closeCardInput.dataset.userEdited = "1";
-  });
 
   if (form) {
   const setStatus = (message, { ok = false, error = false } = {}) => {

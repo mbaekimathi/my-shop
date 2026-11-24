@@ -3656,53 +3656,6 @@ def my_shop_day_toggle(request, shop_id):
     last_closed = None if is_open else get_last_closed_shop_day(shop)
     balance_channels = shop_day_balance_channels(shop=shop)
 
-    # Suggest expected closing balances when closing.
-    # Only fill empty fields — never overwrite amounts the user already typed.
-    if is_open and open_summary and not form_errors:
-        if balance_channels["cash"] and not str(form_data.get("cash_amount") or "").strip():
-            form_data["cash_amount"] = str(
-                int(open_summary["expected_cash"].quantize(Decimal("1")))
-            )
-        if balance_channels["mpesa"] and not str(
-            form_data.get("mpesa_amount") or ""
-        ).strip():
-            form_data["mpesa_amount"] = str(
-                int(open_summary["expected_mpesa"].quantize(Decimal("1")))
-            )
-        if balance_channels.get("card") and not str(
-            form_data.get("card_amount") or ""
-        ).strip():
-            form_data["card_amount"] = str(
-                int(open_summary["expected_card"].quantize(Decimal("1")))
-            )
-    # Suggest last closing as opening balances when starting a new day.
-    # Same rule: do not overwrite user-entered values.
-    elif not is_open and last_closed and not form_errors:
-        if (
-            balance_channels["cash"]
-            and not str(form_data.get("cash_amount") or "").strip()
-            and last_closed.closing_cash is not None
-        ):
-            form_data["cash_amount"] = str(
-                int(Decimal(last_closed.closing_cash).quantize(Decimal("1")))
-            )
-        if (
-            balance_channels["mpesa"]
-            and not str(form_data.get("mpesa_amount") or "").strip()
-            and last_closed.closing_mpesa is not None
-        ):
-            form_data["mpesa_amount"] = str(
-                int(Decimal(last_closed.closing_mpesa).quantize(Decimal("1")))
-            )
-        if (
-            balance_channels.get("card")
-            and not str(form_data.get("card_amount") or "").strip()
-            and last_closed.closing_card is not None
-        ):
-            form_data["card_amount"] = str(
-                int(Decimal(last_closed.closing_card).quantize(Decimal("1")))
-            )
-
     if stale_open:
         headline = "Close yesterday’s day"
         summary = (

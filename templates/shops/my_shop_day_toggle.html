@@ -212,8 +212,6 @@
             <p>
               {% if is_open %}
               Count {{ balance_channels.count_copy }}, enter staff ID.
-              {% elif last_closed %}
-              Prefills from last close — change if different.
               {% else %}
               Enter {{ balance_channels.count_copy }} to start.
               {% endif %}
@@ -236,7 +234,6 @@
               required
               value="{{ form_data.cash_amount }}"
               placeholder="0"
-              data-close-cash-amount
             >
           </label>
           {% endif %}
@@ -252,7 +249,6 @@
               required
               value="{{ form_data.mpesa_amount }}"
               placeholder="0"
-              data-close-mpesa-amount
             >
           </label>
           {% endif %}
@@ -268,7 +264,6 @@
               required
               value="{{ form_data.card_amount }}"
               placeholder="0"
-              data-close-card-amount
             >
           </label>
           {% endif %}
@@ -311,5 +306,5 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script src="{% static 'js/my-shop-day.js' %}?v=16"></script>
+<script src="{% static 'js/my-shop-day.js' %}?v=17"></script>
 {% endblock %}
