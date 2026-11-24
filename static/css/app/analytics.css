@@ -9547,6 +9547,19 @@ body.ax-credit-due-open {
   background: color-mix(in srgb, var(--teal) 7%, var(--surface));
 }
 
+/* Close↔open hand-over mismatch flags between sessions. */
+.ax.ax--sessions .ax-table tbody tr.ax-row--group.is-bad td,
+.ax.ax--day-report .ax-table tbody tr.ax-row--group.is-bad td {
+  background: color-mix(in srgb, var(--bad) 10%, var(--surface));
+  border-left-color: color-mix(in srgb, var(--bad) 65%, var(--line));
+  color: var(--bad);
+}
+
+.ax.ax--sessions .ax-table tbody tr.ax-row--group.is-bad:hover td,
+.ax.ax--day-report .ax-table tbody tr.ax-row--group.is-bad:hover td {
+  background: color-mix(in srgb, var(--bad) 10%, var(--surface));
+}
+
 /* ---------- Cells ---------- */
 
 /* Session primary cell: date + time, un-pilled link */

@@ -3138,7 +3138,11 @@ def hydrate_table_zrows(page: dict | None) -> dict | None:
         for row in table.get("rows") or []:
             if isinstance(row, dict) and row.get("group_header"):
                 zrows.append(
-                    {"group_header": True, "label": row.get("label")}
+                    {
+                        "group_header": True,
+                        "label": row.get("label"),
+                        "tone": row.get("tone"),
+                    }
                 )
                 continue
             if isinstance(row, dict):
@@ -3574,7 +3578,10 @@ def _date_filter_context(
         default_all_time = allow_all_time
     use_all_time = allow_all_time and (
         range_raw == "all"
-        or (default_all_time and range_raw not in ("day", "period", "month", "year"))
+        or (
+            default_all_time
+            and range_raw not in ("day", "period", "month", "year", "last30")
+        )
     )
     if use_all_time:
         return {
@@ -3670,6 +3677,7 @@ def _filters_context(
         "report_range_label": {
             "all": "All time",
             "day": "Day",
+            "last30": "Last 30 days",
             "period": "Period",
             "month": "Month",
             "year": "Year",
@@ -9523,6 +9531,7 @@ def _day_balance_data(filters) -> dict:
         actual_card = Decimal(getattr(session, "opening_card", None) or 0)
         actual_credit = Decimal(session.opening_credit or 0)
         return {
+            "has_prior": prior is not None,
             "expected_opening_cash": expected_cash,
             "expected_opening_mpesa": expected_mpesa,
             "expected_opening_card": expected_card,
@@ -9628,9 +9637,10 @@ def _day_balance_data(filters) -> dict:
             "closing_credit",
         )
     )
-    # Ensure opening expectations exist for currently open sessions opened
-    # outside the selected period (still needed for live cashbox).
-    for session in open_now_sessions:
+    # Ensure opening expectations exist for sessions opened outside the
+    # selected period but shown in the table (closed within it or still
+    # open) — needed for live cashbox and the close↔open hand-over flags.
+    for session in list(closed_sessions) + list(open_now_sessions):
         if session.pk not in opening_by_session_id:
             opening_by_session_id[session.pk] = _opening_expectations(session)
 
@@ -9962,6 +9972,7 @@ def _day_balance_data(filters) -> dict:
                 "closed_by_id": session.closed_by_id,
                 "opened_at": session.opened_at,
                 "closed_at": session.closed_at,
+                "has_prior_close": bool(opening.get("has_prior")),
                 "opening_cash": Decimal(session.opening_cash or 0),
                 "opening_mpesa": Decimal(session.opening_mpesa or 0),
                 "opening_card": Decimal(getattr(session, "opening_card", None) or 0),
@@ -10073,6 +10084,7 @@ def _day_balance_data(filters) -> dict:
                 "closed_by_id": session.closed_by_id,
                 "opened_at": session.opened_at,
                 "closed_at": None,
+                "has_prior_close": bool(opening.get("has_prior")),
                 "opening_cash": opening_cash,
                 "opening_mpesa": opening_mpesa,
                 "opening_card": opening_card,
@@ -11835,6 +11847,33 @@ def _build_balances(filters):
                 },
             ]
         )
+        if row.get("has_prior_close"):
+            gap_parts = []
+            for channel, channel_label in (
+                ("cash", "Cash"),
+                ("mpesa", "M-Pesa"),
+                ("card", "Card"),
+                ("credit", "Credit"),
+            ):
+                gap = Decimal(row.get(f"opening_{channel}_variance") or 0)
+                if not gap:
+                    continue
+                sign = "+" if gap > 0 else "−"
+                gap_parts.append(
+                    f"{channel_label} {sign}{_money_ksh(abs(gap))}"
+                )
+            if gap_parts:
+                session_list_rows.append(
+                    {
+                        "group_header": True,
+                        "tone": "bad",
+                        "label": (
+                            "Opening float mismatch — opened "
+                            + " · ".join(gap_parts)
+                            + " off the previous close"
+                        ),
+                    }
+                )
 
     headline = "Cashiers report"
     if selected_employee_id:

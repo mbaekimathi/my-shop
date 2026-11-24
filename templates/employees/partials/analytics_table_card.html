@@ -164,7 +164,7 @@
           <tbody>
             {% for entry in table.zrows %}
             {% if entry.group_header %}
-            <tr class="ax-row--group">
+            <tr class="ax-row--group{% if entry.tone %} is-{{ entry.tone }}{% endif %}">
               <td colspan="{{ table.columns|length }}">{{ entry.label }}</td>
             </tr>
             {% else %}

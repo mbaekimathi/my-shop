@@ -2017,7 +2017,7 @@ def _report_range_bounds(request):
 
     today = timezone.localdate()
     range_type = (request.GET.get("range") or "day").strip().lower()
-    if range_type not in ("day", "period", "month", "year"):
+    if range_type not in ("day", "period", "month", "year", "last30"):
         range_type = "day"
 
     tz = timezone.get_current_timezone()
@@ -2099,6 +2099,26 @@ def _report_range_bounds(request):
                 report_date=year_start,
                 report_year_value=f"{year}-01",
                 report_period_label=str(year),
+            ),
+        )
+
+    if range_type == "last30":
+        last30_start = today - timedelta(days=29)
+        start = aware_start(last30_start)
+        end = aware_end_exclusive(today)
+        label = (
+            f"{last30_start.strftime('%d %b %Y')} "
+            f"– {today.strftime('%d %b %Y')}"
+        )
+        return (
+            range_type,
+            start,
+            end,
+            base_context(
+                report_date=last30_start,
+                report_date_from=last30_start.isoformat(),
+                report_date_to=today.isoformat(),
+                report_period_label=f"Last 30 days · {label}",
             ),
         )
 

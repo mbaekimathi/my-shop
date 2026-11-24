@@ -471,6 +471,20 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   (`filters["selected_employee_id"]`), the dropdown renders only for
   `section_slug == "balances"`. `_day_balance_data` carries
   `id`/`opened_by_id`/`closed_by_id` on every `session_rows` entry.
+- **Close↔open hand-over flags**: `_day_balance_data` computes each
+  session's `expected_opening_*` (the previous closed session's recorded
+  `closing_*` at that shop) and `opening_*_variance` (actual − expected)
+  per channel via `_opening_expectations` — `has_prior` marks whether a
+  prior close exists. The coverage loop now also fills expectations for
+  sessions opened before the window but shown in the table (closed inside
+  it or still open). In `_build_balances`, any session row with
+  `has_prior_close` and a non-zero opening variance gets a
+  `{"group_header": True, "tone": "bad"}` row inserted right after it —
+  rendered full-width between the two sessions listing each channel's
+  signed gap ("Opening float mismatch — opened Cash −KSh 250.00 off the
+  previous close"). `group_header` rows accept an optional `tone` (passed
+  through `hydrate_table_zrows` → `is-{tone}` on the `ax-row--group`
+  band; `is-bad` styled in `analytics.css`).
 - `?mode=settings` swaps the sessions list for **Cashier settings** —
   company-wide options that govern cashier sessions
   (`_build_balances_settings` + `BALANCES_CASHIER_SETTING_GROUPS`: Open &
@@ -712,6 +726,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   space-separated token list (`split(" ").includes(range)`) and skips
   `required` on `data-range-optional` fields. Any page missing the JS update
   just hides the time inputs — degrade, no break.
+- The shared range select also has **Last 30 days** (`?range=last30`) — a
+  rolling 30-calendar-day window (today−29d → tomorrow, exclusive) parsed
+  in `items/views._report_range_bounds` alongside day/period/month/year;
+  `_date_filter_context` keeps it out of the all-time default so
+  `?range=last30` works on every page using the partial. No extra inputs
+  — every `data-range-field` hides for it. Stock pages' own selects don't
+  offer it but the parser accepts it if a URL carries it.
 - Tests: `shops/tests/test_analytics_time_filter.py`.
 
 ## Shop floor sidebar toggles (Settings → POS)

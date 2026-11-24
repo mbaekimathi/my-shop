@@ -1632,6 +1632,136 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertEqual(pdf["Content-Type"], "application/pdf")
         self.assertTrue(pdf.content.startswith(b"%PDF"))
 
+    def test_opening_off_previous_close_flagged_between_sessions(self):
+        from datetime import timedelta
+
+        from shops.models import ShopDaySession
+
+        prior = self._close(self._session(), cash=1250, mpesa=200)
+        session = ShopDaySession.objects.create(
+            shop=self.shop,
+            opened_by=self.staff,
+            opening_cash=1000,
+            opening_mpesa=200,
+            opening_card=0,
+            opening_credit=0,
+        )
+        # opened_at is auto_now_add — move it past the prior close.
+        session.opened_at = prior.closed_at + timedelta(minutes=5)
+        session.save()
+        page = self._balances_page()
+        table = next(
+            t for t in page["tables"] if t["title"] == "Sessions"
+        )
+        flag = table["rows"][1]
+        self.assertIsInstance(flag, dict)
+        self.assertTrue(flag.get("group_header"))
+        self.assertEqual(flag.get("tone"), "bad")
+        self.assertIn("Cash −KSh 250.00", flag["label"])
+        self.assertIn("previous close", flag["label"])
+        # The flag sits between the newer session and the previous one.
+        self.assertFalse(
+            isinstance(table["rows"][2], dict)
+            and table["rows"][2].get("group_header")
+        )
+
+    def test_matching_handover_and_first_session_not_flagged(self):
+        from datetime import timedelta
+
+        from shops.models import ShopDaySession
+
+        # First-ever session has no previous close → no flag.
+        page = self._balances_page()
+        table = next(
+            t for t in page["tables"] if t["title"] == "Sessions"
+        )
+        self.assertFalse(
+            any(
+                isinstance(row, dict) and row.get("group_header")
+                for row in table["rows"]
+            )
+        )
+
+        prior = self._close(self._session(), cash=1000, mpesa=200)
+        session = ShopDaySession.objects.create(
+            shop=self.shop,
+            opened_by=self.staff,
+            opening_cash=1000,
+            opening_mpesa=200,
+            opening_card=0,
+            opening_credit=0,
+        )
+        session.opened_at = prior.closed_at + timedelta(minutes=5)
+        session.save()
+        page = self._balances_page()
+        table = next(
+            t for t in page["tables"] if t["title"] == "Sessions"
+        )
+        self.assertFalse(
+            any(
+                isinstance(row, dict) and row.get("group_header")
+                for row in table["rows"]
+            )
+        )
+
+    def test_last_30_days_range_lists_older_sessions(self):
+        from datetime import timedelta
+
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from employees.analytics_services import build_analytics_page
+        from shops.models import ShopDaySession
+
+        old = ShopDaySession.objects.create(
+            shop=self.shop,
+            opened_by=self.staff,
+            opening_cash=1000,
+            opening_mpesa=0,
+            opening_card=0,
+            opening_credit=0,
+        )
+        # opened_at is auto_now_add — backdate both timestamps.
+        old.opened_at = timezone.now() - timedelta(days=20)
+        old.closed_at = timezone.now() - timedelta(days=19)
+        old.closing_cash = 1000
+        old.closing_mpesa = 0
+        old.closing_card = 0
+        old.closing_credit = 0
+        old.closed_by = self.staff
+        old.save()
+
+        def _page(params):
+            request = RequestFactory().get(
+                "/shop-manager/analytics/balances/", params
+            )
+            request.user = self.user
+            return build_analytics_page(
+                profile=self.staff,
+                request=request,
+                section_slug="balances",
+            )
+
+        day_ctx = _page({"range": "day"})
+        day_table = next(
+            t for t in day_ctx["page"]["tables"] if t["title"] == "Sessions"
+        )
+        self.assertEqual(day_ctx["range_type"], "day")
+        self.assertFalse(day_table["rows"])
+
+        last30_ctx = _page({"range": "last30"})
+        last30_table = next(
+            t
+            for t in last30_ctx["page"]["tables"]
+            if t["title"] == "Sessions"
+        )
+        self.assertEqual(last30_ctx["range_type"], "last30")
+        self.assertEqual(
+            last30_ctx["end"] - last30_ctx["start"], timedelta(days=30)
+        )
+        self.assertIn("Last 30 days", last30_ctx["report_period_label"])
+        self.assertTrue(last30_table["rows"])
+
     def test_day_session_404s_for_unallocated_shop(self):
         from shops.models import ShopDaySession
 
