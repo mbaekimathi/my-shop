@@ -1398,39 +1398,8 @@ def build_shop_day_prompt(
         return {"show": False}
 
     mode = state["mode"]
-    open_session = state.get("open_session")
     start_time = state["start_time"]
     end_time = state["end_time"]
-
-    form_data = {
-        "cash_amount": "",
-        "mpesa_amount": "",
-        "card_amount": "",
-        "credit_amount": "",
-        "login_code": "",
-    }
-
-    def _amount_str(value) -> str:
-        if value is None:
-            return ""
-        try:
-            return str(int(Decimal(value).quantize(Decimal("1"))))
-        except Exception:
-            return ""
-
-    if mode == "close" and open_session is not None:
-        summary = day_session_balance_summary(open_session)
-        form_data["cash_amount"] = _amount_str(summary.get("expected_cash"))
-        form_data["mpesa_amount"] = _amount_str(summary.get("expected_mpesa"))
-        form_data["card_amount"] = _amount_str(summary.get("expected_card"))
-        form_data["credit_amount"] = "0"
-    elif mode == "open":
-        last_closed = get_last_closed_shop_day(shop)
-        if last_closed is not None:
-            form_data["cash_amount"] = _amount_str(last_closed.closing_cash)
-            form_data["mpesa_amount"] = _amount_str(last_closed.closing_mpesa)
-            form_data["card_amount"] = _amount_str(last_closed.closing_card)
-        form_data["credit_amount"] = "0"
 
     return {
         "show": True,
@@ -1438,7 +1407,6 @@ def build_shop_day_prompt(
         "auto_open": True,
         "stale_open": bool(state.get("stale_open")),
         "compulsory": True,
-        "form_data": form_data,
         "start_time": start_time.strftime("%H:%M"),
         "end_time": end_time.strftime("%H:%M"),
     }
@@ -8104,6 +8072,14 @@ def _append_return_payment_event(
     return True
 
 
+# Receipt statuses whose tender counts as money in the till — a pending
+# (active) receipt is not money at hand; its tender lands in the session
+# where it clears (confirmed_payment_at).
+TILL_MONEY_STATUSES = frozenset(
+    {ShopReceiptStatus.CONFIRMED, ShopReceiptStatus.PARTIAL_RETURN}
+)
+
+
 def _collect_return_payment_events(
     *, shop_id, start, end, counted_statuses=None
 ) -> list:
@@ -8160,10 +8136,7 @@ def _session_cleared_pending_sales(*, shop_id, start, end, counted_statuses=None
         kind=ShopReceiptKind.SALE,
         settled_from_credit=False,
         settled_from_trade=False,
-        status__in=(
-            ShopReceiptStatus.CONFIRMED,
-            ShopReceiptStatus.PARTIAL_RETURN,
-        ),
+        status__in=TILL_MONEY_STATUSES,
         created_at__lt=start,
         confirmed_payment_at__gte=start,
         confirmed_payment_at__lt=end,
@@ -8323,6 +8296,7 @@ def _session_activity_totals(
     cash_sales = Decimal("0.00")
     mpesa_sales = Decimal("0.00")
     card_sales = Decimal("0.00")
+    sales_count = 0
     elsewhere_cash = Decimal("0.00")
     elsewhere_mpesa = Decimal("0.00")
     elsewhere_card = Decimal("0.00")
@@ -8369,6 +8343,7 @@ def _session_activity_totals(
             cash_sales += cash
             mpesa_sales += mpesa
             card_sales += card
+            sales_count += 1
             cleared_at = sale.get("confirmed_payment_at")
             # Pending receipt confirmed outside this window — collected
             # into another session's till. The sale stays attributed here
@@ -8581,6 +8556,7 @@ def _session_activity_totals(
         "mpesa_refunds": mpesa_refunds,
         "card_refunds": card_refunds,
         "sales_total": cash_sales + mpesa_sales + card_sales,
+        "sales_count": sales_count,
         "cleared_elsewhere_cash": elsewhere_cash,
         "cleared_elsewhere_mpesa": elsewhere_mpesa,
         "cleared_elsewhere_card": elsewhere_card,
@@ -8699,6 +8675,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             kind=ShopReceiptKind.SALE,
             settled_from_credit=False,
             settled_from_trade=False,
+            status__in=TILL_MONEY_STATUSES,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
         ).values(
@@ -8761,10 +8738,7 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
             kind=ShopReceiptKind.SALE,
             settled_from_credit=False,
             settled_from_trade=False,
-            status__in=(
-                ShopReceiptStatus.CONFIRMED,
-                ShopReceiptStatus.PARTIAL_RETURN,
-            ),
+            status__in=TILL_MONEY_STATUSES,
             created_at__lt=max_closed,
             confirmed_payment_at__gte=min_opened,
             confirmed_payment_at__lt=max_closed,
@@ -8813,15 +8787,17 @@ def list_shop_day_sessions(shop: Shop, *, limit: int = 30, opened_by=None):
 
 def day_session_balance_summary(
     session,
-    counted_statuses=None,
     *,
     item_stock_from_till=True,
     shelf_stock_from_till=True,
 ) -> dict:
     """Live expected balances for one session (open or closed).
 
-    `counted_statuses` narrows which receipt statuses count as sales (and
-    which receipts' return refunds subtract); None counts every sale receipt.
+    The money flow counts money at hand only — sale receipts in
+    ``TILL_MONEY_STATUSES`` (confirmed / partially returned); a pending
+    receipt's tender joins the till where it clears. Report-scope picks
+    (``counted_statuses``) live in :func:`day_session_report_details`, not
+    here — the till's expected money doesn't follow a view filter.
     `item_stock_from_till` / `shelf_stock_from_till` control whether paid
     stock-ins are treated as money that left the till — when off, those
     supplier payments are excluded from `suppliers_paid` and Expected in
@@ -8848,11 +8824,10 @@ def day_session_balance_summary(
         kind=ShopReceiptKind.SALE,
         settled_from_credit=False,
         settled_from_trade=False,
+        status__in=TILL_MONEY_STATUSES,
         created_at__gte=window_start,
         created_at__lt=closed,
     )
-    if counted_statuses is not None:
-        sales_qs = sales_qs.filter(status__in=counted_statuses)
     sales = list(
         sales_qs.values(
             "created_at",
@@ -8867,7 +8842,6 @@ def day_session_balance_summary(
         shop_id=session.shop_id,
         start=window_start,
         end=closed,
-        counted_statuses=counted_statuses,
     )
     expenses = list(
         Expense.objects.filter(
@@ -8912,7 +8886,6 @@ def day_session_balance_summary(
             shop_id=session.shop_id,
             start=window_start,
             end=closed,
-            counted_statuses=counted_statuses,
         ).values(
             "created_at",
             "confirmed_payment_at",
@@ -8946,6 +8919,8 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
 
     `counted_statuses` narrows which receipt statuses count toward items sold
     and the sales count; the flagged (pending/cancelled) list is unaffected.
+    Till money is untouched by the pick — `pending_sales` lists every still
+    pending receipt (``counted`` marks those the pick also counts as sold).
     """
     from items.models import (
         ShelfStockMovement,
@@ -9248,14 +9223,13 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
                 or user.username
             )
         if receipt.status == ShopReceiptStatus.ACTIVE:
-            # Pending (unconfirmed) receipts — expected-sales extras when the
-            # status pick leaves them uncounted; already in the till figure
-            # otherwise.
+            # Pending (unconfirmed) receipts — never money in the till, so
+            # they all add to expected sales. `counted` only notes the ones
+            # the status pick also lists inside sales_count/items sold.
+            pending_sales_count += 1
+            pending_sales_total += Decimal(receipt.total or 0)
             if receipt.status in counted:
                 pending_sales_counted += 1
-            else:
-                pending_sales_count += 1
-                pending_sales_total += Decimal(receipt.total or 0)
         if receipt.status in counted:
             seller_agg = seller_totals.setdefault(
                 receipt.created_by_id or 0,
@@ -9806,8 +9780,9 @@ def day_session_sales_profit(
 ) -> dict:
     """Expected vs actual sales & profit rollup for the day report.
 
-    Expected sales = counted till sales + pending receipts the status pick
-    leaves uncounted + credit sales + gift issues. Actual sales = the money
+    Expected sales = confirmed till sales + all still-pending receipts
+    (``details["pending_sales"]`` — pending tender is never till money)
+    + credit sales + gift issues. Actual sales = the money
     that reached the till (``summary["sales_total"]``). Expected profit
     charges every expense and stock purchase (paid + unpaid) and adds
     customer prepayments; actual profit charges paid costs only. Credit and
@@ -9951,9 +9926,11 @@ def build_shop_day_report_pdf(
 ) -> bytes:
     """Branded A4 portrait PDF — the shop day's accounting preview/summary.
 
-    `counted_statuses` narrows which receipt statuses count as sales in the
-    money flow, items sold, and sales count (the employee's day-report
-    status pick). `sales_scope_label` is printed under the title when set.
+    `counted_statuses` narrows which receipt statuses count as sales for
+    items sold and the counted-sales figure (the employee's day-report
+    status pick); the money flow always counts confirmed receipts only —
+    `sales_count` in the summary is that money-receipt count.
+    `sales_scope_label` is printed under the title when set.
     `section_visible` is an optional ``(section_key) -> bool`` predicate —
     sections whose key it rejects are left out of the PDF entirely.
     """
@@ -9986,7 +9963,6 @@ def build_shop_day_report_pdf(
     _sec = section_visible or (lambda _key: True)
     summary = day_session_balance_summary(
         session,
-        counted_statuses=counted_statuses,
         item_stock_from_till=_sec("day_report_sec_item_stock"),
         shelf_stock_from_till=_sec("day_report_sec_shelf_stock"),
     )
@@ -10514,7 +10490,7 @@ def build_shop_day_report_pdf(
             summary.get("opening_total"),
         ),
         _money_row(
-            f"Sales collected ({details.get('sales_count') or 0} receipts)",
+            f"Sales collected ({summary.get('sales_count') or 0} receipts)",
             summary.get("cash_sales"),
             summary.get("mpesa_sales"),
             summary.get("card_sales"),

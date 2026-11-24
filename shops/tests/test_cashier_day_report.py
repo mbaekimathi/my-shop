@@ -532,7 +532,8 @@ class CashierDayReportScopeTests(TestCase):
         session = self._open_day(self.next)
         self._sale("SALE-CONF-1", status=ShopReceiptStatus.CONFIRMED,
                    cash="1000", total="1000")
-        # Pending receipt — counted in the default "all" mode.
+        # Pending receipt — still counted as sold in "all" mode, but its
+        # tender is not money at hand until it clears.
         self._sale("SALE-PEND-1", status=ShopReceiptStatus.ACTIVE,
                    cash="200", total="200")
         ShopReceipt.objects.create(
@@ -578,11 +579,11 @@ class CashierDayReportScopeTests(TestCase):
         self.assertEqual(tables[0]["title"], "Expected vs actual")
         sp = tables[0]
 
-        # expected = counted 1200 + pending 0 + credit 5000 + gift 800
+        # expected = confirmed 1000 + pending 200 + credit 5000 + gift 800
         sales = self._sp_row(sp, "Sales")
         self.assertIn("7,000", sales[1]["label"])
-        self.assertIn("1,200", sales[2]["label"])
-        self.assertIn("5,800", sales[3]["label"])  # still to collect
+        self.assertIn("1,000", sales[2]["label"])
+        self.assertIn("6,000", sales[3]["label"])  # still to collect
         # expenses 40 paid + 70 unpaid = 110; expected profit = 7000-110
         expenses = self._sp_row(sp, "Expenses")
         self.assertIn("110", expenses[1]["label"])
@@ -590,8 +591,8 @@ class CashierDayReportScopeTests(TestCase):
         self.assertIn("70", expenses[3]["label"])  # unpaid
         profit = self._sp_row(sp, "Profit")
         self.assertIn("6,890", profit[1]["label"])
-        # actual profit = 1200 - 40
-        self.assertIn("1,160", profit[2]["label"])
+        # actual profit = 1000 - 40
+        self.assertIn("960", profit[2]["label"])
 
         labels = [m["label"] for m in response.context["page"]["metrics"]]
         self.assertIn("Cashier", labels)

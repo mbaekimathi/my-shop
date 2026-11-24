@@ -193,10 +193,12 @@ class CompulsoryShopDayTests(TestCase):
 
         first.refresh_from_db()
         first_summary = day_session_balance_summary(first)
-        self.assertEqual(first_summary["cash_sales"], Decimal("100"))
+        # Both receipts are still pending — their tender is not money at
+        # hand, so neither session's flow counts them.
+        self.assertEqual(first_summary["cash_sales"], Decimal("0"))
 
         second_summary = day_session_balance_summary(second)
-        self.assertEqual(second_summary["cash_sales"], Decimal("200"))
+        self.assertEqual(second_summary["cash_sales"], Decimal("0"))
         status_summary = day_sales_status_summary(second)
         self.assertEqual(status_summary["sales_total"], Decimal("200"))
         self.assertEqual(status_summary["pending_count"], 1)
@@ -207,9 +209,9 @@ class CompulsoryShopDayTests(TestCase):
 
         rows = list_shop_day_sessions(self.shop)
         second_row = next(row for row in rows if row["session"].pk == second.pk)
-        self.assertEqual(second_row["cash_sales"], Decimal("200"))
+        self.assertEqual(second_row["cash_sales"], Decimal("0"))
         first_row = next(row for row in rows if row["session"].pk == first.pk)
-        self.assertEqual(first_row["cash_sales"], Decimal("100"))
+        self.assertEqual(first_row["cash_sales"], Decimal("0"))
         self.assertEqual(gap.shop_id, self.shop.pk)
 
     def test_first_session_window_starts_at_open(self):

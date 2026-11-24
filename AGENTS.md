@@ -575,10 +575,11 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   (`day_report_sec_sales_profit`, first in `DAY_REPORT_SECTION_TOGGLES`)
   computed by `day_session_sales_profit(summary=…, details=…,
   item_stock=…, shelf_stock=…)` (`shops/services.py` — shared by the page
-  and the PDF so the figures always agree): Expected sales = counted till
-  sales + still-pending receipts the status pick leaves uncounted
-  (`details["pending_sales"]` — ACTIVE sale receipts not in
-  `counted_statuses`) + credit sales + gift issues; Actual sales =
+  and the PDF so the figures always agree): Expected sales = confirmed till
+  sales + all still-pending receipts
+  (`details["pending_sales"]` — every ACTIVE sale receipt; `counted` marks
+  the ones the status pick also lists inside sales_count) + credit sales +
+  gift issues; Actual sales =
   `summary["sales_total"]`. Expected profit = expected sales − expenses
   (paid + unpaid) − stock bought (paid + unpaid) + customer prepayments;
   actual profit charges paid costs only. Group-header rows split Sales vs
@@ -818,13 +819,19 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `action=toggle_pos_setting` and use `data-stock-mode-toggle` so
   `pos-settings.js` enforces one-of (unchecked → 400). `my_shop_day_report`
   passes `day_report_counted_statuses(profile)` into
-  `build_shop_day_report_pdf` → `day_session_balance_summary` +
-  `day_session_report_details` (`counted_statuses` param, None = every sale
-  receipt): it filters the sales tender, the counted receipts' return
-  refunds (`_collect_return_payment_events`), items sold, and the
-  "(N receipts)" count; the flagged pending/cancelled list is unaffected.
+  `build_shop_day_report_pdf` → `day_session_report_details`
+  (`counted_statuses` param, None = every sale
+  receipt): it filters items sold and the counted-sales figures; the
+  flagged pending/cancelled list is unaffected.
   The PDF subtitle shows "Pending sales only" / "Confirmed sales only" when
-  filtered. Tests: `shops/tests/test_day_sales_summary.py
+  filtered. The **money flow is not part of the pick** —
+  `day_session_balance_summary` counts money at hand only: sale receipts in
+  `TILL_MONEY_STATUSES` (confirmed + partially returned) with every return
+  event subtracted; a pending receipt's tender lands in the session where
+  it clears (`confirmed_payment_at`), via the cleared-pending /
+  cleared-elsewhere mechanics, and `summary["sales_count"]` (receipts
+  contributing to `sales_total`) drives the "Sales collected (N receipts)"
+  label on the page and PDF. Tests: `shops/tests/test_day_sales_summary.py
   ::DayReportCountedStatusesTests`.
 - The "Day report sections" group is also **per-employee** —
   `DAY_REPORT_SECTION_TOGGLES` (employees/workspace.py) stores

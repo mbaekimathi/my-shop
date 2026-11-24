@@ -300,12 +300,13 @@ class DayReportCountedStatusesTests(TestCase):
             ShopReceiptStatus.CONFIRMED,
             ShopReceiptStatus.PARTIAL_RETURN,
         }
-        summary = day_session_balance_summary(
-            self.session, counted_statuses=counted
-        )
+        # Till money is always confirmed-scope — the status pick no longer
+        # reaches the summary; it still filters the report details.
+        summary = day_session_balance_summary(self.session)
         self.assertEqual(summary["cash_sales"], Decimal("0"))
         self.assertEqual(summary["mpesa_sales"], Decimal("200"))
         self.assertEqual(summary["sales_total"], Decimal("200"))
+        self.assertEqual(summary["sales_count"], 1)
 
         details = day_session_report_details(
             self.session, counted_statuses=counted
@@ -327,11 +328,11 @@ class DayReportCountedStatusesTests(TestCase):
         )
 
         counted = {ShopReceiptStatus.ACTIVE}
-        summary = day_session_balance_summary(
-            self.session, counted_statuses=counted
-        )
-        self.assertEqual(summary["cash_sales"], Decimal("100"))
-        self.assertEqual(summary["mpesa_sales"], Decimal("0"))
+        # Money at hand is not the pending pick: the confirmed sale's
+        # tender still counts, the pending one waits for its clear.
+        summary = day_session_balance_summary(self.session)
+        self.assertEqual(summary["cash_sales"], Decimal("0"))
+        self.assertEqual(summary["mpesa_sales"], Decimal("200"))
 
         details = day_session_report_details(
             self.session, counted_statuses=counted
@@ -417,10 +418,18 @@ class DayReportCountedStatusesTests(TestCase):
             day_session_report_details,
         )
 
+        # Report details still count every sale receipt; till money only
+        # counts the confirmed one (pending is not money at hand).
         summary = day_session_balance_summary(self.session)
-        self.assertEqual(summary["sales_total"], Decimal("300"))
+        self.assertEqual(summary["sales_total"], Decimal("200"))
+        self.assertEqual(summary["sales_count"], 1)
         details = day_session_report_details(self.session)
         self.assertEqual(details["sales_count"], 2)
+        self.assertEqual(
+            details["pending_sales"]["total"], Decimal("100")
+        )
+        self.assertEqual(details["pending_sales"]["count"], 1)
+        self.assertEqual(details["pending_sales"]["counted"], 1)
 
     def test_pdf_builds_with_status_filter(self):
         from shops.services import build_shop_day_report_pdf
@@ -591,30 +600,31 @@ class DayReportCountedStatusesTests(TestCase):
             amount_paid=Decimal("300.00"),
         )
 
-        # Baseline expected cash: 1000 opening + 100 cash sale.
+        # Baseline expected cash: 1000 opening (the 100 cash sale is
+        # still pending — not yet money at hand).
         base = day_session_balance_summary(
             self.session,
             item_stock_from_till=False,
             shelf_stock_from_till=False,
         )
         self.assertEqual(base["suppliers_paid"], Decimal("0"))
-        self.assertEqual(base["expected_cash"], Decimal("1100"))
+        self.assertEqual(base["expected_cash"], Decimal("1000"))
 
         summary = day_session_balance_summary(self.session)
         self.assertEqual(summary["suppliers_paid"], Decimal("500.00"))
-        self.assertEqual(summary["expected_cash"], Decimal("600"))
+        self.assertEqual(summary["expected_cash"], Decimal("500"))
 
         item_only = day_session_balance_summary(
             self.session, shelf_stock_from_till=False
         )
         self.assertEqual(item_only["suppliers_paid"], Decimal("200.00"))
-        self.assertEqual(item_only["expected_cash"], Decimal("900"))
+        self.assertEqual(item_only["expected_cash"], Decimal("800"))
 
         shelf_only = day_session_balance_summary(
             self.session, item_stock_from_till=False
         )
         self.assertEqual(shelf_only["suppliers_paid"], Decimal("300.00"))
-        self.assertEqual(shelf_only["expected_cash"], Decimal("800"))
+        self.assertEqual(shelf_only["expected_cash"], Decimal("700"))
 
 
 class CashierDaySummaryContextTests(TestCase):

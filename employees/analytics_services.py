@@ -9658,12 +9658,16 @@ def _day_balance_data(filters) -> dict:
             (session.closed_at or now) for session in activity_sessions
         )
         # Settled credits/trades land via collection/settlement events on the
-        # paid day, not the receipt's print day.
+        # paid day, not the receipt's print day. Till money counts confirmed
+        # receipts only — a pending receipt's tender is not money at hand.
+        from shops.services import TILL_MONEY_STATUSES
+
         day_sales_qs = ShopReceipt.objects.filter(
             shop_id__in=shop_ids,
             kind=ShopReceiptKind.SALE,
             settled_from_credit=False,
             settled_from_trade=False,
+            status__in=TILL_MONEY_STATUSES,
             created_at__gte=min_opened,
             created_at__lt=max_closed,
         )
@@ -11904,7 +11908,6 @@ def build_day_session_report_page(
     counted_statuses = day_report_counted_statuses(profile)
     summary = day_session_balance_summary(
         session,
-        counted_statuses=counted_statuses,
         item_stock_from_till=day_report_section_enabled(
             profile, "day_report_sec_item_stock"
         ),
@@ -11976,7 +11979,9 @@ def build_day_session_report_page(
         + Decimal(summary.get("mpesa_refunds") or 0)
         + Decimal(summary.get("card_refunds") or 0)
     )
-    sales_count = int(details.get("sales_count") or 0)
+    # Money-flow receipts = the confirmed sales whose tender is in the
+    # till (the report's own sales_count follows the status pick).
+    sales_count = int(summary.get("sales_count") or 0)
     total_variance = summary.get("total_variance")
 
     item_stock_sec = day_report_section_enabled(
@@ -12303,7 +12308,9 @@ def build_day_session_report_page(
     money_footnote = (
         "Expected in till = opening + sales + credit and trade collections "
         "+ prepayments − returns − expenses − stock bought − drawings − "
-        "trade-in payouts − pending cleared in later sessions. A pending "
+        "trade-in payouts − pending cleared in later sessions. Sales "
+        "collected counts confirmed receipts only — a pending receipt's "
+        "money lands in the session where it clears. A pending "
         "receipt cleared in another session leaves this Expected — the "
         "Collected-by note names who has the money; money cleared here "
         "for an earlier session sits outside Expected — set aside. "
