@@ -1,0 +1,55 @@
+<section class="ax-card ax-sessions-card">
+  <header class="ax-card-head">
+    <div class="ax-card-head-main">
+      <h3>Sessions</h3>
+      {% if page.sessions_hint %}
+      <span class="ax-card-hint{% if page.sessions_hint_tone %} is-{{ page.sessions_hint_tone }}{% endif %}">{{ page.sessions_hint }}</span>
+      {% endif %}
+    </div>
+  </header>
+  {% if page.session_days %}
+  <ol class="ax-session-days">
+    {% for day in page.session_days %}
+    <li class="ax-session-day">
+      <header class="ax-day-head">
+        <span class="ax-day-label">{{ day.label }}</span>
+        {% if day.tag %}<span class="ax-day-tag">{{ day.tag }}</span>{% endif %}
+        <span class="ax-day-meta">{{ day.meta }}</span>
+      </header>
+      <ul class="ax-day-entries">
+        {% for entry in day.entries %}
+        {% if entry.type == "flag" %}
+        <li class="ax-flag-row" role="note">
+          <span class="ax-flag">
+            <i data-lucide="flag" aria-hidden="true"></i>
+            <span class="ax-flag-title">{{ entry.title }}</span>
+            <span class="ax-flag-detail">{{ entry.label }}</span>
+          </span>
+        </li>
+        {% else %}
+        <li class="ax-session{% if entry.is_open %} is-open{% endif %}">
+          <a class="ax-session-link" href="{{ entry.href }}" aria-label="Open {{ day.label }} session · {{ entry.shop }}">
+            <span class="ax-session-time">
+              <span class="ax-session-dot" aria-hidden="true"></span>
+              <span class="ax-session-hours">{{ entry.time }}</span>
+            </span>
+            <span class="ax-session-who">
+              <strong>{{ entry.cashier }}</strong>
+              {% if entry.cashier_sub %}<em>{{ entry.cashier_sub }}</em>{% endif %}
+            </span>
+            <span class="ax-session-shop">{{ entry.shop }}</span>
+            <span class="ax-status is-{{ entry.status_tone }}">{{ entry.status }}</span>
+            <span class="ax-session-go">Open <i data-lucide="arrow-right" aria-hidden="true"></i></span>
+          </a>
+        </li>
+        {% endif %}
+        {% endfor %}
+      </ul>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="ax-empty">No shop day sessions in this period.</p>
+  {% endif %}
+  <p class="ax-footnote">A day belongs to the cashier who opened it. Open a session to view every report for that day.</p>
+</section>

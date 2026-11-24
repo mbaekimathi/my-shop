@@ -496,6 +496,10 @@
   </nav>
   {% endif %}
 
+  {% if page.sessions_layout %}
+  {% include "employees/partials/analytics_sessions_list.html" %}
+  {% endif %}
+
   {% if page.tables %}
   <div class="ax-grid ax-grid--tables">
     {% for table in page.primary_tables|default:page.tables %}

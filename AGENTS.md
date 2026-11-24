@@ -459,13 +459,19 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
 - IT support and shop manager dashboards pin a "Cashiers" sidebar shortcut to
   it (`_dashboard_analytics_section_links` — their sidebars are kept in
   parity; `DashboardSidebarLinkTests` asserts they match).
-- `_build_balances` is a slim sessions list: a single "Sessions" table lists
-  each `ShopDaySession` in the filtered period — Session (date + start/end
-  times), Cashier, Shop, Status, Report — whose **Open** link (and the
-  session cell itself) goes to
-  `<role>/analytics/balances/<session_id>/` (`analytics_day_session`,
-  gated by `analytics/balances` + shop allocation). No metrics/till
-  boards — the page is just the sessions list plus the standard filters.
+- `_build_balances` is a slim sessions list rendered as a **day-grouped
+  feed** (`page["session_days"]` + `employees/partials/
+  analytics_sessions_list.html`, included for `sessions_layout` instead
+  of the generic `_table` loop — `page["tables"]` stays empty). Each day
+  group has a band header (weekday date + "Today"/"Yesterday" tag +
+  "N sessions · N mismatches" meta) and session rows are a five-part
+  grid — time (dot + hours), cashier + ID, shop, status pill, "Open →"
+  — linking to `<role>/analytics/balances/<session_id>/`
+  (`analytics_day_session`, gated by `analytics/balances` + shop
+  allocation). The card head shows `sessions_hint`/`sessions_hint_tone`
+  ("113 sessions · 18 opening mismatches"); open sessions get a warm
+  tint + pulsing dot. CSS: the "Sessions day feed" block in
+  `analytics.css` (desktop grid → stacked two-column rows <700px).
 - `?employee_id=<pk>` narrows to sessions the cashier opened (a day belongs
   to whoever opened it) — parsed in `build_analytics_page`
   (`filters["selected_employee_id"]`), the dropdown renders only for
@@ -479,12 +485,14 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   sessions opened before the window but shown in the table (closed inside
   it or still open). In `_build_balances`, any session row with
   `has_prior_close` and a non-zero opening variance gets a
-  `{"group_header": True, "tone": "bad"}` row inserted right after it —
-  rendered full-width between the two sessions listing each channel's
-  signed gap ("Opening float mismatch — opened Cash −KSh 250.00 off the
-  previous close"). `group_header` rows accept an optional `tone` (passed
-  through `hydrate_table_zrows` → `is-{tone}` on the `ax-row--group`
-  band; `is-bad` styled in `analytics.css`).
+  `{"type": "flag", "title", "label"}` entry inserted right after it in
+  its day group — rendered between the two sessions as a red flag
+  banner (lucide `flag` icon + "Opening float mismatch" chip + each
+  channel's signed gap; `.ax-flag-row` in `analytics.css` — note the
+  danger token is `var(--danger)`). The same flag markup still works in
+  the generic `_table` path via `{"group_header": True, "flag": True,
+  "tone": "bad", "title", "label"}` rows (`hydrate_table_zrows` passes
+  `tone`/`flag`/`title` through).
 - `?mode=settings` swaps the sessions list for **Cashier settings** —
   company-wide options that govern cashier sessions
   (`_build_balances_settings` + `BALANCES_CASHIER_SETTING_GROUPS`: Open &
@@ -733,6 +741,10 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `?range=last30` works on every page using the partial. No extra inputs
   — every `data-range-field` hides for it. Stock pages' own selects don't
   offer it but the parser accepts it if a URL carries it.
+  `_date_filter_context`/`_filters_context` take a `default_range`
+  kwarg injected when the URL has no `range` — `build_analytics_page`
+  passes `"last30"` for **balances only**, so the Cashiers report opens
+  on the last 30 days (every other section still defaults to day/all-time).
 - Tests: `shops/tests/test_analytics_time_filter.py`.
 
 ## Shop floor sidebar toggles (Settings → POS)

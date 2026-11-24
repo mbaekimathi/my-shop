@@ -1208,6 +1208,21 @@
   white-space: nowrap;
 }
 
+.ax-card-hint.is-bad {
+  color: var(--danger);
+}
+
+.ax-card-hint.is-bad::before {
+  content: "";
+  display: inline-block;
+  width: 0.42rem;
+  height: 0.42rem;
+  margin-right: 0.32rem;
+  border-radius: 50%;
+  background: var(--danger);
+  vertical-align: 0.02em;
+}
+
 .ax-card--matrix {
   gap: 0.65rem;
   padding: 0.8rem 0.7rem 0.75rem;
@@ -9550,14 +9565,73 @@ body.ax-credit-due-open {
 /* Close↔open hand-over mismatch flags between sessions. */
 .ax.ax--sessions .ax-table tbody tr.ax-row--group.is-bad td,
 .ax.ax--day-report .ax-table tbody tr.ax-row--group.is-bad td {
-  background: color-mix(in srgb, var(--bad) 10%, var(--surface));
-  border-left-color: color-mix(in srgb, var(--bad) 65%, var(--line));
-  color: var(--bad);
+  padding: 0.55rem 1.1rem;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--danger) 14%, var(--surface)),
+      color-mix(in srgb, var(--danger) 5%, var(--surface))
+    );
+  border-left: 4px solid var(--danger);
+  color: var(--danger);
 }
 
 .ax.ax--sessions .ax-table tbody tr.ax-row--group.is-bad:hover td,
 .ax.ax--day-report .ax-table tbody tr.ax-row--group.is-bad:hover td {
-  background: color-mix(in srgb, var(--bad) 10%, var(--surface));
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--danger) 16%, var(--surface)),
+      color-mix(in srgb, var(--danger) 7%, var(--surface))
+    );
+}
+
+/* Flag banner: icon + MISMATCH chip + signed channel gaps. */
+.ax.ax--sessions .ax-table tr.ax-row--flag td,
+.ax.ax--day-report .ax-table tr.ax-row--flag td {
+  border-top: 1px dashed color-mix(in srgb, var(--danger) 35%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.ax.ax--sessions .ax-flag,
+.ax.ax--day-report .ax-flag {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.ax.ax--sessions .ax-flag > svg,
+.ax.ax--sessions .ax-flag > i,
+.ax.ax--day-report .ax-flag > svg,
+.ax.ax--day-report .ax-flag > i {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--danger);
+  flex-shrink: 0;
+}
+
+.ax.ax--sessions .ax-flag-title,
+.ax.ax--day-report .ax-flag-title {
+  padding: 0.14rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+  color: var(--danger);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ax.ax--sessions .ax-flag-detail,
+.ax.ax--day-report .ax-flag-detail {
+  color: color-mix(in srgb, var(--danger) 80%, var(--text-strong));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- Cells ---------- */
@@ -9629,6 +9703,29 @@ body.ax-credit-due-open {
   flex-shrink: 0;
 }
 
+/* "Open" sessions breathe — the dot pulses like the low-stock badge. */
+.ax.ax--sessions .ax-status.is-warn::before {
+  animation: ax-status-pulse 1.8s ease-out infinite;
+}
+
+@keyframes ax-status-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ax.ax--sessions .ax-status.is-warn::before {
+    animation: none;
+  }
+}
+
 /* "Open" action — solid teal pill button */
 .ax.ax--sessions .ax-table td:last-child .ax-link {
   gap: 0.3rem;
@@ -9679,6 +9776,213 @@ body.ax-credit-due-open {
   margin: 0.75rem 1.1rem 0.9rem;
   padding: 1rem;
   text-align: center;
+}
+
+/* ---------- Sessions day feed ---------- */
+
+.ax.ax--sessions .ax-sessions-card {
+  width: min(62rem, 100%);
+  margin-inline: auto;
+  padding: 0;
+  gap: 0;
+  justify-self: center;
+  overflow: hidden;
+}
+
+.ax.ax--sessions .ax-session-days,
+.ax.ax--sessions .ax-day-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ax.ax--sessions .ax-session-day + .ax-session-day {
+  border-top: 1px solid var(--line);
+}
+
+.ax.ax--sessions .ax-day-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.55rem 1.1rem;
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+
+.ax.ax--sessions .ax-day-label {
+  font-size: 0.76rem;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
+}
+
+.ax.ax--sessions .ax-day-tag {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent);
+  background: color-mix(in srgb, var(--teal) 14%, var(--surface));
+  color: var(--teal);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ax.ax--sessions .ax-day-meta {
+  margin-left: auto;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--mist-dim);
+  white-space: nowrap;
+}
+
+.ax.ax--sessions .ax-session-link {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(9rem, 1fr) minmax(7rem, auto) auto auto;
+  grid-template-areas: "time who shop status go";
+  align-items: center;
+  gap: 0.4rem 1rem;
+  padding: 0.6rem 1.1rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  color: inherit;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.ax.ax--sessions .ax-day-entries > li:first-child .ax-session-link {
+  border-top: 0;
+}
+
+.ax.ax--sessions .ax-session-link:hover {
+  background: color-mix(in srgb, var(--teal) 5%, var(--surface));
+}
+
+.ax.ax--sessions .ax-session.is-open .ax-session-link {
+  background: color-mix(in srgb, var(--warning) 5%, var(--surface));
+}
+
+.ax.ax--sessions .ax-session.is-open .ax-session-link:hover {
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+}
+
+.ax.ax--sessions .ax-session-time {
+  grid-area: time;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ax.ax--sessions .ax-session-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mist-dim) 70%, transparent);
+  flex-shrink: 0;
+}
+
+.ax.ax--sessions .ax-session.is-open .ax-session-dot {
+  background: var(--warning);
+  animation: ax-status-pulse 1.8s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ax.ax--sessions .ax-session.is-open .ax-session-dot {
+    animation: none;
+  }
+}
+
+.ax.ax--sessions .ax-session-hours {
+  font-size: 0.78rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.ax.ax--sessions .ax-session-who {
+  grid-area: who;
+  display: inline-grid;
+  gap: 0.04rem;
+  min-width: 0;
+}
+
+.ax.ax--sessions .ax-session-who strong {
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax.ax--sessions .ax-session-who em {
+  font-style: normal;
+  font-size: 0.66rem;
+  color: var(--mist-dim);
+}
+
+.ax.ax--sessions .ax-session-shop {
+  grid-area: shop;
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  color: var(--mist);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax.ax--sessions .ax-session .ax-status {
+  grid-area: status;
+  justify-self: end;
+}
+
+.ax.ax--sessions .ax-session-go {
+  grid-area: go;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent);
+  background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+  color: var(--teal);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.ax.ax--sessions .ax-session-go svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.ax.ax--sessions .ax-session-link:hover .ax-session-go {
+  background: var(--teal);
+  color: var(--surface);
+  transform: translateX(1px);
+}
+
+/* Mismatch flag banner between two sessions. */
+.ax.ax--sessions .ax-flag-row {
+  padding: 0.5rem 1.1rem;
+  border-top: 1px dashed color-mix(in srgb, var(--danger) 40%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--danger) 40%, transparent);
+  border-left: 4px solid var(--danger);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--danger) 12%, var(--surface)),
+      color-mix(in srgb, var(--danger) 4%, var(--surface))
+    );
+}
+
+.ax.ax--sessions .ax-flag-row + .ax-session .ax-session-link {
+  border-top: 0;
 }
 
 /* ---------- Day-report KPI tiles ---------- */
@@ -9860,6 +10164,43 @@ body.ax-credit-due-open {
   .ax.ax--day-report .ax-footnote {
     padding: 0.5rem 1rem 0.65rem;
   }
+
+  /* Sessions day feed — two-column rows, full-width open button. */
+  .ax.ax--sessions .ax-sessions-card {
+    width: auto;
+    justify-self: stretch;
+  }
+
+  .ax.ax--sessions .ax-day-head {
+    padding: 0.5rem 1rem;
+  }
+
+  .ax.ax--sessions .ax-session-link {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "time status"
+      "who shop"
+      "go go";
+    gap: 0.45rem 0.8rem;
+    padding: 0.65rem 1rem;
+  }
+
+  .ax.ax--sessions .ax-session-shop {
+    text-align: right;
+  }
+
+  .ax.ax--sessions .ax-session-go {
+    justify-content: center;
+    padding: 0.42rem 1rem;
+  }
+
+  .ax.ax--sessions .ax-flag-row {
+    padding: 0.55rem 1rem;
+  }
+
+  .ax.ax--sessions .ax-flag-detail {
+    flex: 1 1 100%;
+  }
 }
 
 @media (max-width: 420px) {
@@ -9924,6 +10265,23 @@ body.ax-credit-due-open {
 .ax.ax--sessions .ax-table tbody tr:nth-child(even) td,
 .ax.ax--day-report .ax-table tbody tr:nth-child(even) td {
   background: transparent;
+}
+
+/* Currently-open sessions get a soft warm tint so they stand out of the
+   newest-first list (placed after the zebra reset so it wins on even rows). */
+.ax.ax--sessions .ax-table tbody tr.ax-row--open td {
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface));
+}
+
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table tbody tr.ax-row--open td:first-child,
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table tbody tr.ax-row--open td.ax-cell--primary {
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface));
+}
+
+.ax.ax--sessions .ax-table tbody tr.ax-row--open:hover td,
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table tbody tr.ax-row--open:hover td:first-child,
+.ax.ax--sessions .ax-table-wrap--scroll .ax-table tbody tr.ax-row--open:hover td.ax-cell--primary {
+  background: color-mix(in srgb, var(--warning) 11%, var(--surface));
 }
 
 /* Cashier / supplier entity cells stack name + meta */
@@ -11046,6 +11404,28 @@ body.ax-credit-due-open {
 
   .ax.ax--sessions .ax-table tbody tr.ax-row--group td::before {
     content: none;
+  }
+
+  /* Mismatch flags keep their red banner + sentence case on phones;
+     the gap detail drops under the MISMATCH chip. */
+  .ax.ax--sessions .ax-table tbody tr.ax-row--group.is-bad td {
+    padding: 0.5rem 0.9rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    background:
+      linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--danger) 14%, var(--surface)),
+        color-mix(in srgb, var(--danger) 5%, var(--surface))
+      );
+    border-bottom: 1px dashed
+      color-mix(in srgb, var(--danger) 35%, transparent);
+  }
+
+  .ax.ax--sessions .ax-table tbody tr.ax-row--flag .ax-flag-detail {
+    flex: 1 1 100%;
   }
 
   /* The Report cell becomes a full-width open button — its column

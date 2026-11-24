@@ -161,62 +161,28 @@
       color: var(--muted);
     }
 
-    /* ===== Stacked rows (thermal) ===== */
-    /* Wide tables become a compact list, not cards — each record is a bold
-       title line then wrapped "Label: value" pairs separated by " · ", so
-       the thermal roll stays short. */
-    table.sheet-grid.stack,
-    table.sheet-grid.stack tbody,
-    table.sheet-grid.stack tr,
-    table.sheet-grid.stack td {
-      display: block;
-      width: 100%;
-    }
-    table.sheet-grid.stack thead { display: none; }
-    table.sheet-grid.stack {
-      border-top: 1px solid var(--line);
+    /* ===== Per-shop groups ===== */
+    .shop-group { margin-top: 0.7rem; }
+    .shop-group:first-of-type { margin-top: 0.25rem; }
+    .shop-group-head {
+      margin: 0 0 0.15rem;
+      padding-bottom: 0.12rem;
       border-bottom: 1px solid var(--line);
-    }
-    table.sheet-grid.stack tbody tr {
-      border-top: 1px dashed #666;
-      padding: 0.4mm 0;
-      background: #fff !important;
-    }
-    table.sheet-grid.stack tbody tr:first-child { border-top: 0; }
-    table.sheet-grid.stack tbody tr:nth-child(even) td {
-      background: transparent;
-    }
-    table.sheet-grid.stack td {
-      display: inline;
-      width: auto;
-      border: 0;
-      padding: 0;
-      text-align: left;
-      background: transparent !important;
-    }
-    table.sheet-grid.stack td[data-label]::before {
-      content: attr(data-label) ": ";
+      font-size: 0.85rem;
       font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
     }
-    table.sheet-grid.stack td:not(:first-child):not(:last-child)::after {
-      content: " · ";
+    .shop-group-meta {
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+      font-size: 0.72rem;
     }
-    table.sheet-grid.stack td:first-child {
-      display: block;
-      font-weight: 800;
-    }
-    table.sheet-grid.stack td:first-child::before { content: none; }
-    table.sheet-grid.stack td.num {
-      text-align: left;
-      white-space: normal;
-    }
-    table.sheet-grid.stack .cell-sub {
-      display: inline;
-      font-size: inherit;
-    }
-    table.sheet-grid.stack .cell-sub::before { content: " · "; }
-    table.sheet-grid.stack td.col-when,
-    table.sheet-grid.stack td.col-status { white-space: normal; }
+    body.paper-80 .shop-group-head { font-size: 0.72rem; }
+    body.paper-58 .shop-group-head { font-size: 0.64rem; }
+    body.paper-80 .shop-group-meta,
+    body.paper-58 .shop-group-meta { font-size: 0.6rem; }
 
     /* Thermal trims to the essentials — kicker, chips, and the hint are
        A4/PDF detail, not roll paper. */
@@ -287,7 +253,6 @@
     @media print {
       .print-toolbar { display: none !important; }
       thead { display: table-header-group; }
-      table.sheet-grid.stack thead { display: none; }
       tr { break-inside: avoid; }
       {% if paper == "80" %}
       @page { size: 80mm auto; margin: 1.5mm; }
@@ -376,51 +341,43 @@
     </header>
 
     <p class="sheet-hint">
-      Filtered confirm-receipts list: receipt, status, client, shop, who sold it and how,
-      amount, reference and paid time (as entered on confirm), and printed time.
+      Filtered confirm-receipts list grouped per shop: receipt number and printed
+      date, who printed it, and the amount.
       Ordered pending first, then cancelled, then confirmed.
     </p>
 
-    {% if document.rows %}
-    <table class="sheet-grid{% if paper == "80" or paper == "58" %} stack{% endif %}">
-      <thead>
-        <tr>
-          <th>Receipt</th>
-          <th class="col-status">Status</th>
-          <th>Client</th>
-          <th>Shop</th>
-          <th>Sold</th>
-          <th class="num">Amount</th>
-          <th>Ref · Paid</th>
-          <th class="col-when">Printed</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in document.rows %}
-        <tr>
-          <td>{{ row.number }}</td>
-          <td class="col-status" data-label="Status">{{ row.status }}</td>
-          <td data-label="Client">
-            {{ row.client_name }}
-            {% if row.phone and row.phone != "—" %}<span class="cell-sub">{{ row.phone }}</span>{% endif %}
-          </td>
-          <td data-label="Shop">{{ row.shop }}</td>
-          <td data-label="Sold">
-            {{ row.sold_by }}
-            {% if row.sold_as and row.sold_as != "—" %}<span class="cell-sub">{{ row.sold_as }}</span>{% endif %}
-          </td>
-          <td class="num" data-label="Amount">{{ row.total }}</td>
-          <td data-label="Ref · Paid">
-            {{ row.reference }}
-            {% if row.paid_when and row.paid_when != "—" %}
-            <span class="cell-sub">{{ row.paid_when }}{% if row.paid_via %} · {{ row.paid_via }}{% endif %}</span>
-            {% endif %}
-          </td>
-          <td class="col-when" data-label="Printed">{{ row.when }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    {% if document.groups %}
+    {% for group in document.groups %}
+    <section class="shop-group">
+      <h2 class="shop-group-head">
+        {{ group.shop }}
+        <span class="shop-group-meta">{{ group.count }} {{ document.count_label }}{{ group.count|pluralize }} · {{ group.total }}</span>
+      </h2>
+      <table class="sheet-grid">
+        <thead>
+          <tr>
+            <th>Receipt</th>
+            <th>Sold by</th>
+            {% if document.mixed_status %}<th class="col-status">Status</th>{% endif %}
+            <th class="num">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in group.rows %}
+          <tr>
+            <td>
+              {{ row.number }}
+              <span class="cell-sub">{{ row.when }}</span>
+            </td>
+            <td>{{ row.sold_by }}</td>
+            {% if document.mixed_status %}<td class="col-status">{{ row.status }}</td>{% endif %}
+            <td class="num">{{ row.total }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endfor %}
     {% else %}
     <p class="print-error">No receipts for the selected shops and period.</p>
     {% endif %}

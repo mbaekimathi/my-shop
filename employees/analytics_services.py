@@ -3100,6 +3100,8 @@ def _table(
     section="",
     pager=None,
     wide=False,
+    hint="",
+    hint_tone="",
 ):
     if shop_grid is None:
         shop_grid = any(
@@ -3112,6 +3114,8 @@ def _table(
         "rows": rows,
         "empty": empty,
         "footnote": footnote,
+        "hint": hint,
+        "hint_tone": hint_tone,
         "shop_grid": bool(shop_grid),
         "searchable": bool(searchable),
         "table_class": (table_class or "").strip(),
@@ -3142,6 +3146,8 @@ def hydrate_table_zrows(page: dict | None) -> dict | None:
                         "group_header": True,
                         "label": row.get("label"),
                         "tone": row.get("tone"),
+                        "flag": bool(row.get("flag")),
+                        "title": row.get("title"),
                     }
                 )
                 continue
@@ -3552,9 +3558,19 @@ def _apply_time_filter_bounds(start, end, *, time_from=None, time_to=None):
 
 
 def _date_filter_context(
-    request=None, *, data=None, allow_all_time=False, default_all_time=None
+    request=None,
+    *,
+    data=None,
+    allow_all_time=False,
+    default_all_time=None,
+    default_range=None,
 ) -> dict:
-    """Parse day / period / month / year filters. Optionally support all-time."""
+    """Parse day / period / month / year / last30 filters.
+
+    Optionally support all-time picks (``allow_all_time``/``default_all_time``)
+    and a section default (``default_range``) applied when the URL carries no
+    explicit ``range`` param.
+    """
     from django.utils import timezone
     from items.views import _report_range_bounds
 
@@ -3572,6 +3588,8 @@ def _date_filter_context(
         range_raw = (getter.get("range") or "").strip().lower()
         time_from_raw = (getter.get("time_from") or "").strip()
         time_to_raw = (getter.get("time_to") or "").strip()
+    if not range_raw and default_range:
+        range_raw = default_range
     time_filter = _analytics_time_filter_enabled()
     today = timezone.localdate()
     if default_all_time is None:
@@ -3602,12 +3620,20 @@ def _date_filter_context(
             "report_time_to": "",
         }
 
+    query = getter or {}
+    if default_range and not (query.get("range") or "").strip():
+        # Plain dict copy — QueryDicts are immutable and only .get is read.
+        query = {**query, "range": default_range}
+
     class _QueryRequest:
-        GET = getter or {}
+        GET = query
 
     range_type, start, end, filter_context = _report_range_bounds(
         request
-        if request is not None and not allow_all_time and data is None
+        if request is not None
+        and not allow_all_time
+        and data is None
+        and query is getter
         else _QueryRequest()
     )
     prev_shift = end - start
@@ -3643,6 +3669,7 @@ def _filters_context(
     *,
     allow_all_time=False,
     default_all_time=None,
+    default_range=None,
     shop_scope: str = "default",
     default_receipt_status: str | None = None,
 ):
@@ -3650,6 +3677,7 @@ def _filters_context(
         request,
         allow_all_time=allow_all_time,
         default_all_time=default_all_time,
+        default_range=default_range,
     )
     filter_shops = actionable_shops_for_profile(profile)
     shops_by_id = {shop.pk: shop for shop in filter_shops}
@@ -3710,6 +3738,11 @@ def build_analytics_page(*, profile, request, section_slug: str = "overview") ->
         request,
         allow_all_time=allow_all_time,
         default_all_time=default_all_time if allow_all_time else False,
+        # Balances reviews recent sessions first — land on the rolling
+        # last-30-days window when no range is picked.
+        default_range=(
+            "last30" if section["slug"] == "balances" else None
+        ),
         default_receipt_status=(
             ANALYTICS_RECEIPT_STATUS_ALL
             if section["slug"] == "receipts"
@@ -5392,6 +5425,7 @@ def build_confirm_receipts_print_document(*, profile, request) -> dict:
         print_rows.append(
             {
                 "number": row.get("number") or "—",
+                "amount": amount if isinstance(amount, (int, float, Decimal)) else None,
                 "status": row.get("status_label") or row.get("status") or "—",
                 "kind": row.get("kind_label") or row.get("kind") or "—",
                 "client_name": row.get("client") or "—",
@@ -5409,8 +5443,32 @@ def build_confirm_receipts_print_document(*, profile, request) -> dict:
         )
     receipt_total = len(print_rows)
     a4_page_estimate = max(1, (receipt_total + 27) // 28)
+    shop_groups = {}
+    for prow in print_rows:
+        shop_groups.setdefault(prow["shop"], []).append(prow)
+    groups = []
+    for shop_name in sorted(shop_groups, key=str.lower):
+        grows = shop_groups[shop_name]
+        group_total = sum(
+            (
+                Decimal(row["amount"])
+                for row in grows
+                if isinstance(row.get("amount"), (int, float, Decimal))
+            ),
+            _zero(),
+        )
+        groups.append(
+            {
+                "shop": shop_name,
+                "count": len(grows),
+                "total": _money_ksh(group_total),
+                "rows": grows,
+            }
+        )
     return {
         "title": "Confirm receipts",
+        "mixed_status": not context["status_filter"],
+        "groups": groups,
         "kind_label": kind_label,
         "period_label": period_label,
         "shop_label": shop_label,
@@ -11805,7 +11863,9 @@ def _build_balances(filters):
             if row.get("opened_by_id") == selected_employee_id
         ]
 
-    session_list_rows = []
+    session_days: dict = {}
+    mismatch_count = 0
+    today = timezone.localdate()
     for row in sorted(
         session_rows,
         key=lambda item: item["closed_at"] or item["opened_at"] or timezone.now(),
@@ -11816,36 +11876,46 @@ def _build_balances(filters):
         opened_local = timezone.localtime(row["opened_at"])
         is_open_row = bool(row.get("is_open")) or row["closed_at"] is None
         if is_open_row:
-            session_sub = f"Started {opened_local:%H:%M}"
-            status_cell = {
-                "kind": "status",
-                "label": "Open",
-                "tone": "warn",
-            }
+            time_label = f"Started {opened_local:%H:%M}"
+            status_label, status_tone = "Open", "warn"
         else:
             closed_local = timezone.localtime(row["closed_at"])
-            session_sub = f"{opened_local:%H:%M} – {closed_local:%H:%M}"
-            status_cell = {
-                "kind": "status",
-                "label": "Closed",
-                "tone": "good",
+            time_label = f"{opened_local:%H:%M} – {closed_local:%H:%M}"
+            status_label, status_tone = "Closed", "good"
+        day_key = opened_local.date()
+        group = session_days.get(day_key)
+        if group is None:
+            if day_key == today:
+                day_tag = "Today"
+            elif day_key == today - timedelta(days=1):
+                day_tag = "Yesterday"
+            else:
+                day_tag = ""
+            group = session_days[day_key] = {
+                "key": day_key,
+                "label": opened_local.strftime("%a %d %b %Y"),
+                "tag": day_tag,
+                "sessions": 0,
+                "flags": 0,
+                "entries": [],
             }
-        href = _session_report_href(row.get("id"))
-        session_list_rows.append(
-            [
-                {
-                    "label": opened_local.strftime("%d %b %Y"),
-                    "sub": session_sub,
-                    "href": href,
-                },
-                _cashier_cell(row.get("opened_by_id")),
-                shop_name,
-                status_cell,
-                {
-                    "label": "Open",
-                    "href": href,
-                },
-            ]
+        profile = profiles.get(row.get("opened_by_id"))
+        cashier_name = _cashier_name(row.get("opened_by_id"))
+        cashier_code = getattr(profile, "employee_id", "") or ""
+        group["sessions"] += 1
+        group["entries"].append(
+            {
+                "type": "session",
+                "id": row.get("id"),
+                "href": _session_report_href(row.get("id")),
+                "time": time_label,
+                "cashier": cashier_name,
+                "cashier_sub": f"ID {cashier_code}" if cashier_code else "",
+                "shop": shop_name,
+                "status": status_label,
+                "status_tone": status_tone,
+                "is_open": is_open_row,
+            }
         )
         if row.get("has_prior_close"):
             gap_parts = []
@@ -11863,17 +11933,40 @@ def _build_balances(filters):
                     f"{channel_label} {sign}{_money_ksh(abs(gap))}"
                 )
             if gap_parts:
-                session_list_rows.append(
+                mismatch_count += 1
+                group["flags"] += 1
+                group["entries"].append(
                     {
-                        "group_header": True,
-                        "tone": "bad",
+                        "type": "flag",
+                        "title": "Opening float mismatch",
                         "label": (
-                            "Opening float mismatch — opened "
+                            "Opened "
                             + " · ".join(gap_parts)
                             + " off the previous close"
                         ),
                     }
                 )
+
+    session_days = [
+        session_days[key]
+        for key in sorted(session_days, reverse=True)
+    ]
+    for group in session_days:
+        parts = [f"{group['sessions']} session{'s' if group['sessions'] != 1 else ''}"]
+        if group["flags"]:
+            parts.append(
+                f"{group['flags']} mismatch{'es' if group['flags'] != 1 else ''}"
+            )
+        group["meta"] = " · ".join(parts)
+
+    sessions_hint = f"{len(session_rows)} session{'s' if len(session_rows) != 1 else ''}"
+    sessions_hint_tone = ""
+    if mismatch_count:
+        sessions_hint = (
+            f"{sessions_hint} · {mismatch_count} opening "
+            f"mismatch{'es' if mismatch_count != 1 else ''}"
+        )
+        sessions_hint_tone = "bad"
 
     headline = "Cashiers report"
     if selected_employee_id:
@@ -11887,18 +11980,10 @@ def _build_balances(filters):
         ),
         "alerts": [],
         "insights": [],
-        "tables": [
-            _table(
-                "Sessions",
-                ["Session", "Cashier", "Shop", "Status", "Report"],
-                session_list_rows,
-                empty="No shop day sessions in this period.",
-                footnote=(
-                    "A day belongs to the cashier who opened it. Open a "
-                    "session to view every report for that day."
-                ),
-            ),
-        ],
+        "tables": [],
+        "session_days": session_days,
+        "sessions_hint": sessions_hint,
+        "sessions_hint_tone": sessions_hint_tone,
         "filter_employees": filter_employees,
         "selected_employee_id": selected_employee_id,
         "cashier_settings_href": cashier_settings_href,

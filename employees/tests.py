@@ -1484,37 +1484,27 @@ class AnalyticsDaySessionReportTests(TestCase):
         )["page"]
 
     @staticmethod
-    def _labels(columns):
+    def _entries(page):
         return [
-            (col.get("label") if isinstance(col, dict) else col)
-            for col in columns
+            entry
+            for day in page["session_days"]
+            for entry in day["entries"]
         ]
 
     def test_session_rows_link_to_day_report(self):
         session = self._session()
         page = self._balances_page()
-        table = next(
-            t for t in page["tables"] if t["title"] == "Sessions"
-        )
-        self.assertEqual(
-            self._labels(table["columns"]),
-            ["Session", "Cashier", "Shop", "Status", "Report"],
-        )
-        row = table["rows"][0]
-        cells = row["cells"] if isinstance(row, dict) else row
-        session_cell = cells[0]
-        self.assertIn("Started", session_cell["sub"])
+        entry = self._entries(page)[0]
+        self.assertEqual(entry["type"], "session")
+        self.assertTrue(entry["is_open"])
+        self.assertEqual(entry["status"], "Open")
+        self.assertIn("Started", entry["time"])
         self.assertIn(
             f"/shop-manager/analytics/balances/{session.pk}/",
-            session_cell["href"],
+            entry["href"],
         )
-        report_cell = cells[-1]
-        self.assertEqual(report_cell["label"], "Open")
-        self.assertIn(
-            f"/shop-manager/analytics/balances/{session.pk}/",
-            report_cell["href"],
-        )
-        self.assertIn("back=", report_cell["href"])
+        self.assertIn("back=", entry["href"])
+        self.assertIn("session", page["sessions_hint"])
 
     def test_day_session_page_lists_all_reports(self):
         from django.test import RequestFactory
@@ -1650,20 +1640,17 @@ class AnalyticsDaySessionReportTests(TestCase):
         session.opened_at = prior.closed_at + timedelta(minutes=5)
         session.save()
         page = self._balances_page()
-        table = next(
-            t for t in page["tables"] if t["title"] == "Sessions"
-        )
-        flag = table["rows"][1]
-        self.assertIsInstance(flag, dict)
-        self.assertTrue(flag.get("group_header"))
-        self.assertEqual(flag.get("tone"), "bad")
+        entries = self._entries(page)
+        flag = entries[1]
+        self.assertEqual(flag["type"], "flag")
+        self.assertEqual(flag["title"], "Opening float mismatch")
         self.assertIn("Cash −KSh 250.00", flag["label"])
         self.assertIn("previous close", flag["label"])
+        self.assertEqual(page["sessions_hint_tone"], "bad")
+        self.assertIn("1 opening mismatch", page["sessions_hint"])
         # The flag sits between the newer session and the previous one.
-        self.assertFalse(
-            isinstance(table["rows"][2], dict)
-            and table["rows"][2].get("group_header")
-        )
+        self.assertEqual(entries[0]["type"], "session")
+        self.assertEqual(entries[2]["type"], "session")
 
     def test_matching_handover_and_first_session_not_flagged(self):
         from datetime import timedelta
@@ -1672,14 +1659,8 @@ class AnalyticsDaySessionReportTests(TestCase):
 
         # First-ever session has no previous close → no flag.
         page = self._balances_page()
-        table = next(
-            t for t in page["tables"] if t["title"] == "Sessions"
-        )
         self.assertFalse(
-            any(
-                isinstance(row, dict) and row.get("group_header")
-                for row in table["rows"]
-            )
+            any(e["type"] == "flag" for e in self._entries(page))
         )
 
         prior = self._close(self._session(), cash=1000, mpesa=200)
@@ -1694,14 +1675,8 @@ class AnalyticsDaySessionReportTests(TestCase):
         session.opened_at = prior.closed_at + timedelta(minutes=5)
         session.save()
         page = self._balances_page()
-        table = next(
-            t for t in page["tables"] if t["title"] == "Sessions"
-        )
         self.assertFalse(
-            any(
-                isinstance(row, dict) and row.get("group_header")
-                for row in table["rows"]
-            )
+            any(e["type"] == "flag" for e in self._entries(page))
         )
 
     def test_last_30_days_range_lists_older_sessions(self):
@@ -1743,24 +1718,21 @@ class AnalyticsDaySessionReportTests(TestCase):
             )
 
         day_ctx = _page({"range": "day"})
-        day_table = next(
-            t for t in day_ctx["page"]["tables"] if t["title"] == "Sessions"
-        )
         self.assertEqual(day_ctx["range_type"], "day")
-        self.assertFalse(day_table["rows"])
+        self.assertFalse(day_ctx["page"]["session_days"])
 
         last30_ctx = _page({"range": "last30"})
-        last30_table = next(
-            t
-            for t in last30_ctx["page"]["tables"]
-            if t["title"] == "Sessions"
-        )
         self.assertEqual(last30_ctx["range_type"], "last30")
         self.assertEqual(
             last30_ctx["end"] - last30_ctx["start"], timedelta(days=30)
         )
         self.assertIn("Last 30 days", last30_ctx["report_period_label"])
-        self.assertTrue(last30_table["rows"])
+        self.assertTrue(last30_ctx["page"]["session_days"])
+
+        # No range param at all — balances defaults to the last 30 days.
+        default_ctx = _page({})
+        self.assertEqual(default_ctx["range_type"], "last30")
+        self.assertTrue(default_ctx["page"]["session_days"])
 
     def test_day_session_404s_for_unallocated_shop(self):
         from shops.models import ShopDaySession

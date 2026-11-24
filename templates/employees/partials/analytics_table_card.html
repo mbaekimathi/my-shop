@@ -29,6 +29,8 @@
         <span class="ax-card-hint">Date · supplier · price</span>
         {% elif table.shop_grid %}
         <span class="ax-card-hint">Search or hover for detail</span>
+        {% elif table.hint %}
+        <span class="ax-card-hint{% if table.hint_tone %} is-{{ table.hint_tone }}{% endif %}">{{ table.hint }}</span>
         {% endif %}
       </header>
       {% if table.shop_grid and section_slug == "overview" %}
@@ -164,8 +166,18 @@
           <tbody>
             {% for entry in table.zrows %}
             {% if entry.group_header %}
-            <tr class="ax-row--group{% if entry.tone %} is-{{ entry.tone }}{% endif %}">
-              <td colspan="{{ table.columns|length }}">{{ entry.label }}</td>
+            <tr class="ax-row--group{% if entry.tone %} is-{{ entry.tone }}{% endif %}{% if entry.flag %} ax-row--flag{% endif %}">
+              <td colspan="{{ table.columns|length }}">
+                {% if entry.flag %}
+                <span class="ax-flag">
+                  <i data-lucide="flag" aria-hidden="true"></i>
+                  {% if entry.title %}<span class="ax-flag-title">{{ entry.title }}</span>{% endif %}
+                  <span class="ax-flag-detail">{{ entry.label }}</span>
+                </span>
+                {% else %}
+                {{ entry.label }}
+                {% endif %}
+              </td>
             </tr>
             {% else %}
             {% with row=entry.row cells=entry.cells %}
