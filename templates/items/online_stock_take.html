@@ -11,7 +11,6 @@
   data-online-stock-take
   data-online-stock-take-url="{{ online_stock_take_url }}"
   data-online-count-date="{{ online_count_date_value }}"
-  {% if online_take_locked %}data-online-take-locked{% endif %}
   {% if selected_shop %}data-selected-shop-id="{{ selected_shop.pk }}"{% endif %}
   {% if selected_shop %}data-online-sync-revision="{{ online_sync_revision }}"{% endif %}
 >
@@ -27,13 +26,8 @@
           {% endif %}
         </h2>
         <p>
-          {% if online_take_locked %}
-          This day is view-only — counts can only be opened and updated on the
-          day they were taken.
-          {% else %}
           Pick a day, then enter physical counts beside current stock. Each day keeps its
           own counts. Variance updates live and each input auto-saves.
-          {% endif %}
         </p>
       </div>
       {% if selected_shop %}
@@ -42,18 +36,11 @@
           <i data-lucide="calendar" aria-hidden="true"></i>
           <span>{{ online_count_date|date:"d M Y" }}</span>
         </p>
-        {% if online_take_locked %}
-        <p class="online-take-day-chip online-take-locked-chip" aria-label="View only">
-          <i data-lucide="lock" aria-hidden="true"></i>
-          <span>View only</span>
-        </p>
-        {% else %}
         <p class="online-take-live-status is-live" data-online-take-live-status aria-live="polite">
           <span class="online-take-live-dot" aria-hidden="true"></span>
           Live
         </p>
-        {% endif %}
-        <p class="online-take-save-status" data-online-take-save-status aria-live="polite">{% if online_take_locked %}Locked{% else %}Ready{% endif %}</p>
+        <p class="online-take-save-status" data-online-take-save-status aria-live="polite">Ready</p>
       </div>
       {% endif %}
     </div>
@@ -145,7 +132,7 @@
     </div>
     <ul class="online-take-list" role="list" data-online-take-list>
       {% for line in online_catalog.lines %}
-      {% include "items/partials/online_stock_take_row.html" with line=line locked=online_take_locked %}
+      {% include "items/partials/online_stock_take_row.html" with line=line %}
       {% empty %}
       <li class="online-take-empty-line">No active items to count.</li>
       {% endfor %}
@@ -183,13 +170,12 @@
         </span>
         <span class="online-take-saved-when">{{ rec.saved_at|date:"d M Y H:i" }}</span>
         <span class="online-take-saved-actions">
-          {% if not rec.is_today %}<em class="online-take-saved-lock">Locked</em>{% endif %}
           <a
             class="online-take-saved-link"
             href="{{ online_stock_take_url }}&shop_id={{ rec.shop_id }}&date={{ rec.count_date|date:"Y-m-d" }}"
           >
             <i data-lucide="folder-open" aria-hidden="true"></i>
-            <span>{% if rec.is_today %}Open &amp; update{% else %}Open{% endif %}</span>
+            <span>Open &amp; update</span>
           </a>
           <a
             class="online-take-saved-link"
@@ -277,7 +263,6 @@
       {% endfor %}
     </ul>
     <div class="online-take-cart-actions">
-      {% if not online_take_locked %}
       <button
         type="button"
         class="online-take-cart-action is-primary"
@@ -286,7 +271,6 @@
         <i data-lucide="save" aria-hidden="true"></i>
         <span>Save count</span>
       </button>
-      {% endif %}
       <a
         class="online-take-cart-action"
         href="{{ online_stock_take_url }}&shop_id={{ selected_shop.pk }}&date={{ online_count_date_value }}&download=1"

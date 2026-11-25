@@ -9724,10 +9724,6 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   color: var(--accent-deep, var(--accent));
 }
 
-.online-take-locked-chip {
-  color: var(--mist-dim);
-}
-
 .online-take-live-status {
   display: inline-flex;
   align-items: center;
@@ -10239,20 +10235,6 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
   color: var(--mist-dim);
   font-size: 0.8rem;
-}
-
-.online-take-saved-lock {
-  align-self: center;
-  font-style: normal;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--mist-dim);
-  padding: 0.14rem 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-muted) 55%, transparent);
 }
 
 /* Floating counted-items cart */

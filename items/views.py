@@ -8725,8 +8725,6 @@ def online_stock_take_page(request, profile, meta, module):
         else {"revision": "0:"}
     )
 
-    from django.utils import timezone as dj_timezone
-
     return render(
         request,
         "items/online_stock_take.html",
@@ -8740,7 +8738,6 @@ def online_stock_take_page(request, profile, meta, module):
             "selected_shop": selected_shop,
             "online_count_date": count_date,
             "online_count_date_value": count_date_value,
-            "online_take_locked": count_date != dj_timezone.localdate(),
             "online_catalog": catalog,
             "online_sync_revision": sync_meta.get("revision") or "0:",
             "online_saved_counts": _online_take_saved_counts(
@@ -9131,8 +9128,6 @@ def shelf_online_stock_take_page(request, profile, meta, module):
         else {"revision": "0:"}
     )
 
-    from django.utils import timezone as dj_timezone
-
     return render(
         request,
         "items/online_stock_take.html",
@@ -9147,7 +9142,6 @@ def shelf_online_stock_take_page(request, profile, meta, module):
             "selected_shop": selected_shop,
             "online_count_date": count_date,
             "online_count_date_value": count_date_value,
-            "online_take_locked": count_date != dj_timezone.localdate(),
             "online_catalog": catalog,
             "online_sync_revision": sync_meta.get("revision") or "0:",
             "online_saved_counts": _online_take_saved_counts(

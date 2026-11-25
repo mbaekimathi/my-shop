@@ -28,7 +28,6 @@ from items.models import (
     StockTakeStatus,
 )
 from items.online_stock_take import (
-    _assert_editable_count_day,
     _baseline_system,
     _qty_label,
     _quantize,
@@ -431,7 +430,6 @@ def save_shelf_online_take_line(
 ) -> dict:
     """Autosave one shelf count for a shop/day; mirrors the item contract."""
     count_date = count_date or timezone.localdate()
-    _assert_editable_count_day(count_date)
     try:
         item_pk = int(item_id)
     except (TypeError, ValueError) as exc:

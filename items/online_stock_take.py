@@ -54,14 +54,6 @@ def resolve_online_stock_take_date(raw=None) -> date:
             return today
 
 
-def _assert_editable_count_day(count_date: date) -> None:
-    """Counts are only writable on their own day — other days are view-only."""
-    if count_date != timezone.localdate():
-        raise ValidationError(
-            "Counts can only be updated on the day they were taken."
-        )
-
-
 def variance_payload(*, system: Decimal, physical: Decimal | None) -> dict:
     if physical is None:
         return {
@@ -346,7 +338,6 @@ def save_online_stock_take_line(
 ) -> dict:
     """Autosave one physical count for a shop/day against book qty frozen at save."""
     count_date = count_date or timezone.localdate()
-    _assert_editable_count_day(count_date)
     try:
         item_pk = int(item_id)
     except (TypeError, ValueError) as exc:
@@ -452,7 +443,6 @@ def record_online_stock_take_save(
         OnlineStockTakeSavedCount.SHELF,
     ):
         stock_kind = OnlineStockTakeSavedCount.ITEM
-    _assert_editable_count_day(count_date)
     filled = int(catalog.get("filled_count") or 0)
     if filled <= 0:
         raise ValidationError("Count at least one item before saving.")
@@ -479,23 +469,15 @@ def record_online_stock_take_save(
 
 
 def list_saved_online_stock_takes(*, stock_kind, shop=None, shops=None, limit=40):
-    """Recent saved counts, newest first — one shop or the in-scope shop set.
-
-    Rows are stamped ``is_today`` so the page can mark same-day records as
-    open/updatable and older ones as locked.
-    """
+    """Recent saved counts, newest first — one shop or the in-scope shop set."""
     saved = OnlineStockTakeSavedCount.objects.filter(stock_kind=stock_kind)
     if shop is not None:
         saved = saved.filter(shop=shop)
     elif shops is not None:
         saved = saved.filter(shop__in=shops)
-    today = timezone.localdate()
-    rows = list(
+    return list(
         saved.select_related("shop").order_by("-saved_at", "-id")[:limit]
     )
-    for row in rows:
-        row.is_today = row.count_date == today
-    return rows
 
 
 def saved_count_summary(record) -> dict:
@@ -508,7 +490,6 @@ def saved_count_summary(record) -> dict:
         "shop_id": record.shop_id,
         "count_date": record.count_date.isoformat(),
         "count_date_label": record.count_date.strftime("%d %b %Y"),
-        "is_today": record.count_date == timezone.localdate(),
         "shop_name": getattr(record.shop, "name", "") or "",
         "item_count": record.item_count,
         "filled_count": record.filled_count,

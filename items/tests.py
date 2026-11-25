@@ -4778,7 +4778,7 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertFalse(page.json()["ok"])
         self.assertEqual(OnlineStockTakeSavedCount.objects.count(), 0)
 
-    def test_online_stock_take_past_day_is_view_only(self):
+    def test_online_stock_take_past_day_is_editable(self):
         from datetime import timedelta
 
         from items.models import (
@@ -4788,7 +4788,7 @@ class ItSupportItemStockPagesTests(TestCase):
 
         yesterday = timezone.localdate() - timedelta(days=1)
 
-        # Counting and saving are refused for a day other than today.
+        # Counting and saving work for a day other than today.
         page = self.client.post(
             f"{self.url}?mode=online-stock-take",
             {
@@ -4800,9 +4800,10 @@ class ItSupportItemStockPagesTests(TestCase):
             },
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(page.status_code, 400)
-        self.assertFalse(page.json()["ok"])
-        self.assertEqual(OnlineStockTakeEntry.objects.count(), 0)
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.json()["ok"])
+        entry = OnlineStockTakeEntry.objects.get()
+        self.assertEqual(entry.count_date, yesterday)
 
         page = self.client.post(
             f"{self.url}?mode=online-stock-take",
@@ -4814,12 +4815,13 @@ class ItSupportItemStockPagesTests(TestCase):
             },
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(page.status_code, 400)
-        self.assertFalse(page.json()["ok"])
-        self.assertEqual(OnlineStockTakeSavedCount.objects.count(), 0)
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.json()["ok"])
+        saved = OnlineStockTakeSavedCount.objects.get()
+        self.assertEqual(saved.count_date, yesterday)
 
-        # The day still opens — read-only: inputs disabled, no Save count,
-        # a locked marker on the page.
+        # The day opens fully editable — no locked marker, inputs enabled,
+        # Save count present.
         page = self.client.get(
             self.url,
             {
@@ -4829,10 +4831,12 @@ class ItSupportItemStockPagesTests(TestCase):
             },
         )
         self.assertEqual(page.status_code, 200)
-        self.assertContains(page, "data-online-take-locked")
-        self.assertContains(page, "View only")
-        self.assertContains(page, "disabled")
-        self.assertNotContains(page, "data-online-take-save-count")
+        self.assertNotContains(page, "data-online-take-locked")
+        self.assertNotContains(page, "View only")
+        self.assertContains(page, "data-online-take-save-count")
+        body = page.content.decode()
+        self.assertIn("data-online-take-qty", body)
+        self.assertNotRegex(body, r"<input[^>]*disabled[^>]*data-online-take-qty")
 
     def test_shelf_online_stock_take_save_count(self):
         from shops.services import set_company_pos_setting

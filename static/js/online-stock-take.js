@@ -23,7 +23,6 @@
   const emptySearchEl = root.querySelector("[data-online-take-empty-search]");
   const emptyTermEl = root.querySelector("[data-online-take-empty-term]");
   const shopId = root.getAttribute("data-selected-shop-id") || "";
-  const dayLocked = root.hasAttribute("data-online-take-locked");
   const countDate =
     root.getAttribute("data-online-count-date") ||
     dateInput?.value ||
@@ -571,7 +570,6 @@
   const renderSavedRow = (saved) => {
     const savedId = encodeURIComponent(String(saved.id));
     const byLabel = String(saved.saved_by_label || "").trim();
-    const isToday = Boolean(saved.is_today);
     const li = document.createElement("li");
     li.className = "online-take-saved-row";
     li.setAttribute("data-saved-id", String(saved.id));
@@ -600,15 +598,12 @@
         saved.saved_at_label || ""
       )}</span>
       <span class="online-take-saved-actions">
-        ${isToday ? "" : '<em class="online-take-saved-lock">Locked</em>'}
         <a class="online-take-saved-link" href="${escapeHtml(
           `${baseUrl}&shop_id=${encodeURIComponent(
             String(saved.shop_id || "")
           )}&date=${encodeURIComponent(saved.count_date || "")}`
         )}">
-          <i data-lucide="folder-open" aria-hidden="true"></i><span>${
-            isToday ? "Open & update" : "Open"
-          }</span>
+          <i data-lucide="folder-open" aria-hidden="true"></i><span>Open &amp; update</span>
         </a>
         <a class="online-take-saved-link" href="${escapeHtml(
           `${baseUrl}&saved=${savedId}&download=1`
@@ -625,7 +620,7 @@
   };
 
   const saveCount = async () => {
-    if (!baseUrl || !shopId || !saveCountBtn || dayLocked) return;
+    if (!baseUrl || !shopId || !saveCountBtn) return;
     saveCountBtn.disabled = true;
     setSaveNote("");
     setStatus("Saving count…");
@@ -742,7 +737,6 @@
   };
 
   const queueSave = (row) => {
-    if (dayLocked) return;
     const itemId = row.getAttribute("data-item-id");
     if (!itemId) return;
     const existing = pendingTimers.get(itemId);
@@ -936,7 +930,7 @@
   }
   syncSummary();
 
-  if (shopId && baseUrl && !dayLocked) {
+  if (shopId && baseUrl) {
     pollTimer = window.setInterval(pollRemoteCounts, POLL_MS);
     window.setTimeout(pollRemoteCounts, 1200);
     document.addEventListener("visibilitychange", () => {

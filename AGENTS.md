@@ -295,15 +295,13 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `saved_count_summary` / `build_online_take_count_document` live in
   `items/online_stock_take.py` (shelf counts reuse them — the payload is
   generic).
-- **Same-day-only writes**: `_assert_editable_count_day` in
-  `save_online_stock_take_line`, `save_shelf_online_take_line` and
-  `record_online_stock_take_save` rejects any `count_date != localdate()` —
-  past/future days render view-only (`online_take_locked` context →
-  `data-online-take-locked`, disabled qty inputs, hidden Save count, "View
-  only" chip, live poll off). Each saved row links **Open**
-  (`?shop_id&date=<count_date>` — editable when `rec.is_today`, else tagged
-  "Locked"), Download (`?saved=<pk>&download=1`) and Print
-  (`?saved=<pk>&paper=a4&auto=1`).
+- **Any day is writable**: `save_online_stock_take_line`,
+  `save_shelf_online_take_line` and `record_online_stock_take_save` accept
+  any `count_date` — picking a past/future day still opens the full editable
+  sheet (autosave, Save count, live poll all on; a recount re-freezes
+  `system_qty_at_count` against live book qty). Each saved row links **Open
+  & update** (`?shop_id&date=<count_date>`), Download
+  (`?saved=<pk>&download=1`) and Print (`?saved=<pk>&paper=a4&auto=1`).
 - A **Saved counts** list sits at the bottom of the page — the selected shop's
   saves, or all in-scope shops when none is picked.
 - The same URL serves the live count sheet: `?shop_id&date&paper=a4|80|58`,
