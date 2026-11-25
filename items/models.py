@@ -100,6 +100,11 @@ class Item(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["created_at"], name="items_item_created_idx"
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.category})"
@@ -532,6 +537,19 @@ class StockMovement(models.Model):
             models.Index(
                 fields=["movement_type", "-created_at"],
                 name="items_stockmv_type_created_idx",
+            ),
+            # 12s floor poll: incoming pending requests for this shop.
+            models.Index(
+                fields=["requested_from_shop", "movement_type", "request_status"],
+                name="items_stockmv_recv_req_idx",
+            ),
+            # 12s floor poll: unacknowledged decisions sent by this shop.
+            models.Index(
+                fields=["shop", "requester_notified"],
+                name="items_stockmv_shop_notify_idx",
+            ),
+            models.Index(
+                fields=["responded_at"], name="items_stockmv_responded_idx"
             ),
         ]
 
@@ -1098,6 +1116,18 @@ class StoreStockMovement(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+        indexes = [
+            # backfill_item_sale_stock MIN(created_at) over source='pos'.
+            models.Index(
+                fields=["source", "created_at"],
+                name="items_storemv_src_created_idx",
+            ),
+            # Per-item period ledgers (reports, backfill).
+            models.Index(
+                fields=["item", "created_at"],
+                name="items_storemv_item_created_idx",
+            ),
+        ]
 
     def __str__(self):
         return f"Store {self.movement_type} {self.quantity} of item {self.item_id}"

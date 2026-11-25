@@ -280,6 +280,7 @@ POS_SETTINGS_CACHE_KEY = "company_pos_settings:v4"
 SHOP_POS_SETTINGS_CACHE_KEY = "shop_pos_settings:v3:{shop_id}"
 POS_SETTINGS_CACHE_TTL = 300
 WORKING_HOURS_SETTINGS_CACHE_KEY = "company_working_hours:v1"
+SHOP_WORKING_HOURS_CACHE_KEY = "shop_working_hours:v1"
 DARAJA_SETTINGS_CACHE_KEY = "company_daraja_settings:v2"
 COMMUNICATIONS_SETTINGS_CACHE_KEY = "company_communications_settings:v1"
 RECEIPT_QR_PREVIEW_CACHE_KEY = "receipt_qr_preview:v1"
@@ -1007,7 +1008,7 @@ def stock_hide_state(settings_row: CompanyStockSettings | None = None) -> dict:
     }
 
 
-def item_stock_is_hidden(item_id, category="", state=None, shop_id=None) -> bool:
+def item_stock_is_hidden(item_id, category="", state=None, shop_id=None, *, take_state=None) -> bool:
     state = state or stock_hide_state()
     mode = state["mode"]
     if mode == "all":
@@ -1024,7 +1025,9 @@ def item_stock_is_hidden(item_id, category="", state=None, shop_id=None) -> bool
     # Pending stock takes mask on-hand numbers until that shop submits.
     from items.stock_take import stock_take_hides_item
 
-    return stock_take_hides_item(item_id, category, shop_id=shop_id)
+    return stock_take_hides_item(
+        item_id, category, shop_id=shop_id, state=take_state
+    )
 
 
 def save_stock_visibility(*, mode: str, categories, item_ids) -> CompanyStockSettings:
@@ -1108,6 +1111,18 @@ def _parse_working_time(raw: str):
 
 def _invalidate_working_hours_settings_cache() -> None:
     cache.delete(WORKING_HOURS_SETTINGS_CACHE_KEY)
+    cache.delete(SHOP_WORKING_HOURS_CACHE_KEY)
+
+
+def _refresh_shop_working_hours_cache(rows_by_shop: dict) -> None:
+    """Merge saved/created per-shop hours rows into the shared cache map."""
+    if not rows_by_shop:
+        return
+    cached = cache.get(SHOP_WORKING_HOURS_CACHE_KEY)
+    if not isinstance(cached, dict):
+        cached = {}
+    cached.update(rows_by_shop)
+    cache.set(SHOP_WORKING_HOURS_CACHE_KEY, cached, POS_SETTINGS_CACHE_TTL)
 
 
 def get_company_working_hours_settings() -> CompanyWorkingHoursSettings:
@@ -1158,25 +1173,39 @@ def validate_working_hours_payload(data) -> dict:
 
 
 def get_shop_working_hours_settings(shop: Shop) -> ShopWorkingHoursSettings:
+    cached = cache.get(SHOP_WORKING_HOURS_CACHE_KEY)
+    if isinstance(cached, dict) and shop.pk in cached:
+        return cached[shop.pk]
     existing = ShopWorkingHoursSettings.objects.filter(shop_id=shop.pk).first()
-    if existing is not None:
-        return existing
-    company = get_company_working_hours_settings()
-    row, _ = ShopWorkingHoursSettings.objects.get_or_create(
-        shop=shop,
-        defaults={
-            "start_time": company.start_time,
-            "end_time": company.end_time,
-        },
-    )
-    return row
+    if existing is None:
+        company = get_company_working_hours_settings()
+        existing, _ = ShopWorkingHoursSettings.objects.get_or_create(
+            shop=shop,
+            defaults={
+                "start_time": company.start_time,
+                "end_time": company.end_time,
+            },
+        )
+    _refresh_shop_working_hours_cache({shop.pk: existing})
+    return existing
 
 
 def get_shop_working_hours_map(shops) -> dict[int, ShopWorkingHoursSettings]:
     company = get_company_working_hours_settings()
     shop_ids = [shop.pk for shop in shops]
-    rows = ShopWorkingHoursSettings.objects.filter(shop_id__in=shop_ids)
-    existing = {row.shop_id: row for row in rows}
+    cached = cache.get(SHOP_WORKING_HOURS_CACHE_KEY)
+    cached_map = cached if isinstance(cached, dict) else {}
+    uncached_ids = [pk for pk in shop_ids if pk not in cached_map]
+    rows = (
+        ShopWorkingHoursSettings.objects.filter(shop_id__in=uncached_ids)
+        if uncached_ids
+        else []
+    )
+    existing = {
+        pk: cached_map[pk] for pk in shop_ids if pk in cached_map
+    }
+    for row in rows:
+        existing[row.shop_id] = row
     missing = [shop for shop in shops if shop.pk not in existing]
     if missing:
         ShopWorkingHoursSettings.objects.bulk_create(
@@ -1189,8 +1218,13 @@ def get_shop_working_hours_map(shops) -> dict[int, ShopWorkingHoursSettings]:
                 for shop in missing
             ]
         )
-        for row in ShopWorkingHoursSettings.objects.filter(shop_id__in=shop_ids):
+        for row in ShopWorkingHoursSettings.objects.filter(
+            shop_id__in=[shop.pk for shop in missing]
+        ):
             existing[row.shop_id] = row
+    _refresh_shop_working_hours_cache(
+        {pk: existing[pk] for pk in shop_ids if pk in existing}
+    )
     return existing
 
 
@@ -1224,6 +1258,7 @@ def update_shop_working_hours_from_post(data, shops) -> None:
         hours_row.start_time = start_time
         hours_row.end_time = end_time
         hours_row.save(update_fields=["start_time", "end_time", "updated_at"])
+    _refresh_shop_working_hours_cache(hours_map)
 
 
 def update_company_working_hours(data) -> CompanyWorkingHoursSettings:
@@ -7088,9 +7123,11 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
         }
         stock_by_item = {
             row.item_id: row
-            for row in ShopStock.objects.select_for_update().filter(
-                shop=shop, item_id__in=item_ids
-            )
+            for row in ShopStock.objects.select_for_update()
+            .filter(shop=shop, item_id__in=item_ids)
+            # PK order avoids the Meta.ordering join+filesort under lock and
+            # gives a consistent lock-acquisition order across checkouts.
+            .order_by("pk")
         }
         missing_stock_ids = [
             item_id for item_id in item_ids if item_id not in stock_by_item
@@ -7103,8 +7140,10 @@ def complete_shop_checkout(*, shop: Shop, profile, payload: dict, request=None, 
                 ],
                 ignore_conflicts=True,
             )
-            for row in ShopStock.objects.select_for_update().filter(
-                shop=shop, item_id__in=missing_stock_ids
+            for row in (
+                ShopStock.objects.select_for_update()
+                .filter(shop=shop, item_id__in=missing_stock_ids)
+                .order_by("pk")
             ):
                 stock_by_item[row.item_id] = row
 
@@ -8224,11 +8263,18 @@ def _session_trade_payments(*, shop_id, start, end):
     Trade-out collections are money into the till; trade-in payouts are money
     out (the shop pays the customer for the goods traded in).
     """
+    from django.db.models import Q
+
     from .models import ShopReceipt
 
     rows = []
     for receipt in (
-        ShopReceipt.objects.filter(shop_id=shop_id, created_at__lt=end)
+        ShopReceipt.objects.filter(
+            Q(kind__in=(ShopReceiptKind.TRADE_OUT, ShopReceiptKind.TRADE_IN))
+            | Q(settled_from_trade=True),
+            shop_id=shop_id,
+            created_at__lt=end,
+        )
         .exclude(trade_settlements=[])
         .select_related("created_by__user")
     ):
@@ -12782,7 +12828,7 @@ def _receipt_sold_as_payload(receipt) -> dict:
     return {"sold_as": "shop", "sold_as_label": "Shop"}
 
 
-def _receipt_list_item(receipt) -> dict:
+def _receipt_list_item(receipt, *, settings_row=None) -> dict:
     created = timezone.localtime(receipt.created_at)
     confirmed_payment = getattr(receipt, "confirmed_payment_at", None)
     confirmed_local = (
@@ -12795,7 +12841,7 @@ def _receipt_list_item(receipt) -> dict:
         "id": receipt.pk,
         "source": "pos",
         "receipt_number": receipt.receipt_number,
-        "tally_code": receipt_tally_code(receipt),
+        "tally_code": receipt_tally_code(receipt, settings_row=settings_row),
         "kind": receipt.kind,
         "kind_label": receipt.get_kind_display(),
         "status": receipt.status,
@@ -13118,6 +13164,8 @@ def list_shop_receipts(
     include_advancement = kind_key in ("all", "advancement")
 
     merged = []
+    total_count = 0
+    pos_settings_row = get_effective_pos_settings(shop) if include_pos else None
 
     if include_pos:
         pos_qs = (
@@ -13126,7 +13174,7 @@ def list_shop_receipts(
                 created_at__gte=start_dt,
                 created_at__lte=end_dt,
             )
-            .select_related("created_by__user")
+            .select_related("created_by__user", "shop")
             .annotate(
                 has_customer_delivery=Exists(
                     ShopDelivery.objects.filter(receipt_id=OuterRef("pk"))
@@ -13164,7 +13212,13 @@ def list_shop_receipts(
                 | Q(kind__icontains=q)
                 | Q(converted_from_kind__icontains=q)
             )
-        merged.extend(_receipt_list_item(row) for row in pos_qs)
+        total_count += pos_qs.count()
+        # Every source sorts by (-created_at, -id) like the final merge, so
+        # per-source top-N preserves the merged top-N.
+        merged.extend(
+            _receipt_list_item(row, settings_row=pos_settings_row)
+            for row in pos_qs[:limit_n]
+        )
 
     if include_stock:
         stock_qs = (
@@ -13178,6 +13232,10 @@ def list_shop_receipts(
             .prefetch_related("lines")
             .order_by("-created_at", "-id")
         )
+        if not q_l:
+            total_count += stock_qs.count()
+            stock_qs = stock_qs[:limit_n]
+        matched = len(merged)
         for movement in stock_qs:
             item = _stock_receipt_list_item(movement)
             if q_l:
@@ -13195,6 +13253,8 @@ def list_shop_receipts(
                 if q_l not in hay:
                     continue
             merged.append(item)
+        if q_l:
+            total_count += len(merged) - matched
 
     if include_expense:
         expense_qs = (
@@ -13206,6 +13266,10 @@ def list_shop_receipts(
             .select_related("created_by__user")
             .order_by("-created_at", "-id")
         )
+        if not q_l:
+            total_count += expense_qs.count()
+            expense_qs = expense_qs[:limit_n]
+        matched = len(merged)
         for expense in expense_qs:
             item = _expense_receipt_list_item(expense)
             if q_l:
@@ -13224,6 +13288,8 @@ def list_shop_receipts(
                 if q_l not in hay:
                     continue
             merged.append(item)
+        if q_l:
+            total_count += len(merged) - matched
 
     if include_advancement:
         from .models import CustomerPrepayment
@@ -13237,6 +13303,10 @@ def list_shop_receipts(
             .select_related("created_by__user", "shop")
             .order_by("-created_at", "-id")
         )
+        if not q_l:
+            total_count += prepay_qs.count()
+            prepay_qs = prepay_qs[:limit_n]
+        matched = len(merged)
         for prepay in prepay_qs:
             item = _prepayment_receipt_list_item(prepay)
             if q_l:
@@ -13256,9 +13326,10 @@ def list_shop_receipts(
                 if q_l not in hay:
                     continue
             merged.append(item)
+        if q_l:
+            total_count += len(merged) - matched
 
     merged.sort(key=lambda row: (row["created_at"], row["id"]), reverse=True)
-    total_count = len(merged)
     receipts = merged[:limit_n]
     return {
         "ok": True,

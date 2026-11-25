@@ -105,11 +105,12 @@ def open_stock_take_hide_sets() -> dict:
     }
 
 
-def stock_take_hides_item(item_id, category="", shop_id=None) -> bool:
+def stock_take_hides_item(item_id, category="", shop_id=None, *, state=None) -> bool:
     """Hide on-hand numbers only for selected take items at pending shops.
 
     Requires shop_id. Without a shop, stock-take masking does not apply — other
-    shops and aggregates keep showing quantities.
+    shops and aggregates keep showing quantities. Pass ``state`` (from
+    ``open_stock_take_hide_sets``) to avoid a cache read per item in loops.
     """
     if shop_id is None:
         return False
@@ -118,7 +119,7 @@ def stock_take_hides_item(item_id, category="", shop_id=None) -> bool:
         item_key = int(item_id)
     except (TypeError, ValueError):
         return False
-    state = open_stock_take_hide_sets()
+    state = state if state is not None else open_stock_take_hide_sets()
     if not state["active"]:
         return False
     coverage = state["by_shop"].get(shop_key)

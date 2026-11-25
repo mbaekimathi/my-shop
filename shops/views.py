@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, DecimalField, Q, Subquery, Sum, Value
@@ -1274,9 +1275,11 @@ def _catalog_rows_for_items(shop, items):
             shop=shop, item_id__in=item_ids
         ).values_list("item_id", "price")
     }
+    from items.stock_take import open_stock_take_hide_sets
     from shops.services import item_stock_is_hidden, stock_hide_state
 
     hide_state = stock_hide_state()
+    take_state = open_stock_take_hide_sets()
     rows = []
     for item in items:
         override = price_by_item.get(item.pk) if item.use_individual_shop_prices else None
@@ -1298,7 +1301,11 @@ def _catalog_rows_for_items(shop, items):
                 "discount_amount": str(item.discount_amount or 0),
                 "stock": _qty_number(stock_by_item.get(item.pk, 0)),
                 "stock_hidden": item_stock_is_hidden(
-                    item.pk, item.category, hide_state, shop_id=shop.pk
+                    item.pk,
+                    item.category,
+                    hide_state,
+                    shop_id=shop.pk,
+                    take_state=take_state,
                 ),
                 "sale_stock_tracked": bool(
                     getattr(item, "deduct_stock_on_sale", True)
@@ -1330,42 +1337,56 @@ def shop_website(request, shop_id):
     shop = get_object_or_404(
         Shop.objects.filter(is_hidden=False, is_suspended=False), pk=shop_id
     )
-    sale_filter = Q(
-        shop_receipt_lines__receipt__shop=shop,
-        shop_receipt_lines__receipt__kind__in=(
-            ShopReceiptKind.SALE,
-            ShopReceiptKind.CREDIT,
-        ),
-        shop_receipt_lines__receipt__status__in=COUNTED_RECEIPT_STATUSES,
-    )
-    items = list(
-        _catalog_base_qs(shop)
-        .annotate(
-            sold_quantity=Coalesce(
-                Sum("shop_receipt_lines__quantity", filter=sale_filter),
-                Value(0),
-                output_field=DecimalField(max_digits=14, decimal_places=3),
-            )
-            - Coalesce(
-                Sum("shop_receipt_lines__returned_quantity", filter=sale_filter),
-                Value(0),
-                output_field=DecimalField(max_digits=14, decimal_places=3),
-            )
+    # The sold-quantity annotation joins items to the shop's whole receipt-line
+    # history — expensive on an uncached public page, so cache the built
+    # catalog briefly. Sales made within the TTL simply show up a little late.
+    catalog_cache_key = f"shop_website_catalog:v1:{shop.pk}"
+    cached_catalog = cache.get(catalog_cache_key)
+    if cached_catalog is None:
+        sale_filter = Q(
+            shop_receipt_lines__receipt__shop=shop,
+            shop_receipt_lines__receipt__kind__in=(
+                ShopReceiptKind.SALE,
+                ShopReceiptKind.CREDIT,
+            ),
+            shop_receipt_lines__receipt__status__in=COUNTED_RECEIPT_STATUSES,
         )
-        .order_by("category", "-sold_quantity", "name")
-    )
-    rows_by_id = {row["id"]: row for row in _catalog_rows_for_items(shop, items)}
-    categories = []
-    for index, (category, group) in enumerate(
-        groupby(items, key=lambda item: item.category), start=1
-    ):
-        categories.append(
-            {
-                "name": category,
-                "anchor": f"{slugify(category) or 'category'}-{index}",
-                "items": [rows_by_id[item.pk] for item in group],
-            }
+        items = list(
+            _catalog_base_qs(shop)
+            .annotate(
+                sold_quantity=Coalesce(
+                    Sum("shop_receipt_lines__quantity", filter=sale_filter),
+                    Value(0),
+                    output_field=DecimalField(max_digits=14, decimal_places=3),
+                )
+                - Coalesce(
+                    Sum(
+                        "shop_receipt_lines__returned_quantity",
+                        filter=sale_filter,
+                    ),
+                    Value(0),
+                    output_field=DecimalField(max_digits=14, decimal_places=3),
+                )
+            )
+            .order_by("category", "-sold_quantity", "name")
         )
+        rows_by_id = {
+            row["id"]: row for row in _catalog_rows_for_items(shop, items)
+        }
+        categories = []
+        for index, (category, group) in enumerate(
+            groupby(items, key=lambda item: item.category), start=1
+        ):
+            categories.append(
+                {
+                    "name": category,
+                    "anchor": f"{slugify(category) or 'category'}-{index}",
+                    "items": [rows_by_id[item.pk] for item in group],
+                }
+            )
+        cached_catalog = {"categories": categories, "item_count": len(items)}
+        cache.set(catalog_cache_key, cached_catalog, 120)
+    categories = cached_catalog["categories"]
 
     suggestions_url_template = reverse(
         "employees:shop_website_suggestions",
@@ -1384,7 +1405,7 @@ def shop_website(request, shop_id):
         {
             "shop": shop,
             "categories": categories,
-            "item_count": len(items),
+            "item_count": cached_catalog["item_count"],
             "branches": branches,
             "suggestions_url_template": suggestions_url_template,
             "whatsapp_phone": whatsapp_phone,
@@ -2112,14 +2133,30 @@ def my_shop_workspace(request, shop_id):
 def _stock_take_workspace_context(
     shop, *, force_open=False, suppress_auto_open=False
 ):
+    from items.models import (
+        StockTakeAssignment,
+        StockTakeAssignmentStatus,
+        StockTakeStatus,
+    )
     from items.stock_take import (
-        pending_stock_take_count_for_shop,
-        pending_stock_take_for_shop,
+        close_overdue_stock_takes,
         stock_take_assignment_payload,
     )
 
-    assignment = pending_stock_take_for_shop(shop)
-    pending_count = pending_stock_take_count_for_shop(shop)
+    # One sweep + two reads (count + oldest) instead of a sweep per helper.
+    close_overdue_stock_takes()
+    pending_qs = StockTakeAssignment.objects.filter(
+        shop=shop,
+        status=StockTakeAssignmentStatus.PENDING,
+        stock_take__status=StockTakeStatus.OPEN,
+    )
+    pending_count = pending_qs.order_by().count()
+    assignment = (
+        pending_qs.select_related("stock_take")
+        .prefetch_related("counts__item")
+        .order_by("stock_take__deadline", "id")
+        .first()
+    )
     results_url = reverse(
         "employees:my_shop_stock_count", kwargs={"shop_id": shop.pk}
     )

@@ -2563,29 +2563,6 @@ def backfill_item_sale_stock(item: Item, *, actor=None, since=None) -> dict:
         record_store_receipt_movement,
     )
 
-    lines = list(
-        ShopReceiptLine.objects.filter(
-            item_id=item.pk,
-            receipt__kind__in=(
-                ShopReceiptKind.SALE,
-                ShopReceiptKind.CREDIT,
-                ShopReceiptKind.GIFT,
-                ShopReceiptKind.TRADE_OUT,
-                ShopReceiptKind.TRADE_IN,
-            ),
-        )
-        .select_related("receipt__shop", "receipt__created_by")
-        .order_by("receipt__created_at", "id")
-    )
-    summary = {"lines": 0, "units_out": Decimal("0"), "units_in": Decimal("0")}
-    if not lines:
-        return summary
-
-    pos_movements = list(
-        StoreStockMovement.objects.filter(
-            item_id=item.pk, source=STORE_SOURCE_POS
-        ).only("movement_type", "quantity", "note", "created_at")
-    )
     # The first POS-mirror movement marks when per-line deduction tracking
     # existed at all — older receipts always deducted and are skipped. With
     # no mirror history at all nothing can be judged; only an explicit
@@ -2601,25 +2578,57 @@ def backfill_item_sale_stock(item: Item, *, actor=None, since=None) -> dict:
             or timezone.now()
         )
 
+    lines = list(
+        ShopReceiptLine.objects.filter(
+            item_id=item.pk,
+            receipt__kind__in=(
+                ShopReceiptKind.SALE,
+                ShopReceiptKind.CREDIT,
+                ShopReceiptKind.GIFT,
+                ShopReceiptKind.TRADE_OUT,
+                ShopReceiptKind.TRADE_IN,
+            ),
+            receipt__created_at__gte=mirror_since,
+        )
+        .select_related("receipt__shop", "receipt__created_by")
+        .order_by("receipt__created_at", "id")
+    )
+    summary = {"lines": 0, "units_out": Decimal("0"), "units_in": Decimal("0")}
+    if not lines:
+        return summary
+
+    pos_movements = list(
+        StoreStockMovement.objects.filter(
+            item_id=item.pk, source=STORE_SOURCE_POS
+        ).only("movement_type", "quantity", "note", "created_at")
+    )
+    # Group movements by their "{receipt_number} · …" note prefix once so the
+    # per-line loop only scans that receipt's movements, not the whole list.
+    movements_by_receipt = {}
+    for mv in pos_movements:
+        receipt_key, sep, rest = (mv.note or "").partition(" · ")
+        if not sep:
+            continue
+        label, _, shop_part = rest.partition(" · ")
+        movements_by_receipt.setdefault(receipt_key, []).append(
+            (mv, label.strip().lower(), shop_part)
+        )
+
     item = Item.objects.select_for_update().get(pk=item.pk)
     stocks_by_shop = {}
     now = timezone.now()
 
     for line in lines:
         receipt = line.receipt
-        if receipt.shop_id is None or receipt.created_at < mirror_since:
+        if receipt.shop_id is None:
             continue
         is_trade_in = receipt.kind == ShopReceiptKind.TRADE_IN
-        prefix = f"{receipt.receipt_number} · "
         shop_name = receipt.shop.name or ""
         actual = Decimal("0")
         issued = False
-        for mv in pos_movements:
-            note = mv.note or ""
-            if not note.startswith(prefix):
-                continue
-            label, _, shop_part = note[len(prefix) :].partition(" · ")
-            label = label.strip().lower()
+        for mv, label, shop_part in movements_by_receipt.get(
+            receipt.receipt_number, ()
+        ):
             if is_trade_in:
                 accepted = (
                     mv.movement_type == StoreStockMovementType.IN

@@ -237,6 +237,9 @@ class Client(models.Model):
 
     class Meta:
         ordering = ["full_name", "id"]
+        indexes = [
+            models.Index(fields=["full_name"], name="shops_client_full_name_idx"),
+        ]
 
     def __str__(self):
         return f"{self.full_name} ({self.phone_number})"
@@ -369,6 +372,21 @@ class ShopReceipt(models.Model):
             models.Index(
                 fields=["shop", "created_at"],
                 name="shopreceipt_shop_created_idx",
+            ),
+            # Till/day windows filter shop + confirmed_payment_at.
+            models.Index(
+                fields=["shop", "confirmed_payment_at"],
+                name="shopreceipt_shop_confirmed_idx",
+            ),
+            # Return-refund windows filter shop + last_returned_at.
+            models.Index(
+                fields=["shop", "last_returned_at"],
+                name="shopreceipt_shop_returned_idx",
+            ),
+            # Client-lookup joins deliveries on client_phone.
+            models.Index(
+                fields=["client_phone"],
+                name="shopreceipt_client_phone_idx",
             ),
         ]
         constraints = [
@@ -735,6 +753,12 @@ class ShopDaySession(models.Model):
 
     class Meta:
         ordering = ["-opened_at"]
+        indexes = [
+            # get_open_shop_day / get_last_closed_shop_day per shop.
+            models.Index(
+                fields=["shop", "closed_at"], name="shopday_shop_closed_idx"
+            ),
+        ]
 
     def __str__(self):
         state = "open" if self.is_open else "closed"

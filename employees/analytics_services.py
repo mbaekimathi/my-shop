@@ -4393,6 +4393,8 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
     slug = spec["slug"]
 
     def _list_payload(rows):
+        truncated = len(rows) > ANALYTICS_RECEIPT_LIST_LIMIT
+        shown = rows[:ANALYTICS_RECEIPT_LIST_LIMIT]
         return {
             **filters,
             "kind": spec,
@@ -4409,11 +4411,11 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
                     "when": row["when"],
                     "cashier": row["cashier"],
                 }
-                for row in rows
+                for row in shown
             ],
             "total_count": len(rows),
-            "returned_count": len(rows),
-            "truncated": False,
+            "returned_count": len(shown),
+            "truncated": truncated,
             "page": {
                 "headline": spec["label"],
                 "lead": "",
@@ -4464,8 +4466,13 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
             | Q(converted_from_kind__icontains=search)
         ).distinct()
 
+    # One extra row detects truncation without hydrating the whole period.
+    fetched = list(qs[: ANALYTICS_RECEIPT_LIST_LIMIT + 1])
+    truncated = len(fetched) > ANALYTICS_RECEIPT_LIST_LIMIT
+    fetched = fetched[:ANALYTICS_RECEIPT_LIST_LIMIT]
+
     rows = []
-    for row in qs:
+    for row in fetched:
         cashier = _cashier_label(row.created_by)
         client = row.client_name or "Walk-in"
         if row.client_phone:
@@ -4489,9 +4496,9 @@ def build_analytics_receipts_list(*, profile, request, kind: str) -> dict:
         "kind": spec,
         "search": search,
         "rows": rows,
-        "total_count": len(rows),
+        "total_count": qs.count() if truncated else len(rows),
         "returned_count": len(rows),
-        "truncated": False,
+        "truncated": truncated,
         "page": {
             "headline": spec["label"],
             "lead": "",
@@ -4520,7 +4527,9 @@ CONFIRM_RECEIPT_KIND_FILTERS = (
 
 # Optional per-band cap when callers pass an explicit limit (e.g. tests).
 # Page / rows / print default to None = all receipts in the filtered period.
-CONFIRM_RECEIPT_DEFAULT_LIMIT = None
+ANALYTICS_RECEIPT_LIST_LIMIT = 500
+
+CONFIRM_RECEIPT_DEFAULT_LIMIT = 500
 CONFIRM_RECEIPT_PRINT_LIMIT = None
 # Always show every status: pending → cancelled → confirmed.
 CONFIRM_RECEIPT_STATUS_RANK = {
@@ -5292,6 +5301,7 @@ def build_confirm_receipts_rows(*, profile, request) -> dict:
             status_key=context["status_filter"],
             search=context["search"],
             kind_key=context["kind_filter"],
+            limit=CONFIRM_RECEIPT_DEFAULT_LIMIT,
         ),
         profile,
     )
@@ -5324,6 +5334,7 @@ def build_confirm_receipts_page(*, profile, request, include_rows: bool = True) 
                 status_key=context["status_filter"],
                 search=context["search"],
                 kind_key=context["kind_filter"],
+                limit=CONFIRM_RECEIPT_DEFAULT_LIMIT,
             ),
             profile,
         )
