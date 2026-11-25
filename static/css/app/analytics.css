@@ -2796,6 +2796,12 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
+.ax-money.is-balanced {
+  background: color-mix(in srgb, var(--info) 12%, var(--surface));
+  color: color-mix(in srgb, var(--info) 40%, var(--text-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--info) 28%, transparent);
+}
+
 .ax-table td.ax-cell--money {
   text-align: right;
   vertical-align: middle;
@@ -10778,12 +10784,20 @@ body.ax-credit-due-open {
   background: var(--danger-bg);
 }
 
+.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-balanced td {
+  background: var(--info-bg);
+}
+
 .ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-good td.ax-cell--primary {
   color: var(--success-text);
 }
 
 .ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-bad td.ax-cell--primary {
   color: var(--danger-text);
+}
+
+.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-balanced td.ax-cell--primary {
+  color: var(--info-text);
 }
 
 .ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--deficit td {
@@ -10973,7 +10987,8 @@ body.ax-credit-due-open {
   .ax.ax--day-report .ax-table .ax-money,
   .ax.ax--day-report .ax-table .ax-money.is-good,
   .ax.ax--day-report .ax-table .ax-money.is-bad,
-  .ax.ax--day-report .ax-table .ax-money.is-warn {
+  .ax.ax--day-report .ax-table .ax-money.is-warn,
+  .ax.ax--day-report .ax-table .ax-money.is-balanced {
     white-space: nowrap;
   }
 
@@ -11206,6 +11221,10 @@ body.ax-credit-due-open {
   .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-bad,
   .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--deficit {
     background: var(--danger-bg);
+  }
+
+  .ax.ax--day-report .ax-table--moneyflow tbody tr.ax-flow-row--variance.is-balanced {
+    background: var(--info-bg);
   }
 
   /* Money-flow primary cells still carry their direction dot — the

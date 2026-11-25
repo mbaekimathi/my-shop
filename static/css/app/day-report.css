@@ -467,6 +467,10 @@
   color: var(--warning-text);
 }
 
+.dr-money.is-balanced {
+  color: var(--info-text);
+}
+
 .dr-tone--good {
   color: var(--success-text);
   font-weight: 600;
@@ -636,6 +640,18 @@
 
 .ax-flow-row--variance.is-bad td.dr-cell--lead::before {
   background: var(--danger);
+}
+
+.ax-flow-row--variance.is-balanced td {
+  background: var(--info-bg);
+}
+
+.ax-flow-row--variance.is-balanced td.dr-cell--lead {
+  color: var(--info-text);
+}
+
+.ax-flow-row--variance.is-balanced td.dr-cell--lead::before {
+  background: var(--info);
 }
 
 .ax-flow-row--note td,

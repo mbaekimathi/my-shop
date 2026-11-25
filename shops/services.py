@@ -8165,8 +8165,8 @@ def _session_cleared_pending_sales(*, shop_id, start, end, counted_statuses=None
     These are receipts a previous session showed as pending — the money is
     tendered when the receipt clears (`confirmed_payment_at`), so it lands in
     the session that collected it, not the session that printed it. The
-    collecting session holds it above Expected (set aside); the printing
-    session keeps the sale but drops the money expectation.
+    collecting session counts it in Expected; the printing session keeps the
+    sale but drops the money expectation.
     """
     from .models import ShopReceipt
 
@@ -8331,9 +8331,8 @@ def _session_activity_totals(
     Sales use original tender (including later-returned receipts). A pending
     receipt confirmed in a *different* session keeps its sale on the
     printing session but its tender is deducted from that session's
-    Expected — the money moved to the collecting till, which holds it
-    above Expected as a set-aside. Refunds are subtracted on the day the
-    return happened.
+    Expected — the money moved to the collecting till, which counts it in
+    its own Expected. Refunds are subtracted on the day the return happened.
     """
     from .models import ExpenseCategory
 
@@ -8515,13 +8514,14 @@ def _session_activity_totals(
     opening_mpesa = Decimal(session.opening_mpesa or 0)
     opening_card = Decimal(getattr(session, "opening_card", None) or 0)
     opening_credit = Decimal(session.opening_credit or 0)
-    # Cleared-pending money is collected into this till but stays outside
-    # Expected — it belongs to an earlier session's sale, so it sits aside
-    # above Expected (positive variance). The matching tender is deducted
+    # Cleared-pending money is collected into this till: the sale stays on
+    # the earlier session that printed it, but the cash sits in this drawer
+    # so it counts toward this Expected. The matching tender is deducted
     # from the printing session's Expected — its deficit is cleared.
     expected_cash = (
         opening_cash
         + cash_sales
+        + cleared_cash
         - elsewhere_cash
         + credit_cash
         + trade_collected_cash
@@ -8535,6 +8535,7 @@ def _session_activity_totals(
     expected_mpesa = (
         opening_mpesa
         + mpesa_sales
+        + cleared_mpesa
         - elsewhere_mpesa
         + credit_mpesa
         + trade_collected_mpesa
@@ -8546,6 +8547,7 @@ def _session_activity_totals(
     expected_card = (
         opening_card
         + card_sales
+        + cleared_card
         - elsewhere_card
         + credit_card
         + trade_collected_card
@@ -10506,17 +10508,20 @@ def build_shop_day_report_pdf(
         head.append(Paragraph(_esc(label), head_cell_right))
     head.append(Paragraph("Total", head_cell_right))
 
-    def _money_row(label, cash_v, mpesa_v, card_v, total_v, *, strong=False, minus=False):
+    def _money_row(label, cash_v, mpesa_v, card_v, total_v, *, strong=False, minus=False, color=None):
         style_r = cell_strong_right if strong else cell_right
         style_l = cell_strong if strong else cell
         values = {"cash": cash_v, "mpesa": mpesa_v, "card": card_v}
 
+        def _ink(text):
+            return f"<font color='{color}'>{text}</font>" if color else text
+
         def _cell(value):
             if minus and value is not None and Decimal(value) != 0:
-                return f"−{_fmt(value)}"
-            return _fmt(value)
+                return _ink(f"−{_fmt(value)}")
+            return _ink(_fmt(value))
 
-        row = [Paragraph(_esc(label), style_l)]
+        row = [Paragraph(_ink(_esc(label)), style_l)]
         for key, _lbl in channel_cols:
             row.append(Paragraph(_cell(values.get(key)), style_r))
         row.append(Paragraph(_cell(total_v), style_r))
@@ -10526,6 +10531,32 @@ def build_shop_day_report_pdf(
         (summary.get("cash_refunds") or 0)
         + (summary.get("mpesa_refunds") or 0)
         + (summary.get("card_refunds") or 0)
+    )
+    # Cross-session pending clears: each money-flow row names the cashier
+    # on the other side of the hand-off.
+    def _party_names(detail_rows, key):
+        names = []
+        for row in detail_rows:
+            name = (row.get(key) or "").strip()
+            if name and name != "—" and name not in names:
+                names.append(name)
+        return ", ".join(names)
+
+    elsewhere_names = _party_names(
+        details.get("cleared_elsewhere") or [], "cleared_by"
+    )
+    collected_for_names = _party_names(
+        details.get("cleared_pending") or [], "seller"
+    )
+    # The day-report section toggles gate every money-flow row that
+    # itemizes a toggled section (same picks as the report page).
+    sec_credit = _sec("day_report_sec_credit_payments")
+    sec_prepay = _sec("day_report_sec_prepayments")
+    sec_cleared = _sec("day_report_sec_cleared")
+    sec_expenses = _sec("day_report_sec_expenses")
+    sec_drawings = _sec("day_report_sec_drawings")
+    sec_stock = _sec("day_report_sec_item_stock") or _sec(
+        "day_report_sec_shelf_stock"
     )
     rows = [
         _money_row(
@@ -10542,26 +10573,66 @@ def build_shop_day_report_pdf(
             summary.get("card_sales"),
             summary.get("sales_total"),
         ),
-        _money_row(
-            f"Credit payments collected ({summary.get('credit_collected_count') or 0})",
-            summary.get("credit_collected_cash"),
-            summary.get("credit_collected_mpesa"),
-            summary.get("credit_collected_card"),
-            summary.get("credit_collected_total"),
+        *(
+            [
+                _money_row(
+                    f"Credit payments collected "
+                    f"({summary.get('credit_collected_count') or 0})",
+                    summary.get("credit_collected_cash"),
+                    summary.get("credit_collected_mpesa"),
+                    summary.get("credit_collected_card"),
+                    summary.get("credit_collected_total"),
+                )
+            ]
+            if sec_credit
+            else []
         ),
-        _money_row(
-            f"Trade payments collected ({summary.get('trade_collected_count') or 0})",
-            summary.get("trade_collected_cash"),
-            summary.get("trade_collected_mpesa"),
-            summary.get("trade_collected_card"),
-            summary.get("trade_collected_total"),
+        *(
+            [
+                _money_row(
+                    f"Trade payments collected "
+                    f"({summary.get('trade_collected_count') or 0})",
+                    summary.get("trade_collected_cash"),
+                    summary.get("trade_collected_mpesa"),
+                    summary.get("trade_collected_card"),
+                    summary.get("trade_collected_total"),
+                )
+            ]
+            if sec_cleared
+            else []
         ),
-        _money_row(
-            f"Customer prepayments ({summary.get('prepayments_count') or 0})",
-            summary.get("prepayments_cash"),
-            summary.get("prepayments_mpesa"),
-            summary.get("prepayments_card"),
-            summary.get("prepayments_total"),
+        *(
+            [
+                _money_row(
+                    f"Customer prepayments "
+                    f"({summary.get('prepayments_count') or 0})",
+                    summary.get("prepayments_cash"),
+                    summary.get("prepayments_mpesa"),
+                    summary.get("prepayments_card"),
+                    summary.get("prepayments_total"),
+                )
+            ]
+            if sec_prepay
+            else []
+        ),
+        *(
+            [
+                _money_row(
+                    f"Pending cleared here "
+                    f"({summary.get('cleared_pending_count') or 0})"
+                    + (
+                        f" — collected for {collected_for_names}"
+                        if collected_for_names
+                        else ""
+                    ),
+                    summary.get("cleared_pending_cash"),
+                    summary.get("cleared_pending_mpesa"),
+                    summary.get("cleared_pending_card"),
+                    summary.get("cleared_pending_total"),
+                )
+            ]
+            if sec_cleared and summary.get("cleared_pending_count")
+            else []
         ),
         _money_row(
             "Returns paid",
@@ -10571,37 +10642,62 @@ def build_shop_day_report_pdf(
             refunds_total,
             minus=True,
         ),
-        _money_row(
-            "Expenses paid",
-            summary.get("expenses_paid"),
-            None,
-            None,
-            summary.get("expenses_paid"),
-            minus=True,
+        *(
+            [
+                _money_row(
+                    "Expenses paid",
+                    summary.get("expenses_paid"),
+                    None,
+                    None,
+                    summary.get("expenses_paid"),
+                    minus=True,
+                )
+            ]
+            if sec_expenses
+            else []
         ),
-        _money_row(
-            "Stock bought",
-            summary.get("suppliers_paid"),
-            None,
-            None,
-            summary.get("suppliers_paid"),
-            minus=True,
+        *(
+            [
+                _money_row(
+                    "Stock bought",
+                    summary.get("suppliers_paid"),
+                    None,
+                    None,
+                    summary.get("suppliers_paid"),
+                    minus=True,
+                )
+            ]
+            if sec_stock
+            else []
         ),
-        _money_row(
-            "Owner drawings",
-            summary.get("drawings_cash"),
-            summary.get("drawings_mpesa"),
-            summary.get("drawings_card"),
-            summary.get("drawings_paid"),
-            minus=True,
+        *(
+            [
+                _money_row(
+                    "Owner drawings",
+                    summary.get("drawings_cash"),
+                    summary.get("drawings_mpesa"),
+                    summary.get("drawings_card"),
+                    summary.get("drawings_paid"),
+                    minus=True,
+                )
+            ]
+            if sec_drawings
+            else []
         ),
-        _money_row(
-            f"Trade-in payouts ({summary.get('trade_paid_count') or 0})",
-            summary.get("trade_paid_cash"),
-            summary.get("trade_paid_mpesa"),
-            summary.get("trade_paid_card"),
-            summary.get("trade_paid_total"),
-            minus=True,
+        *(
+            [
+                _money_row(
+                    f"Trade-in payouts "
+                    f"({summary.get('trade_paid_count') or 0})",
+                    summary.get("trade_paid_cash"),
+                    summary.get("trade_paid_mpesa"),
+                    summary.get("trade_paid_card"),
+                    summary.get("trade_paid_total"),
+                    minus=True,
+                )
+            ]
+            if sec_cleared
+            else []
         ),
         _money_row(
             "Expected in till",
@@ -10612,12 +10708,20 @@ def build_shop_day_report_pdf(
             strong=True,
         ),
     ]
-    if summary.get("cleared_elsewhere_count"):
+    # Pending receipts this session printed but a later session collected:
+    # the money moved to that till, so it is deducted from this Expected —
+    # the deficit is cleared and the row names the collector.
+    if sec_cleared and summary.get("cleared_elsewhere_count"):
+        elsewhere_label = (
+            f"Pending cleared in later sessions "
+            f"({summary.get('cleared_elsewhere_count') or 0})"
+        )
+        if elsewhere_names:
+            elsewhere_label += f" — collected by {elsewhere_names}"
         rows.insert(
             -1,
             _money_row(
-                f"Pending cleared in later sessions "
-                f"({summary.get('cleared_elsewhere_count') or 0})",
+                elsewhere_label,
                 summary.get("cleared_elsewhere_cash"),
                 summary.get("cleared_elsewhere_mpesa"),
                 summary.get("cleared_elsewhere_card"),
@@ -10626,6 +10730,16 @@ def build_shop_day_report_pdf(
             ),
         )
     strong_rows = {len(rows)}
+    variance_index = None
+    variance_tone = None
+    _vt = summary.get("total_variance")
+    if _vt is not None:
+        if _vt > 0:
+            variance_tone = (colors.HexColor("#dcfce7"), "#15803d")
+        elif _vt < 0:
+            variance_tone = (colors.HexColor("#fee2e2"), "#b91c1c")
+        else:
+            variance_tone = (colors.HexColor("#dbeafe"), "#1d4ed8")
     if not is_open:
         rows.append(
             _money_row(
@@ -10637,6 +10751,7 @@ def build_shop_day_report_pdf(
                 strong=True,
             )
         )
+        variance_index = len(rows)
         rows.append(
             _money_row(
                 "Variance",
@@ -10645,62 +10760,10 @@ def build_shop_day_report_pdf(
                 summary.get("card_variance"),
                 summary.get("total_variance"),
                 strong=True,
+                color=variance_tone[1] if variance_tone else None,
             )
         )
         strong_rows.update({len(rows) - 1, len(rows)})
-    # Cross-session pending clears, per cashier: what this session printed
-    # but another collected was deducted from Expected in the build-up —
-    # the note names who holds the money; what this till collected for an
-    # earlier session sits aside above Expected. Each row names the
-    # cashier on the other side of the hand-off.
-    def _party_names(detail_rows, key):
-        names = []
-        for row in detail_rows:
-            name = (row.get(key) or "").strip()
-            if name and name != "—" and name not in names:
-                names.append(name)
-        return ", ".join(names)
-
-    elsewhere_names = _party_names(
-        details.get("cleared_elsewhere") or [], "cleared_by"
-    )
-    collected_for_names = _party_names(
-        details.get("cleared_pending") or [], "seller"
-    )
-    # Only the side that applies shows: the collected-by note on the
-    # printing session's report, the set-aside on the collecting session's.
-    if summary.get("cleared_elsewhere_count"):
-        note_label = (
-            f"Pending cleared in later sessions "
-            f"({summary.get('cleared_elsewhere_count') or 0})"
-        )
-        if elsewhere_names:
-            note_label += f" — collected by {elsewhere_names}"
-        rows.append(
-            _money_row(
-                note_label,
-                summary.get("cleared_elsewhere_cash"),
-                summary.get("cleared_elsewhere_mpesa"),
-                summary.get("cleared_elsewhere_card"),
-                summary.get("cleared_elsewhere_total"),
-            )
-        )
-    if summary.get("cleared_pending_count"):
-        aside_label = (
-            f"Set aside — cleared pending receipts "
-            f"({summary.get('cleared_pending_count') or 0})"
-        )
-        if collected_for_names:
-            aside_label += f" — collected for {collected_for_names}"
-        rows.append(
-            _money_row(
-                aside_label,
-                summary.get("cleared_pending_cash"),
-                summary.get("cleared_pending_mpesa"),
-                summary.get("cleared_pending_card"),
-                summary.get("cleared_pending_total"),
-            )
-        )
     credit_payments = details.get("credit_payments") or {}
     credit_pay_rows = credit_payments.get("rows") or []
     credit_payments_sec = getattr(
@@ -10723,6 +10786,15 @@ def build_shop_day_report_pdf(
     ]
     for index in sorted(strong_rows):
         money_style.append(("BACKGROUND", (0, index), (-1, index), accent_soft))
+    if variance_tone is not None and variance_index is not None:
+        money_style.append(
+            (
+                "BACKGROUND",
+                (0, variance_index),
+                (-1, variance_index),
+                variance_tone[0],
+            )
+        )
     money_table.setStyle(TableStyle(money_style))
     if _sec("day_report_sec_money_flow"):
         story.append(money_table)

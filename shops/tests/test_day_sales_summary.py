@@ -977,9 +977,11 @@ class ClearedPendingCollectionTests(TestCase):
 
         summary = day_session_balance_summary(second)
         self.assertEqual(summary["cleared_pending_total"], Decimal("100"))
-        # Collected into this till but outside Expected — set aside.
+        # Collected into this till — the money is in this drawer, so it
+        # counts toward this Expected.
         self.assertEqual(
-            summary["expected_cash"], Decimal(second.opening_cash or 0)
+            summary["expected_cash"],
+            Decimal(second.opening_cash or 0) + Decimal("100"),
         )
 
         first_details = day_session_report_details(first)
@@ -1001,7 +1003,7 @@ class ClearedPendingCollectionTests(TestCase):
         second_row = next(r for r in listed if r["session"].pk == second.pk)
         self.assertEqual(second_row["cleared_pending_total"], Decimal("100"))
 
-        # Money-flow memo rows name the cashier on the other side.
+        # Money-flow rows name the cashier on the other side.
         from django.test import RequestFactory
 
         from employees.analytics_services import (
@@ -1018,12 +1020,19 @@ class ClearedPendingCollectionTests(TestCase):
             for r in first_page["tables"][1]["rows"]
         ]
         self.assertTrue(
+            any(
+                "Pending cleared in later sessions" in row
+                for row in first_flow
+            ),
+            first_flow,
+        )
+        self.assertTrue(
             any("collected by Cleared Cashier" in row for row in first_flow),
             first_flow,
         )
-        # The set-aside side must not leak onto the printer's page.
+        # The collected-here row stays off the printer's page.
         self.assertFalse(
-            any("Set aside — cleared pending" in row for row in first_flow),
+            any("Pending cleared here" in row for row in first_flow),
             first_flow,
         )
         second_page = build_day_session_report_page(
@@ -1034,13 +1043,51 @@ class ClearedPendingCollectionTests(TestCase):
             for r in second_page["tables"][1]["rows"]
         ]
         self.assertTrue(
+            any("Pending cleared here" in row for row in second_flow),
+            second_flow,
+        )
+        self.assertTrue(
             any("collected for Cleared Cashier" in row for row in second_flow),
             second_flow,
         )
-        # And the collected-by note stays off the collector's page.
+        # And the collected-by side stays off the collector's page.
         self.assertFalse(
             any("collected by" in row for row in second_flow),
             second_flow,
+        )
+
+        # Balanced till (counted = expected) renders the blue state.
+        first_variance = next(
+            r
+            for r in first_page["tables"][1]["rows"]
+            if isinstance(r, dict) and r["cells"][0] == "Variance"
+        )
+        self.assertIn("is-balanced", first_variance["row_class"])
+
+        # Cashier-settings "Cleared pending & settlements" toggle drops
+        # both cross-session rows from the money flow.
+        self.profile.sidebar_prefs = {"day_report_sec_cleared": False}
+        first_off = build_day_session_report_page(
+            profile=self.profile, request=request, session=first
+        )["page"]
+        first_flow_off = [
+            r["cells"][0] if isinstance(r, dict) else r[0]
+            for r in first_off["tables"][1]["rows"]
+        ]
+        self.assertFalse(
+            any("Pending cleared" in row for row in first_flow_off),
+            first_flow_off,
+        )
+        second_off = build_day_session_report_page(
+            profile=self.profile, request=request, session=second
+        )["page"]
+        second_flow_off = [
+            r["cells"][0] if isinstance(r, dict) else r[0]
+            for r in second_off["tables"][1]["rows"]
+        ]
+        self.assertFalse(
+            any("Pending cleared" in row for row in second_flow_off),
+            second_flow_off,
         )
 
     def test_credit_collected_in_next_session_lands_on_new_till(self):

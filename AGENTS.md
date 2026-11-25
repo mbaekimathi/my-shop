@@ -552,7 +552,7 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `day_report_sec_gift`) — each followed by its own "Credit receipts" /
   "Gift receipts" line list when receipts exist
   (`day_report_not_till_lines` lines carry `key` = credit/gift so callers
-  can split them). The "Credit payments collected" table + money-flow memo
+  can split them). The "Credit payments collected" table + money-flow
   row hide under `day_report_sec_credit_payments` (all three keys are in
   `DAY_REPORT_SECTION_TOGGLES`, so they also appear in the cashier
   settings + company-defaults day-report-sections panels). Credit and
@@ -1578,17 +1578,16 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   SALE receipt keeps its expected *sale* on the printing session's
   ledger (`created_at` never moves — items sold, sellers, sales count
   and Expected sales all stay with the cashier who printed it), but
-  its tender is deducted from the printing session's `expected_*`
-  (`cleared_elsewhere_*` is subtracted in `_session_activity_totals`),
-  while `cleared_pending_*` never feeds the collecting session's
-  `expected_*`. Net effect: the printing session's variance is clean
-  (the deficit is cleared — the money is owed by the collecting till)
-  and the collecting session shows the same amount **set aside**
-  (positive variance — extra money held for the printer). The money
-  flow shows a minus row "Pending cleared in later sessions" inside
-  the build-up plus a post-Variance note row naming the collector
-  ("… — collected by X") on the printer's report, and "Set aside —
-  cleared pending receipts (… — collected for X)" on the collector's.
+  its tender moves with the cash: `cleared_elsewhere_*` is subtracted
+  from the printing session's `expected_*` and `cleared_pending_*` is
+  added to the collecting session's `expected_*` in
+  `_session_activity_totals` — the money sits in the collecting
+  till's drawer, so Expected counts it and variance stays clean on
+  both sides. Both cross-session rows sit inside the money-flow
+  build-up: a minus "Pending cleared in later sessions (… — collected
+  by X)" on the printer's report and a plus "Pending cleared here
+  (… — collected for X)" on the collector's (same labels on the page
+  and the A4 PDF).
   `day_session_report_details` returns `cleared_elsewhere` rows —
   per-receipt print/clear timestamps, the printer (`seller`) and the
   collecting session's cashier (`cleared_by`, resolved as the
@@ -1600,6 +1599,21 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   printing window lands back on the printer (nothing moves).
   `_day_balance_data` applies the same expected rules so shop-level
   day balances agree.
+- **Money-flow rows follow the section toggles** — each flow row that
+  itemizes a day-report section hides when the cashier switches that
+  section off (`sec_*` flags on the page, `_sec(...)` in the PDF):
+  credit collections → `day_report_sec_credit_payments`, customer
+  prepayments → `day_report_sec_prepayments`, expenses →
+  `day_report_sec_expenses`, drawings → `day_report_sec_drawings`,
+  stock bought → item/shelf stock picks (also zeroed via
+  `*_stock_from_till`), and both pending rows + the trade
+  collect/payout rows → `day_report_sec_cleared`. Hiding a row is
+  display-only — Expected math is unchanged.
+- **Variance row tones**: `_variance_tone` maps counted−expected to
+  `good` (excess → green), `bad` (short → red), `balanced` (zero →
+  blue, `is-balanced` → `--info*` tokens) on the row and each money
+  cell (`ax-money`/`dr-money`); the A4 PDF tints the Variance row the
+  same three ways.
 - How-many-paid / conversion data: `settled_from_credit` + the paid stamp
   on the receipt, `ClientCreditAccountEvent` audit rows (meta.cleared),
   the analytics Paid cash/M-Pesa/card/total columns, and the
