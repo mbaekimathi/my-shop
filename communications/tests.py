@@ -3384,6 +3384,109 @@ class TriggeredMessageTests(TestCase):
             TriggeredMessage.objects.filter(shop=self.shop).count(), 2
         )
 
+    def _second_employee(self):
+        from django.contrib.auth.models import User
+
+        from employees.models import EmployeeProfile, EmployeeRole, EmployeeStatus
+
+        user = User.objects.create_user(
+            username="860033",
+            password="x",
+            first_name="Amina",
+            last_name="Store",
+            is_active=True,
+        )
+        return EmployeeProfile.objects.create(
+            user=user,
+            employee_id="860033",
+            phone_country_code="+254",
+            phone_number="711222333",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_MANAGER,
+        )
+
+    def test_staff_draft_sends_to_picked_users_only(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+
+        self._second_employee()  # active but not picked — gets nothing
+        draft = self._draft(recipient_mode="staff", channel="whatsapp")
+        draft.recipients.set([self.it])
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
+        ):
+            maybe_send_triggered_messages(self.receipt)
+
+        dispatch.assert_called_once()
+        message = OutboundMessage.objects.get()
+        # Goes to the picked employee — not the customer, not other staff.
+        self.assertEqual(message.phone, "+254700000972")
+        self.assertNotEqual(message.phone, "+254795606116")
+        self.assertEqual(message.client_name, self.user.get_full_name() or "860031")
+
+    def test_staff_draft_with_no_recipients_sends_nothing(self):
+        from unittest.mock import patch
+
+        from communications.automations import maybe_send_triggered_messages
+        from communications.models import OutboundMessage
+
+        self._draft(recipient_mode="staff")
+        with (
+            patch("communications.automations.threading.Thread", ImmediateThread),
+            patch("communications.automations._dispatch_triggered_send") as dispatch,
+        ):
+            maybe_send_triggered_messages(self.receipt)
+        dispatch.assert_not_called()
+        self.assertFalse(OutboundMessage.objects.exists())
+
+    def test_save_draft_specific_users_requires_a_pick(self):
+        from django.core.exceptions import ValidationError
+
+        from communications.automations import save_triggered_message
+
+        with self.assertRaises(ValidationError):
+            save_triggered_message(
+                {
+                    "trigger": "sale",
+                    "body": "Hi {first_name}.",
+                    "status": "draft",
+                    "recipient_mode": "staff",
+                }
+            )
+
+        draft = save_triggered_message(
+            {
+                "trigger": "sale",
+                "body": "Hi {first_name}.",
+                "status": "draft",
+                "recipient_mode": "staff",
+                "recipient_id": [str(self.it.pk)],
+            }
+        )
+        self.assertEqual(draft.recipient_mode, "staff")
+        self.assertEqual(list(draft.recipients.all()), [self.it])
+
+    def test_save_draft_anyone_clears_recipients(self):
+        from communications.automations import save_triggered_message
+
+        draft = self._draft(recipient_mode="staff")
+        draft.recipients.set([self.it])
+        save_triggered_message(
+            {
+                "draft_id": str(draft.pk),
+                "trigger": "sale",
+                "body": "Hi {first_name}.",
+                "status": "draft",
+                "recipient_mode": "party",
+            }
+        )
+        draft.refresh_from_db()
+        self.assertEqual(draft.recipient_mode, "party")
+        self.assertFalse(draft.recipients.exists())
+
 
 class TriggeredDispatchTests(TestCase):
     @override_settings(COMMS_SEND_MODE="cron")
@@ -4074,6 +4177,59 @@ class SupplierAutomationTests(TestCase):
             maybe_send_stock_supplier_notice(self.movement)
         dispatch.assert_called_once()
         self.assertEqual(OutboundMessage.objects.get().body, "Custom supply note.")
+
+    def test_supply_draft_specific_users_notifies_staff_not_supplier(self):
+        from unittest.mock import patch
+
+        from communications.automations import (
+            maybe_send_stock_supplier_notice,
+            maybe_send_supplier_payment_notice,
+        )
+        from communications.models import OutboundMessage, TriggeredMessage
+        from items.models import Supplier
+
+        draft = TriggeredMessage.objects.create(
+            trigger="supply",
+            body="Stock in: {total} ref {receipt_number} at {shop_name}.",
+            channel="whatsapp",
+            status="active",
+            recipient_mode="staff",
+        )
+        draft.recipients.set([self.it])
+        pay_draft = TriggeredMessage.objects.create(
+            trigger="supplier_payment",
+            body="Paid {total} ref {receipt_number}.",
+            channel="whatsapp",
+            status="active",
+            recipient_mode="staff",
+        )
+        pay_draft.recipients.set([self.it])
+        supplier = Supplier.objects.create(
+            name="KIM SUPPLIES",
+            phone_country_code="+254",
+            phone_number="795606115",
+        )
+        with patch(
+            "communications.automations._dispatch_triggered_send"
+        ) as dispatch:
+            maybe_send_stock_supplier_notice(self.movement)
+            maybe_send_supplier_payment_notice(
+                supplier,
+                kind="stock",
+                amount="400",
+                balance_after="0",
+                receipt_ref="I7",
+            )
+        self.assertEqual(dispatch.call_count, 2)
+        # Both supplier triggers went to the picked employee — the supplier
+        # phone never received anything.
+        self.assertEqual(
+            set(OutboundMessage.objects.values_list("phone", flat=True)),
+            {"+254700000991"},
+        )
+        bodies = list(OutboundMessage.objects.values_list("body", flat=True))
+        self.assertTrue(any("Stock in: KSh 800" in body for body in bodies))
+        self.assertTrue(any("Paid KSh 400 ref I7." in body for body in bodies))
 
     def test_supplier_payment_draft_sends_custom_message(self):
         from unittest.mock import patch

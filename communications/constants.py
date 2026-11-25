@@ -313,6 +313,18 @@ TRIGGER_DELAY_UNITS = (
 
 TRIGGER_DELAY_MAX_MINUTES = 43200  # 30 days
 
+# Who a triggered message is delivered to. "party" is the customer/supplier on
+# the event; "staff" sends only to the picked employees instead.
+TRIGGER_RECIPIENT_PARTY = "party"
+TRIGGER_RECIPIENT_STAFF = "staff"
+
+TRIGGER_RECIPIENT_CHOICES = (
+    (TRIGGER_RECIPIENT_PARTY, "Anyone — the customer/supplier on the event"),
+    (TRIGGER_RECIPIENT_STAFF, "Specific users"),
+)
+
+TRIGGER_RECIPIENT_VALUES = {value for value, _ in TRIGGER_RECIPIENT_CHOICES}
+
 # Who should get this? — primary audience groups
 AUDIENCE_SALE = "sale"
 AUDIENCE_CREDIT = "credit"

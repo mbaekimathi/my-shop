@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'css/app/messages.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/app/messages.css' %}?v=20261125-recipients">
 {% endblock %}
 
 {% block workspace_content %}
@@ -61,7 +61,7 @@
           {% for draft in drafts %}
           <li class="pos-settings-row">
             <div class="pos-settings-copy">
-              <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }}</strong>
+              <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }} · {{ draft.recipient_label }}</strong>
               <p>{{ draft.body|truncatechars:180 }}</p>
               {% if draft.link %}
                 {% if draft.link_label %}
@@ -125,7 +125,7 @@
         {% for draft in company_drafts %}
         <li class="pos-settings-row">
           <div class="pos-settings-copy">
-            <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }}</strong>
+            <strong>{{ draft.trigger_label }} · {{ draft.timing_label }} · {{ draft.channel_label }} · {{ draft.recipient_label }}</strong>
             <p>{{ draft.body|truncatechars:180 }}</p>
             {% if draft.link %}
               {% if draft.link_label %}
@@ -156,5 +156,5 @@
 {% block extra_js %}
 {{ block.super }}
 <script src="{% static 'js/shop-settings.js' %}?v=2"></script>
-<script src="{% static 'js/message-drafts.js' %}?v=1"></script>
+<script src="{% static 'js/message-drafts.js' %}?v=20261125-recipients"></script>
 {% endblock %}

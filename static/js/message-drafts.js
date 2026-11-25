@@ -55,6 +55,28 @@
     });
   }
 
+  function recipientValue() {
+    return (
+      form.querySelector('input[name="recipient_mode"]:checked')?.value ||
+      "party"
+    );
+  }
+
+  function syncRecipients() {
+    const staff = recipientValue() === "staff";
+    const picker = root.querySelector("[data-recipient-picker]");
+    if (picker) {
+      picker.classList.toggle("is-disabled", !staff);
+      picker.querySelectorAll('input[name="recipient_id"]').forEach((el) => {
+        el.disabled = !staff;
+      });
+    }
+    root.querySelectorAll(".msg-pill").forEach((pill) => {
+      const input = pill.querySelector('input[name="recipient_mode"]');
+      if (input) pill.classList.toggle("is-active", input.checked);
+    });
+  }
+
   function renderPreview() {
     if (!pvBody) return;
     let text = (body.value || "").trim();
@@ -121,8 +143,10 @@
   form.addEventListener("input", renderPreview);
   form.addEventListener("change", () => {
     syncTiming();
+    syncRecipients();
     renderPreview();
   });
   syncTiming();
+  syncRecipients();
   renderPreview();
 })();

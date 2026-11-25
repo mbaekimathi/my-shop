@@ -58,8 +58,17 @@ class WhatsAppGroupAdmin(admin.ModelAdmin):
 
 @admin.register(TriggeredMessage)
 class TriggeredMessageAdmin(admin.ModelAdmin):
-    list_display = ("id", "shop", "trigger", "delay_minutes", "status", "updated_at")
-    list_filter = ("shop", "trigger", "status")
+    list_display = (
+        "id",
+        "shop",
+        "trigger",
+        "delay_minutes",
+        "status",
+        "recipient_mode",
+        "updated_at",
+    )
+    list_filter = ("shop", "trigger", "status", "recipient_mode")
+    filter_horizontal = ("recipients",)
 
 
 @admin.register(OutboundMessage)

@@ -2522,6 +2522,7 @@ def _message_drafts_settings(request, context):
         ensure_company_credit_drafts,
         ensure_company_delivery_drafts,
         save_triggered_message,
+        staff_recipient_choices,
         triggered_message_as_dict,
     )
     from communications.constants import (
@@ -2575,12 +2576,17 @@ def _message_drafts_settings(request, context):
         if edit_id.isdigit()
         else None
     )
-    company_drafts = list(TriggeredMessage.objects.filter(shop__isnull=True))
+    company_drafts = list(
+        TriggeredMessage.objects.filter(shop__isnull=True).prefetch_related(
+            "recipients"
+        )
+    )
     comms = get_communications_settings()
     context.update(
         {
             "drafts": [triggered_message_as_dict(row) for row in company_drafts],
             "editing": triggered_message_as_dict(editing) if editing else None,
+            "recipient_user_choices": staff_recipient_choices(),
             "trigger_choices": TRIGGER_MESSAGE_CHOICES,
             "trigger_groups": TRIGGER_MESSAGE_GROUPS,
             "status_choices": MESSAGE_STATUS_CHOICES,

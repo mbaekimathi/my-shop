@@ -27,6 +27,7 @@ from .constants import (
     TRIGGER_DELIVERY_COMPLETE,
     TRIGGER_DELIVERY_ON_WAY,
     TRIGGER_LABEL_PREFIX,
+    TRIGGER_RECIPIENT_STAFF,
     TRIGGER_SUPPLIER_PAYMENT,
     TRIGGER_SUPPLY,
 )
@@ -309,8 +310,6 @@ def _queue_client_triggered_messages(
             return []
         phone = (getattr(client, "phone_number", "") or "").strip()
         email = (getattr(client, "email", "") or "").strip()
-        if not phone and not email:
-            return []
         due_now = []
         for draft in drafts:
             channels = [
@@ -318,15 +317,6 @@ def _queue_client_triggered_messages(
                 for channel in _trigger_channels(draft)
                 if _triggered_channel_ready(row, channel)
             ]
-            if CHANNEL_MESSAGE in channels and not email:
-                channels = [c for c in channels if c != CHANNEL_MESSAGE]
-            if CHANNEL_WHATSAPP in channels or CHANNEL_SMS in channels:
-                if not phone:
-                    channels = [
-                        c
-                        for c in channels
-                        if c not in {CHANNEL_WHATSAPP, CHANNEL_SMS}
-                    ]
             if not channels:
                 continue
             body = render_credit_account_trigger_message(
@@ -340,12 +330,29 @@ def _queue_client_triggered_messages(
             )
             if not body:
                 continue
+            label = f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}"
+            if _is_staff_draft(draft):
+                due_now.extend(
+                    _queue_staff_draft_sends(
+                        draft,
+                        body=body,
+                        base_channels=channels,
+                        label=label,
+                        shop=shop_obj,
+                    )
+                )
+                continue
+            channels = _channels_for_contact(
+                channels, phone=phone, email=email
+            )
+            if not channels:
+                continue
             campaign_id = _queue_triggered_send(
                 phone=phone or email,
                 body=body,
                 receipt=None,
                 delay_minutes=draft.delay_minutes,
-                label=f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}",
+                label=label,
                 channels=channels,
                 party_name=getattr(client, "full_name", "") or "",
                 shop=shop_obj,
@@ -838,6 +845,8 @@ def _deliverable_triggered_draft_exists_for_trigger(trigger, shop, row) -> bool:
             **_triggered_message_scope(shop),
         )
         for draft in drafts:
+            if _is_staff_draft(draft) and not draft.recipients.exists():
+                continue
             if any(
                 _triggered_channel_ready(row, channel)
                 for channel in _trigger_channels(draft)
@@ -856,6 +865,75 @@ def _party_first_name(raw: str, *, fallback: str = "there") -> str:
     if not name:
         return fallback
     return name.split()[0].title()
+
+
+def _is_staff_draft(draft) -> bool:
+    """True when the draft sends to picked employees, not the event party."""
+    return getattr(draft, "recipient_mode", "") == TRIGGER_RECIPIENT_STAFF
+
+
+def _employee_contact(profile) -> tuple[str, str]:
+    """(phone, email) for a staff recipient — phone may be "" when unset."""
+    phone = _supplier_whatsapp_phone(
+        dial=getattr(profile, "phone_country_code", ""),
+        national=getattr(profile, "phone_number", ""),
+    )
+    email = (
+        getattr(getattr(profile, "user", None), "email", "") or ""
+    ).strip()
+    return phone, email
+
+
+def _employee_display_name(profile) -> str:
+    user = getattr(profile, "user", None)
+    name = (user.get_full_name() if user is not None else "") or ""
+    return name.strip() or (getattr(user, "username", "") or "").strip()
+
+
+def _channels_for_contact(channels, *, phone: str, email: str) -> list[str]:
+    """Drop channels this contact cannot receive (no phone / no email)."""
+    channels = list(channels)
+    if CHANNEL_MESSAGE in channels and not email:
+        channels = [c for c in channels if c != CHANNEL_MESSAGE]
+    if not phone:
+        channels = [
+            c for c in channels if c not in {CHANNEL_WHATSAPP, CHANNEL_SMS}
+        ]
+    return channels
+
+
+def _queue_staff_draft_sends(
+    draft,
+    *,
+    body: str,
+    base_channels,
+    label: str,
+    receipt=None,
+    shop=None,
+) -> list[int]:
+    """Queue one campaign per picked staff recipient; return due-now pks."""
+    due_now = []
+    for profile in draft.recipients.select_related("user").all():
+        phone, email = _employee_contact(profile)
+        channels = _channels_for_contact(
+            base_channels, phone=phone, email=email
+        )
+        if not channels:
+            continue
+        campaign_id = _queue_triggered_send(
+            phone=phone or email,
+            body=body,
+            receipt=receipt,
+            delay_minutes=draft.delay_minutes,
+            label=label,
+            channels=channels,
+            party_name=_employee_display_name(profile),
+            shop=shop,
+            email=email,
+        )
+        if campaign_id:
+            due_now.append(campaign_id)
+    return due_now
 
 
 def _supplier_whatsapp_phone(*, dial: str = "", national: str = "") -> str:
@@ -1070,7 +1148,11 @@ def _supplier_trigger_drafts(trigger: str, *, shop=None):
 def _queue_supplier_drafts(
     *, phone, party_name, drafts, row, render_data, shop=None
 ) -> list[int]:
-    """Queue supplier drafts via the durable campaign path; return due-now pks."""
+    """Queue supplier drafts via the durable campaign path; return due-now pks.
+
+    Staff-audience drafts go to their picked employees instead of the
+    supplier; party drafts are skipped when the supplier has no phone.
+    """
     due_now = []
     for draft in drafts:
         channels = [
@@ -1085,12 +1167,26 @@ def _queue_supplier_drafts(
         )
         if not body:
             continue
+        label = f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}"
+        if _is_staff_draft(draft):
+            due_now.extend(
+                _queue_staff_draft_sends(
+                    draft,
+                    body=body,
+                    base_channels=channels,
+                    label=label,
+                    shop=shop,
+                )
+            )
+            continue
+        if not phone:
+            continue
         campaign_id = _queue_triggered_send(
             phone=phone,
             body=body,
             receipt=None,
             delay_minutes=draft.delay_minutes,
-            label=f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}",
+            label=label,
             channels=channels,
             party_name=party_name,
             shop=shop,
@@ -1144,12 +1240,6 @@ def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
     }:
         return
     phone = _stock_supplier_phone(movement)
-    if not phone:
-        logger.warning(
-            "Buy stock supplier notice skipped for movement %s: no supplier phone.",
-            getattr(movement, "pk", None),
-        )
-        return
     first = movement.lines.first()
     supplier_name = (getattr(first, "supplier_name", "") or "").strip()
     shop_obj = shop or getattr(movement, "shop", None)
@@ -1173,6 +1263,12 @@ def maybe_send_stock_supplier_notice(movement, *, shop=None) -> None:
         )
         _dispatch_supplier_campaigns(
             due_now, name=f"comms-supplier-supply-{movement.pk}"
+        )
+        return
+    if not phone:
+        logger.warning(
+            "Buy stock supplier notice skipped for movement %s: no supplier phone.",
+            getattr(movement, "pk", None),
         )
         return
     if not row.auto_stock_supplier:
@@ -1263,12 +1359,6 @@ def maybe_send_supplier_payment_notice(
         dial=getattr(supplier, "phone_country_code", ""),
         national=getattr(supplier, "phone_number", ""),
     )
-    if not phone:
-        logger.warning(
-            "Supplier payment notice skipped for %s: no supplier phone.",
-            getattr(supplier, "pk", "?"),
-        )
-        return
     supplier_name = (getattr(supplier, "name", "") or "").strip()
     drafts = _supplier_trigger_drafts(TRIGGER_SUPPLIER_PAYMENT, shop=shop)
     if drafts:
@@ -1288,6 +1378,12 @@ def maybe_send_supplier_payment_notice(
         )
         _dispatch_supplier_campaigns(
             due_now, name=f"comms-supplier-pay-{getattr(supplier, 'pk', 'x')}"
+        )
+        return
+    if not phone:
+        logger.warning(
+            "Supplier payment notice skipped for %s: no supplier phone.",
+            getattr(supplier, "pk", "?"),
         )
         return
     enabled = (
@@ -1779,8 +1875,6 @@ def _queue_triggered_messages_for_trigger(
         email = ""
         if receipt.client_id:
             email = (getattr(receipt.client, "email", "") or "").strip()
-        if not phone and not email:
-            return []
         due_now = []
         for draft in drafts:
             channels = [
@@ -1788,15 +1882,6 @@ def _queue_triggered_messages_for_trigger(
                 for channel in _trigger_channels(draft)
                 if _triggered_channel_ready(row, channel)
             ]
-            if CHANNEL_MESSAGE in channels and not email:
-                channels = [c for c in channels if c != CHANNEL_MESSAGE]
-            if CHANNEL_WHATSAPP in channels or CHANNEL_SMS in channels:
-                if not phone:
-                    channels = [
-                        c
-                        for c in channels
-                        if c not in {CHANNEL_WHATSAPP, CHANNEL_SMS}
-                    ]
             if not channels:
                 continue
             body = render_trigger_message(
@@ -1810,12 +1895,30 @@ def _queue_triggered_messages_for_trigger(
                 body = _append_credit_note_link(body, delivery, request=request)
             if not body:
                 continue
+            label = f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}"
+            if _is_staff_draft(draft):
+                due_now.extend(
+                    _queue_staff_draft_sends(
+                        draft,
+                        body=body,
+                        base_channels=channels,
+                        label=label,
+                        receipt=receipt,
+                        shop=getattr(receipt, "shop", None),
+                    )
+                )
+                continue
+            channels = _channels_for_contact(
+                channels, phone=phone, email=email
+            )
+            if not channels:
+                continue
             campaign_id = _queue_triggered_send(
                 phone=phone or email,
                 body=body,
                 receipt=receipt,
                 delay_minutes=draft.delay_minutes,
-                label=f"{TRIGGER_LABEL_PREFIX}{draft.get_trigger_display()}",
+                label=label,
                 channels=channels,
                 email=email,
             )
@@ -1853,8 +1956,13 @@ def seed_shop_triggered_messages(shop) -> int:
 
     if shop is None or TriggeredMessage.objects.filter(shop_id=shop.pk).exists():
         return 0
-    rows = [
-        TriggeredMessage(
+    company_drafts = list(
+        TriggeredMessage.objects.filter(shop__isnull=True).prefetch_related(
+            "recipients"
+        )
+    )
+    for draft in company_drafts:
+        row = TriggeredMessage.objects.create(
             shop=shop,
             trigger=draft.trigger,
             delay_minutes=draft.delay_minutes,
@@ -1862,11 +1970,10 @@ def seed_shop_triggered_messages(shop) -> int:
             link=draft.link,
             channel=draft.channel,
             status=draft.status,
+            recipient_mode=draft.recipient_mode,
         )
-        for draft in TriggeredMessage.objects.filter(shop__isnull=True)
-    ]
-    TriggeredMessage.objects.bulk_create(rows)
-    return len(rows)
+        row.recipients.set(draft.recipients.all())
+    return len(company_drafts)
 
 
 def _ensure_company_drafts(defaults, *, active: bool = True) -> int:
@@ -2070,8 +2177,17 @@ _LINK_TOKEN_LABELS = {
 
 
 def triggered_message_as_dict(row) -> dict:
+    from .constants import TRIGGER_RECIPIENT_PARTY
+
     amount, unit = _delay_parts(row.delay_minutes)
     link = (row.link or "").strip()
+    recipient_mode = getattr(row, "recipient_mode", "") or TRIGGER_RECIPIENT_PARTY
+    recipient_ids = list(row.recipients.values_list("pk", flat=True))
+    if recipient_mode == TRIGGER_RECIPIENT_STAFF:
+        count = len(recipient_ids)
+        recipient_label = f"To {count} user" if count == 1 else f"To {count} users"
+    else:
+        recipient_label = "To anyone"
     return {
         "id": row.pk,
         "trigger": row.trigger,
@@ -2089,7 +2205,32 @@ def triggered_message_as_dict(row) -> dict:
         "status": row.status,
         "status_label": row.get_status_display(),
         "is_active": row.status == MESSAGE_STATUS_ACTIVE,
+        "recipient_mode": recipient_mode,
+        "recipient_ids": recipient_ids,
+        "recipient_label": recipient_label,
     }
+
+
+def staff_recipient_choices() -> list[dict]:
+    """Active employees selectable as specific recipients on a saved message."""
+    from employees.models import EmployeeProfile, EmployeeStatus
+
+    rows = (
+        EmployeeProfile.objects.filter(
+            status=EmployeeStatus.ACTIVE, user__is_active=True
+        )
+        .select_related("user")
+        .order_by("user__first_name", "user__last_name", "employee_id")
+    )
+    return [
+        {
+            "id": row.pk,
+            "name": _employee_display_name(row) or row.employee_id,
+            "role_label": row.get_role_display(),
+            "employee_id": row.employee_id,
+        }
+        for row in rows
+    ]
 
 
 def _triggered_delay_minutes(data) -> int:
@@ -2119,6 +2260,9 @@ def save_triggered_message(data, *, shop=None):
         MESSAGE_STATUS_ACTIVE,
         MESSAGE_STATUS_DRAFT,
         TRIGGER_MESSAGE_CHOICES,
+        TRIGGER_RECIPIENT_PARTY,
+        TRIGGER_RECIPIENT_STAFF,
+        TRIGGER_RECIPIENT_VALUES,
     )
     from .models import TriggeredMessage
 
@@ -2156,6 +2300,32 @@ def save_triggered_message(data, *, shop=None):
     if channel and channel not in TRIGGER_CHANNEL_VALUES:
         raise ValidationError("Choose how this message should be sent.")
 
+    recipient_mode = (data.get("recipient_mode") or "").strip()
+    if recipient_mode not in TRIGGER_RECIPIENT_VALUES:
+        recipient_mode = TRIGGER_RECIPIENT_PARTY
+
+    if hasattr(data, "getlist"):
+        raw_recipients = data.getlist("recipient_id")
+    else:
+        raw = data.get("recipient_id") or []
+        raw_recipients = raw if isinstance(raw, (list, tuple)) else [raw]
+    recipient_ids = {
+        int(value)
+        for value in raw_recipients
+        if str(value).strip().isdigit()
+    }
+    recipients = []
+    if recipient_ids:
+        from employees.models import EmployeeProfile
+
+        recipients = list(
+            EmployeeProfile.objects.filter(pk__in=recipient_ids)
+        )
+    if recipient_mode == TRIGGER_RECIPIENT_STAFF and not recipients:
+        raise ValidationError(
+            "Pick at least one user to receive this message, or choose Anyone."
+        )
+
     if draft is None:
         draft = TriggeredMessage(trigger=trigger, shop=shop)
     draft.trigger = trigger
@@ -2165,7 +2335,9 @@ def save_triggered_message(data, *, shop=None):
     if channel:
         draft.channel = channel
     draft.status = status
+    draft.recipient_mode = recipient_mode
     draft.save()
+    draft.recipients.set(recipients)
     return draft
 
 

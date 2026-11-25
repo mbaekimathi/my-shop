@@ -16,6 +16,8 @@ from .constants import (
     TRIGGER_CHANNEL_CHOICES,
     TRIGGER_CHANNEL_WHATSAPP,
     TRIGGER_MESSAGE_CHOICES,
+    TRIGGER_RECIPIENT_CHOICES,
+    TRIGGER_RECIPIENT_PARTY,
 )
 
 
@@ -214,6 +216,21 @@ class TriggeredMessage(models.Model):
         choices=MESSAGE_STATUS_CHOICES,
         default=MESSAGE_STATUS_DRAFT,
         db_index=True,
+    )
+    recipient_mode = models.CharField(
+        max_length=12,
+        choices=TRIGGER_RECIPIENT_CHOICES,
+        default=TRIGGER_RECIPIENT_PARTY,
+        help_text=(
+            "'party' sends to the customer/supplier on the event; 'staff' "
+            "sends only to the picked employees."
+        ),
+    )
+    recipients = models.ManyToManyField(
+        "employees.EmployeeProfile",
+        blank=True,
+        related_name="triggered_message_recipients",
+        help_text="Staff users who receive the message in 'staff' mode.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

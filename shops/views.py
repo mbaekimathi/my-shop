@@ -6386,6 +6386,7 @@ def my_shop_settings_messages(request, shop_id):
 
     from communications.automations import (
         save_triggered_message,
+        staff_recipient_choices,
         triggered_message_as_dict,
     )
     from communications.constants import (
@@ -6464,13 +6465,18 @@ def my_shop_settings_messages(request, shop_id):
         "using_company_defaults": not bool(shop_row.override_messages),
         "drafts": [
             triggered_message_as_dict(row)
-            for row in TriggeredMessage.objects.filter(shop=shop)
+            for row in TriggeredMessage.objects.filter(shop=shop).prefetch_related(
+                "recipients"
+            )
         ],
         "company_drafts": [
             triggered_message_as_dict(row)
-            for row in TriggeredMessage.objects.filter(shop__isnull=True)
+            for row in TriggeredMessage.objects.filter(
+                shop__isnull=True
+            ).prefetch_related("recipients")
         ],
         "editing": triggered_message_as_dict(editing) if editing else None,
+        "recipient_user_choices": staff_recipient_choices(),
         "trigger_choices": TRIGGER_MESSAGE_CHOICES,
         "trigger_groups": TRIGGER_MESSAGE_GROUPS,
         "status_choices": MESSAGE_STATUS_CHOICES,

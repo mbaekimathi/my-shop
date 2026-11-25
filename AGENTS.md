@@ -1895,3 +1895,35 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `ShopShelfAssistantTests`, `AllShopsReportSectionTests`,
   `AllShopsShelfMovementTests`). The suite takes ~8 min:
   `MYSQL_DATABASE=myshop_<slug> python manage.py test chat -v 1`.
+
+## Saved messages — recipient picker (`/<role>/settings/message-drafts/`)
+- Every `TriggeredMessage` carries a **Who receives** choice in the shared
+  composer (`employees/partials/message_composer.html`, also used by the
+  per-shop messages page): `recipient_mode` = `party` ("Anyone" — the
+  customer/supplier on the event, the default/current behaviour) or `staff`
+  ("Specific users" — only the ticked employees receive it; the event party
+  and everyone else get nothing). Picks live on the `recipients` M2M to
+  `EmployeeProfile`; staff mode requires ≥1 pick
+  (`save_triggered_message` raises "Pick at least one user…").
+- Send paths branch per draft via `_is_staff_draft` +
+  `_queue_staff_draft_sends` (`communications/automations.py`): receipt
+  drafts (`_queue_triggered_messages_for_trigger`), client credit drafts
+  (`_queue_client_triggered_messages`) and supplier drafts
+  (`_queue_supplier_drafts` — supply received / supplier paid). Each picked
+  employee gets one campaign on their own phone/email
+  (`_employee_contact` + `_channels_for_contact`); a staff draft no longer
+  needs the client/supplier phone, so the early "no contact" bails were
+  moved to the built-in fallback paths only. A staff draft with zero
+  recipients doesn't count as deliverable
+  (`_deliverable_triggered_draft_exists_for_trigger`), so the built-in
+  notice still fires. `seed_shop_triggered_messages` copies
+  `recipient_mode` + picks into shop-scope drafts.
+- The employee checkbox list comes from `staff_recipient_choices()`
+  (active employees) passed as `recipient_user_choices` by both views;
+  `triggered_message_as_dict` exposes `recipient_mode`/`recipient_ids`/
+  `recipient_label` ("To anyone" / "To N users") for the saved list and
+  edit prefill. `message-drafts.js::syncRecipients` dims/disables the
+  picker unless Specific users is selected. Tests:
+  `communications/tests.py` (`test_staff_draft_sends_to_picked_users_only`,
+  `test_supply_draft_specific_users_notifies_staff_not_supplier`,
+  `test_save_draft_specific_users_requires_a_pick`).

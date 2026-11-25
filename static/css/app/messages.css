@@ -167,6 +167,67 @@
   width: auto;
 }
 
+/* "Who receives" — specific-user picker */
+.msg-recipient-hint {
+  flex: 1 1 100%;
+}
+
+.msg-recipients {
+  display: grid;
+  gap: var(--space-1);
+  max-height: 230px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  transition: opacity 0.15s ease;
+}
+
+.msg-recipients.is-disabled {
+  opacity: 0.45;
+}
+
+.msg-recipient {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.msg-recipient:hover {
+  background: rgba(var(--teal-rgb), 0.07);
+}
+
+.msg-recipient:has(input:checked) {
+  background: rgba(var(--teal-rgb), 0.12);
+}
+
+.msg-recipient input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+}
+
+.msg-recipient input:disabled {
+  cursor: not-allowed;
+}
+
+.msg-recipient-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.msg-recipient-copy small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
 /* Placeholder chips — click to insert into the message */
 .msg-chips {
   display: flex;

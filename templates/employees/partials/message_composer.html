@@ -120,6 +120,54 @@
         </span>
       </fieldset>
 
+      <fieldset class="msg-timing">
+        <legend class="msg-legend">Who receives</legend>
+        <label class="msg-pill">
+          <input
+            type="radio"
+            name="recipient_mode"
+            value="party"
+            {% if not editing or editing.recipient_mode == "party" %}checked{% endif %}
+          >
+          <span>Anyone</span>
+        </label>
+        <label class="msg-pill">
+          <input
+            type="radio"
+            name="recipient_mode"
+            value="staff"
+            {% if editing.recipient_mode == "staff" %}checked{% endif %}
+          >
+          <span>Specific users</span>
+        </label>
+        <p class="msg-hint msg-recipient-hint">
+          <strong>Anyone</strong> sends it to the customer or supplier the event
+          is about. <strong>Specific users</strong> sends it only to the staff
+          you tick below — nobody else receives it.
+        </p>
+      </fieldset>
+
+      <div class="msg-recipients" data-recipient-picker>
+        {% for user in recipient_user_choices %}
+        <label class="msg-recipient">
+          <input
+            type="checkbox"
+            name="recipient_id"
+            value="{{ user.id }}"
+            {% if editing.recipient_ids %}
+              {% if user.id in editing.recipient_ids %}checked{% endif %}
+            {% endif %}
+          >
+          <span class="msg-recipient-copy">
+            <strong>{{ user.name }}</strong>
+            <small>{{ user.role_label }} · {{ user.employee_id }}</small>
+          </span>
+        </label>
+        {% empty %}
+        <p class="msg-hint">No active employees to pick yet.</p>
+        {% endfor %}
+      </div>
+
       <label class="msg-field">
         <span>Message</span>
         <textarea
