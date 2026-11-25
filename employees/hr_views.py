@@ -1148,9 +1148,9 @@ def hr_pending_approvals_status(request, role_segment):
     profile = get_profile_for_request(request)
     expected_segment = role_url_segment(profile.role)
     if role_segment != expected_segment:
-        return JsonResponse(
-            {"ok": False, "error": "role_mismatch"},
-            status=403,
+        return redirect(
+            "employees:hr_pending_approvals_status",
+            role_segment=expected_segment,
         )
 
     denied = require_module_permission(
