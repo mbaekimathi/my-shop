@@ -323,8 +323,9 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   and the JS prepends/replaces the row in the saved list. Mirrored on the
   shelf page (`stock=shelf`) which shares the template/JS.
 - The page itself is a flat report table, not category cards: the catalog
-  also returns `lines` (all items A–Z by name; `groups` is still built but
-  the template doesn't use it). Search filters rows in place via
+  also returns `lines` (uncounted items A–Z first, then counted items A–Z —
+  `_sheet_order_key`; `groups` is still built with the same counted-last
+  order per category but the template doesn't use it). Search filters rows in place via
   `data-search` (still matches category text even though no category is
   shown) and toggles the `data-online-take-empty-search` no-results row.
   The summary is four stat cards (`data-online-take-filled`/`match`/`excess`/

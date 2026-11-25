@@ -31,6 +31,7 @@ from items.online_stock_take import (
     _baseline_system,
     _qty_label,
     _quantize,
+    _sheet_order_key,
     resolve_online_stock_take_date,
     variance_payload,
 )
@@ -320,8 +321,11 @@ def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
             row["item_id"],
         )
     )
-    # Flat A-Z sheet — the page is one report-style table, not category cards.
-    lines.sort(key=lambda row: ((row["name"] or "").lower(), row["item_id"]))
+    # Flat sheet — uncounted first A-Z; counted rows sink to the bottom (of
+    # the sheet, and of each category group).
+    lines.sort(key=_sheet_order_key)
+    for group_lines in groups.values():
+        group_lines.sort(key=_sheet_order_key)
     return {
         **empty,
         "filled_lines": filled_lines,

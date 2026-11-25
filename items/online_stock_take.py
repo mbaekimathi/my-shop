@@ -99,6 +99,15 @@ def _baseline_system(*, entry, live_system: Decimal) -> Decimal:
     return _quantize(entry.system_qty_at_count)
 
 
+def _sheet_order_key(row: dict) -> tuple:
+    """Count-sheet order: uncounted rows A-Z, counted rows sink to the bottom."""
+    return (
+        row["physical_qty"] != "",
+        (row["name"] or "").lower(),
+        row["item_id"],
+    )
+
+
 def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> dict:
     """All active items for one shop/day, grouped by category, with frozen variance.
 
@@ -197,8 +206,12 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
             row["item_id"],
         )
     )
-    # Flat A-Z sheet — the page is one report-style table, not category cards.
-    lines.sort(key=lambda row: ((row["name"] or "").lower(), row["item_id"]))
+    # Flat sheet — the page is one report-style table, not category cards.
+    # Uncounted rows first A-Z; counted rows sink to the bottom (of the
+    # sheet, and of each category group).
+    lines.sort(key=_sheet_order_key)
+    for group_lines in groups.values():
+        group_lines.sort(key=_sheet_order_key)
 
     return {
         "filled_lines": filled_lines,

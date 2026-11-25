@@ -4648,6 +4648,60 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertContains(page, "IT STOCK ITEM")
         self.assertContains(page, "Saved")
 
+    def test_online_stock_take_sheet_sinks_counted_items_to_the_bottom(self):
+        from items.models import Item
+
+        counted_gadget = Item.objects.create(
+            category="GADGETS",
+            name="BBB GADGET",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        Item.objects.create(
+            category="GADGETS",
+            name="ZZZ GADGET",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        Item.objects.create(
+            category="TOOLS",
+            name="AAA TOOL",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        for item in (self.item, counted_gadget):
+            page = self.client.post(
+                f"{self.url}?mode=online-stock-take",
+                {
+                    "mode": "online-stock-take",
+                    "shop_id": str(self.shop.pk),
+                    "item_id": str(item.pk),
+                    "qty": "5",
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+            self.assertTrue(page.json()["ok"])
+
+        page = self.client.get(
+            self.url,
+            {"mode": "online-stock-take", "shop_id": self.shop.pk},
+        )
+        self.assertEqual(page.status_code, 200)
+        catalog = page.context["online_catalog"]
+        self.assertEqual(
+            [line["name"] for line in catalog["lines"]],
+            ["AAA TOOL", "ZZZ GADGET", "BBB GADGET", "IT STOCK ITEM"],
+        )
+        groups = {
+            group["category"]: [line["name"] for line in group["lines"]]
+            for group in catalog["groups"]
+        }
+        self.assertEqual(groups["GADGETS"], ["ZZZ GADGET", "BBB GADGET"])
+        self.assertEqual(groups["TOOLS"], ["AAA TOOL", "IT STOCK ITEM"])
+
     def test_online_stock_take_sync_includes_live_system_map(self):
         from items.models import Item, ShopStock
 
