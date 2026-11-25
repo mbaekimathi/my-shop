@@ -68,7 +68,10 @@
         {% endfor %}
       </select>
     </label>
-    {% if selected_shop %}
+  </div>
+
+  {% if selected_shop %}
+  <div class="online-take-searchbar">
     <label class="online-take-search">
       <i data-lucide="search" aria-hidden="true"></i>
       <input
@@ -79,8 +82,8 @@
         aria-label="Search items"
       >
     </label>
-    {% endif %}
   </div>
+  {% endif %}
 
   {% if not selected_shop %}
   <p class="stock-settings-footnote">

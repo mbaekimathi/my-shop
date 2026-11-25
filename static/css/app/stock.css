@@ -9657,12 +9657,19 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   font-weight: 650;
 }
 
+/* Floating search — pins under the workspace header while the sheet scrolls */
+.online-take-searchbar {
+  position: sticky;
+  top: calc(var(--workspace-header-h, 4.35rem) + 0.45rem);
+  z-index: 25;
+}
+
 .online-take-search {
   position: relative;
   display: grid;
   gap: 0.3rem;
-  flex: 1 1 15rem;
   align-content: end;
+  filter: drop-shadow(0 8px 18px rgba(6, 24, 27, 0.1));
 }
 
 .online-take-search i,
@@ -10560,10 +10567,6 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   .stock-panel--online-take .online-take-shop-pick {
     min-width: 0;
     flex: 1 1 calc(50% - 0.3rem);
-  }
-
-  .stock-panel--online-take .online-take-search {
-    flex-basis: 100%;
   }
 
   .stock-panel--online-take .online-take-summary {
