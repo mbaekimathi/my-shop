@@ -9,7 +9,8 @@ Expects `edit_session` dict:
   opening{cash,mpesa,card}, closing{cash,mpesa,card},
   expenses[{id,name,category,category_label,amount,paid,supplier_name,label}],
   expense_categories[{value,label}],
-  drawings[{id,drawer,cash,mpesa,card,label}]
+  drawings[{id,drawer,when,cash,mpesa,card,label}]
+    (all drawings at the shop, newest first — not window-bound)
 {% endcomment %}
 {% if edit_session %}
 <div
@@ -67,7 +68,7 @@ Expects `edit_session` dict:
           <span class="ax-edit-session-choice-ico"><i data-lucide="hand-coins" aria-hidden="true"></i></span>
           <span class="ax-edit-session-choice-text">
             <strong>Owner drawing</strong>
-            <small>Correct a drawing recorded in this session.</small>
+            <small>Correct a drawing recorded at this shop.</small>
           </span>
           <i class="ax-edit-session-choice-arrow" data-lucide="chevron-right" aria-hidden="true"></i>
         </button>
@@ -238,7 +239,7 @@ Expects `edit_session` dict:
           <input type="hidden" name="expense_id" value="{{ drawing.id }}">
           <p class="ax-edit-expense-head">
             <strong>{{ drawing.drawer }}</strong>
-            <span>Owner drawing</span>
+            <span>Owner drawing · {{ drawing.when }}</span>
           </p>
           <div class="ax-day-session-edit-fields">
             {% if edit_session.channels.cash %}

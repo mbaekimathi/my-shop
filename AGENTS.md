@@ -638,8 +638,10 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   panes switched by `data-edit-goto`/`data-edit-back`): **Opening float**,
   **Counted closing** (always shown — on an open day it records a
   provisional count prefilled with the live expected), **Owner drawing**
-  (when the session window has drawings), or **Expense** (when it has
-  non-drawing expenses). Each editor posts
+  (when the shop has ANY drawings — the editor lists all drawings at the
+  shop newest-first, not just ones inside the session window, so rows
+  recorded before day sessions existed stay correctable), or **Expense**
+  (when the session window has non-drawing expenses). Each editor posts
   `edit_scope=opening|closing|drawing|expense` — opening/closing carry the
   shown `opening_*`/`closing_*` per-channel fields; expense/drawing pick
   one session record (`expense_id`) — expenses edit `expense_name`,
@@ -655,8 +657,9 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `edit_scope` — missing scope keeps the legacy combined balances form
   (closing still skipped while the day is open there); `expense` /
   `drawing` run `_update_session_expense` / `_update_session_drawing`
-  over `_locked_session_expense`, which requires the row to sit in the
-  session's shop + window and match its kind. The expense edit rewrites
+  over `_locked_session_expense`, which requires the row to sit at the
+  session's shop and match its kind (the session-window check applies to
+  expenses only — drawings are shop-wide). The expense edit rewrites
   name/category/amount/amount_paid (paid ≤ amount), re-stamps
   `payment_status` and mirrors `cash_amount = amount_paid`; the drawing
   edit rewrites the channel split, sets amount = paid = sum and rebuilds

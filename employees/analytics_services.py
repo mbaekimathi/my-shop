@@ -13675,15 +13675,24 @@ def build_day_session_report_page(
                     "label": f"{label} · {_money_ksh(row['amount'])}",
                 }
 
-            def _drawing_row(row):
-                drawer = row.get("drawer") or "Owner drawing"
+            def _drawing_row(expense):
+                name = expense.name or ""
+                parts = [p.strip() for p in name.split("·")]
+                drawer = (
+                    parts[1]
+                    if len(parts) >= 2
+                    and parts[0].upper() == "OWNER DRAWING"
+                    else name or "Owner drawing"
+                )
+                at = timezone.localtime(expense.created_at)
                 return {
-                    "id": row["id"],
+                    "id": expense.pk,
                     "drawer": drawer,
-                    "cash": _dec(row.get("cash")),
-                    "mpesa": _dec(row.get("mpesa")),
-                    "card": _dec(row.get("card")),
-                    "label": f"{drawer} · {_money_ksh(row['amount'])}",
+                    "when": f"{at:%d %b %Y %H:%M}",
+                    "cash": _dec(expense.cash_amount),
+                    "mpesa": _dec(expense.mpesa_amount),
+                    "card": _dec(expense.card_amount),
+                    "label": f"{drawer} · {_money_ksh(expense.amount)}",
                 }
 
             def _closing(key):
@@ -13712,9 +13721,15 @@ def build_day_session_report_page(
                     _expense_row(row)
                     for row in (details.get("expenses") or [])
                 ],
+                # All drawings at this shop are correctable — not just the
+                # ones inside this session's window — so drawings recorded
+                # before day sessions existed stay editable.
                 "drawings": [
-                    _drawing_row(row)
-                    for row in (details.get("drawings") or [])
+                    _drawing_row(expense)
+                    for expense in Expense.objects.filter(
+                        shop_id=shop.pk,
+                        category=ExpenseCategory.OWNER_DRAWINGS,
+                    ).order_by("-created_at")[:30]
                 ],
                 "expense_categories": [
                     {"value": choice.value, "label": choice.label}

@@ -2202,6 +2202,59 @@ class AnalyticsDaySessionReportTests(TestCase):
             drawing.name, "OWNER DRAWING · JOHN DOE · CASH 250 · MPESA 150"
         )
 
+    def test_edit_session_post_drawing_outside_window_still_editable(self):
+        """Drawings predating the session (or day sessions entirely) edit fine."""
+        from datetime import timedelta
+        from decimal import Decimal
+
+        from django.utils import timezone
+
+        from shops.models import Expense
+
+        session = self._close(self._session())
+        drawing = self._drawing()
+        # Push the drawing's stamp before the session window — like rows
+        # recorded before day sessions existed at the shop.
+        Expense.objects.filter(pk=drawing.pk).update(
+            created_at=session.opened_at - timedelta(days=30)
+        )
+
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        request.user = self.user
+        edit = build_day_session_report_page(
+            profile=self.staff,
+            request=request,
+            session=session,
+            allow_edit=True,
+        )["page"]["edit_session"]
+        self.assertIn(
+            drawing.pk, [row["id"] for row in edit["drawings"]]
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "drawing",
+                "expense_id": drawing.pk,
+                "drawing_cash": "400",
+                "drawing_mpesa": "0",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        drawing.refresh_from_db()
+        self.assertEqual(drawing.cash_amount, Decimal("400"))
+        self.assertEqual(drawing.mpesa_amount, Decimal("0"))
+        self.assertEqual(drawing.amount, Decimal("400"))
+
     def test_edit_session_post_drawing_rejects_regular_expense(self):
         """The drawing scope can't reach a non-drawing expense."""
         session = self._close(self._session())

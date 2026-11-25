@@ -12227,13 +12227,17 @@ def update_shop_day_balances(*, session, payload: dict):
     return locked
 
 
-def _locked_session_expense(session, payload: dict, *, drawings: bool):
+def _locked_session_expense(
+    session, payload: dict, *, drawings: bool, window: bool = True
+):
     """Fetch the expense/drawing the posted edit form targets.
 
-    The row must belong to the session's shop and sit inside the
-    session's [opened, closed) window; ``drawings`` switches between
-    owner-drawing rows and regular expenses so each editor can only reach
-    its own kind.
+    The row must belong to the session's shop; ``drawings`` switches
+    between owner-drawing rows and regular expenses so each editor can
+    only reach its own kind. ``window`` also requires the row to sit
+    inside the session's [opened, closed) window — kept for expenses but
+    dropped for drawings, since an equity correction shouldn't depend on
+    which session happened to report the drawing.
     """
     try:
         expense_id = int(payload.get("expense_id") or "")
@@ -12249,11 +12253,14 @@ def _locked_session_expense(session, payload: dict, *, drawings: bool):
     expense = qs.first()
     label = "Drawing" if drawings else "Expense"
     if expense is None:
-        raise ValidationError(f"{label} not found for this session.")
-    opened = session_activity_start(session)
-    closed = _session_window_end(session)
-    if not (opened <= expense.created_at < closed):
-        raise ValidationError(f"That {label.lower()} is outside this session.")
+        raise ValidationError(f"{label} not found for this shop.")
+    if window:
+        opened = session_activity_start(session)
+        closed = _session_window_end(session)
+        if not (opened <= expense.created_at < closed):
+            raise ValidationError(
+                f"That {label.lower()} is outside this session."
+            )
     return expense
 
 
@@ -12320,13 +12327,18 @@ def _update_session_expense(session, payload: dict):
 
 
 def _update_session_drawing(session, payload: dict):
-    """Correct the channel amounts of one owner drawing in the session.
+    """Correct the channel amounts of one owner drawing at the shop.
 
     Drawings are always fully paid, so ``amount``/``amount_paid`` become
     the channel sum and the stamped ``OWNER DRAWING · <drawer> · <split>``
     name is rebuilt to match (a custom-stamped name is left untouched).
+    Any drawing at the session's shop is fair game — not just ones inside
+    the session window — so drawings recorded before day sessions existed
+    stay correctable.
     """
-    drawing = _locked_session_expense(session, payload, drawings=True)
+    drawing = _locked_session_expense(
+        session, payload, drawings=True, window=False
+    )
 
     channels = shop_day_balance_channels(shop=session.shop)
     zero = Decimal("0.00")
