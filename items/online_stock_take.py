@@ -100,9 +100,15 @@ def _baseline_system(*, entry, live_system: Decimal) -> Decimal:
 
 
 def _sheet_order_key(row: dict) -> tuple:
-    """Count-sheet order: uncounted rows A-Z, counted rows sink to the bottom."""
+    """Count-sheet order: uncounted rows A-Z on top, zero counts next,
+    non-zero counts sink to the bottom."""
+    physical = row["physical_qty"]
+    if physical == "":
+        tier = 0
+    else:
+        tier = 1 if _quantize(physical) == 0 else 2
     return (
-        row["physical_qty"] != "",
+        tier,
         (row["name"] or "").lower(),
         row["item_id"],
     )
@@ -207,8 +213,8 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
         )
     )
     # Flat sheet — the page is one report-style table, not category cards.
-    # Uncounted rows first A-Z; counted rows sink to the bottom (of the
-    # sheet, and of each category group).
+    # Uncounted rows first A-Z, then zero counts, non-zero counts last
+    # (same tier order inside each category group).
     lines.sort(key=_sheet_order_key)
     for group_lines in groups.values():
         group_lines.sort(key=_sheet_order_key)

@@ -321,8 +321,8 @@ def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
             row["item_id"],
         )
     )
-    # Flat sheet — uncounted first A-Z; counted rows sink to the bottom (of
-    # the sheet, and of each category group).
+    # Flat sheet — uncounted first A-Z, then zero counts, non-zero counts
+    # last (same tier order inside each category group).
     lines.sort(key=_sheet_order_key)
     for group_lines in groups.values():
         group_lines.sort(key=_sheet_order_key)
