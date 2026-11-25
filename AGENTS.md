@@ -636,26 +636,32 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `analytics-day-session-edit.js`) gated by the `analytics/edit-balances`
   permission key. The modal opens on a **chooser step** (`data-edit-step`
   panes switched by `data-edit-goto`/`data-edit-back`): **Opening float**,
-  **Counted closing** (closed days only), or **Expense** (only when the
-  session window has non-drawing expenses). Each editor posts
-  `edit_scope=opening|closing|expense` — opening/closing carry the shown
-  `opening_*`/`closing_*` per-channel fields; expense picks one of the
-  session's expenses (one mini form each: `expense_id`, `expense_name`,
-  `expense_category`, `expense_amount`, `expense_paid`).
+  **Counted closing** (always shown — on an open day it records a
+  provisional count prefilled with the live expected), **Owner drawing**
+  (when the session window has drawings), or **Expense** (when it has
+  non-drawing expenses). Each editor posts
+  `edit_scope=opening|closing|drawing|expense` — opening/closing carry the
+  shown `opening_*`/`closing_*` per-channel fields; expense/drawing pick
+  one session record (`expense_id`) — expenses edit `expense_name`,
+  `expense_category`, `expense_amount`, `expense_paid`, drawings edit the
+  `drawing_cash`/`drawing_mpesa`/`drawing_card` split.
   `build_day_session_report_page` emits `page.edit_session` (balances +
-  `expenses` rows + `expense_categories` sans owner drawings) only when
-  its `allow_edit=True` kwarg is passed (just the `analytics_day_session`
-  view — the shop-floor `my_shop_day_report` has no POST endpoint and
-  stays view-only) and `employee_may(profile, "analytics",
-  "edit-balances")` holds. POSTs hit the same URL:
+  `expenses`/`drawings` rows + `expense_categories` sans owner drawings)
+  only when its `allow_edit=True` kwarg is passed (just the
+  `analytics_day_session` view — the shop-floor `my_shop_day_report` has
+  no POST endpoint and stays view-only) and `employee_may(profile,
+  "analytics", "edit-balances")` holds. POSTs hit the same URL:
   `update_shop_day_balances` (`shops/services.py`) dispatches on
-  `edit_scope` — missing scope keeps the legacy combined balances form;
-  `closing` is rejected while the day is open; `expense` runs
-  `_update_session_expense`, which validates the expense belongs to the
-  session's shop + window and isn't a drawing, then rewrites
+  `edit_scope` — missing scope keeps the legacy combined balances form
+  (closing still skipped while the day is open there); `expense` /
+  `drawing` run `_update_session_expense` / `_update_session_drawing`
+  over `_locked_session_expense`, which requires the row to sit in the
+  session's shop + window and match its kind. The expense edit rewrites
   name/category/amount/amount_paid (paid ≤ amount), re-stamps
-  `payment_status` (paid/partial/unpaid) and mirrors `cash_amount =
-  amount_paid` — every report figure recalculates off the saved values.
+  `payment_status` and mirrors `cash_amount = amount_paid`; the drawing
+  edit rewrites the channel split, sets amount = paid = sum and rebuilds
+  the stamped `OWNER DRAWING · <drawer> · <split>` name — every report
+  figure recalculates off the saved values.
   `messages` + redirect back to `request.get_full_path()` keeps the
   `?back=` link. Tests:
   `AnalyticsDaySessionReportTests::test_edit_session_*`.

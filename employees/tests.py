@@ -1992,22 +1992,30 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertEqual(session.opening_cash, 1000)
         self.assertEqual(session.opening_mpesa, 200)
 
-    def test_edit_session_closing_scope_rejected_while_open(self):
+    def test_edit_session_closing_scope_allowed_while_open(self):
+        """An open day can record a provisional counted closing."""
+        from decimal import Decimal
+
         session = self._session()
         self.client.force_login(self.user)
         response = self.client.post(
             f"/shop-manager/analytics/balances/{session.pk}/",
             {
                 "edit_scope": "closing",
-                "closing_cash": "999",
-                "closing_mpesa": "999",
+                "closing_cash": "1500",
+                "closing_mpesa": "250",
             },
         )
         self.assertEqual(response.status_code, 302)
         session.refresh_from_db()
-        self.assertIsNone(session.closing_cash)
-        self.assertIsNone(session.closing_mpesa)
+        self.assertEqual(session.closing_cash, Decimal("1500"))
+        self.assertEqual(session.closing_mpesa, Decimal("250"))
+        # A provisional count, not a close — the day stays open and the
+        # opening floats are untouched.
+        self.assertTrue(session.is_open)
+        self.assertIsNone(session.closed_at)
         self.assertEqual(session.opening_cash, 1000)
+        self.assertEqual(session.opening_mpesa, 200)
 
     def _expense(self, *, amount=500, paid=500):
         from shops.models import (
@@ -2141,9 +2149,82 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertEqual(foreign.name, "OTHER")
         self.assertEqual(foreign.amount, 100)
 
+    def _drawing(self, *, cash=300, mpesa=100, card=0):
+        from shops.models import (
+            Expense,
+            ExpenseCategory,
+            ExpensePaymentStatus,
+        )
+
+        parts = ["OWNER DRAWING · JOHN DOE"]
+        if cash:
+            parts.append(f"CASH {cash}")
+        if mpesa:
+            parts.append(f"MPESA {mpesa}")
+        if card:
+            parts.append(f"CARD {card}")
+        return Expense.objects.create(
+            shop=self.shop,
+            category=ExpenseCategory.OWNER_DRAWINGS,
+            name=" · ".join(parts),
+            amount=cash + mpesa + card,
+            amount_paid=cash + mpesa + card,
+            cash_amount=cash,
+            mpesa_amount=mpesa,
+            card_amount=card,
+            payment_status=ExpensePaymentStatus.PAID,
+            created_by=self.staff,
+        )
+
+    def test_edit_session_post_drawing_updates_channel_amounts(self):
+        from decimal import Decimal
+
+        session = self._close(self._session())
+        drawing = self._drawing()
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "drawing",
+                "expense_id": drawing.pk,
+                "drawing_cash": "250",
+                "drawing_mpesa": "150",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        drawing.refresh_from_db()
+        self.assertEqual(drawing.cash_amount, Decimal("250"))
+        self.assertEqual(drawing.mpesa_amount, Decimal("150"))
+        self.assertEqual(drawing.amount, Decimal("400"))
+        self.assertEqual(drawing.amount_paid, Decimal("400"))
+        # The stamped name follows the corrected split.
+        self.assertEqual(
+            drawing.name, "OWNER DRAWING · JOHN DOE · CASH 250 · MPESA 150"
+        )
+
+    def test_edit_session_post_drawing_rejects_regular_expense(self):
+        """The drawing scope can't reach a non-drawing expense."""
+        session = self._close(self._session())
+        expense = self._expense()
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "drawing",
+                "expense_id": expense.pk,
+                "drawing_cash": "10",
+                "drawing_mpesa": "0",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        expense.refresh_from_db()
+        self.assertEqual(expense.amount, 500)
+        self.assertEqual(expense.amount_paid, 500)
+
     def test_edit_session_modal_renders_chooser_steps(self):
         session = self._close(self._session())
         self._expense()
+        self._drawing()
         self.client.force_login(self.user)
         response = self.client.get(
             f"/shop-manager/analytics/balances/{session.pk}/"
@@ -2154,12 +2235,43 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertIn('data-edit-step="choose"', html)
         self.assertIn('data-edit-goto="opening"', html)
         self.assertIn('data-edit-goto="closing"', html)
+        self.assertIn('data-edit-goto="drawing"', html)
         self.assertIn('data-edit-goto="expense"', html)
         self.assertIn('name="edit_scope" value="opening"', html)
         self.assertIn('name="edit_scope" value="closing"', html)
+        self.assertIn('name="edit_scope" value="drawing"', html)
         self.assertIn('name="edit_scope" value="expense"', html)
         self.assertIn('name="expense_id"', html)
         self.assertIn("SUPPLIES RUN", html)
+        self.assertIn("JOHN DOE", html)
+
+    def test_edit_session_open_modal_closing_prefilled_with_expected(self):
+        """Open day — the closing editor prefills with the live expected."""
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        session = self._session()
+        sale = self._sale()
+        sale.status = ShopReceiptStatus.CONFIRMED
+        sale.save(update_fields=["status"])
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        request.user = self.user
+        page = build_day_session_report_page(
+            profile=self.staff,
+            request=request,
+            session=session,
+            allow_edit=True,
+        )["page"]
+        edit = page["edit_session"]
+        self.assertTrue(edit["is_open"])
+        # expected_cash = opening 1000 + cash sale 250
+        self.assertEqual(edit["closing"]["cash"], "1250")
+        self.assertEqual(edit["closing"]["mpesa"], "200")
 
 
 class DashboardSidebarLinkTests(TestCase):

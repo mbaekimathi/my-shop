@@ -13675,6 +13675,25 @@ def build_day_session_report_page(
                     "label": f"{label} · {_money_ksh(row['amount'])}",
                 }
 
+            def _drawing_row(row):
+                drawer = row.get("drawer") or "Owner drawing"
+                return {
+                    "id": row["id"],
+                    "drawer": drawer,
+                    "cash": _dec(row.get("cash")),
+                    "mpesa": _dec(row.get("mpesa")),
+                    "card": _dec(row.get("card")),
+                    "label": f"{drawer} · {_money_ksh(row['amount'])}",
+                }
+
+            def _closing(key):
+                recorded = getattr(session, f"closing_{key}", None)
+                if recorded is not None:
+                    return _amt(recorded)
+                # Open day — prefill with the live expected so the count
+                # starts from the till figure.
+                return _amt(summary.get(f"expected_{key}"))
+
             page["edit_session"] = {
                 "post_url": request.get_full_path(),
                 "is_open": is_open,
@@ -13685,13 +13704,17 @@ def build_day_session_report_page(
                     "card": _amt(session.opening_card),
                 },
                 "closing": {
-                    "cash": _amt(session.closing_cash),
-                    "mpesa": _amt(session.closing_mpesa),
-                    "card": _amt(session.closing_card),
+                    "cash": _closing("cash"),
+                    "mpesa": _closing("mpesa"),
+                    "card": _closing("card"),
                 },
                 "expenses": [
                     _expense_row(row)
                     for row in (details.get("expenses") or [])
+                ],
+                "drawings": [
+                    _drawing_row(row)
+                    for row in (details.get("drawings") or [])
                 ],
                 "expense_categories": [
                     {"value": choice.value, "label": choice.label}

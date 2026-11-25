@@ -12180,13 +12180,12 @@ def update_shop_day_balances(*, session, payload: dict):
     if scope == "expense":
         _update_session_expense(locked, payload)
         return locked
+    if scope == "drawing":
+        _update_session_drawing(locked, payload)
+        return locked
     if scope not in ("", "opening", "closing"):
         raise ValidationError(
-            "Pick what to edit — opening, closing, or an expense."
-        )
-    if scope == "closing" and locked.is_open:
-        raise ValidationError(
-            "This session is still open — there is no counted closing to correct."
+            "Pick what to edit — opening, closing, an expense, or a drawing."
         )
 
     channels = shop_day_balance_channels(shop=locked.shop)
@@ -12206,7 +12205,10 @@ def update_shop_day_balances(*, session, payload: dict):
             setattr(locked, f"opening_{key}", opening[key])
             update_fields.append(f"opening_{key}")
 
-    if scope in ("", "closing") and not locked.is_open:
+    # The scoped "closing" editor is always usable (an open day can record a
+    # provisional count); the legacy combined form still skips closing while
+    # the day is open.
+    if scope == "closing" or (scope == "" and not locked.is_open):
         closing = _parse_balance_fields(
             {
                 "cash_amount": payload.get("closing_cash"),
@@ -12225,31 +12227,44 @@ def update_shop_day_balances(*, session, payload: dict):
     return locked
 
 
-def _update_session_expense(session, payload: dict):
-    """Correct one expense recorded inside a day session's window.
+def _locked_session_expense(session, payload: dict, *, drawings: bool):
+    """Fetch the expense/drawing the posted edit form targets.
 
-    The expense must belong to the session's shop, sit inside the
-    session's [opened, closed) window, and not be an owner drawing
-    (drawings are recorded on the Day page, not here). Payment status is
-    re-stamped from the corrected amounts; the paid part stays as till
-    cash (``cash_amount``) like the register form assumes.
+    The row must belong to the session's shop and sit inside the
+    session's [opened, closed) window; ``drawings`` switches between
+    owner-drawing rows and regular expenses so each editor can only reach
+    its own kind.
     """
     try:
         expense_id = int(payload.get("expense_id") or "")
     except (TypeError, ValueError):
         expense_id = 0
-    expense = (
-        Expense.objects.select_for_update()
-        .filter(pk=expense_id, shop_id=session.shop_id)
-        .exclude(category=ExpenseCategory.OWNER_DRAWINGS)
-        .first()
+    qs = Expense.objects.select_for_update().filter(
+        pk=expense_id, shop_id=session.shop_id
     )
+    if drawings:
+        qs = qs.filter(category=ExpenseCategory.OWNER_DRAWINGS)
+    else:
+        qs = qs.exclude(category=ExpenseCategory.OWNER_DRAWINGS)
+    expense = qs.first()
+    label = "Drawing" if drawings else "Expense"
     if expense is None:
-        raise ValidationError("Expense not found for this session.")
+        raise ValidationError(f"{label} not found for this session.")
     opened = session_activity_start(session)
     closed = _session_window_end(session)
     if not (opened <= expense.created_at < closed):
-        raise ValidationError("That expense is outside this session.")
+        raise ValidationError(f"That {label.lower()} is outside this session.")
+    return expense
+
+
+def _update_session_expense(session, payload: dict):
+    """Correct one expense recorded inside a day session's window.
+
+    Payment status is re-stamped from the corrected amounts; the paid
+    part stays as till cash (``cash_amount``) like the register form
+    assumes.
+    """
+    expense = _locked_session_expense(session, payload, drawings=False)
 
     name = (payload.get("expense_name") or "").strip().upper()
     if not name:
@@ -12302,6 +12317,79 @@ def _update_session_expense(session, payload: dict):
         ]
     )
     return expense
+
+
+def _update_session_drawing(session, payload: dict):
+    """Correct the channel amounts of one owner drawing in the session.
+
+    Drawings are always fully paid, so ``amount``/``amount_paid`` become
+    the channel sum and the stamped ``OWNER DRAWING · <drawer> · <split>``
+    name is rebuilt to match (a custom-stamped name is left untouched).
+    """
+    drawing = _locked_session_expense(session, payload, drawings=True)
+
+    channels = shop_day_balance_channels(shop=session.shop)
+    zero = Decimal("0.00")
+
+    def _optional_amount(raw, *, label: str) -> Decimal:
+        text = "" if raw is None else str(raw).strip()
+        if text == "":
+            return zero
+        try:
+            return _money(text)
+        except ValidationError as exc:
+            raise ValidationError(f"Enter a valid {label} amount.") from exc
+
+    cash_amount = (
+        _optional_amount(payload.get("drawing_cash"), label="cash")
+        if channels["cash"]
+        else zero
+    )
+    mpesa_amount = (
+        _optional_amount(payload.get("drawing_mpesa"), label="M-Pesa")
+        if channels["mpesa"]
+        else zero
+    )
+    card_amount = (
+        _optional_amount(payload.get("drawing_card"), label="card")
+        if channels.get("card")
+        else zero
+    )
+    if cash_amount < 0 or mpesa_amount < 0 or card_amount < 0:
+        raise ValidationError("Drawing amounts cannot be negative.")
+    amount = cash_amount + mpesa_amount + card_amount
+    if amount <= 0:
+        raise ValidationError("Enter a drawing amount.")
+
+    name = drawing.name or ""
+    parts = [part.strip() for part in name.split("·")]
+    if len(parts) >= 2 and parts[0].upper() == "OWNER DRAWING":
+        stamped = [f"OWNER DRAWING · {parts[1]}"]
+        if cash_amount > 0:
+            stamped.append(f"CASH {cash_amount.quantize(Decimal('1'))}")
+        if mpesa_amount > 0:
+            stamped.append(f"MPESA {mpesa_amount.quantize(Decimal('1'))}")
+        if card_amount > 0:
+            stamped.append(f"CARD {card_amount.quantize(Decimal('1'))}")
+        name = " · ".join(stamped).upper()
+
+    drawing.name = name
+    drawing.amount = amount
+    drawing.amount_paid = amount
+    drawing.cash_amount = cash_amount
+    drawing.mpesa_amount = mpesa_amount
+    drawing.card_amount = card_amount
+    drawing.save(
+        update_fields=[
+            "name",
+            "amount",
+            "amount_paid",
+            "cash_amount",
+            "mpesa_amount",
+            "card_amount",
+        ]
+    )
+    return drawing
 
 
 # ---------------------------------------------------------------------------

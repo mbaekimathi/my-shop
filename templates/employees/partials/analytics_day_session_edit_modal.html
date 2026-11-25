@@ -1,14 +1,15 @@
 {% comment %}
 "Edit session" modal for the Cashiers report day-session page
 (analytics-day-session-edit.js). Opens on a chooser step — opening float,
-counted closing (closed days only) or one of the session's expenses —
-then shows just the picked editor. Every other figure is recalculated
-from the day's records.
+counted closing (prefilled with the live expected while the day is open),
+an owner drawing, or one of the session's expenses — then shows just the
+picked editor. Every other figure is recalculated from the day's records.
 Expects `edit_session` dict:
   post_url, is_open, channels{cash,mpesa,card},
   opening{cash,mpesa,card}, closing{cash,mpesa,card},
   expenses[{id,name,category,category_label,amount,paid,supplier_name,label}],
-  expense_categories[{value,label}]
+  expense_categories[{value,label}],
+  drawings[{id,drawer,cash,mpesa,card,label}]
 {% endcomment %}
 {% if edit_session %}
 <div
@@ -43,30 +44,42 @@ Expects `edit_session` dict:
     </div>
 
     <div class="ax-edit-session-step" data-edit-step="choose">
+      <p class="ax-edit-session-prompt">What would you like to edit?</p>
       <div class="ax-edit-session-choices">
         <button type="button" class="ax-edit-session-choice" data-edit-goto="opening">
-          <i data-lucide="door-open" aria-hidden="true"></i>
-          <span>
+          <span class="ax-edit-session-choice-ico"><i data-lucide="door-open" aria-hidden="true"></i></span>
+          <span class="ax-edit-session-choice-text">
             <strong>Opening float</strong>
             <small>Till balances recorded when the day was opened.</small>
           </span>
+          <i class="ax-edit-session-choice-arrow" data-lucide="chevron-right" aria-hidden="true"></i>
         </button>
-        {% if not edit_session.is_open %}
         <button type="button" class="ax-edit-session-choice" data-edit-goto="closing">
-          <i data-lucide="clipboard-check" aria-hidden="true"></i>
-          <span>
+          <span class="ax-edit-session-choice-ico"><i data-lucide="clipboard-check" aria-hidden="true"></i></span>
+          <span class="ax-edit-session-choice-text">
             <strong>Counted closing</strong>
-            <small>Till balances counted when the day was closed.</small>
+            <small>{% if edit_session.is_open %}Prefilled with the live expected — save the actual count.{% else %}Till balances counted when the day was closed.{% endif %}</small>
           </span>
+          <i class="ax-edit-session-choice-arrow" data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+        {% if edit_session.drawings %}
+        <button type="button" class="ax-edit-session-choice" data-edit-goto="drawing">
+          <span class="ax-edit-session-choice-ico"><i data-lucide="hand-coins" aria-hidden="true"></i></span>
+          <span class="ax-edit-session-choice-text">
+            <strong>Owner drawing</strong>
+            <small>Correct a drawing recorded in this session.</small>
+          </span>
+          <i class="ax-edit-session-choice-arrow" data-lucide="chevron-right" aria-hidden="true"></i>
         </button>
         {% endif %}
         {% if edit_session.expenses %}
         <button type="button" class="ax-edit-session-choice" data-edit-goto="expense">
-          <i data-lucide="receipt-text" aria-hidden="true"></i>
-          <span>
+          <span class="ax-edit-session-choice-ico"><i data-lucide="receipt-text" aria-hidden="true"></i></span>
+          <span class="ax-edit-session-choice-text">
             <strong>Expense</strong>
             <small>Correct an expense recorded in this session.</small>
           </span>
+          <i class="ax-edit-session-choice-arrow" data-lucide="chevron-right" aria-hidden="true"></i>
         </button>
         {% endif %}
       </div>
@@ -143,7 +156,6 @@ Expects `edit_session` dict:
       </div>
     </form>
 
-    {% if not edit_session.is_open %}
     <form
       method="post"
       action="{{ edit_session.post_url }}"
@@ -211,6 +223,80 @@ Expects `edit_session` dict:
         </button>
       </div>
     </form>
+
+    {% if edit_session.drawings %}
+    <div class="ax-edit-session-step" data-edit-step="drawing" hidden>
+      <div class="ax-edit-session-expenses">
+        {% for drawing in edit_session.drawings %}
+        <form
+          method="post"
+          action="{{ edit_session.post_url }}"
+          class="workspace-modal-form ax-edit-expense-form"
+        >
+          {% csrf_token %}
+          <input type="hidden" name="edit_scope" value="drawing">
+          <input type="hidden" name="expense_id" value="{{ drawing.id }}">
+          <p class="ax-edit-expense-head">
+            <strong>{{ drawing.drawer }}</strong>
+            <span>Owner drawing</span>
+          </p>
+          <div class="ax-day-session-edit-fields">
+            {% if edit_session.channels.cash %}
+            <label class="shop-cart-input is-cash">
+              <span><i data-lucide="banknote" aria-hidden="true"></i> Cash</span>
+              <input
+                type="text"
+                name="drawing_cash"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{{ drawing.cash }}"
+                placeholder="0"
+              >
+            </label>
+            {% endif %}
+            {% if edit_session.channels.mpesa %}
+            <label class="shop-cart-input is-mpesa">
+              <span><i data-lucide="smartphone" aria-hidden="true"></i> M-Pesa</span>
+              <input
+                type="text"
+                name="drawing_mpesa"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{{ drawing.mpesa }}"
+                placeholder="0"
+              >
+            </label>
+            {% endif %}
+            {% if edit_session.channels.card %}
+            <label class="shop-cart-input is-card">
+              <span><i data-lucide="credit-card" aria-hidden="true"></i> Card</span>
+              <input
+                type="text"
+                name="drawing_card"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                value="{{ drawing.card }}"
+                placeholder="0"
+              >
+            </label>
+            {% endif %}
+          </div>
+          <div class="workspace-modal-actions">
+            <button type="submit" class="btn btn--primary">
+              <i data-lucide="save" aria-hidden="true"></i>
+              Save drawing
+            </button>
+          </div>
+        </form>
+        {% endfor %}
+      </div>
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-edit-back>Back</button>
+      </div>
+    </div>
     {% endif %}
 
     {% if edit_session.expenses %}

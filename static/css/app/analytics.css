@@ -10682,6 +10682,15 @@ body.ax-credit-due-open {
   display: none;
 }
 
+.ax-edit-session-prompt {
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mist-dim);
+}
+
 .ax-edit-session-choices {
   display: grid;
   gap: 0.55rem;
@@ -10691,7 +10700,8 @@ body.ax-credit-due-open {
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  padding: 0.7rem 0.8rem;
+  width: 100%;
+  padding: 0.65rem 0.8rem;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
@@ -10702,31 +10712,50 @@ body.ax-credit-due-open {
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.ax-edit-session-choice:hover {
+.ax-edit-session-choice:hover,
+.ax-edit-session-choice:focus-visible {
   border-color: var(--teal);
   background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  outline: none;
 }
 
-.ax-edit-session-choice > i,
-.ax-edit-session-choice > svg {
+.ax-edit-session-choice-ico {
   flex: none;
-  width: 1.2rem;
-  height: 1.2rem;
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--teal) 11%, var(--surface));
   color: var(--teal);
 }
 
-.ax-edit-session-choice > span {
+.ax-edit-session-choice-ico svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.ax-edit-session-choice-text {
+  flex: 1;
+  min-width: 0;
   display: grid;
   gap: 0.1rem;
 }
 
-.ax-edit-session-choice strong {
+.ax-edit-session-choice-text strong {
   font-size: 0.9rem;
   font-weight: 700;
 }
 
-.ax-edit-session-choice small {
+.ax-edit-session-choice-text small {
   font-size: 0.74rem;
+  color: var(--mist-dim);
+}
+
+.ax-edit-session-choice-arrow {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
   color: var(--mist-dim);
 }
 

@@ -696,9 +696,10 @@ def analytics_day_session(request, role_segment, session_id):
             scope = (request.POST.get("edit_scope") or "").strip().lower()
             messages.success(
                 request,
-                "Expense updated."
-                if scope == "expense"
-                else "Session opening / closing balances updated.",
+                {
+                    "expense": "Expense updated.",
+                    "drawing": "Owner drawing updated.",
+                }.get(scope, "Session opening / closing balances updated."),
             )
         return redirect(request.get_full_path())
 
