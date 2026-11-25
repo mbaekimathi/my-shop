@@ -1951,6 +1951,216 @@ class AnalyticsDaySessionReportTests(TestCase):
         self.assertEqual(session.opening_cash, 1000)
         self.assertEqual(session.closing_cash, 1250)
 
+    def test_edit_session_scoped_post_updates_only_opening(self):
+        from decimal import Decimal
+
+        session = self._close(self._session())
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "opening",
+                "opening_cash": "950",
+                "opening_mpesa": "180",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        session.refresh_from_db()
+        self.assertEqual(session.opening_cash, Decimal("950"))
+        self.assertEqual(session.opening_mpesa, Decimal("180"))
+        # Untouched — the scoped form carries no closing inputs.
+        self.assertEqual(session.closing_cash, 1250)
+        self.assertEqual(session.closing_mpesa, 200)
+
+    def test_edit_session_scoped_post_updates_only_closing(self):
+        from decimal import Decimal
+
+        session = self._close(self._session())
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "closing",
+                "closing_cash": "1200",
+                "closing_mpesa": "220",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        session.refresh_from_db()
+        self.assertEqual(session.closing_cash, Decimal("1200"))
+        self.assertEqual(session.closing_mpesa, Decimal("220"))
+        self.assertEqual(session.opening_cash, 1000)
+        self.assertEqual(session.opening_mpesa, 200)
+
+    def test_edit_session_closing_scope_rejected_while_open(self):
+        session = self._session()
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "closing",
+                "closing_cash": "999",
+                "closing_mpesa": "999",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        session.refresh_from_db()
+        self.assertIsNone(session.closing_cash)
+        self.assertIsNone(session.closing_mpesa)
+        self.assertEqual(session.opening_cash, 1000)
+
+    def _expense(self, *, amount=500, paid=500):
+        from shops.models import (
+            Expense,
+            ExpenseCategory,
+            ExpensePaymentStatus,
+        )
+
+        status = (
+            ExpensePaymentStatus.PAID
+            if paid >= amount
+            else ExpensePaymentStatus.PARTIAL
+            if paid
+            else ExpensePaymentStatus.UNPAID
+        )
+        return Expense.objects.create(
+            shop=self.shop,
+            category=ExpenseCategory.TRANSPORT,
+            name="SUPPLIES RUN",
+            amount=amount,
+            amount_paid=paid,
+            cash_amount=paid,
+            payment_status=status,
+            created_by=self.staff,
+        )
+
+    def test_edit_session_context_lists_session_expenses(self):
+        from django.test import RequestFactory
+
+        from employees.analytics_services import (
+            build_day_session_report_page,
+        )
+
+        session = self._close(self._session())
+        expense = self._expense()
+        request = RequestFactory().get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        request.user = self.user
+        page = build_day_session_report_page(
+            profile=self.staff,
+            request=request,
+            session=session,
+            allow_edit=True,
+        )["page"]
+        edit = page["edit_session"]
+        self.assertEqual(len(edit["expenses"]), 1)
+        row = edit["expenses"][0]
+        self.assertEqual(row["id"], expense.pk)
+        self.assertEqual(row["category"], "transport")
+        self.assertEqual(row["amount"], "500")
+        self.assertTrue(
+            any(cat["value"] == "transport" for cat in edit["expense_categories"])
+        )
+        self.assertFalse(
+            any(
+                cat["value"] == "owner_drawings"
+                for cat in edit["expense_categories"]
+            )
+        )
+
+    def test_edit_session_post_expense_updates_expense(self):
+        from decimal import Decimal
+
+        from shops.models import ExpensePaymentStatus
+
+        session = self._close(self._session())
+        expense = self._expense()
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "expense",
+                "expense_id": expense.pk,
+                "expense_name": "CORRECTED RUN",
+                "expense_category": "utilities",
+                "expense_amount": "700",
+                "expense_paid": "350",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        expense.refresh_from_db()
+        self.assertEqual(expense.name, "CORRECTED RUN")
+        self.assertEqual(expense.category, "utilities")
+        self.assertEqual(expense.amount, Decimal("700"))
+        self.assertEqual(expense.amount_paid, Decimal("350"))
+        self.assertEqual(expense.cash_amount, Decimal("350"))
+        self.assertEqual(expense.payment_status, ExpensePaymentStatus.PARTIAL)
+        # Balances untouched by the expense scope.
+        session.refresh_from_db()
+        self.assertEqual(session.opening_cash, 1000)
+        self.assertEqual(session.closing_cash, 1250)
+
+    def test_edit_session_post_expense_rejects_foreign_expense(self):
+        session = self._close(self._session())
+        other_shop = Shop.objects.create(
+            name="OTHER SHOP",
+            location="NAIROBI",
+            email="other-shop@test.local",
+            phone_number="0700001177",
+            login_code="870177",
+            password_hash="x",
+            created_by=self.staff,
+        )
+        from shops.models import Expense, ExpenseCategory
+
+        foreign = Expense.objects.create(
+            shop=other_shop,
+            category=ExpenseCategory.MISC,
+            name="OTHER",
+            amount=100,
+            amount_paid=100,
+            cash_amount=100,
+            payment_status="paid",
+            created_by=self.staff,
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f"/shop-manager/analytics/balances/{session.pk}/",
+            {
+                "edit_scope": "expense",
+                "expense_id": foreign.pk,
+                "expense_name": "HACKED",
+                "expense_category": "misc",
+                "expense_amount": "1",
+                "expense_paid": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.name, "OTHER")
+        self.assertEqual(foreign.amount, 100)
+
+    def test_edit_session_modal_renders_chooser_steps(self):
+        session = self._close(self._session())
+        self._expense()
+        self.client.force_login(self.user)
+        response = self.client.get(
+            f"/shop-manager/analytics/balances/{session.pk}/"
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        # Chooser step first; each editor is its own scoped form.
+        self.assertIn('data-edit-step="choose"', html)
+        self.assertIn('data-edit-goto="opening"', html)
+        self.assertIn('data-edit-goto="closing"', html)
+        self.assertIn('data-edit-goto="expense"', html)
+        self.assertIn('name="edit_scope" value="opening"', html)
+        self.assertIn('name="edit_scope" value="closing"', html)
+        self.assertIn('name="edit_scope" value="expense"', html)
+        self.assertIn('name="expense_id"', html)
+        self.assertIn("SUPPLIES RUN", html)
+
 
 class DashboardSidebarLinkTests(TestCase):
     def test_role_dashboard_omits_dashboard_link(self):

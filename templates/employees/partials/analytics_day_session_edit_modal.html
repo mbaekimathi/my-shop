@@ -1,11 +1,14 @@
 {% comment %}
 "Edit session" modal for the Cashiers report day-session page
-(analytics-day-session-edit.js). Corrects the recorded opening float and —
-when the day is closed — the counted closing only; every other figure is
-recalculated from the day's records.
+(analytics-day-session-edit.js). Opens on a chooser step — opening float,
+counted closing (closed days only) or one of the session's expenses —
+then shows just the picked editor. Every other figure is recalculated
+from the day's records.
 Expects `edit_session` dict:
   post_url, is_open, channels{cash,mpesa,card},
-  opening{cash,mpesa,card}, closing{cash,mpesa,card}
+  opening{cash,mpesa,card}, closing{cash,mpesa,card},
+  expenses[{id,name,category,category_label,amount,paid,supplier_name,label}],
+  expense_categories[{value,label}]
 {% endcomment %}
 {% if edit_session %}
 <div
@@ -24,10 +27,9 @@ Expects `edit_session` dict:
     <div class="workspace-modal-head">
       <div>
         <p class="shop-receipt-modal-kicker">Cashiers report</p>
-        <h2 id="edit-day-session-title">Edit session balances</h2>
+        <h2 id="edit-day-session-title">Edit session</h2>
         <p class="buy-stock-modal-lead">
-          Correct the {% if edit_session.is_open %}opening float{% else %}opening float and counted closing{% endif %}
-          — every other figure is recalculated from the day's records.
+          Pick what to correct — every other figure is recalculated from the day's records.
         </p>
       </div>
       <button
@@ -40,8 +42,48 @@ Expects `edit_session` dict:
       </button>
     </div>
 
-    <form method="post" action="{{ edit_session.post_url }}" class="workspace-modal-form ax-day-session-edit-form">
+    <div class="ax-edit-session-step" data-edit-step="choose">
+      <div class="ax-edit-session-choices">
+        <button type="button" class="ax-edit-session-choice" data-edit-goto="opening">
+          <i data-lucide="door-open" aria-hidden="true"></i>
+          <span>
+            <strong>Opening float</strong>
+            <small>Till balances recorded when the day was opened.</small>
+          </span>
+        </button>
+        {% if not edit_session.is_open %}
+        <button type="button" class="ax-edit-session-choice" data-edit-goto="closing">
+          <i data-lucide="clipboard-check" aria-hidden="true"></i>
+          <span>
+            <strong>Counted closing</strong>
+            <small>Till balances counted when the day was closed.</small>
+          </span>
+        </button>
+        {% endif %}
+        {% if edit_session.expenses %}
+        <button type="button" class="ax-edit-session-choice" data-edit-goto="expense">
+          <i data-lucide="receipt-text" aria-hidden="true"></i>
+          <span>
+            <strong>Expense</strong>
+            <small>Correct an expense recorded in this session.</small>
+          </span>
+        </button>
+        {% endif %}
+      </div>
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+      </div>
+    </div>
+
+    <form
+      method="post"
+      action="{{ edit_session.post_url }}"
+      class="workspace-modal-form ax-day-session-edit-form ax-edit-session-step"
+      data-edit-step="opening"
+      hidden
+    >
       {% csrf_token %}
+      <input type="hidden" name="edit_scope" value="opening">
       <fieldset class="ax-day-session-edit-group">
         <legend class="ax-day-session-edit-legend">Opening float</legend>
         <div class="ax-day-session-edit-fields">
@@ -92,8 +134,25 @@ Expects `edit_session` dict:
           {% endif %}
         </div>
       </fieldset>
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-edit-back>Back</button>
+        <button type="submit" class="btn btn--primary">
+          <i data-lucide="save" aria-hidden="true"></i>
+          Save opening
+        </button>
+      </div>
+    </form>
 
-      {% if not edit_session.is_open %}
+    {% if not edit_session.is_open %}
+    <form
+      method="post"
+      action="{{ edit_session.post_url }}"
+      class="workspace-modal-form ax-day-session-edit-form ax-edit-session-step"
+      data-edit-step="closing"
+      hidden
+    >
+      {% csrf_token %}
+      <input type="hidden" name="edit_scope" value="closing">
       <fieldset class="ax-day-session-edit-group">
         <legend class="ax-day-session-edit-legend">Counted closing</legend>
         <div class="ax-day-session-edit-fields">
@@ -144,16 +203,97 @@ Expects `edit_session` dict:
           {% endif %}
         </div>
       </fieldset>
-      {% endif %}
-
       <div class="workspace-modal-actions">
-        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="button" class="btn btn--ghost" data-edit-back>Back</button>
         <button type="submit" class="btn btn--primary">
           <i data-lucide="save" aria-hidden="true"></i>
-          Save balances
+          Save closing
         </button>
       </div>
     </form>
+    {% endif %}
+
+    {% if edit_session.expenses %}
+    <div class="ax-edit-session-step" data-edit-step="expense" hidden>
+      <div class="ax-edit-session-expenses">
+        {% for exp in edit_session.expenses %}
+        <form
+          method="post"
+          action="{{ edit_session.post_url }}"
+          class="workspace-modal-form ax-edit-expense-form"
+        >
+          {% csrf_token %}
+          <input type="hidden" name="edit_scope" value="expense">
+          <input type="hidden" name="expense_id" value="{{ exp.id }}">
+          <p class="ax-edit-expense-head">
+            <strong>{{ exp.name }}</strong>
+            <span>
+              {{ exp.category_label }}{% if exp.supplier_name %} · {{ exp.supplier_name }}{% endif %}
+            </span>
+          </p>
+          <div class="ax-day-session-edit-fields">
+            <label class="shop-cart-input">
+              <span><i data-lucide="tag" aria-hidden="true"></i> Expense</span>
+              <input
+                type="text"
+                name="expense_name"
+                required
+                maxlength="200"
+                value="{{ exp.name }}"
+              >
+            </label>
+            <label class="shop-cart-input">
+              <span><i data-lucide="list" aria-hidden="true"></i> Category</span>
+              <select name="expense_category" required>
+                {% for cat in edit_session.expense_categories %}
+                <option
+                  value="{{ cat.value }}"
+                  {% if cat.value == exp.category %}selected{% endif %}
+                >{{ cat.label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="shop-cart-input is-cash">
+              <span><i data-lucide="banknote" aria-hidden="true"></i> Amount</span>
+              <input
+                type="text"
+                name="expense_amount"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                required
+                value="{{ exp.amount }}"
+                placeholder="0"
+              >
+            </label>
+            <label class="shop-cart-input is-cash">
+              <span><i data-lucide="banknote" aria-hidden="true"></i> Amount paid</span>
+              <input
+                type="text"
+                name="expense_paid"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                required
+                value="{{ exp.paid }}"
+                placeholder="0"
+              >
+            </label>
+          </div>
+          <div class="workspace-modal-actions">
+            <button type="submit" class="btn btn--primary">
+              <i data-lucide="save" aria-hidden="true"></i>
+              Save expense
+            </button>
+          </div>
+        </form>
+        {% endfor %}
+      </div>
+      <div class="workspace-modal-actions">
+        <button type="button" class="btn btn--ghost" data-edit-back>Back</button>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endif %}

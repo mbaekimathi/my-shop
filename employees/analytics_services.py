@@ -13649,6 +13649,32 @@ def build_day_session_report_page(
                 except Exception:
                     return ""
 
+            def _dec(value):
+                if value is None:
+                    return ""
+                try:
+                    text = f"{Decimal(value).quantize(Decimal('0.01')):f}"
+                    if "." in text:
+                        text = text.rstrip("0").rstrip(".")
+                    return text
+                except Exception:
+                    return ""
+
+            def _expense_row(row):
+                label = row["name"] or "Expense"
+                if row.get("supplier_name"):
+                    label += f" — {row['supplier_name']}"
+                return {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "category": row["category"],
+                    "category_label": row["category_label"],
+                    "amount": _dec(row["amount"]),
+                    "paid": _dec(row["paid"]),
+                    "supplier_name": row.get("supplier_name") or "",
+                    "label": f"{label} · {_money_ksh(row['amount'])}",
+                }
+
             page["edit_session"] = {
                 "post_url": request.get_full_path(),
                 "is_open": is_open,
@@ -13663,6 +13689,15 @@ def build_day_session_report_page(
                     "mpesa": _amt(session.closing_mpesa),
                     "card": _amt(session.closing_card),
                 },
+                "expenses": [
+                    _expense_row(row)
+                    for row in (details.get("expenses") or [])
+                ],
+                "expense_categories": [
+                    {"value": choice.value, "label": choice.label}
+                    for choice in ExpenseCategory
+                    if choice.value != ExpenseCategory.OWNER_DRAWINGS
+                ],
             }
     flags = _pos_feature_flags(pos)
     for key, _label in channel_cols:

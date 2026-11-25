@@ -9005,6 +9005,7 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         Expense.objects.filter(**window)
         .order_by("created_at")
         .values(
+            "id",
             "created_at",
             "name",
             "category",
@@ -9026,8 +9027,10 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
         if paid is None:
             paid = row["amount"] or Decimal("0.00")
         entry = {
+            "id": row["id"],
             "at": row["created_at"],
             "name": row["name"],
+            "category": row["category"],
             "category_label": category_labels.get(
                 row["category"], row["category"] or "Expense"
             ),
@@ -12154,13 +12157,16 @@ def close_shop_day(*, shop: Shop, payload: dict):
 
 @transaction.atomic
 def update_shop_day_balances(*, session, payload: dict):
-    """Correct a day session's recorded opening / closing balances.
+    """Correct a day session's recorded opening / closing balances or one
+    of its expenses.
 
-    Used by the Cashiers report "Edit session" action — only the till
-    floats move; every report figure is recalculated from the day's
-    records. Till channels follow the shop's active POS methods (same
-    rules as open/close): a channel that is off is not editable and keeps
-    its stored value, including a NULL closing count.
+    Used by the Cashiers report "Edit session" action — the posted
+    ``edit_scope`` picks which part the form covers (``opening``,
+    ``closing`` or ``expense``; a missing scope is the legacy combined
+    balances form). Till channels follow the shop's active POS methods
+    (same rules as open/close): a channel that is off is not editable and
+    keeps its stored value, including a NULL closing count. Every other
+    report figure is recalculated from the day's records.
     """
     from .models import ShopDaySession
 
@@ -12170,23 +12176,37 @@ def update_shop_day_balances(*, session, payload: dict):
     if locked is None:
         raise ValidationError("Day session not found.")
 
-    channels = shop_day_balance_channels(shop=locked.shop)
-    opening = _parse_balance_fields(
-        {
-            "cash_amount": payload.get("opening_cash"),
-            "mpesa_amount": payload.get("opening_mpesa"),
-            "card_amount": payload.get("opening_card"),
-        },
-        shop=locked.shop,
-    )
-    update_fields = []
-    for key in ("cash", "mpesa", "card"):
-        if not channels[key]:
-            continue
-        setattr(locked, f"opening_{key}", opening[key])
-        update_fields.append(f"opening_{key}")
+    scope = (payload.get("edit_scope") or "").strip().lower()
+    if scope == "expense":
+        _update_session_expense(locked, payload)
+        return locked
+    if scope not in ("", "opening", "closing"):
+        raise ValidationError(
+            "Pick what to edit — opening, closing, or an expense."
+        )
+    if scope == "closing" and locked.is_open:
+        raise ValidationError(
+            "This session is still open — there is no counted closing to correct."
+        )
 
-    if not locked.is_open:
+    channels = shop_day_balance_channels(shop=locked.shop)
+    update_fields = []
+    if scope in ("", "opening"):
+        opening = _parse_balance_fields(
+            {
+                "cash_amount": payload.get("opening_cash"),
+                "mpesa_amount": payload.get("opening_mpesa"),
+                "card_amount": payload.get("opening_card"),
+            },
+            shop=locked.shop,
+        )
+        for key in ("cash", "mpesa", "card"):
+            if not channels[key]:
+                continue
+            setattr(locked, f"opening_{key}", opening[key])
+            update_fields.append(f"opening_{key}")
+
+    if scope in ("", "closing") and not locked.is_open:
         closing = _parse_balance_fields(
             {
                 "cash_amount": payload.get("closing_cash"),
@@ -12203,6 +12223,85 @@ def update_shop_day_balances(*, session, payload: dict):
 
     locked.save(update_fields=update_fields)
     return locked
+
+
+def _update_session_expense(session, payload: dict):
+    """Correct one expense recorded inside a day session's window.
+
+    The expense must belong to the session's shop, sit inside the
+    session's [opened, closed) window, and not be an owner drawing
+    (drawings are recorded on the Day page, not here). Payment status is
+    re-stamped from the corrected amounts; the paid part stays as till
+    cash (``cash_amount``) like the register form assumes.
+    """
+    try:
+        expense_id = int(payload.get("expense_id") or "")
+    except (TypeError, ValueError):
+        expense_id = 0
+    expense = (
+        Expense.objects.select_for_update()
+        .filter(pk=expense_id, shop_id=session.shop_id)
+        .exclude(category=ExpenseCategory.OWNER_DRAWINGS)
+        .first()
+    )
+    if expense is None:
+        raise ValidationError("Expense not found for this session.")
+    opened = session_activity_start(session)
+    closed = _session_window_end(session)
+    if not (opened <= expense.created_at < closed):
+        raise ValidationError("That expense is outside this session.")
+
+    name = (payload.get("expense_name") or "").strip().upper()
+    if not name:
+        raise ValidationError("Expense name is required.")
+    if len(name) > 200:
+        raise ValidationError("Expense name is too long.")
+    category = (payload.get("expense_category") or "").strip().lower()
+    valid_categories = {choice.value for choice in ExpenseCategory}
+    if (
+        category not in valid_categories
+        or category == ExpenseCategory.OWNER_DRAWINGS
+    ):
+        raise ValidationError("Choose a valid expense category.")
+    amount_text = (payload.get("expense_amount") or "").strip()
+    if not amount_text:
+        raise ValidationError("Enter the expense amount.")
+    amount = _money(amount_text)
+    paid_text = (payload.get("expense_paid") or "").strip()
+    if not paid_text:
+        raise ValidationError("Enter the amount paid.")
+    amount_paid = _money(paid_text)
+    if amount <= 0:
+        raise ValidationError("Expense amount must be greater than zero.")
+    if amount_paid < 0 or amount_paid > amount:
+        raise ValidationError(
+            "Amount paid must be between zero and the expense amount."
+        )
+
+    if amount_paid >= amount:
+        status = ExpensePaymentStatus.PAID
+    elif amount_paid > 0:
+        status = ExpensePaymentStatus.PARTIAL
+    else:
+        status = ExpensePaymentStatus.UNPAID
+
+    expense.name = name
+    expense.category = category
+    expense.amount = amount
+    expense.amount_paid = amount_paid
+    expense.cash_amount = amount_paid
+    expense.payment_status = status
+    expense.save(
+        update_fields=[
+            "name",
+            "category",
+            "amount",
+            "amount_paid",
+            "cash_amount",
+            "payment_status",
+        ]
+    )
+    return expense
 
 
 # ---------------------------------------------------------------------------

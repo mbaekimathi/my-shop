@@ -1,7 +1,8 @@
 /**
- * Cashiers report day-session "Edit session" popup — corrects the recorded
- * opening float and counted closing. Plain POST form; this file only handles
- * opening / closing the modal.
+ * Cashiers report day-session "Edit session" popup — a chooser step asks
+ * what to correct (opening float, counted closing, or an expense), then a
+ * plain POST form shows just that editor. This file only handles opening /
+ * closing the modal and switching steps.
  */
 (function () {
   "use strict";
@@ -9,7 +10,20 @@
   const modal = document.querySelector("[data-modal='edit-day-session']");
   if (!modal) return;
 
+  const steps = modal.querySelectorAll("[data-edit-step]");
+  const showStep = (name) => {
+    steps.forEach((step) => {
+      step.hidden = step.dataset.editStep !== name;
+    });
+    if (name !== "choose") {
+      modal
+        .querySelector(`[data-edit-step='${name}'] input:not([type='hidden'])`)
+        ?.focus();
+    }
+  };
+
   const openModal = () => {
+    showStep("choose");
     modal.hidden = false;
     modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("workspace-modal-open");
@@ -18,9 +32,6 @@
     } catch (_) {
       /* ignore */
     }
-    window.setTimeout(() => {
-      modal.querySelector("input")?.focus();
-    }, 40);
   };
 
   const closeModal = () => {
@@ -38,6 +49,20 @@
         openModal();
       });
     });
+
+  modal.querySelectorAll("[data-edit-goto]").forEach((trigger) => {
+    trigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      showStep(trigger.dataset.editGoto);
+    });
+  });
+
+  modal.querySelectorAll("[data-edit-back]").forEach((trigger) => {
+    trigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      showStep("choose");
+    });
+  });
 
   modal.querySelectorAll("[data-modal-close]").forEach((el) => {
     el.addEventListener("click", (event) => {

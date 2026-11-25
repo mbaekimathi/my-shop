@@ -10672,6 +10672,106 @@ body.ax-credit-due-open {
   margin-inline: 0;
 }
 
+.ax-edit-session-step {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.25rem;
+}
+
+.ax-edit-session-step[hidden] {
+  display: none;
+}
+
+.ax-edit-session-choices {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.ax-edit-session-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ax-edit-session-choice:hover {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+}
+
+.ax-edit-session-choice > i,
+.ax-edit-session-choice > svg {
+  flex: none;
+  width: 1.2rem;
+  height: 1.2rem;
+  color: var(--teal);
+}
+
+.ax-edit-session-choice > span {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.ax-edit-session-choice strong {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.ax-edit-session-choice small {
+  font-size: 0.74rem;
+  color: var(--mist-dim);
+}
+
+.ax-edit-session-expenses {
+  display: grid;
+  gap: 0.8rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.ax-edit-session-step .ax-edit-expense-form {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.ax-edit-expense-head {
+  margin: 0;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.ax-edit-expense-head strong {
+  font-size: 0.86rem;
+}
+
+.ax-edit-expense-head span {
+  font-size: 0.72rem;
+  color: var(--mist-dim);
+}
+
+.ax-edit-expense-form .shop-cart-input select {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
 /* ==== Day session report — modern look ================================
    Scoped to .ax--day-report so every other analytics page is untouched. */
 

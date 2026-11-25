@@ -690,11 +690,15 @@ def analytics_day_session(request, role_segment, session_id):
                 else str(exc)
             )
             messages.error(
-                request, detail or "Could not update the session balances."
+                request, detail or "Could not update the session."
             )
         else:
+            scope = (request.POST.get("edit_scope") or "").strip().lower()
             messages.success(
-                request, "Session opening / closing balances updated."
+                request,
+                "Expense updated."
+                if scope == "expense"
+                else "Session opening / closing balances updated.",
             )
         return redirect(request.get_full_path())
 
