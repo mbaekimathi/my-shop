@@ -10588,15 +10588,16 @@ html[data-theme="dark"] .stock-visibility-list--items em {
     display: none;
   }
 
-  /* Dense rows: name | stock | count | variance, counted-by underneath.
-     Fixed tracks keep every column edge straight across all rows. */
+  /* Dense rows: full-width name on top (never clipped), then
+     system | count | variance on a compact line, counted-by underneath. */
   .stock-panel--online-take .online-take-row {
-    grid-template-columns: minmax(0, 1fr) 2.8rem 4.6rem 4.4rem;
+    grid-template-columns: minmax(0, 1fr) 3.4rem 4.4rem;
     grid-template-areas:
-      "item system qty variance"
-      "by by by by";
-    gap: 0.14rem 0.45rem;
-    padding: 0.34rem 0.55rem;
+      "item item item"
+      "system qty variance"
+      "by by by";
+    gap: 0.1rem 0.45rem;
+    padding: 0.36rem 0.55rem;
   }
 
   .stock-panel--online-take .online-take-item {
@@ -10605,10 +10606,7 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 
   .stock-panel--online-take .online-take-item strong {
     font-size: 0.85rem;
-    line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.25;
   }
 
   .stock-panel--online-take .online-take-system {
@@ -10619,13 +10617,14 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 
   .stock-panel--online-take .online-take-qty {
     grid-area: qty;
+    align-self: center;
   }
 
   .stock-panel--online-take .online-take-qty input {
-    min-height: 2.25rem;
-    padding: 0.15rem 0.3rem;
-    border-radius: 7px;
-    font-size: 0.88rem;
+    min-height: 1.9rem;
+    padding: 0.1rem 0.25rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
   }
 
   .stock-panel--online-take .online-take-variance {
