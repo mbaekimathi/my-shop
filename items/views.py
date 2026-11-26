@@ -8586,17 +8586,14 @@ def online_stock_take_page(request, profile, meta, module):
     except (TypeError, ValueError):
         shop_id = 0
     selected_shop = next((shop for shop in shops if shop.pk == shop_id), None)
+    # No shop filter → the merged all-shops sheet (one column per shop).
+    column_shops = [selected_shop] if selected_shop is not None else list(shops)
     count_date = resolve_online_stock_take_date(
         request.POST.get("date") if request.method == "POST" else request.GET.get("date")
     )
     count_date_value = count_date.isoformat()
 
     if request.method == "POST":
-        if not selected_shop:
-            return JsonResponse(
-                {"ok": False, "error": "Select a shop for this online stock take."},
-                status=400,
-            )
         user = getattr(profile, "user", None)
         label = (
             (getattr(user, "get_full_name", lambda: "")() or "")
@@ -8606,22 +8603,49 @@ def online_stock_take_page(request, profile, meta, module):
         )
         if (request.POST.get("action") or "").strip() == "save_count":
             from items.online_stock_take import (
+                catalog_shop_slice,
                 record_online_stock_take_save,
                 saved_count_summary,
             )
 
-            catalog = build_online_stock_take_catalog(
-                shop=selected_shop, count_date=count_date
-            )
-            try:
-                record = record_online_stock_take_save(
-                    shop=selected_shop,
-                    count_date=count_date,
-                    stock_kind="item",
-                    catalog=catalog,
-                    profile=profile,
-                    saved_by_label=label,
+            # Merged mode saves one OnlineStockTakeSavedCount per shop that
+            # has counted lines; a shop filter narrows it to that shop.
+            if not column_shops:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Select a shop for this online stock take.",
+                    },
+                    status=400,
                 )
+            catalog = build_online_stock_take_catalog(
+                shops=column_shops, count_date=count_date
+            )
+            if not int(catalog.get("filled_count") or 0):
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Count at least one item before saving.",
+                    },
+                    status=400,
+                )
+            try:
+                saved_rows = []
+                for take_shop in column_shops:
+                    shop_catalog = catalog_shop_slice(
+                        catalog, take_shop.pk
+                    )
+                    if not int(shop_catalog.get("filled_count") or 0):
+                        continue
+                    record = record_online_stock_take_save(
+                        shop=take_shop,
+                        count_date=count_date,
+                        stock_kind="item",
+                        catalog=shop_catalog,
+                        profile=profile,
+                        saved_by_label=label,
+                    )
+                    saved_rows.append(saved_count_summary(record))
             except ValidationError as exc:
                 message = (
                     exc.messages[0]
@@ -8629,8 +8653,11 @@ def online_stock_take_page(request, profile, meta, module):
                     else str(exc)
                 )
                 return JsonResponse({"ok": False, "error": message}, status=400)
+            return JsonResponse({"ok": True, "saved": saved_rows})
+        if not selected_shop:
             return JsonResponse(
-                {"ok": True, "saved": saved_count_summary(record)}
+                {"ok": False, "error": "Select a shop for this online stock take."},
+                status=400,
             )
         try:
             line = save_online_stock_take_line(
@@ -8653,18 +8680,18 @@ def online_stock_take_page(request, profile, meta, module):
         request.headers.get("x-requested-with") == "XMLHttpRequest"
         and request.GET.get("sync") == "1"
     ):
-        if not selected_shop:
+        if not column_shops:
             return JsonResponse(
                 {"ok": False, "error": "Select a shop for this online stock take."},
                 status=400,
             )
         sync = build_online_stock_take_sync(
-            shop=selected_shop, count_date=count_date
+            shops=column_shops, count_date=count_date
         )
         return JsonResponse({"ok": True, **sync})
 
     # Count sheet outputs — ?paper=a4|80|58, ?estimate=1, ?download=1
-    # (live count for the selected shop/day, or ?saved=<id> snapshot).
+    # (live count for the shop set/day, or ?saved=<id> snapshot).
     from .movement_page import _movement_report_output_flags
     from items.online_stock_take import build_online_take_count_document
 
@@ -8681,14 +8708,15 @@ def online_stock_take_page(request, profile, meta, module):
                 filename_prefix="stock-count",
                 saved=saved_record,
             )
-        elif selected_shop is not None:
+        elif column_shops:
             document = build_online_take_count_document(
                 kind_label="Stock count",
                 filename_prefix="stock-count",
                 shop=selected_shop,
+                shops=None if selected_shop is not None else column_shops,
                 count_date=count_date,
                 catalog=build_online_stock_take_catalog(
-                    shop=selected_shop, count_date=count_date
+                    shops=column_shops, count_date=count_date
                 ),
             )
         else:
@@ -8702,26 +8730,12 @@ def online_stock_take_page(request, profile, meta, module):
             want_download=wants_download,
         )
 
-    catalog = (
-        build_online_stock_take_catalog(
-            shop=selected_shop, count_date=count_date
-        )
-        if selected_shop
-        else {
-            "filled_lines": [],
-            "lines": [],
-            "groups": [],
-            "item_count": 0,
-            "filled_count": 0,
-            "match_count": 0,
-            "excess_count": 0,
-            "short_count": 0,
-            "count_date": count_date,
-        }
+    catalog = build_online_stock_take_catalog(
+        shops=column_shops, count_date=count_date
     )
     sync_meta = (
-        build_online_stock_take_sync(shop=selected_shop, count_date=count_date)
-        if selected_shop
+        build_online_stock_take_sync(shops=column_shops, count_date=count_date)
+        if column_shops
         else {"revision": "0:"}
     )
 
@@ -8735,6 +8749,8 @@ def online_stock_take_page(request, profile, meta, module):
             "stock_mode": "online-stock-take",
             "online_stock_take_url": list_url,
             "online_shops": shops,
+            "online_column_shops": column_shops,
+            "online_merged": selected_shop is None,
             "selected_shop": selected_shop,
             "online_count_date": count_date,
             "online_count_date_value": count_date_value,
@@ -8745,12 +8761,12 @@ def online_stock_take_page(request, profile, meta, module):
                 selected_shop=selected_shop,
                 shops=shops,
             ),
-            "receipts_print_modal": bool(selected_shop),
+            "receipts_print_modal": bool(column_shops),
             "receipts_print_url": request.path,
             "receipts_print_title": "Print stock count",
             "receipts_print_lead": (
-                "Prints the counted items for this shop and day — pick a "
-                "paper size, then print or download the A4 PDF."
+                "Prints the day's counted items with variance per shop — "
+                "pick a paper size, then print or download the A4 PDF."
             ),
         },
     )
@@ -9001,6 +9017,8 @@ def shelf_online_stock_take_page(request, profile, meta, module):
     except (TypeError, ValueError):
         shop_id = 0
     selected_shop = next((shop for shop in shops if shop.pk == shop_id), None)
+    # No shop filter → merged sheet (shelf items only fill their own column).
+    column_shops = [selected_shop] if selected_shop is not None else list(shops)
     count_date = resolve_online_stock_take_date(
         request.POST.get("date")
         if request.method == "POST"
@@ -9009,11 +9027,6 @@ def shelf_online_stock_take_page(request, profile, meta, module):
     count_date_value = count_date.isoformat()
 
     if request.method == "POST":
-        if not selected_shop:
-            return JsonResponse(
-                {"ok": False, "error": "Select a shop for this shelf stock take."},
-                status=400,
-            )
         user = getattr(profile, "user", None)
         label = (
             (getattr(user, "get_full_name", lambda: "")() or "")
@@ -9023,22 +9036,47 @@ def shelf_online_stock_take_page(request, profile, meta, module):
         )
         if (request.POST.get("action") or "").strip() == "save_count":
             from items.online_stock_take import (
+                catalog_shop_slice,
                 record_online_stock_take_save,
                 saved_count_summary,
             )
 
-            catalog = build_shelf_online_take_catalog(
-                shop=selected_shop, count_date=count_date
-            )
-            try:
-                record = record_online_stock_take_save(
-                    shop=selected_shop,
-                    count_date=count_date,
-                    stock_kind="shelf",
-                    catalog=catalog,
-                    profile=profile,
-                    saved_by_label=label,
+            if not column_shops:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Select a shop for this shelf stock take.",
+                    },
+                    status=400,
                 )
+            catalog = build_shelf_online_take_catalog(
+                shops=column_shops, count_date=count_date
+            )
+            if not int(catalog.get("filled_count") or 0):
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Count at least one item before saving.",
+                    },
+                    status=400,
+                )
+            try:
+                saved_rows = []
+                for take_shop in column_shops:
+                    shop_catalog = catalog_shop_slice(
+                        catalog, take_shop.pk
+                    )
+                    if not int(shop_catalog.get("filled_count") or 0):
+                        continue
+                    record = record_online_stock_take_save(
+                        shop=take_shop,
+                        count_date=count_date,
+                        stock_kind="shelf",
+                        catalog=shop_catalog,
+                        profile=profile,
+                        saved_by_label=label,
+                    )
+                    saved_rows.append(saved_count_summary(record))
             except ValidationError as exc:
                 message = (
                     exc.messages[0]
@@ -9046,8 +9084,11 @@ def shelf_online_stock_take_page(request, profile, meta, module):
                     else str(exc)
                 )
                 return JsonResponse({"ok": False, "error": message}, status=400)
+            return JsonResponse({"ok": True, "saved": saved_rows})
+        if not selected_shop:
             return JsonResponse(
-                {"ok": True, "saved": saved_count_summary(record)}
+                {"ok": False, "error": "Select a shop for this shelf stock take."},
+                status=400,
             )
         try:
             line = save_shelf_online_take_line(
@@ -9070,18 +9111,18 @@ def shelf_online_stock_take_page(request, profile, meta, module):
         request.headers.get("x-requested-with") == "XMLHttpRequest"
         and request.GET.get("sync") == "1"
     ):
-        if not selected_shop:
+        if not column_shops:
             return JsonResponse(
                 {"ok": False, "error": "Select a shop for this shelf stock take."},
                 status=400,
             )
         sync = build_shelf_online_take_sync(
-            shop=selected_shop, count_date=count_date
+            shops=column_shops, count_date=count_date
         )
         return JsonResponse({"ok": True, **sync})
 
     # Count sheet outputs — ?paper=a4|80|58, ?estimate=1, ?download=1
-    # (live count for the selected shop/day, or ?saved=<id> snapshot).
+    # (live count for the shop set/day, or ?saved=<id> snapshot).
     from .movement_page import _movement_report_output_flags
     from items.online_stock_take import build_online_take_count_document
 
@@ -9098,14 +9139,15 @@ def shelf_online_stock_take_page(request, profile, meta, module):
                 filename_prefix="shelf-stock-count",
                 saved=saved_record,
             )
-        elif selected_shop is not None:
+        elif column_shops:
             document = build_online_take_count_document(
                 kind_label="Shelf stock count",
                 filename_prefix="shelf-stock-count",
                 shop=selected_shop,
+                shops=None if selected_shop is not None else column_shops,
                 count_date=count_date,
                 catalog=build_shelf_online_take_catalog(
-                    shop=selected_shop, count_date=count_date
+                    shops=column_shops, count_date=count_date
                 ),
             )
         else:
@@ -9120,11 +9162,11 @@ def shelf_online_stock_take_page(request, profile, meta, module):
         )
 
     catalog = build_shelf_online_take_catalog(
-        shop=selected_shop, count_date=count_date
+        shops=column_shops, count_date=count_date
     )
     sync_meta = (
-        build_shelf_online_take_sync(shop=selected_shop, count_date=count_date)
-        if selected_shop
+        build_shelf_online_take_sync(shops=column_shops, count_date=count_date)
+        if column_shops
         else {"revision": "0:"}
     )
 
@@ -9139,6 +9181,8 @@ def shelf_online_stock_take_page(request, profile, meta, module):
             "online_stock_take_url": list_url,
             "online_page_label": "Shelf online stock take",
             "online_shops": shops,
+            "online_column_shops": column_shops,
+            "online_merged": selected_shop is None,
             "selected_shop": selected_shop,
             "online_count_date": count_date,
             "online_count_date_value": count_date_value,
@@ -9149,12 +9193,12 @@ def shelf_online_stock_take_page(request, profile, meta, module):
                 selected_shop=selected_shop,
                 shops=shops,
             ),
-            "receipts_print_modal": bool(selected_shop),
+            "receipts_print_modal": bool(column_shops),
             "receipts_print_url": request.path,
             "receipts_print_title": "Print shelf stock count",
             "receipts_print_lead": (
-                "Prints the counted shelf items for this shop and day — pick "
-                "a paper size, then print or download the A4 PDF."
+                "Prints the day's counted shelf items with variance per shop "
+                "— pick a paper size, then print or download the A4 PDF."
             ),
         },
     )

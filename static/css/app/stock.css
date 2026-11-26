@@ -9882,24 +9882,29 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   transition: width 0.4s ease;
 }
 
-/* Count sheet — one continuous report table */
+/* Count sheet — one continuous report table, one shop column per shop */
 .online-take-report {
-  /* Shared column template — head and rows use identical tracks so every
-     column edge stays straight. Breakpoints override the one variable. */
-  --online-take-cols:
-    minmax(10rem, 1.6fr) 5.5rem 8rem minmax(8rem, 1fr) minmax(6.5rem, 0.75fr);
+  /* --ost-shop-cols is stamped inline (number of shop columns). Head and
+     rows use identical tracks so every column edge stays straight. */
+  --ost-shop-cols: 1;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface);
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 10px 28px -14px rgba(15, 23, 42, 0.14);
 }
 
+.online-take-report-head,
+.stock-panel--online-take .online-take-list {
+  min-width: calc(9rem + var(--ost-shop-cols) * 10.5rem);
+}
+
 .online-take-report-head {
   display: grid;
-  grid-template-columns: var(--online-take-cols);
+  grid-template-columns:
+    minmax(9rem, 1.4fr) repeat(var(--ost-shop-cols), minmax(10.5rem, 1fr));
   gap: 0.5rem 0.9rem;
   align-items: center;
   padding: 0.6rem 1rem;
@@ -9916,6 +9921,28 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   text-align: right;
 }
 
+.online-take-head-shop {
+  display: grid;
+  gap: 0.08rem;
+  text-align: center;
+  min-width: 0;
+}
+
+.online-take-head-shop b {
+  font-size: 0.72rem;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-take-head-shop em {
+  font-style: normal;
+  font-size: 0.56rem;
+  letter-spacing: 0.09em;
+  color: var(--mist);
+}
+
 .stock-panel--online-take .online-take-list {
   list-style: none;
   margin: 0;
@@ -9924,7 +9951,8 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 
 .stock-panel--online-take .online-take-row {
   display: grid;
-  grid-template-columns: var(--online-take-cols);
+  grid-template-columns:
+    minmax(9rem, 1.4fr) repeat(var(--ost-shop-cols), minmax(10.5rem, 1fr));
   gap: 0.5rem 0.9rem;
   align-items: center;
   padding: 0.55rem 1rem;
@@ -9950,6 +9978,47 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 
 .stock-panel--online-take .online-take-row.is-saving {
   opacity: 0.65;
+}
+
+.stock-panel--online-take .online-take-cell {
+  display: grid;
+  gap: 0.2rem;
+  align-content: center;
+  min-width: 0;
+  padding: 0.15rem 0.2rem 0.15rem 0.75rem;
+  border-left: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 10px;
+}
+
+.stock-panel--online-take .online-take-cell.is-na {
+  place-items: center;
+  color: var(--mist);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.stock-panel--online-take .online-take-cell.is-saving {
+  opacity: 0.65;
+}
+
+.stock-panel--online-take .online-take-cell.is-remote-flash {
+  background: color-mix(in srgb, var(--accent, #1f6f78) 14%, transparent);
+  transition: background 0.9s ease;
+}
+
+.online-take-cell-top {
+  display: grid;
+  grid-template-columns: minmax(2.2rem, auto) minmax(3.4rem, 1fr);
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.online-take-cell-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  min-width: 0;
 }
 
 .stock-panel--online-take .online-take-row.is-match {
@@ -9986,6 +10055,14 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   line-height: 1.3;
   color: var(--text-strong);
   overflow-wrap: anywhere;
+}
+
+.stock-panel--online-take .online-take-item em {
+  display: block;
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--mist-dim);
 }
 
 .stock-panel--online-take .online-take-system {
@@ -10066,7 +10143,7 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 }
 
 .stock-panel--online-take .online-take-by {
-  font-size: 0.78rem;
+  font-size: 0.66rem;
   font-weight: 650;
   line-height: 1.25;
   text-align: right;
@@ -10074,6 +10151,8 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .stock-panel--online-take .online-take-by[data-empty] {
@@ -10545,11 +10624,6 @@ html[data-theme="dark"] .stock-visibility-list--items em {
 
 @media (max-width: 900px) {
   /* Tighter straight columns before the compact row layout takes over. */
-  .online-take-report {
-    --online-take-cols:
-      minmax(6.5rem, 1.5fr) 4.5rem 6.5rem minmax(5.5rem, 1fr) minmax(5rem, 0.7fr);
-  }
-
   .online-take-report-head,
   .stock-panel--online-take .online-take-row {
     gap: 0.4rem 0.6rem;
@@ -10583,28 +10657,22 @@ html[data-theme="dark"] .stock-visibility-list--items em {
     font-size: 1.15rem;
   }
 
+  /* The merged matrix scrolls sideways on phones — tighten what we can. */
   .stock-panel--online-take .online-take-report {
     border-radius: 12px;
   }
 
-  .stock-panel--online-take .online-take-report-head {
-    display: none;
+  .online-take-report-head,
+  .stock-panel--online-take .online-take-list {
+    min-width: calc(7rem + var(--ost-shop-cols) * 8rem);
   }
 
-  /* Dense rows: full-width name on top (never clipped), then
-     system | count | variance on a compact line, counted-by underneath. */
+  .online-take-report-head,
   .stock-panel--online-take .online-take-row {
-    grid-template-columns: minmax(0, 1fr) 3.4rem 4.4rem;
-    grid-template-areas:
-      "item item item"
-      "system qty variance"
-      "by by by";
-    gap: 0.1rem 0.45rem;
-    padding: 0.36rem 0.55rem;
-  }
-
-  .stock-panel--online-take .online-take-item {
-    grid-area: item;
+    grid-template-columns:
+      minmax(7rem, 1.4fr) repeat(var(--ost-shop-cols), minmax(8rem, 1fr));
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
   }
 
   .stock-panel--online-take .online-take-item strong {
@@ -10612,15 +10680,12 @@ html[data-theme="dark"] .stock-visibility-list--items em {
     line-height: 1.25;
   }
 
-  .stock-panel--online-take .online-take-system {
-    grid-area: system;
-    align-self: center;
-    font-size: 0.78rem;
+  .stock-panel--online-take .online-take-cell {
+    padding-left: 0.5rem;
   }
 
-  .stock-panel--online-take .online-take-qty {
-    grid-area: qty;
-    align-self: center;
+  .stock-panel--online-take .online-take-system {
+    font-size: 0.78rem;
   }
 
   .stock-panel--online-take .online-take-qty input {
@@ -10631,8 +10696,6 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   }
 
   .stock-panel--online-take .online-take-variance {
-    grid-area: variance;
-    justify-self: end;
     min-width: 0;
     padding: 0.14rem 0.42rem;
     font-size: 0.7rem;
@@ -10650,9 +10713,7 @@ html[data-theme="dark"] .stock-visibility-list--items em {
   }
 
   .stock-panel--online-take .online-take-by {
-    grid-area: by;
-    text-align: left;
-    font-size: 0.68rem;
+    font-size: 0.62rem;
     color: var(--mist-dim);
   }
 

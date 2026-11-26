@@ -12,7 +12,7 @@
   data-online-stock-take-url="{{ online_stock_take_url }}"
   data-online-count-date="{{ online_count_date_value }}"
   {% if selected_shop %}data-selected-shop-id="{{ selected_shop.pk }}"{% endif %}
-  {% if selected_shop %}data-online-sync-revision="{{ online_sync_revision }}"{% endif %}
+  {% if online_column_shops %}data-online-sync-revision="{{ online_sync_revision }}"{% endif %}
 >
   <header class="stock-panel-head stock-settings-head">
     <div class="stock-panel-head-top">
@@ -21,16 +21,19 @@
         <h2>
           {% if selected_shop %}
           {{ selected_shop.name }}
+          {% elif online_column_shops %}
+          All shops
           {% else %}
-          Choose a shop
+          No shops available
           {% endif %}
         </h2>
         <p>
-          Pick a day, then enter physical counts beside current stock. Each day keeps its
-          own counts. Variance updates live and each input auto-saves.
+          Pick a day, then enter physical counts beside current stock — every
+          shop sits side by side on one sheet. Each day keeps its own counts.
+          Variance updates live and each input auto-saves.
         </p>
       </div>
-      {% if selected_shop %}
+      {% if online_column_shops %}
       <div class="online-take-status-stack">
         <p class="online-take-day-chip" aria-label="Count day">
           <i data-lucide="calendar" aria-hidden="true"></i>
@@ -59,8 +62,8 @@
     </label>
     <label class="online-take-shop-pick">
       <span>Shop</span>
-      <select data-online-take-shop aria-label="Select shop for online stock take">
-        <option value="">Select shop…</option>
+      <select data-online-take-shop aria-label="Filter shops for online stock take">
+        <option value=""{% if not selected_shop %} selected{% endif %}>All shops</option>
         {% for shop in online_shops %}
         <option value="{{ shop.pk }}"{% if selected_shop and selected_shop.pk == shop.pk %} selected{% endif %}>
           {{ shop.name }}
@@ -70,7 +73,7 @@
     </label>
   </div>
 
-  {% if selected_shop %}
+  {% if online_column_shops %}
   <div class="online-take-searchbar">
     <label class="online-take-search">
       <i data-lucide="search" aria-hidden="true"></i>
@@ -85,10 +88,10 @@
   </div>
   {% endif %}
 
-  {% if not selected_shop %}
+  {% if not online_column_shops %}
   <p class="stock-settings-footnote">
-    Choose a day and shop to open the live count sheet — every item with its
-    current stock and a physical count field.
+    No shops are assigned to you yet — ask an admin for a shop allocation to
+    start counting.
   </p>
   {% else %}
 
@@ -125,13 +128,18 @@
 
   {% csrf_token %}
 
-  <div class="online-take-report">
+  <div
+    class="online-take-report"
+    style="--ost-shop-cols: {{ online_column_shops|length }}"
+  >
     <div class="online-take-report-head" aria-hidden="true">
-      <span>Item</span>
-      <span class="is-num">System qty</span>
-      <span class="is-num">Physical count</span>
-      <span>Variance</span>
-      <span class="is-num">Counted by</span>
+      <span class="online-take-head-item">Item</span>
+      {% for shop in online_column_shops %}
+      <span class="online-take-head-shop">
+        <b>{{ shop.name }}</b>
+        <em>sys · count · var</em>
+      </span>
+      {% endfor %}
     </div>
     <ul class="online-take-list" role="list" data-online-take-list>
       {% for line in online_catalog.lines %}
@@ -214,7 +222,7 @@
 {% if receipts_print_modal %}
 {% include "employees/partials/receipts_print_modal.html" with receipts_print_modal=receipts_print_modal receipts_print_url=receipts_print_url receipts_print_title=receipts_print_title receipts_print_lead=receipts_print_lead %}
 {% endif %}
-{% if selected_shop %}
+{% if online_column_shops %}
 <div class="online-take-cart" data-online-take-cart>
   <div
     id="online-take-cart-panel"
@@ -243,11 +251,13 @@
       <li
         class="online-take-cart-line is-{{ line.variance_kind|default:'empty' }}"
         data-online-take-cart-line
-        data-item-id="{{ line.item_id }}"
+        data-cell-key="{{ line.shop_id }}:{{ line.item_id }}"
+        data-shop-name="{{ line.shop_name }}"
       >
-        <button type="button" data-online-take-cart-jump data-item-id="{{ line.item_id }}">
+        <button type="button" data-online-take-cart-jump data-cell-key="{{ line.shop_id }}:{{ line.item_id }}">
           <span class="online-take-cart-line-main">
             <strong>{{ line.name }}</strong>
+            {% if line.shop_name and online_merged %}<em>{{ line.shop_name }}</em>{% endif %}
             {% if line.category %}<em>{{ line.category }}</em>{% endif %}
             {% if line.updated_by_label %}<em class="online-take-cart-by">By {{ line.updated_by_label }}</em>{% endif %}
           </span>
@@ -276,7 +286,7 @@
       </button>
       <a
         class="online-take-cart-action"
-        href="{{ online_stock_take_url }}&shop_id={{ selected_shop.pk }}&date={{ online_count_date_value }}&download=1"
+        href="{{ online_stock_take_url }}{% if selected_shop %}&shop_id={{ selected_shop.pk }}{% endif %}&date={{ online_count_date_value }}&download=1"
         data-online-take-download
         download
       >
@@ -316,7 +326,7 @@
 
 {% block extra_js %}
 {{ block.super }}
-<script defer src="{% static 'js/online-stock-take.js' %}?v=10"></script>
+<script defer src="{% static 'js/online-stock-take.js' %}?v=11"></script>
 {% if receipts_print_modal %}
 <script defer src="{% static 'js/analytics-receipts-print.js' %}?v=2"></script>
 {% endif %}

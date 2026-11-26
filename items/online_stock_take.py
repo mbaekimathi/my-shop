@@ -114,96 +114,119 @@ def _sheet_order_key(row: dict) -> tuple:
     )
 
 
-def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> dict:
-    """All active items for one shop/day, grouped by category, with frozen variance.
+def resolve_take_shops(*, shop=None, shops=None) -> list:
+    """Normalize the shop kwarg(s) — one shop, a merged shop set, or none."""
+    if shops is not None:
+        return [s for s in shops if s is not None]
+    return [shop] if shop is not None else []
 
-    Counted items stay in their category groups. ``filled_lines`` powers the
-    floating cart summary (most recently updated first).
-    """
-    count_date = count_date or timezone.localdate()
-    if shop is None:
-        return {
-            "filled_lines": [],
-            "lines": [],
-            "groups": [],
-            "item_count": 0,
-            "filled_count": 0,
-            "match_count": 0,
-            "excess_count": 0,
-            "short_count": 0,
-            "count_date": count_date,
-        }
 
-    items = list(
-        Item.objects.filter(is_suspended=False)
-        .only("id", "name", "category")
-        .order_by("category", "name", "id")
+def _count_cell(*, shop, live_system, entry) -> dict:
+    """One shop cell of a count-sheet row — sys / count / variance."""
+    physical = (
+        _quantize(entry.physical_qty)
+        if entry is not None and entry.physical_qty is not None
+        else None
     )
-    stock_map = {
-        row.item_id: _quantize(row.quantity)
-        for row in ShopStock.objects.filter(shop=shop).only("item_id", "quantity")
-    }
-    entry_map = {
-        row.item_id: row
-        for row in OnlineStockTakeEntry.objects.filter(
-            shop=shop, count_date=count_date
-        ).only(
-            "item_id",
-            "physical_qty",
-            "system_qty_at_count",
-            "updated_at",
-            "updated_by_label",
-            "count_date",
-        )
+    system = _baseline_system(entry=entry, live_system=live_system)
+    variance = variance_payload(system=system, physical=physical)
+    return {
+        "shop_id": shop.pk,
+        "shop_name": getattr(shop, "name", "") or "",
+        "system_qty": _qty_label(system),
+        "live_system_qty": _qty_label(live_system),
+        "physical_qty": _qty_label(physical) if physical is not None else "",
+        "updated_at": entry.updated_at if entry is not None else None,
+        "updated_by_label": (
+            (entry.updated_by_label or "").strip()
+            if entry is not None and physical is not None
+            else ""
+        ),
+        **variance,
     }
 
-    groups: OrderedDict[str, list] = OrderedDict()
-    lines = []
-    filled_lines = []
-    filled = 0
-    match_count = 0
-    excess_count = 0
-    short_count = 0
 
-    for item in items:
-        category = (item.category or "").strip() or "Uncategorised"
-        live_system = stock_map.get(item.pk, _ZERO)
-        entry = entry_map.get(item.pk)
-        physical = (
-            _quantize(entry.physical_qty)
-            if entry is not None and entry.physical_qty is not None
-            else None
+def _tally_sheet_row(*, item, cells, lines, groups, filled_lines):
+    """Shared row assembly for the merged count sheet.
+
+    ``cells`` is aligned to the column shops (``None`` where the item is not
+    counted at that shop — e.g. a shelf item owned by another shop). Returns
+    the counters contribution of the row's filled cells.
+    """
+    physical_sum = _ZERO
+    filled_in_line = 0
+    row_kind = None
+    for cell in cells:
+        if cell is None or cell["physical_qty"] == "":
+            continue
+        filled_in_line += 1
+        physical_sum += _quantize(cell["physical_qty"])
+        row_kind = cell["variance_kind"] if filled_in_line == 1 else None
+        filled_lines.append(
+            {
+                "item_id": item.pk,
+                "name": item.name,
+                "category": line_category(item),
+                **cell,
+            }
         )
-        system = _baseline_system(entry=entry, live_system=live_system)
-        variance = variance_payload(system=system, physical=physical)
-        line = {
-            "item_id": item.pk,
-            "name": item.name,
-            "category": category,
-            "system_qty": _qty_label(system),
-            "live_system_qty": _qty_label(live_system),
-            "physical_qty": (
-                _qty_label(physical) if physical is not None else ""
-            ),
-            "updated_at": entry.updated_at if entry is not None else None,
-            "updated_by_label": (
-                (entry.updated_by_label or "").strip()
-                if entry is not None and physical is not None
-                else ""
-            ),
-            **variance,
-        }
-        groups.setdefault(category, []).append(line)
-        lines.append(line)
-        if physical is not None:
-            filled += 1
-            if variance["variance_kind"] == "match":
-                match_count += 1
-            elif variance["variance_kind"] == "excess":
-                excess_count += 1
-            elif variance["variance_kind"] == "short":
-                short_count += 1
-            filled_lines.append(line)
+    line = {
+        "item_id": item.pk,
+        "name": item.name,
+        "category": line_category(item),
+        "cells": cells,
+        "physical_qty": (
+            _qty_label(physical_sum) if filled_in_line else ""
+        ),
+        "variance_kind": row_kind,
+        "search_text": " ".join(
+            [
+                item.name or "",
+                line_category(item),
+                *[
+                    cell["updated_by_label"]
+                    for cell in cells
+                    if cell is not None and cell["updated_by_label"]
+                ],
+            ]
+        ).strip().lower(),
+    }
+    lines.append(line)
+    groups.setdefault(line["category"], []).append(line)
+    return filled_in_line
+
+
+def line_category(item) -> str:
+    return (getattr(item, "category", "") or "").strip() or "Uncategorised"
+
+
+def _empty_take_catalog(count_date: date) -> dict:
+    return {
+        "filled_lines": [],
+        "lines": [],
+        "groups": [],
+        "item_count": 0,
+        "filled_count": 0,
+        "match_count": 0,
+        "excess_count": 0,
+        "short_count": 0,
+        "count_date": count_date,
+    }
+
+
+def _finish_take_catalog(
+    *, lines, groups, filled_lines, cell_total, count_date, empty
+) -> dict:
+    """Sort + counter assembly shared by the item/shelf catalogs."""
+    match_count = excess_count = short_count = 0
+    for cell in filled_lines:
+        kind = cell["variance_kind"]
+        if kind == "match":
+            match_count += 1
+        elif kind == "excess":
+            excess_count += 1
+        elif kind == "short":
+            short_count += 1
 
     filled_lines.sort(
         key=lambda row: (
@@ -218,39 +241,153 @@ def build_online_stock_take_catalog(*, shop, count_date: date | None = None) -> 
     lines.sort(key=_sheet_order_key)
     for group_lines in groups.values():
         group_lines.sort(key=_sheet_order_key)
-
     return {
+        **empty,
         "filled_lines": filled_lines,
         "lines": lines,
         "groups": [
-            {
-                "category": category,
-                "lines": lines,
-                "count": len(lines),
-            }
+            {"category": category, "lines": lines, "count": len(lines)}
             for category, lines in groups.items()
         ],
-        "item_count": len(items),
-        "filled_count": filled,
+        "item_count": cell_total,
+        "filled_count": len(filled_lines),
         "match_count": match_count,
         "excess_count": excess_count,
         "short_count": short_count,
-        "count_date": count_date,
     }
 
 
+def catalog_shop_slice(catalog: dict, shop_id) -> dict:
+    """One shop's view of a merged catalog — feeds per-shop saved counts."""
+    filled = []
+    cells = 0
+    match_count = excess_count = short_count = 0
+    for line in catalog.get("lines") or []:
+        for cell in line.get("cells") or []:
+            if cell is None or cell.get("shop_id") != shop_id:
+                continue
+            cells += 1
+            if cell.get("physical_qty") == "":
+                continue
+            filled.append(
+                {
+                    "item_id": line.get("item_id"),
+                    "name": line.get("name"),
+                    "category": line.get("category"),
+                    **cell,
+                }
+            )
+            kind = cell.get("variance_kind")
+            if kind == "match":
+                match_count += 1
+            elif kind == "excess":
+                excess_count += 1
+            elif kind == "short":
+                short_count += 1
+    filled.sort(
+        key=lambda row: (
+            -(row["updated_at"].timestamp() if row["updated_at"] else 0),
+            (row["name"] or "").lower(),
+            row["item_id"],
+        )
+    )
+    return {
+        "filled_lines": filled,
+        "item_count": cells,
+        "filled_count": len(filled),
+        "match_count": match_count,
+        "excess_count": excess_count,
+        "short_count": short_count,
+    }
+
+
+def build_online_stock_take_catalog(
+    *, shop=None, shops=None, count_date: date | None = None
+) -> dict:
+    """All active items for the shop set on one day — a cell per shop column.
+
+    ``lines`` is the merged sheet: one row per item whose ``cells`` list is
+    aligned to the resolved shops (all editable for catalog items).
+    ``filled_lines`` flattens every counted cell for the cart/documents.
+    """
+    count_date = count_date or timezone.localdate()
+    empty = _empty_take_catalog(count_date)
+    shop_list = resolve_take_shops(shop=shop, shops=shops)
+    if not shop_list:
+        return empty
+
+    items = list(
+        Item.objects.filter(is_suspended=False)
+        .only("id", "name", "category")
+        .order_by("category", "name", "id")
+    )
+    stock_by_shop: dict = {}
+    for row in ShopStock.objects.filter(shop__in=shop_list).only(
+        "shop_id", "item_id", "quantity"
+    ):
+        stock_by_shop.setdefault(row.shop_id, {})[row.item_id] = _quantize(
+            row.quantity
+        )
+    entry_by_shop: dict = {}
+    for row in OnlineStockTakeEntry.objects.filter(
+        shop__in=shop_list, count_date=count_date
+    ).only(
+        "shop_id",
+        "item_id",
+        "physical_qty",
+        "system_qty_at_count",
+        "updated_at",
+        "updated_by_label",
+        "count_date",
+    ):
+        entry_by_shop.setdefault(row.shop_id, {})[row.item_id] = row
+
+    groups: OrderedDict[str, list] = OrderedDict()
+    lines = []
+    filled_lines = []
+    cell_total = 0
+
+    for item in items:
+        cells = []
+        for shop in shop_list:
+            live_system = stock_by_shop.get(shop.pk, {}).get(item.pk, _ZERO)
+            entry = entry_by_shop.get(shop.pk, {}).get(item.pk)
+            cells.append(
+                _count_cell(shop=shop, live_system=live_system, entry=entry)
+            )
+            cell_total += 1
+        _tally_sheet_row(
+            item=item,
+            cells=cells,
+            lines=lines,
+            groups=groups,
+            filled_lines=filled_lines,
+        )
+
+    return _finish_take_catalog(
+        lines=lines,
+        groups=groups,
+        filled_lines=filled_lines,
+        cell_total=cell_total,
+        count_date=count_date,
+        empty=empty,
+    )
+
+
 def build_online_stock_take_sync(
-    *, shop, count_date: date | None = None
+    *, shop=None, shops=None, count_date: date | None = None
 ) -> dict:
     """Lightweight payload of current filled counts for cross-device live sync.
 
-    ``system`` maps every active item's live book qty at this shop so
-    uncounted rows on the page keep comparing against current stock.
+    ``system`` maps ``"shop:item"`` for every countable cell to its live book
+    qty so uncounted cells on the page keep comparing against current stock.
     """
     count_date = count_date or timezone.localdate()
-    if shop is None:
+    shop_list = resolve_take_shops(shop=shop, shops=shops)
+    if not shop_list:
         return {
-            "shop_id": None,
+            "shop_id": shop.pk if shop is not None else None,
+            "shop_ids": [],
             "count_date": count_date.isoformat(),
             "revision": "0:",
             "lines": [],
@@ -259,9 +396,12 @@ def build_online_stock_take_sync(
         }
 
     entries = list(
-        OnlineStockTakeEntry.objects.filter(shop=shop, count_date=count_date)
+        OnlineStockTakeEntry.objects.filter(
+            shop__in=shop_list, count_date=count_date
+        )
         .exclude(physical_qty__isnull=True)
         .only(
+            "shop_id",
             "item_id",
             "physical_qty",
             "system_qty_at_count",
@@ -270,22 +410,27 @@ def build_online_stock_take_sync(
         )
         .order_by("-updated_at", "item_id")
     )
+    stock_by_shop: dict = {}
+    for row in ShopStock.objects.filter(shop__in=shop_list).only(
+        "shop_id", "item_id", "quantity"
+    ):
+        stock_by_shop.setdefault(row.shop_id, {})[row.item_id] = _quantize(
+            row.quantity
+        )
     item_ids = [row.item_id for row in entries]
-    stock_map = {
-        row.item_id: _quantize(row.quantity)
-        for row in ShopStock.objects.filter(shop=shop).only(
-            "item_id", "quantity"
-        )
-    }
-    system_by_item = {
-        str(pk): _qty_label(stock_map.get(pk, _ZERO))
-        for pk in Item.objects.filter(is_suspended=False).values_list(
-            "id", flat=True
-        )
-    }
     item_meta = {
         row.pk: row
         for row in Item.objects.filter(pk__in=item_ids).only("id", "name", "category")
+    }
+    all_item_ids = list(
+        Item.objects.filter(is_suspended=False).values_list("id", flat=True)
+    )
+    system_by_item = {
+        f"{take_shop.pk}:{pk}": _qty_label(
+            stock_by_shop.get(take_shop.pk, {}).get(pk, _ZERO)
+        )
+        for take_shop in shop_list
+        for pk in all_item_ids
     }
 
     lines = []
@@ -294,7 +439,9 @@ def build_online_stock_take_sync(
         item = item_meta.get(entry.item_id)
         if item is None:
             continue
-        live_system = stock_map.get(entry.item_id, _ZERO)
+        live_system = stock_by_shop.get(entry.shop_id, {}).get(
+            entry.item_id, _ZERO
+        )
         physical = _quantize(entry.physical_qty)
         system = _baseline_system(entry=entry, live_system=live_system)
         variance = variance_payload(system=system, physical=physical)
@@ -303,6 +450,7 @@ def build_online_stock_take_sync(
             max_ts = updated_at
         lines.append(
             {
+                "shop_id": entry.shop_id,
                 "item_id": entry.item_id,
                 "name": item.name,
                 "category": (item.category or "").strip() or "Uncategorised",
@@ -324,7 +472,8 @@ def build_online_stock_take_sync(
         f"{timezone.localtime(max_ts).isoformat() if max_ts is not None else ''}"
     )
     return {
-        "shop_id": shop.pk,
+        "shop_id": shop_list[0].pk if len(shop_list) == 1 else None,
+        "shop_ids": [take_shop.pk for take_shop in shop_list],
         "count_date": count_date.isoformat(),
         "revision": revision,
         "lines": lines,
@@ -404,6 +553,7 @@ def save_online_stock_take_line(
     variance = variance_payload(system=system, physical=physical)
     sync = build_online_stock_take_sync(shop=shop, count_date=count_date)
     return {
+        "shop_id": shop.pk,
         "item_id": item.pk,
         "name": item.name,
         "category": (item.category or "").strip() or "Uncategorised",
@@ -533,6 +683,7 @@ _COUNT_NUMERIC_FROM = 2
 
 
 _COUNT_KIND_ORDER = {"excess": 0, "short": 1, "match": 2}
+_NIL_LABEL = "Nil"
 
 
 def _ordered_count_lines(lines) -> list:
@@ -545,6 +696,16 @@ def _ordered_count_lines(lines) -> list:
     )
 
 
+def _count_variance_text(line: dict) -> str:
+    """Variance cell text — a 0 count against 0 book stock reads as Nil."""
+    if (
+        _quantize(line.get("physical_qty") or "0") == 0
+        and _quantize(line.get("system_qty") or "0") == 0
+    ):
+        return _NIL_LABEL
+    return (line.get("variance_label") or "").strip() or "—"
+
+
 def _count_row_cells(lines) -> list:
     rows = []
     for line in _ordered_count_lines(lines):
@@ -554,9 +715,56 @@ def _count_row_cells(lines) -> list:
                 (line.get("updated_by_label") or "").strip() or "—",
                 str(line.get("system_qty") or "0"),
                 str(line.get("physical_qty") or "0"),
-                (line.get("variance_label") or "").strip() or "—",
+                _count_variance_text(line),
             ]
         )
+    return rows
+
+
+def _matrix_variance_cell(cell) -> dict:
+    """Compact per-shop variance text for the merged count document."""
+    if not cell or cell.get("physical_qty") in (None, ""):
+        return {"text": "—", "kind": None}
+    if (
+        _quantize(cell.get("physical_qty")) == 0
+        and _quantize(cell.get("system_qty") or "0") == 0
+    ):
+        return {"text": _NIL_LABEL, "kind": "nil"}
+    kind = cell.get("variance_kind")
+    text = str(cell.get("variance") or "0")
+    if kind == "excess" and not text.startswith("+"):
+        text = f"+{text}"
+    return {"text": text, "kind": kind}
+
+
+def _matrix_row_rank(cells) -> tuple:
+    kinds = {cell.get("kind") for cell in cells if cell}
+    if "excess" in kinds:
+        return 0
+    if "short" in kinds:
+        return 1
+    return 2
+
+
+def _merged_count_rows(lines) -> list:
+    """Variance-per-shop matrix rows — items with at least one count."""
+    rows = []
+    for line in lines or []:
+        cells = line.get("cells") or []
+        matrix_cells = [_matrix_variance_cell(cell) for cell in cells]
+        if not any(
+            cell["kind"] is not None for cell in matrix_cells
+        ):
+            continue
+        rows.append(
+            {
+                "name": line.get("name") or "Item",
+                "cells": matrix_cells,
+            }
+        )
+    rows.sort(
+        key=lambda row: (_matrix_row_rank(row["cells"]), row["name"].lower())
+    )
     return rows
 
 
@@ -565,12 +773,16 @@ def build_online_take_count_document(
     kind_label: str,
     filename_prefix: str,
     shop=None,
+    shops=None,
     count_date: date | None = None,
     catalog: dict | None = None,
     saved=None,
 ) -> dict:
-    """Print/PDF document for one shop/day count (live or a saved snapshot).
+    """Print/PDF document for a day's count (live or a saved snapshot).
 
+    ``shops`` (plural) renders the merged variance-per-shop matrix — one item
+    row, one variance column per shop. ``saved`` and single-``shop`` calls
+    keep the classic Item / Counted by / System / Counted / Variance table.
     Mirrors ``_shelf_report_document``: ``_movement_print_tables`` renders the
     report table for the a4/80mm/58mm sheet, ``pdf_params`` feeds
     ``build_stock_report_pdf`` for the A4 download.
@@ -579,6 +791,9 @@ def build_online_take_count_document(
     from django.utils.text import slugify
 
     from shops.services import get_company_profile
+
+    merged_shops = [] if shops is None else [s for s in shops if s is not None]
+    merged = saved is None and shops is not None
 
     company = get_company_profile()
     company_name = (getattr(company, "name", None) or "").strip() or "MY-SHOP"
@@ -624,15 +839,46 @@ def build_online_take_count_document(
 
     count_date = count_date or timezone.localdate()
     period_label = count_date.strftime("%d %b %Y")
-    shop_label = getattr(shop, "name", "") or "—"
-    ordered_lines = _ordered_count_lines(lines)
-    rows = _count_row_cells(lines)
-    subtitle = (
-        "Physical count vs the book qty frozen when each item was counted"
-        f" — {counters['filled_count']} of {counters['item_count']} items counted"
-        f" ({counters['match_count']} match · {counters['excess_count']} excess"
-        f" · {counters['short_count']} short)."
-    )
+    matrix_shops = []
+    matrix_rows = []
+    if merged:
+        shop_label = (
+            "All shops"
+            if len(merged_shops) > 1
+            else (getattr(merged_shops[0], "name", "") or "—")
+        )
+        matrix_shops = [
+            {"id": merged_shop.pk, "name": getattr(merged_shop, "name", "") or "Shop"}
+            for merged_shop in merged_shops
+        ]
+        matrix_rows = _merged_count_rows(catalog.get("lines") or [])
+        headers = ["Item"] + [s["name"] for s in matrix_shops]
+        rows = [
+            [row["name"], *[cell["text"] for cell in row["cells"]]]
+            for row in matrix_rows
+        ]
+        count_lines = matrix_rows
+        numeric_from = 1
+        subtitle = (
+            "Variance per shop — physical count vs the book qty frozen when "
+            "each item was counted"
+            f" — {counters['filled_count']} of {counters['item_count']} counts"
+            f" ({counters['match_count']} match · {counters['excess_count']} "
+            f"excess · {counters['short_count']} short)."
+        )
+    else:
+        shop_label = getattr(shop, "name", "") or "—"
+        headers = _COUNT_HEADERS
+        rows = _count_row_cells(lines)
+        count_lines = _ordered_count_lines(lines)
+        numeric_from = _COUNT_NUMERIC_FROM
+        subtitle = (
+            "Physical count vs the book qty frozen when each item was counted"
+            f" — {counters['filled_count']} of {counters['item_count']} items"
+            f" counted ({counters['match_count']} match · "
+            f"{counters['excess_count']} excess · {counters['short_count']} "
+            "short)."
+        )
     if saved_label:
         subtitle = f"{saved_label}. {subtitle}"
     generated_at = dj_timezone.localtime(dj_timezone.now())
@@ -652,11 +898,13 @@ def build_online_take_count_document(
         "company_phone": (getattr(company, "phone_number", None) or "").strip(),
         "company_email": (getattr(company, "email", None) or "").strip(),
         "company_location": (getattr(company, "location", None) or "").strip(),
-        "report_headers": _COUNT_HEADERS,
+        "report_headers": headers,
         "report_rows": rows,
-        "report_numeric_from": _COUNT_NUMERIC_FROM,
+        "report_numeric_from": numeric_from,
         "kind_label": kind_label,
-        "count_lines": ordered_lines,
+        "count_lines": count_lines,
+        "matrix_shops": matrix_shops,
+        "merged": merged,
         "counters": counters,
         "saved_label": saved_label,
         "subtitle": subtitle,
@@ -671,12 +919,15 @@ def build_online_take_count_document(
         "view_label": "Counted items",
         "generated_at": generated_at,
         "item_count": counters["filled_count"],
-        "count_lines": ordered_lines,
+        "count_lines": count_lines,
+        "matrix_shops": matrix_shops,
+        "matrix_rows": matrix_rows,
+        "merged": merged,
         "counters": counters,
         "report_table_title": "Counted items",
         "report_table_subtitle": subtitle,
-        "report_numeric_from": _COUNT_NUMERIC_FROM,
-        "report_headers": _COUNT_HEADERS,
+        "report_numeric_from": numeric_from,
+        "report_headers": headers,
         "report_rows": rows,
         "pdf_params": pdf_params,
     }
@@ -758,6 +1009,7 @@ def build_online_take_count_pdf(document: dict) -> bytes:
         "match": match_c,
         "excess": excess_c,
         "short": short_c,
+        "nil": mist,
     }
 
     buffer = BytesIO()
@@ -1090,74 +1342,135 @@ def build_online_take_count_pdf(document: dict) -> bytes:
         )
     )
 
-    head = [
-        Paragraph("ITEM", head_cell),
-        Paragraph("COUNTED BY", head_cell),
-        Paragraph("SYSTEM QTY", head_cell_right),
-        Paragraph("COUNTED QTY", head_cell_right),
-        Paragraph("VARIANCE", head_cell_right),
-    ]
-    body = [head]
-    row_kinds = []
-    for entry in lines:
-        body.append(
-            [
-                Paragraph(_esc(entry.get("name") or "Item"), cell_bold),
-                Paragraph(
-                    _esc((entry.get("updated_by_label") or "").strip() or "—"),
-                    cell,
-                ),
-                Paragraph(_esc(entry.get("system_qty") or "0"), cell_right),
-                Paragraph(_esc(entry.get("physical_qty") or "0"), cell_right),
-                Paragraph(
-                    _esc(
-                        (entry.get("variance_label") or "").strip() or "—"
+    matrix_shops = params.get("matrix_shops") or []
+    if document.get("merged") and matrix_shops:
+        # Merged sheet — one item row, one variance column per shop.
+        head = [Paragraph("ITEM", head_cell)] + [
+            Paragraph(_esc(str(shop["name"]).upper()), head_cell_right)
+            for shop in matrix_shops
+        ]
+        body = [head]
+        cell_kinds = []
+        for entry in lines:
+            matrix_cells = entry.get("cells") or []
+            body.append(
+                [Paragraph(_esc(entry.get("name") or "Item"), cell_bold)]
+                + [
+                    Paragraph(
+                        _esc(matrix_cell.get("text") or "—"), cell_var
+                    )
+                    for matrix_cell in matrix_cells
+                ]
+            )
+            cell_kinds.append(
+                [matrix_cell.get("kind") for matrix_cell in matrix_cells]
+            )
+        if len(body) == 1:
+            body.append(
+                [Paragraph("No items counted for this day.", cell)]
+                + [
+                    Paragraph("—", cell_var) for _ in matrix_shops
+                ]
+            )
+            cell_kinds.append([None] * len(matrix_shops))
+        col_widths = [doc.width * 0.26] + [
+            doc.width * 0.74 / len(matrix_shops)
+        ] * len(matrix_shops)
+        table = Table(body, colWidths=col_widths, repeatRows=1)
+        cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), ink),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.6, accent),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, soft]),
+            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, line),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.6),
+        ]
+        for r, kinds in enumerate(cell_kinds, start=1):
+            for c, kind in enumerate(kinds, start=1):
+                color = kind_colors.get(kind)
+                if color is not None:
+                    cmds.append(("TEXTCOLOR", (c, r), (c, r), color))
+        table.setStyle(TableStyle(cmds))
+    else:
+        head = [
+            Paragraph("ITEM", head_cell),
+            Paragraph("COUNTED BY", head_cell),
+            Paragraph("SYSTEM QTY", head_cell_right),
+            Paragraph("COUNTED QTY", head_cell_right),
+            Paragraph("VARIANCE", head_cell_right),
+        ]
+        body = [head]
+        row_kinds = []
+        for entry in lines:
+            body.append(
+                [
+                    Paragraph(_esc(entry.get("name") or "Item"), cell_bold),
+                    Paragraph(
+                        _esc(
+                            (entry.get("updated_by_label") or "").strip()
+                            or "—"
+                        ),
+                        cell,
                     ),
-                    cell_var,
-                ),
-            ]
-        )
-        row_kinds.append(entry.get("variance_kind"))
+                    Paragraph(
+                        _esc(entry.get("system_qty") or "0"), cell_right
+                    ),
+                    Paragraph(
+                        _esc(entry.get("physical_qty") or "0"), cell_right
+                    ),
+                    Paragraph(
+                        _esc(_count_variance_text(entry)),
+                        cell_var,
+                    ),
+                ]
+            )
+            row_kinds.append(entry.get("variance_kind"))
 
-    if len(body) == 1:
-        body.append(
-            [
-                Paragraph("No items counted for this day.", cell),
-                Paragraph("—", cell),
-                Paragraph("—", cell_right),
-                Paragraph("—", cell_right),
-                Paragraph("—", cell_var),
-            ]
-        )
-        row_kinds.append(None)
+        if len(body) == 1:
+            body.append(
+                [
+                    Paragraph("No items counted for this day.", cell),
+                    Paragraph("—", cell),
+                    Paragraph("—", cell_right),
+                    Paragraph("—", cell_right),
+                    Paragraph("—", cell_var),
+                ]
+            )
+            row_kinds.append(None)
 
-    col_widths = [
-        doc.width * 0.30,
-        doc.width * 0.20,
-        doc.width * 0.15,
-        doc.width * 0.15,
-        doc.width * 0.20,
-    ]
-    table = Table(body, colWidths=col_widths, repeatRows=1)
-    cmds = [
-        ("BACKGROUND", (0, 0), (-1, 0), ink),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("LINEBELOW", (0, 0), (-1, 0), 1.6, accent),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.white),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, soft]),
-        ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
-        ("INNERGRID", (0, 0), (-1, -1), 0.3, line),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.6),
-    ]
-    for r, kind in enumerate(row_kinds, start=1):
-        color = kind_colors.get(kind)
-        if color is not None:
-            cmds.append(("TEXTCOLOR", (4, r), (4, r), color))
-    table.setStyle(TableStyle(cmds))
+        col_widths = [
+            doc.width * 0.30,
+            doc.width * 0.20,
+            doc.width * 0.15,
+            doc.width * 0.15,
+            doc.width * 0.20,
+        ]
+        table = Table(body, colWidths=col_widths, repeatRows=1)
+        cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), ink),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.6, accent),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, soft]),
+            ("BOX", (0, 0), (-1, -1), 0.7, line_strong),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, line),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.6),
+        ]
+        for r, kind in enumerate(row_kinds, start=1):
+            color = kind_colors.get(kind)
+            if color is not None:
+                cmds.append(("TEXTCOLOR", (4, r), (4, r), color))
+        table.setStyle(TableStyle(cmds))
     story.append(table)
     story.append(Spacer(1, 6 * mm))
 

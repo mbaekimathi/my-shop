@@ -29,9 +29,13 @@ from items.models import (
 )
 from items.online_stock_take import (
     _baseline_system,
+    _count_cell,
+    _empty_take_catalog,
+    _finish_take_catalog,
     _qty_label,
     _quantize,
-    _sheet_order_key,
+    _tally_sheet_row,
+    resolve_take_shops,
     resolve_online_stock_take_date,
     variance_payload,
 )
@@ -234,31 +238,26 @@ def apply_shelf_take_adjustments(*, take, profile=None) -> int:
 # Shelf online stock take (same JSON contract as the item version)
 
 
-def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
+def build_shelf_online_take_catalog(
+    *, shop=None, shops=None, count_date=None
+) -> dict:
+    """Merged shelf sheet — one row per shelf item; shelf items belong to a
+    shop, so a row only carries a live cell in its owning shop's column."""
     count_date = count_date or timezone.localdate()
-    empty = {
-        "filled_lines": [],
-        "lines": [],
-        "groups": [],
-        "item_count": 0,
-        "filled_count": 0,
-        "match_count": 0,
-        "excess_count": 0,
-        "short_count": 0,
-        "count_date": count_date,
-    }
-    if shop is None:
+    empty = _empty_take_catalog(count_date)
+    shop_list = resolve_take_shops(shop=shop, shops=shops)
+    if not shop_list:
         return empty
 
     items = list(
-        ShelfItem.objects.filter(shop=shop, is_archived=False)
-        .only("id", "name", "category", "quantity")
+        ShelfItem.objects.filter(shop__in=shop_list, is_archived=False)
+        .only("id", "shop_id", "name", "category", "quantity")
         .order_by("category", "name", "id")
     )
     entry_map = {
         row.shelf_item_id: row
         for row in ShelfOnlineStockTakeEntry.objects.filter(
-            shop=shop, count_date=count_date
+            shop__in=shop_list, count_date=count_date
         ).only(
             "shelf_item_id",
             "physical_qty",
@@ -268,85 +267,53 @@ def build_shelf_online_take_catalog(*, shop, count_date=None) -> dict:
             "count_date",
         )
     }
+    shops_by_id = {take_shop.pk: take_shop for take_shop in shop_list}
 
     groups: OrderedDict[str, list] = OrderedDict()
     lines = []
     filled_lines = []
-    filled = match_count = excess_count = short_count = 0
+    cell_total = 0
 
     for item in items:
-        category = (item.category or "").strip() or "Uncategorised"
-        live_system = _quantize(item.quantity)
-        entry = entry_map.get(item.pk)
-        physical = (
-            _quantize(entry.physical_qty)
-            if entry is not None and entry.physical_qty is not None
-            else None
+        owner = shops_by_id.get(item.shop_id)
+        cells = []
+        for take_shop in shop_list:
+            if take_shop.pk != item.shop_id or owner is None:
+                cells.append(None)
+                continue
+            cells.append(
+                _count_cell(
+                    shop=take_shop,
+                    live_system=_quantize(item.quantity),
+                    entry=entry_map.get(item.pk),
+                )
+            )
+            cell_total += 1
+        _tally_sheet_row(
+            item=item,
+            cells=cells,
+            lines=lines,
+            groups=groups,
+            filled_lines=filled_lines,
         )
-        system = _baseline_system(entry=entry, live_system=live_system)
-        variance = variance_payload(system=system, physical=physical)
-        line = {
-            "item_id": item.pk,
-            "name": item.name,
-            "category": category,
-            "system_qty": _qty_label(system),
-            "live_system_qty": _qty_label(live_system),
-            "physical_qty": (
-                _qty_label(physical) if physical is not None else ""
-            ),
-            "updated_at": entry.updated_at if entry is not None else None,
-            "updated_by_label": (
-                (entry.updated_by_label or "").strip()
-                if entry is not None and physical is not None
-                else ""
-            ),
-            **variance,
-        }
-        groups.setdefault(category, []).append(line)
-        lines.append(line)
-        if physical is not None:
-            filled += 1
-            if variance["variance_kind"] == "match":
-                match_count += 1
-            elif variance["variance_kind"] == "excess":
-                excess_count += 1
-            elif variance["variance_kind"] == "short":
-                short_count += 1
-            filled_lines.append(line)
 
-    filled_lines.sort(
-        key=lambda row: (
-            -(row["updated_at"].timestamp() if row["updated_at"] else 0),
-            (row["name"] or "").lower(),
-            row["item_id"],
-        )
+    return _finish_take_catalog(
+        lines=lines,
+        groups=groups,
+        filled_lines=filled_lines,
+        cell_total=cell_total,
+        count_date=count_date,
+        empty=empty,
     )
-    # Flat sheet — uncounted first A-Z, then zero counts, non-zero counts
-    # last (same tier order inside each category group).
-    lines.sort(key=_sheet_order_key)
-    for group_lines in groups.values():
-        group_lines.sort(key=_sheet_order_key)
-    return {
-        **empty,
-        "filled_lines": filled_lines,
-        "lines": lines,
-        "groups": [
-            {"category": category, "lines": lines, "count": len(lines)}
-            for category, lines in groups.items()
-        ],
-        "item_count": len(items),
-        "filled_count": filled,
-        "match_count": match_count,
-        "excess_count": excess_count,
-        "short_count": short_count,
-    }
 
 
-def build_shelf_online_take_sync(*, shop, count_date=None) -> dict:
+def build_shelf_online_take_sync(*, shop=None, shops=None, count_date=None) -> dict:
     count_date = count_date or timezone.localdate()
-    if shop is None:
+    shop_list = resolve_take_shops(shop=shop, shops=shops)
+    if not shop_list:
         return {
-            "shop_id": None,
+            "shop_id": shop.pk if shop is not None else None,
+            "shop_ids": [],
             "count_date": count_date.isoformat(),
             "revision": "0:",
             "lines": [],
@@ -355,16 +322,19 @@ def build_shelf_online_take_sync(*, shop, count_date=None) -> dict:
         }
 
     system_by_item = {
-        str(row.pk): _qty_label(_quantize(row.quantity))
-        for row in ShelfItem.objects.filter(shop=shop, is_archived=False).only(
-            "id", "quantity"
-        )
+        f"{row.shop_id}:{row.pk}": _qty_label(_quantize(row.quantity))
+        for row in ShelfItem.objects.filter(
+            shop__in=shop_list, is_archived=False
+        ).only("id", "shop_id", "quantity")
     }
     entries = list(
-        ShelfOnlineStockTakeEntry.objects.filter(shop=shop, count_date=count_date)
+        ShelfOnlineStockTakeEntry.objects.filter(
+            shop__in=shop_list, count_date=count_date
+        )
         .exclude(physical_qty__isnull=True)
         .select_related("shelf_item")
         .only(
+            "shop_id",
             "shelf_item_id",
             "physical_qty",
             "system_qty_at_count",
@@ -392,6 +362,7 @@ def build_shelf_online_take_sync(*, shop, count_date=None) -> dict:
             max_ts = updated_at
         lines.append(
             {
+                "shop_id": entry.shop_id,
                 "item_id": entry.shelf_item_id,
                 "name": item.name,
                 "category": (item.category or "").strip() or "Uncategorised",
@@ -413,7 +384,8 @@ def build_shelf_online_take_sync(*, shop, count_date=None) -> dict:
         f"{timezone.localtime(max_ts).isoformat() if max_ts is not None else ''}"
     )
     return {
-        "shop_id": shop.pk,
+        "shop_id": shop_list[0].pk if len(shop_list) == 1 else None,
+        "shop_ids": [take_shop.pk for take_shop in shop_list],
         "count_date": count_date.isoformat(),
         "revision": revision,
         "lines": lines,
@@ -485,6 +457,7 @@ def save_shelf_online_take_line(
     variance = variance_payload(system=system, physical=physical)
     sync = build_shelf_online_take_sync(shop=shop, count_date=count_date)
     return {
+        "shop_id": shop.pk,
         "item_id": item.pk,
         "name": item.name,
         "category": (item.category or "").strip() or "Uncategorised",

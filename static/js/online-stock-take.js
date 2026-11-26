@@ -1,6 +1,7 @@
 /**
  * Online stock take — variance vs book qty frozen at count time + autosave.
- * Floating cart shows filled counts; polls other devices' updates live.
+ * One row per item with a count cell per shop; a shop filter narrows the
+ * columns. Floating cart shows filled counts; polls other devices' updates.
  */
 (function () {
   "use strict";
@@ -22,7 +23,8 @@
   const progressEl = root.querySelector("[data-online-take-progress]");
   const emptySearchEl = root.querySelector("[data-online-take-empty-search]");
   const emptyTermEl = root.querySelector("[data-online-take-empty-term]");
-  const shopId = root.getAttribute("data-selected-shop-id") || "";
+  const shopFilter = root.getAttribute("data-selected-shop-id") || "";
+  const isMerged = shopFilter === "";
   const countDate =
     root.getAttribute("data-online-count-date") ||
     dateInput?.value ||
@@ -32,7 +34,7 @@
   const buildPageUrl = ({ shopId: nextShopId, date: nextDate } = {}) => {
     const url = new URL(baseUrl, window.location.origin);
     const shopValue =
-      nextShopId === undefined ? shopId : String(nextShopId || "").trim();
+      nextShopId === undefined ? shopFilter : String(nextShopId || "").trim();
     const dateValue =
       nextDate === undefined
         ? countDate
@@ -47,7 +49,7 @@
   const POLL_MS = 3000;
   const pendingTimers = new Map();
   const lastSaved = new Map();
-  /** Most-recently counted item ids first (for cart ordering). */
+  /** Most-recently counted cell keys ("shop:item") first (cart ordering). */
   const recentFilledIds = [];
   let syncRevision = root.getAttribute("data-online-sync-revision") || "0:";
   let pollTimer = null;
@@ -104,114 +106,143 @@
     liveStatusEl.classList.toggle("is-error", state === "error");
   };
 
-  const findRow = (itemId) => {
+  const cellKey = (shopId, itemId) => `${shopId}:${itemId}`;
+
+  const splitCellKey = (key) => {
+    const idx = String(key).indexOf(":");
+    if (idx < 0) return [null, String(key)];
+    return [String(key).slice(0, idx), String(key).slice(idx + 1)];
+  };
+
+  const findCell = (shopId, itemId) => {
     if (!list || itemId == null || itemId === "") return null;
-    return list.querySelector(
+    const row = list.querySelector(
       `[data-online-take-row][data-item-id="${CSS.escape(String(itemId))}"]`
+    );
+    if (!row) return null;
+    if (shopId == null || shopId === "") {
+      return row.querySelector("[data-online-take-cell]");
+    }
+    return row.querySelector(
+      `[data-online-take-cell][data-shop-id="${CSS.escape(String(shopId))}"]`
     );
   };
 
-  const isRowDirty = (row) => {
-    const itemId = row?.getAttribute("data-item-id") || "";
-    const input = row?.querySelector("[data-online-take-qty]");
-    if (!input || !itemId) return false;
-    if (pendingTimers.has(itemId)) return true;
+  const findCellByKey = (key) => {
+    const [shopId, itemId] = splitCellKey(key);
+    return findCell(shopId, itemId);
+  };
+
+  const cellItemId = (cell) =>
+    cell?.closest("[data-online-take-row]")?.getAttribute("data-item-id") || "";
+
+  const keyForCell = (cell) =>
+    cellKey(cell?.getAttribute("data-shop-id") || "", cellItemId(cell));
+
+  const isCellDirty = (cell) => {
+    const key = keyForCell(cell);
+    const input = cell?.querySelector("[data-online-take-qty]");
+    if (!input || !key) return false;
+    if (pendingTimers.has(key)) return true;
     if (document.activeElement === input) return true;
-    return input.value.trim() !== String(lastSaved.get(itemId) ?? "");
+    return input.value.trim() !== String(lastSaved.get(key) ?? "");
   };
 
-  const flashRemoteRow = (row) => {
-    if (!row) return;
-    row.classList.add("is-remote-flash");
-    window.setTimeout(() => row.classList.remove("is-remote-flash"), 1200);
+  const flashRemoteCell = (cell) => {
+    if (!cell) return;
+    cell.classList.add("is-remote-flash");
+    window.setTimeout(() => cell.classList.remove("is-remote-flash"), 1200);
   };
 
-  const applySystemQty = (row, systemQty, liveSystemQty) => {
-    if (!row) return;
+  const applySystemQty = (cell, systemQty, liveSystemQty) => {
+    if (!cell) return;
     if (liveSystemQty != null && liveSystemQty !== "") {
-      row.setAttribute("data-live-system-qty", String(liveSystemQty));
+      cell.setAttribute("data-live-system-qty", String(liveSystemQty));
     }
     if (systemQty != null && systemQty !== "") {
-      row.setAttribute("data-system-qty", String(systemQty));
-      const systemEl = row.querySelector("[data-online-take-system]");
+      cell.setAttribute("data-system-qty", String(systemQty));
+      const systemEl = cell.querySelector("[data-online-take-system]");
       if (systemEl) systemEl.textContent = String(systemQty);
     }
   };
 
-  const restoreLiveSystemQty = (row) => {
-    const live = row?.getAttribute("data-live-system-qty");
+  const restoreLiveSystemQty = (cell) => {
+    const live = cell?.getAttribute("data-live-system-qty");
     if (live == null || live === "") return;
-    applySystemQty(row, live, live);
+    applySystemQty(cell, live, live);
   };
 
   const applyRemoteLine = (line) => {
+    const shopId = line?.shop_id ?? "";
     const itemId = String(line?.item_id ?? "");
-    const row = findRow(itemId);
-    if (!row || isRowDirty(row)) return false;
-    const input = row.querySelector("[data-online-take-qty]");
+    const cell = findCell(shopId, itemId);
+    if (!cell || isCellDirty(cell)) return false;
+    const input = cell.querySelector("[data-online-take-qty]");
     if (!input) return false;
 
+    const key = cellKey(shopId, itemId);
     const nextQty = String(line.physical_qty ?? "").trim();
     const nextBy = String(line.updated_by_label || "").trim();
-    const prevQty = String(lastSaved.get(itemId) ?? "");
+    const prevQty = String(lastSaved.get(key) ?? "");
     const prevBy =
-      row.querySelector("[data-online-take-by]")?.textContent?.trim() || "";
+      cell.querySelector("[data-online-take-by]")?.textContent?.trim() || "";
     const same =
       prevQty === nextQty &&
       (prevBy === nextBy || (!nextBy && (prevBy === "—" || !prevBy)));
 
-    applySystemQty(row, line.system_qty, line.live_system_qty);
-    if (line.category) {
+    applySystemQty(cell, line.system_qty, line.live_system_qty);
+    const row = cell.closest("[data-online-take-row]");
+    if (line.category && row) {
       row.setAttribute("data-category-name", line.category);
     }
 
     if (!same) {
       input.value = nextQty;
-      lastSaved.set(itemId, nextQty);
-      syncRow(row);
-      applyCountedBy(row, nextQty ? nextBy : "");
-      touchFilledOrder(itemId, nextQty !== "");
-      flashRemoteRow(row);
+      lastSaved.set(key, nextQty);
+      syncCell(cell);
+      applyCountedBy(cell, nextQty ? nextBy : "");
+      touchFilledOrder(key, nextQty !== "");
+      flashRemoteCell(cell);
       return true;
     }
 
-    syncRow(row);
+    syncCell(cell);
     return false;
   };
 
-  const clearRemoteLine = (itemId) => {
-    const row = findRow(itemId);
-    if (!row || isRowDirty(row)) return false;
-    const input = row.querySelector("[data-online-take-qty]");
+  const clearRemoteLine = (key) => {
+    const cell = findCellByKey(key);
+    if (!cell || isCellDirty(cell)) return false;
+    const input = cell.querySelector("[data-online-take-qty]");
     if (!input) return false;
-    const prevQty = String(lastSaved.get(itemId) ?? "");
+    const prevQty = String(lastSaved.get(key) ?? "");
     if (!prevQty && !input.value.trim()) return false;
     input.value = "";
-    lastSaved.set(itemId, "");
-    restoreLiveSystemQty(row);
-    syncRow(row);
-    applyCountedBy(row, "");
-    touchFilledOrder(itemId, false);
-    flashRemoteRow(row);
+    lastSaved.set(key, "");
+    restoreLiveSystemQty(cell);
+    syncCell(cell);
+    applyCountedBy(cell, "");
+    touchFilledOrder(key, false);
+    flashRemoteCell(cell);
     return true;
   };
 
   const applySystemMap = (systemMap) => {
     if (!systemMap || typeof systemMap !== "object" || !list) return false;
     let changed = false;
-    Object.entries(systemMap).forEach(([itemId, qty]) => {
-      const row = findRow(itemId);
-      if (!row || isRowDirty(row)) return;
-      const input = row.querySelector("[data-online-take-qty]");
+    Object.entries(systemMap).forEach(([key, qty]) => {
+      const cell = findCellByKey(key);
+      if (!cell || isCellDirty(cell)) return;
+      const input = cell.querySelector("[data-online-take-qty]");
       if (!input) return;
       const liveQty = String(qty ?? "");
       if (input.value.trim() !== "") {
-        row.setAttribute("data-live-system-qty", liveQty);
+        cell.setAttribute("data-live-system-qty", liveQty);
         return;
       }
-      if ((row.getAttribute("data-system-qty") || "") === liveQty) return;
-      applySystemQty(row, liveQty, liveQty);
-      syncRow(row);
+      if ((cell.getAttribute("data-system-qty") || "") === liveQty) return;
+      applySystemQty(cell, liveQty, liveQty);
+      syncCell(cell);
       changed = true;
     });
     return changed;
@@ -230,14 +261,16 @@
 
     if (lines) {
       const remoteIds = new Set(
-        lines.map((line) => String(line.item_id)).filter(Boolean)
+        lines
+          .map((line) => cellKey(line.shop_id ?? "", line.item_id))
+          .filter((key) => key !== ":")
       );
       lines.forEach((line) => {
         if (applyRemoteLine(line)) changed = true;
       });
-      lastSaved.forEach((qty, itemId) => {
-        if (!qty || remoteIds.has(String(itemId))) return;
-        if (clearRemoteLine(itemId)) changed = true;
+      lastSaved.forEach((qty, key) => {
+        if (!qty || remoteIds.has(String(key))) return;
+        if (clearRemoteLine(key)) changed = true;
       });
     }
 
@@ -283,14 +316,14 @@
     };
   };
 
-  const applyVariance = (row, result) => {
-    const badge = row.querySelector("[data-online-take-variance]");
+  const applyVariance = (cell, result) => {
+    const badge = cell.querySelector("[data-online-take-variance]");
     if (!badge) return;
     badge.classList.remove("is-empty", "is-match", "is-excess", "is-short");
     badge.classList.add(`is-${result.kind}`);
-    row.classList.remove("is-match", "is-excess", "is-short");
+    cell.classList.remove("is-match", "is-excess", "is-short");
     if (result.kind !== "empty") {
-      row.classList.add(`is-${result.kind}`);
+      cell.classList.add(`is-${result.kind}`);
     }
     if (result.kind === "empty") {
       badge.textContent = "—";
@@ -301,8 +334,8 @@
     }
   };
 
-  const applyCountedBy = (row, label) => {
-    const byEl = row.querySelector("[data-online-take-by]");
+  const applyCountedBy = (cell, label) => {
+    const byEl = cell.querySelector("[data-online-take-by]");
     if (!byEl) return;
     const name = String(label || "").trim();
     byEl.textContent = name || "—";
@@ -311,25 +344,55 @@
     } else {
       byEl.setAttribute("data-empty", "");
     }
-    const item = row.querySelector(".online-take-item strong");
+    const row = cell.closest("[data-online-take-row]");
+    if (!row) return;
+    const itemName =
+      row.querySelector(".online-take-item strong")?.textContent?.trim() || "";
     const category = row.getAttribute("data-category-name") || "";
-    const itemName = item?.textContent?.trim() || "";
+    const countedNames = [
+      ...row.querySelectorAll("[data-online-take-by]"),
+    ]
+      .map((el) => el.textContent?.trim() || "")
+      .filter((text) => text && text !== "—");
     row.setAttribute(
       "data-search",
-      `${itemName} ${category} ${name}`.trim().toLowerCase()
+      `${itemName} ${category} ${countedNames.join(" ")}`
+        .trim()
+        .toLowerCase()
     );
   };
 
-  const syncRow = (row) => {
-    const input = row.querySelector("[data-online-take-qty]");
+  const syncRowClasses = (row) => {
+    if (!row) return;
+    row.classList.remove("is-filled", "is-match", "is-excess", "is-short");
+    const filledCells = [
+      ...row.querySelectorAll("[data-online-take-cell]"),
+    ].filter(
+      (cell) =>
+        (cell.querySelector("[data-online-take-qty]")?.value.trim() || "") !==
+        ""
+    );
+    if (!filledCells.length) return;
+    row.classList.add("is-filled");
+    if (filledCells.length === 1) {
+      const kind = ["match", "excess", "short"].find((k) =>
+        filledCells[0].classList.contains(`is-${k}`)
+      );
+      if (kind) row.classList.add(`is-${kind}`);
+    }
+  };
+
+  const syncCell = (cell) => {
+    const input = cell.querySelector("[data-online-take-qty]");
     if (!input) return;
     const result = varianceFor(
       input.value.trim(),
-      row.getAttribute("data-system-qty")
+      cell.getAttribute("data-system-qty")
     );
-    applyVariance(row, result);
-    row.classList.toggle("is-filled", input.value.trim() !== "");
-    if (!input.value.trim()) applyCountedBy(row, "");
+    applyVariance(cell, result);
+    cell.classList.toggle("is-filled", input.value.trim() !== "");
+    if (!input.value.trim()) applyCountedBy(cell, "");
+    syncRowClasses(cell.closest("[data-online-take-row]"));
   };
 
   const setCartOpen = (open) => {
@@ -343,9 +406,9 @@
     }
   };
 
-  const renderCart = (rows) => {
+  const renderCart = (cells) => {
     if (!cartLines) return;
-    if (!rows.length) {
+    if (!cells.length) {
       cartLines.innerHTML = `
         <li class="online-take-cart-empty" data-online-take-cart-empty>
           No counted items yet. Enter a physical count to add it here.
@@ -354,32 +417,37 @@
       return;
     }
 
-    const html = rows
-      .map((row) => {
-        const itemId = row.getAttribute("data-item-id") || "";
-        const input = row.querySelector("[data-online-take-qty]");
+    const html = cells
+      .map((cell) => {
+        const key = keyForCell(cell);
+        const row = cell.closest("[data-online-take-row]");
+        const input = cell.querySelector("[data-online-take-qty]");
         const qty = input?.value.trim() || "";
         const name =
-          row.querySelector(".online-take-item strong")?.textContent?.trim() ||
+          row?.querySelector(".online-take-item strong")?.textContent?.trim() ||
           "Item";
-        const category =
-          row.getAttribute("data-category-name") ||
-          row.querySelector(".online-take-item em")?.textContent?.trim() ||
-          "";
+        const shopName = cell.getAttribute("data-shop-name") || "";
+        const category = row?.getAttribute("data-category-name") || "";
         const countedBy =
-          row.querySelector("[data-online-take-by]")?.textContent?.trim() || "";
-        const byLabel =
-          countedBy && countedBy !== "—" ? countedBy : "";
-        const result = varianceFor(qty, row.getAttribute("data-system-qty"));
+          cell.querySelector("[data-online-take-by]")?.textContent?.trim() ||
+          "";
+        const byLabel = countedBy && countedBy !== "—" ? countedBy : "";
+        const result = varianceFor(qty, cell.getAttribute("data-system-qty"));
         return `
           <li
             class="online-take-cart-line is-${escapeHtml(result.kind)}"
             data-online-take-cart-line
-            data-item-id="${escapeHtml(itemId)}"
+            data-cell-key="${escapeHtml(key)}"
+            data-shop-name="${escapeHtml(shopName)}"
           >
-            <button type="button" data-online-take-cart-jump data-item-id="${escapeHtml(itemId)}">
+            <button type="button" data-online-take-cart-jump data-cell-key="${escapeHtml(key)}">
               <span class="online-take-cart-line-main">
                 <strong>${escapeHtml(name)}</strong>
+                ${
+                  isMerged && shopName
+                    ? `<em>${escapeHtml(shopName)}</em>`
+                    : ""
+                }
                 ${category ? `<em>${escapeHtml(category)}</em>` : ""}
                 ${byLabel ? `<em class="online-take-cart-by">By ${escapeHtml(byLabel)}</em>` : ""}
               </span>
@@ -399,50 +467,50 @@
     cartLines.innerHTML = html;
   };
 
-  const touchFilledOrder = (itemId, filled) => {
-    if (!itemId) return;
-    const idx = recentFilledIds.indexOf(itemId);
+  const touchFilledOrder = (key, filled) => {
+    if (!key) return;
+    const idx = recentFilledIds.indexOf(key);
     if (idx >= 0) recentFilledIds.splice(idx, 1);
-    if (filled) recentFilledIds.unshift(itemId);
+    if (filled) recentFilledIds.unshift(key);
   };
 
-  const orderedFilledRows = (rowById) => {
+  const orderedFilledCells = (cellByKey) => {
     const ordered = [];
     const seen = new Set();
-    recentFilledIds.forEach((id) => {
-      const row = rowById.get(id);
-      if (!row || seen.has(id)) return;
-      ordered.push(row);
-      seen.add(id);
+    recentFilledIds.forEach((key) => {
+      const cell = cellByKey.get(key);
+      if (!cell || seen.has(key)) return;
+      ordered.push(cell);
+      seen.add(key);
     });
-    rowById.forEach((row, id) => {
-      if (seen.has(id)) return;
-      ordered.push(row);
-      seen.add(id);
+    cellByKey.forEach((cell, key) => {
+      if (seen.has(key)) return;
+      ordered.push(cell);
+      seen.add(key);
     });
     return ordered;
   };
 
   const syncSummary = () => {
     if (!list) return;
-    const rows = [...list.querySelectorAll("[data-online-take-row]")];
+    const cells = [...list.querySelectorAll("[data-online-take-cell]")];
     let filled = 0;
     let match = 0;
     let excess = 0;
     let short = 0;
-    const rowById = new Map();
+    const cellByKey = new Map();
     const liveIds = new Set();
-    rows.forEach((row) => {
-      const input = row.querySelector("[data-online-take-qty]");
+    cells.forEach((cell) => {
+      const input = cell.querySelector("[data-online-take-qty]");
       const value = input?.value.trim() || "";
-      const itemId = row.getAttribute("data-item-id") || "";
+      const key = keyForCell(cell);
       if (!value) return;
       filled += 1;
-      if (itemId) {
-        liveIds.add(itemId);
-        rowById.set(itemId, row);
+      if (key) {
+        liveIds.add(key);
+        cellByKey.set(key, cell);
       }
-      const result = varianceFor(value, row.getAttribute("data-system-qty"));
+      const result = varianceFor(value, cell.getAttribute("data-system-qty"));
       if (result.kind === "match") match += 1;
       if (result.kind === "excess") excess += 1;
       if (result.kind === "short") short += 1;
@@ -455,7 +523,7 @@
     if (excessEl) excessEl.textContent = String(excess);
     if (shortEl) shortEl.textContent = String(short);
     if (progressEl) {
-      const total = rows.length;
+      const total = cells.length;
       progressEl.style.width = total
         ? `${Math.min(100, Math.round((filled / total) * 100))}%`
         : "0%";
@@ -468,23 +536,25 @@
     if (cartHeading) {
       cartHeading.textContent = `${filled} item${filled === 1 ? "" : "s"}`;
     }
-    renderCart(orderedFilledRows(rowById));
+    renderCart(orderedFilledCells(cellByKey));
     if (filled === 0) setCartOpen(false);
   };
 
-  const saveRow = async (row) => {
-    const input = row.querySelector("[data-online-take-qty]");
-    const itemId = row.getAttribute("data-item-id");
-    if (!input || !itemId || !baseUrl || !shopId) return;
+  const saveCell = async (cell) => {
+    const input = cell.querySelector("[data-online-take-qty]");
+    const shopId = cell.getAttribute("data-shop-id") || "";
+    const itemId = cellItemId(cell);
+    const key = cellKey(shopId, itemId);
+    if (!input || !itemId || !shopId || !baseUrl) return;
     const qty = input.value.trim();
-    if (lastSaved.get(itemId) === qty) {
+    if (lastSaved.get(key) === qty) {
       syncSummary();
       return;
     }
 
     setStatus("Saving…");
     savingCount += 1;
-    row.classList.add("is-saving");
+    cell.classList.add("is-saving");
     const body = new URLSearchParams({
       mode: "online-stock-take",
       shop_id: shopId,
@@ -508,10 +578,10 @@
       if (!response.ok || !data.ok) {
         throw new Error(data.error || "Could not save this count.");
       }
-      lastSaved.set(itemId, qty);
+      lastSaved.set(key, qty);
       if (qty === "") {
         applySystemQty(
-          row,
+          cell,
           data.line?.system_qty ?? data.line?.live_system_qty,
           data.line?.live_system_qty
         );
@@ -519,28 +589,37 @@
           data.line?.system_qty == null &&
           data.line?.live_system_qty == null
         ) {
-          restoreLiveSystemQty(row);
+          restoreLiveSystemQty(cell);
         }
       } else {
-        applySystemQty(row, data.line?.system_qty, data.line?.live_system_qty);
+        applySystemQty(
+          cell,
+          data.line?.system_qty,
+          data.line?.live_system_qty
+        );
       }
-      if (data.line?.category) {
+      const row = cell.closest("[data-online-take-row]");
+      if (data.line?.category && row) {
         row.setAttribute("data-category-name", data.line.category);
       }
-      syncRow(row);
+      syncCell(cell);
       applyCountedBy(
-        row,
+        cell,
         qty !== "" ? data.line?.updated_by_label || "" : ""
       );
-      touchFilledOrder(itemId, qty !== "");
-      if (data.line?.revision) syncRevision = String(data.line.revision);
+      touchFilledOrder(key, qty !== "");
+      // Only a single-shop sheet can adopt the per-shop revision; the merged
+      // page re-syncs against the multi-shop revision on the next poll.
+      if (!isMerged && data.line?.revision) {
+        syncRevision = String(data.line.revision);
+      }
       syncSummary();
       setStatus(`Saved ${data.line?.saved_at || ""}`.trim());
     } catch (error) {
       setStatus(error?.message || "Could not save this count.", { error: true });
     } finally {
       savingCount = Math.max(0, savingCount - 1);
-      row.classList.remove("is-saving");
+      cell.classList.remove("is-saving");
     }
   };
 
@@ -549,13 +628,13 @@
     pendingTimers.forEach((timer) => window.clearTimeout(timer));
     pendingTimers.clear();
     if (!list) return;
-    const rows = [...list.querySelectorAll("[data-online-take-row]")];
-    for (const row of rows) {
-      const input = row.querySelector("[data-online-take-qty]");
-      const itemId = row.getAttribute("data-item-id") || "";
-      if (!input || !itemId) continue;
-      if (input.value.trim() !== String(lastSaved.get(itemId) ?? "")) {
-        await saveRow(row);
+    const cells = [...list.querySelectorAll("[data-online-take-cell]")];
+    for (const cell of cells) {
+      const input = cell.querySelector("[data-online-take-qty]");
+      const key = keyForCell(cell);
+      if (!input || !key) continue;
+      if (input.value.trim() !== String(lastSaved.get(key) ?? "")) {
+        await saveCell(cell);
       }
     }
   };
@@ -620,7 +699,7 @@
   };
 
   const saveCount = async () => {
-    if (!baseUrl || !shopId || !saveCountBtn) return;
+    if (!baseUrl || !saveCountBtn) return;
     saveCountBtn.disabled = true;
     setSaveNote("");
     setStatus("Saving count…");
@@ -629,9 +708,9 @@
       const body = new URLSearchParams({
         mode: "online-stock-take",
         action: "save_count",
-        shop_id: shopId,
         csrfmiddlewaretoken: csrf,
       });
+      if (shopFilter) body.set("shop_id", shopFilter);
       if (countDate) body.set("date", countDate);
       const response = await fetch(baseUrl, {
         method: "POST",
@@ -647,23 +726,40 @@
       if (!response.ok || !data.ok) {
         throw new Error(data.error || "Could not save this count.");
       }
-      const saved = data.saved || {};
-      const itemsLabel =
-        Number(saved.filled_count) === 1 ? "1 item" : `${saved.filled_count ?? 0} items`;
-      setStatus(`Count saved · ${itemsLabel}`);
-      setSaveNote(
-        `Saved ${saved.saved_at_label || ""} — kept under Saved counts below.`
+      const savedRows = Array.isArray(data.saved)
+        ? data.saved
+        : data.saved
+        ? [data.saved]
+        : [];
+      const totalFilled = savedRows.reduce(
+        (total, saved) => total + Number(saved?.filled_count || 0),
+        0
       );
-      if (savedLines && saved.id != null) {
+      const itemsLabel =
+        totalFilled === 1 ? "1 item" : `${totalFilled} items`;
+      setStatus(
+        savedRows.length > 1
+          ? `Count saved · ${savedRows.length} shops`
+          : `Count saved · ${itemsLabel}`
+      );
+      setSaveNote(
+        `Saved ${
+          savedRows[0]?.saved_at_label || ""
+        } — kept under Saved counts below.`.trim()
+      );
+      if (savedLines) {
         savedLines
           .querySelector("[data-online-take-saved-empty]")
           ?.remove();
-        const row = renderSavedRow(saved);
-        const existing = savedLines.querySelector(
-          `[data-saved-id="${CSS.escape(String(saved.id))}"]`
-        );
-        if (existing) existing.replaceWith(row);
-        else savedLines.prepend(row);
+        savedRows.forEach((saved) => {
+          if (saved?.id == null) return;
+          const row = renderSavedRow(saved);
+          const existing = savedLines.querySelector(
+            `[data-saved-id="${CSS.escape(String(saved.id))}"]`
+          );
+          if (existing) existing.replaceWith(row);
+          else savedLines.prepend(row);
+        });
         if (typeof window.lucide?.createIcons === "function") {
           window.lucide.createIcons();
         }
@@ -685,7 +781,7 @@
   };
 
   const pollRemoteCounts = async () => {
-    if (!baseUrl || !shopId || document.hidden || pollInFlight) return;
+    if (!baseUrl || !list || document.hidden || pollInFlight) return;
     pollInFlight = true;
     if (savingCount === 0) setLiveStatus("Syncing", { state: "syncing" });
     try {
@@ -736,25 +832,25 @@
     }
   };
 
-  const queueSave = (row) => {
-    const itemId = row.getAttribute("data-item-id");
-    if (!itemId) return;
-    const existing = pendingTimers.get(itemId);
+  const queueSave = (cell) => {
+    const key = keyForCell(cell);
+    if (!key || key === ":") return;
+    const existing = pendingTimers.get(key);
     if (existing) window.clearTimeout(existing);
     pendingTimers.set(
-      itemId,
+      key,
       window.setTimeout(() => {
-        pendingTimers.delete(itemId);
-        saveRow(row);
+        pendingTimers.delete(key);
+        saveCell(cell);
       }, SAVE_DELAY_MS)
     );
   };
 
-  const jumpToRow = (itemId) => {
-    if (!itemId || !list) return;
-    const row = findRow(itemId);
-    if (!row) return;
-    revealRowInFullList(row, { keepFocus: true });
+  const jumpToCell = (key) => {
+    if (!key || !list) return;
+    const cell = findCellByKey(key);
+    if (!cell) return;
+    revealCellInFullList(cell, { keepFocus: true });
   };
 
   shopSelect?.addEventListener("change", () => {
@@ -769,7 +865,7 @@
     if (!baseUrl) return;
     const nextDate = (dateInput.value || "").trim();
     window.location.assign(
-      buildPageUrl({ shopId, date: nextDate }).toString()
+      buildPageUrl({ shopId: shopFilter, date: nextDate }).toString()
     );
   });
 
@@ -793,20 +889,26 @@
     return q;
   };
 
-  const revealRowInFullList = (row, { keepFocus = true } = {}) => {
-    if (!row) return;
-    const input = row.querySelector("[data-online-take-qty]");
+  const revealCellInFullList = (cell, { keepFocus = true } = {}) => {
+    if (!cell) return;
+    const row = cell.closest("[data-online-take-row]");
+    const input = cell.querySelector("[data-online-take-qty]");
     const hadSearch = Boolean((searchInput?.value || "").trim());
     if (hadSearch && searchInput) {
       searchInput.value = "";
       applySearchFilter("");
       returnSearchAfterQty = true;
     }
-    row.hidden = false;
+    if (row) {
+      row.hidden = false;
+      row.classList.add("is-cart-focus");
+      window.setTimeout(
+        () => row.classList.remove("is-cart-focus"),
+        1400
+      );
+    }
     if (emptySearchEl) emptySearchEl.hidden = true;
-    row.scrollIntoView({ behavior: "smooth", block: "center" });
-    row.classList.add("is-cart-focus");
-    window.setTimeout(() => row.classList.remove("is-cart-focus"), 1400);
+    (row || cell).scrollIntoView({ behavior: "smooth", block: "center" });
     if (keepFocus && input) {
       input.focus({ preventScroll: true });
     }
@@ -821,40 +923,37 @@
     const input = event.target.closest("[data-online-take-qty]");
     if (!input) return;
     if (!(searchInput?.value || "").trim()) return;
-    const row = input.closest("[data-online-take-row]");
-    if (!row) return;
-    revealRowInFullList(row, { keepFocus: true });
+    const cell = input.closest("[data-online-take-cell]");
+    if (!cell) return;
+    revealCellInFullList(cell, { keepFocus: true });
   });
 
   list?.addEventListener("input", (event) => {
     const input = event.target.closest("[data-online-take-qty]");
     if (!input) return;
-    const row = input.closest("[data-online-take-row]");
-    if (!row) return;
+    const cell = input.closest("[data-online-take-cell]");
+    if (!cell) return;
     // Cover tap/type paths that skip focusin quirks on some mobile browsers.
     if ((searchInput?.value || "").trim()) {
-      revealRowInFullList(row, { keepFocus: true });
+      revealCellInFullList(cell, { keepFocus: true });
     }
-    syncRow(row);
-    touchFilledOrder(
-      row.getAttribute("data-item-id"),
-      input.value.trim() !== ""
-    );
+    syncCell(cell);
+    touchFilledOrder(keyForCell(cell), input.value.trim() !== "");
     syncSummary();
-    queueSave(row);
+    queueSave(cell);
   });
 
   list?.addEventListener("change", (event) => {
     const input = event.target.closest("[data-online-take-qty]");
     if (!input) return;
-    const row = input.closest("[data-online-take-row]");
-    if (!row) return;
-    const itemId = row.getAttribute("data-item-id");
-    if (itemId && pendingTimers.has(itemId)) {
-      window.clearTimeout(pendingTimers.get(itemId));
-      pendingTimers.delete(itemId);
+    const cell = input.closest("[data-online-take-cell]");
+    if (!cell) return;
+    const key = keyForCell(cell);
+    if (key && pendingTimers.has(key)) {
+      window.clearTimeout(pendingTimers.get(key));
+      pendingTimers.delete(key);
     }
-    saveRow(row);
+    saveCell(cell);
   });
 
   list?.addEventListener("focusout", (event) => {
@@ -881,7 +980,7 @@
   cartLines?.addEventListener("click", (event) => {
     const jump = event.target.closest("[data-online-take-cart-jump]");
     if (!jump) return;
-    jumpToRow(jump.getAttribute("data-item-id"));
+    jumpToCell(jump.getAttribute("data-cell-key"));
   });
 
   saveCountBtn?.addEventListener("click", () => {
@@ -908,20 +1007,20 @@
     }
   });
 
-  list?.querySelectorAll("[data-online-take-row]").forEach((row) => {
-    const input = row.querySelector("[data-online-take-qty]");
-    const itemId = row.getAttribute("data-item-id");
+  list?.querySelectorAll("[data-online-take-cell]").forEach((cell) => {
+    const input = cell.querySelector("[data-online-take-qty]");
+    const key = keyForCell(cell);
     const qty = input?.value.trim() || "";
-    if (itemId) lastSaved.set(itemId, qty);
-    if (qty) touchFilledOrder(itemId, true);
-    syncRow(row);
+    if (key) lastSaved.set(key, qty);
+    if (qty) touchFilledOrder(key, true);
+    syncCell(cell);
   });
   // Server already sorts filled_lines newest-first; seed that order on load.
   if (cartLines) {
     const seeded = [
-      ...cartLines.querySelectorAll("[data-online-take-cart-line][data-item-id]"),
+      ...cartLines.querySelectorAll("[data-online-take-cart-line][data-cell-key]"),
     ]
-      .map((line) => line.getAttribute("data-item-id"))
+      .map((line) => line.getAttribute("data-cell-key"))
       .filter(Boolean);
     if (seeded.length) {
       recentFilledIds.length = 0;
@@ -930,7 +1029,7 @@
   }
   syncSummary();
 
-  if (shopId && baseUrl) {
+  if (list && baseUrl) {
     pollTimer = window.setInterval(pollRemoteCounts, POLL_MS);
     window.setTimeout(pollRemoteCounts, 1200);
     document.addEventListener("visibilitychange", () => {

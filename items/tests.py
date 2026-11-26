@@ -4497,7 +4497,9 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(data["filled_count"], 1)
         self.assertEqual(data["lines"][0]["item_id"], shelf_item.pk)
-        self.assertEqual(data["system"][str(shelf_item.pk)], "8")
+        self.assertEqual(
+            data["system"][f"{self.shop.pk}:{shelf_item.pk}"], "8"
+        )
 
     def test_shelf_print_page_lists_shelf_items_only(self):
         from shops.services import set_company_pos_setting
@@ -4742,8 +4744,10 @@ class ItSupportItemStockPagesTests(TestCase):
         self.assertEqual(page.status_code, 200)
         data = page.json()
         self.assertTrue(data["ok"])
-        self.assertEqual(data["system"][str(self.item.pk)], "4")
-        self.assertEqual(data["system"][str(extra.pk)], "9")
+        self.assertEqual(
+            data["system"][f"{self.shop.pk}:{self.item.pk}"], "4"
+        )
+        self.assertEqual(data["system"][f"{self.shop.pk}:{extra.pk}"], "9")
 
     def test_online_stock_take_report_orders_excess_then_short_then_match(self):
         from items.models import Item, OnlineStockTakeSavedCount, ShopStock
@@ -4910,6 +4914,125 @@ class ItSupportItemStockPagesTests(TestCase):
         body = page.content.decode()
         self.assertIn("data-online-take-qty", body)
         self.assertNotRegex(body, r"<input[^>]*disabled[^>]*data-online-take-qty")
+
+    def test_online_stock_take_merged_all_shops_matrix(self):
+        from items.models import OnlineStockTakeSavedCount, ShopStock
+
+        ShopStock.objects.create(shop=self.shop, item=self.item, quantity=4)
+        ShopStock.objects.create(shop=self.shop_b, item=self.item, quantity=9)
+
+        # No shop filter → the merged sheet: one row per item, a count cell
+        # per shop, and a column header per shop.
+        page = self.client.get(self.url, {"mode": "online-stock-take"})
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "All shops")
+        catalog = page.context["online_catalog"]
+        self.assertEqual(catalog["item_count"], 2)  # 1 item × 2 shops
+        line = catalog["lines"][0]
+        cells = {cell["shop_id"]: cell for cell in line["cells"]}
+        self.assertEqual(cells[self.shop.pk]["system_qty"], "4")
+        self.assertEqual(cells[self.shop_b.pk]["system_qty"], "9")
+
+        # The merged sync poll covers every shop column at once.
+        page = self.client.get(
+            f"{self.url}?mode=online-stock-take&sync=1",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        data = page.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(
+            data["system"][f"{self.shop.pk}:{self.item.pk}"], "4"
+        )
+        self.assertEqual(
+            data["system"][f"{self.shop_b.pk}:{self.item.pk}"], "9"
+        )
+
+        # Count at both shops, then one Save count writes a record per shop.
+        for shop_id, qty in ((self.shop.pk, "4"), (self.shop_b.pk, "0")):
+            page = self.client.post(
+                f"{self.url}?mode=online-stock-take",
+                {
+                    "mode": "online-stock-take",
+                    "shop_id": str(shop_id),
+                    "item_id": str(self.item.pk),
+                    "qty": qty,
+                },
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+            self.assertTrue(page.json()["ok"])
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {"mode": "online-stock-take", "action": "save_count"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(page.status_code, 200)
+        data = page.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(len(data["saved"]), 2)
+        self.assertEqual(OnlineStockTakeSavedCount.objects.count(), 2)
+
+        # Merged print/download = one variance column per shop; the
+        # counted-0/system-9 cell is short, counted-4/system-4 matches.
+        page = self.client.get(
+            self.url, {"mode": "online-stock-take", "paper": "a4"}
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "IT STOCK SHOP")
+        self.assertContains(page, "IT STOCK SHOP B")
+
+        page = self.client.get(
+            self.url, {"mode": "online-stock-take", "download": "1"}
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page["Content-Type"], "application/pdf")
+        self.assertTrue(page.content.startswith(b"%PDF"))
+
+    def test_online_stock_take_nil_variance_on_zero_zero(self):
+        from items.models import Item, OnlineStockTakeSavedCount
+
+        empty = Item.objects.create(
+            category="TOOLS",
+            name="IT EMPTY ITEM",
+            minimum_selling_price=Decimal("10.00"),
+            shop_price=Decimal("20.00"),
+            created_by=self.profile,
+        )
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "shop_id": str(self.shop.pk),
+                "item_id": str(empty.pk),
+                "qty": "0",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertTrue(page.json()["ok"])
+        page = self.client.post(
+            f"{self.url}?mode=online-stock-take",
+            {
+                "mode": "online-stock-take",
+                "action": "save_count",
+                "shop_id": str(self.shop.pk),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertTrue(page.json()["ok"])
+        saved = OnlineStockTakeSavedCount.objects.get()
+
+        # A 0 count against 0 book stock prints as Nil — live and saved.
+        for params in (
+            {
+                "mode": "online-stock-take",
+                "shop_id": self.shop.pk,
+                "paper": "a4",
+            },
+            {"mode": "online-stock-take", "saved": saved.pk, "paper": "a4"},
+            {"mode": "online-stock-take", "paper": "a4"},
+        ):
+            page = self.client.get(self.url, params)
+            self.assertEqual(page.status_code, 200)
+            self.assertContains(page, "Nil")
 
     def test_shelf_online_stock_take_save_count(self):
         from shops.services import set_company_pos_setting
