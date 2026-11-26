@@ -1568,12 +1568,14 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `chat/stock.py`). Surfaces: confirm-receipts, kind-change → sale,
   client account pay (`apply_account_payment` / `apply_credit_receipt_payment`
   FIFO), credit-note STK self-pay, full-return, chat.
-- **Walk-in credits can be cleared too**: the Clients board's "Walk-in" row
-  opens the receipts browse (`analytics/receipts/?client=walkin&receipt_kind=credits`),
-  which — when the viewer has `analytics/account_pay` — adds a **Pay** column
-  per open credit row plus a **Pay amount** button (shared
+- **Walk-in credits can be cleared too**: whenever the receipts browse shows
+  credits (`?receipt_kind=credits`, the all-types browse, or the Clients
+  board's "Walk-in" row → `?client=walkin`), a viewer with
+  `analytics/account_pay` gets a **Pay** column on client-less credit rows
+  plus a **Pay amount** button (shared
   `analytics_account_pay_modal.html` + `analytics-receipt-ledger.js`, same
-  `_table` `kind:"pay"` cell pattern as supplier pay). The pay cells post
+  `_table` `kind:"pay"` cell pattern as supplier pay). Named-client credit
+  rows show a "—" hint cell (they still clear from the client's account). The pay cells post
   `account_id="walkin"`; `analytics_account_pay` maps that sentinel to
   `apply_account_payment(..., walkin=True)`, which scopes the FIFO /
   `receipt_ids` selection / balance-after to `client__isnull=True` receipts

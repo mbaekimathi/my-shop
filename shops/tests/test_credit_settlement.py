@@ -361,6 +361,44 @@ class CreditPaymentConversionTests(TestCase):
         self.assertEqual(pay_cell["pay_id"], walk.pk)
         self.assertTrue(pay_cell["can_pay"])
 
+    def test_credits_browse_without_client_scope_shows_walkin_pay(self):
+        from django.utils import timezone
+
+        from employees.analytics_services import (
+            _collect_analytics_receipts_browse,
+        )
+
+        walk = self._walkin_receipt(total=Decimal("60.00"))
+        named = self._receipt(total=Decimal("30.00"))
+        settled = self._walkin_receipt(
+            total=Decimal("20.00"),
+            amount_paid=Decimal("20.00"),
+            kind=ShopReceiptKind.SALE,
+            settled_from_credit=True,
+        )
+        now = timezone.now()
+        browse = _collect_analytics_receipts_browse(
+            filters={
+                "active_shop_ids": [self.shop.pk],
+                "filter_shops": [self.shop],
+                "start": now - timezone.timedelta(days=1),
+                "end": now + timezone.timedelta(days=1),
+                "receipt_kind": "credits",
+                "receipt_status": "all",
+            },
+            include_walkin_pay=True,
+        )
+        self.assertTrue(browse["walkin_credit_pay"])
+        self.assertEqual(browse["walkin_credit_due"], Decimal("60.00"))
+        cells_by_id = {
+            row["sort_id"]: row["cells"][-1]
+            for row in browse["receipt_rows"]
+        }
+        self.assertEqual(cells_by_id[walk.pk]["kind"], "pay")
+        self.assertEqual(cells_by_id[walk.pk]["account_id"], "walkin")
+        self.assertEqual(cells_by_id[named.pk]["kind"], "empty")
+        self.assertEqual(cells_by_id[settled.pk]["kind"], "empty")
+
 
 class SalesAnalyticsPaidCreditsTests(TestCase):
     def setUp(self):
@@ -787,15 +825,23 @@ class WalkinCreditPayViewTests(TestCase):
 
     def test_browse_page_shows_walkin_pay_controls(self):
         receipt = self._walkin(Decimal("60.00"))
-        response = self.client.get(
-            "/shop-cashier/analytics/receipts/?client=walkin&receipt_kind=credits"
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "data-ax-pay-open")
-        self.assertContains(response, "data-ax-pay-modal")
-        self.assertContains(response, 'data-account-id="walkin"')
-        self.assertContains(response, f'data-receipt-id="{receipt.pk}"')
-        self.assertContains(response, "analytics-receipt-ledger.js")
+        for url in (
+            "/shop-cashier/analytics/receipts/?receipt_kind=credits",
+            "/shop-cashier/analytics/receipts/?client=walkin&receipt_kind=credits",
+        ):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, url)
+            self.assertContains(response, "data-ax-pay-open", msg_prefix=url)
+            self.assertContains(response, "data-ax-pay-modal", msg_prefix=url)
+            self.assertContains(
+                response, 'data-account-id="walkin"', msg_prefix=url
+            )
+            self.assertContains(
+                response, f'data-receipt-id="{receipt.pk}"', msg_prefix=url
+            )
+            self.assertContains(
+                response, "analytics-receipt-ledger.js", msg_prefix=url
+            )
 
     def test_pay_amount_clears_clientless_credits_fifo(self):
         first = self._walkin(Decimal("50.00"))

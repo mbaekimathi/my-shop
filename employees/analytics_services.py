@@ -20877,7 +20877,10 @@ def _collect_analytics_receipts_browse(
     receipt_status = filters.get("receipt_status")
     apply_status = receipt_kind not in {"cancelled", "partial-returns"}
     walkins_only = filters.get("client_scope") in ("walkin", "walk-in", "walk_in")
-    include_walkin_pay = bool(include_walkin_pay) and walkins_only
+    credits_in_view = receipt_kind in ("", "credits")
+    include_walkin_pay = bool(include_walkin_pay) and (
+        walkins_only or credits_in_view
+    )
 
     all_receipts = ShopReceipt.objects.filter(
         shop_id__in=shop_ids, created_at__gte=start, created_at__lt=end
@@ -21204,7 +21207,10 @@ def _collect_analytics_receipts_browse(
             items_detail = _receipt_line_items_detail(row.lines.all())
             pay_cell = None
             if include_walkin_pay:
-                if row.kind == ShopReceiptKind.CREDIT:
+                if (
+                    row.kind == ShopReceiptKind.CREDIT
+                    and row.client_id is None
+                ):
                     due = _due_amount(row.total, row.amount_paid)
                     pay_cell = {
                         "kind": "pay",
@@ -21221,8 +21227,16 @@ def _collect_analytics_receipts_browse(
                             and row.status != ShopReceiptStatus.CANCELLED
                         ),
                     }
+                elif row.kind == ShopReceiptKind.CREDIT:
+                    pay_cell = {
+                        "kind": "empty",
+                        "title": (
+                            "Named-client credits clear from the "
+                            "client's account page"
+                        ),
+                    }
                 else:
-                    pay_cell = ""
+                    pay_cell = {"kind": "empty"}
             merged.append(
                 _row_payload(
                     number=receipt_tally_code(row),
@@ -21412,7 +21426,15 @@ def _build_receipts(filters):
                 )
             )
             if browse.get("walkins_only")
-            else "Filter by receipt type and period across selected shops."
+            else (
+                "Filter by receipt type and period across selected shops."
+                + (
+                    " The Pay column clears walk-in credits only — "
+                    "named-client credits clear from the client's account."
+                    if browse["walkin_credit_pay"]
+                    else ""
+                )
+            )
         ),
         "walkin_credit_pay": browse["walkin_credit_pay"],
         "walkin_credit_pay_url": _account_pay_url(role),
