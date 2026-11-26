@@ -837,11 +837,14 @@ def apply_account_payment(
     receipt_ids=None,
     supplier_name: str = "",
     supplier_phone: str = "",
+    walkin: bool = False,
 ) -> dict:
     """Apply a payment to an account, clearing receipts oldest → newest (FIFO).
 
     When ``receipt_ids`` is provided for credit accounts, only those receipts are
-    eligible — still allocated oldest → newest within the selection.
+    eligible — still allocated oldest → newest within the selection. ``walkin``
+    scopes a credit payment to receipts with no client record instead of a
+    named client's account.
     """
     from django.core.exceptions import ValidationError
     from django.db import transaction
@@ -880,9 +883,11 @@ def apply_account_payment(
 
     with transaction.atomic():
         if kind == "credit":
-            client = Client.objects.filter(pk=account_id).first()
-            if client is None:
-                raise ValidationError("Client not found.")
+            client = None
+            if not walkin:
+                client = Client.objects.filter(pk=account_id).first()
+                if client is None:
+                    raise ValidationError("Client not found.")
 
             if method == "mpesa" and not (stk_payment_id or "").strip():
                 if not mpesa_receipt_number:
@@ -897,21 +902,31 @@ def apply_account_payment(
                 stk_payment = require_successful_stk(
                     public_id=stk_payment_id,
                     expected_amount=pay_amount,
-                    expected_phone=client.phone_number or client.phone_normalized,
+                    expected_phone=(
+                        client.phone_number or client.phone_normalized
+                    )
+                    if client
+                    else "",
                     purpose="credit",
                 )
                 if stk_payment.applied:
                     raise ValidationError("This M-Pesa payment was already applied.")
                 if stk_payment.account_kind and stk_payment.account_kind != "credit":
                     raise ValidationError("M-Pesa payment is not for a credit account.")
-                if stk_payment.account_id and int(stk_payment.account_id) != int(client.pk):
+                if stk_payment.account_id and int(stk_payment.account_id) != int(
+                    client.pk if client else 0
+                ):
                     raise ValidationError("M-Pesa payment belongs to a different client.")
                 mpesa_receipt_number = stk_payment.mpesa_receipt_number or ""
 
             credit_qs = ShopReceipt.objects.select_for_update().filter(
-                client_id=client.pk,
                 kind=ShopReceiptKind.CREDIT,
                 shop_id__in=shop_ids,
+            )
+            credit_qs = (
+                credit_qs.filter(client__isnull=True)
+                if walkin
+                else credit_qs.filter(client_id=client.pk)
             )
             if selected_receipt_ids:
                 credit_qs = credit_qs.filter(pk__in=selected_receipt_ids)
@@ -963,17 +978,18 @@ def apply_account_payment(
                     converted += 1
                 remaining = (remaining - apply).quantize(Decimal("0.01"))
                 cleared += 1
-                from shops.credit_audit import log_credit_payment
+                if receipt.client_id:
+                    from shops.credit_audit import log_credit_payment
 
-                log_credit_payment(
-                    client_id=client.pk,
-                    receipt=receipt,
-                    amount=apply,
-                    payment_method=method,
-                    actor=profile,
-                    stk_payment=stk_payment if method == "mpesa" else None,
-                    mpesa_receipt_number=mpesa_receipt_number,
-                )
+                    log_credit_payment(
+                        client_id=receipt.client_id,
+                        receipt=receipt,
+                        amount=apply,
+                        payment_method=method,
+                        actor=profile,
+                        stk_payment=stk_payment if method == "mpesa" else None,
+                        mpesa_receipt_number=mpesa_receipt_number,
+                    )
 
             if method == "mpesa" and stk_payment is not None:
                 stk_payment.applied = True
@@ -981,14 +997,19 @@ def apply_account_payment(
 
             # Account balance after payment: all open credits for this client/shops,
             # not only the selected subset.
+            all_open_qs = ShopReceipt.objects.filter(
+                kind=ShopReceiptKind.CREDIT,
+                shop_id__in=shop_ids,
+            )
+            all_open_qs = (
+                all_open_qs.filter(client__isnull=True)
+                if walkin
+                else all_open_qs.filter(client_id=client.pk)
+            )
             all_open = list(
-                ShopReceipt.objects.filter(
-                    client_id=client.pk,
-                    kind=ShopReceiptKind.CREDIT,
-                    shop_id__in=shop_ids,
+                all_open_qs.exclude(status=ShopReceiptStatus.CANCELLED).only(
+                    "total", "amount_paid"
                 )
-                .exclude(status=ShopReceiptStatus.CANCELLED)
-                .only("total", "amount_paid")
             )
             balance_after = sum(
                 (_due_amount(row.total, row.amount_paid) for row in all_open),
@@ -1013,7 +1034,7 @@ def apply_account_payment(
             return {
                 "ok": True,
                 "kind": kind,
-                "account_id": client.pk,
+                "account_id": client.pk if client else "walkin",
                 "cleared": cleared,
                 "converted": converted,
                 "payment_method": method,
@@ -1507,9 +1528,10 @@ def apply_credit_receipt_payment(
                 raise ValidationError("M-Pesa payment is for a different receipt.")
             if stk_payment.account_kind and stk_payment.account_kind != "credit":
                 raise ValidationError("M-Pesa payment is not for a credit account.")
-            if receipt.client_id and stk_payment.account_id:
-                if int(stk_payment.account_id) != int(receipt.client_id):
-                    raise ValidationError("M-Pesa payment belongs to a different client.")
+            if stk_payment.account_id and int(stk_payment.account_id) != int(
+                receipt.client_id or 0
+            ):
+                raise ValidationError("M-Pesa payment belongs to a different client.")
             mpesa_receipt_number = stk_payment.mpesa_receipt_number or ""
             stk_payment.receipt = receipt
             stk_payment.applied = True
@@ -1524,17 +1546,18 @@ def apply_credit_receipt_payment(
             mpesa_receipt_number=mpesa_receipt_number,
         )
 
-        from shops.credit_audit import log_credit_payment
+        if receipt.client_id:
+            from shops.credit_audit import log_credit_payment
 
-        log_credit_payment(
-            client_id=receipt.client_id,
-            receipt=receipt,
-            amount=pay_amount,
-            payment_method=method,
-            actor=profile,
-            stk_payment=stk_payment if method == "mpesa" else None,
-            mpesa_receipt_number=mpesa_receipt_number,
-        )
+            log_credit_payment(
+                client_id=receipt.client_id,
+                receipt=receipt,
+                amount=pay_amount,
+                payment_method=method,
+                actor=profile,
+                stk_payment=stk_payment if method == "mpesa" else None,
+                mpesa_receipt_number=mpesa_receipt_number,
+            )
 
         due_after = _due_amount(receipt.total, receipt.amount_paid)
         balance_after = _zero()
@@ -20837,7 +20860,12 @@ _SUPPLIER_STATUS_CELL_TONE = {
 }
 
 
-def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool = False):
+def _collect_analytics_receipts_browse(
+    *,
+    filters,
+    include_receipt_actions: bool = False,
+    include_walkin_pay: bool = False,
+):
     """Shared receipt browse payload for analytics receipts + return pages."""
     shop_ids = filters["active_shop_ids"]
     shops = [shop for shop in filters["filter_shops"] if shop.pk in set(shop_ids)]
@@ -20849,6 +20877,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
     receipt_status = filters.get("receipt_status")
     apply_status = receipt_kind not in {"cancelled", "partial-returns"}
     walkins_only = filters.get("client_scope") in ("walkin", "walk-in", "walk_in")
+    include_walkin_pay = bool(include_walkin_pay) and walkins_only
 
     all_receipts = ShopReceipt.objects.filter(
         shop_id__in=shop_ids, created_at__gte=start, created_at__lt=end
@@ -21046,6 +21075,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         shop_id=None,
         items_detail=None,
         raw_number="",
+        pay_cell=None,
     ):
         items_label = (items or "").strip() or "—"
         items_cell = {
@@ -21117,6 +21147,8 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         if include_receipt_actions and receipt_id is not None:
             payload["receipt_id"] = receipt_id
             payload["shop_id"] = shop_id
+        if pay_cell is not None:
+            payload["cells"] = [*cells, pay_cell]
         return payload
 
     if include_pos:
@@ -21170,6 +21202,27 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
             client_name = (row.client_name or "").strip() or "Walk-in"
             phone = (row.client_phone or "").strip() or "—"
             items_detail = _receipt_line_items_detail(row.lines.all())
+            pay_cell = None
+            if include_walkin_pay:
+                if row.kind == ShopReceiptKind.CREDIT:
+                    due = _due_amount(row.total, row.amount_paid)
+                    pay_cell = {
+                        "kind": "pay",
+                        "label": "Pay",
+                        "pay_kind": "credit",
+                        "account_id": WALKIN_CLIENT_KEY,
+                        "pay_id": row.pk,
+                        "number": row.receipt_number,
+                        "due": _money_ksh(due),
+                        "due_raw": str(due),
+                        "shop": row.shop.name if row.shop_id else "",
+                        "can_pay": (
+                            due > 0
+                            and row.status != ShopReceiptStatus.CANCELLED
+                        ),
+                    }
+                else:
+                    pay_cell = ""
             merged.append(
                 _row_payload(
                     number=receipt_tally_code(row),
@@ -21192,6 +21245,7 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
                     total_raw=row.total,
                     receipt_id=row.pk,
                     shop_id=row.shop_id,
+                    pay_cell=pay_cell,
                 )
             )
     if include_stock:
@@ -21271,6 +21325,24 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         else "All types"
     )
     period_label = filters.get("report_period_label") or "selected period"
+
+    # Open balance across walk-in credit receipts in scope — what "Pay
+    # amount" clears oldest → newest for this same period/shop filter.
+    walkin_credit_due = _zero()
+    if include_walkin_pay:
+        for row in (
+            ShopReceipt.objects.filter(
+                shop_id__in=shop_ids,
+                client__isnull=True,
+                kind=ShopReceiptKind.CREDIT,
+                created_at__gte=start,
+                created_at__lt=end,
+            )
+            .exclude(status=ShopReceiptStatus.CANCELLED)
+            .only("total", "amount_paid")
+        ):
+            walkin_credit_due += _due_amount(row.total, row.amount_paid)
+
     return {
         "receipt_kind": receipt_kind,
         "receipt_kind_options": [("all", "All types"), *all_kind_specs],
@@ -21286,6 +21358,8 @@ def _collect_analytics_receipts_browse(*, filters, include_receipt_actions: bool
         "receipt_rows": merged,
         "receipt_total": len(merged),
         "walkins_only": walkins_only,
+        "walkin_credit_pay": include_walkin_pay,
+        "walkin_credit_due": walkin_credit_due,
     }
 
 
@@ -21297,8 +21371,11 @@ def _build_receipts(filters):
 
     role = filters["role"]
     segment = role_url_segment(role)
+    can_pay = bool(filters.get("can_pay_accounts"))
     browse = _collect_analytics_receipts_browse(
-        filters=filters, include_receipt_actions=False
+        filters=filters,
+        include_receipt_actions=False,
+        include_walkin_pay=can_pay,
     )
     receipt_kind = browse["receipt_kind"]
     kind_label = browse["kind_label"]
@@ -21310,14 +21387,37 @@ def _build_receipts(filters):
         + f" for {period_label}."
         + (" Walk-in clients only." if browse.get("walkins_only") else "")
     )
+    list_columns = [
+        "Receipt",
+        "Type",
+        "Client",
+        "Items",
+        "Total",
+        "Status",
+        "Date & time",
+    ]
+    if browse["walkin_credit_pay"]:
+        list_columns.append({"label": "Pay", "title": "Record a payment"})
 
     return {
         "headline": "Receipts",
         "lead": (
-            "Walk-in receipts only — receipts with no linked client record."
+            (
+                "Walk-in receipts only — receipts with no linked client record."
+                + (
+                    " Pay clears one receipt; Pay amount clears the oldest "
+                    "walk-in credits first."
+                    if browse["walkin_credit_pay"]
+                    else ""
+                )
+            )
             if browse.get("walkins_only")
             else "Filter by receipt type and period across selected shops."
         ),
+        "walkin_credit_pay": browse["walkin_credit_pay"],
+        "walkin_credit_pay_url": _account_pay_url(role),
+        "walkin_credit_balance": _money_ksh(browse["walkin_credit_due"]),
+        "walkin_credit_balance_raw": str(browse["walkin_credit_due"]),
         "list_table_layout": True,
         "show_search": True,
         "search_placeholder": "Search receipts…",
@@ -21361,15 +21461,7 @@ def _build_receipts(filters):
         "tables": [
             _table(
                 f"All receipts · {period_label}",
-                [
-                    "Receipt",
-                    "Type",
-                    "Client",
-                    "Items",
-                    "Total",
-                    "Status",
-                    "Date & time",
-                ],
+                list_columns,
                 browse["receipt_rows"],
                 empty="No receipts for selected shops and period.",
                 footnote=list_footnote,

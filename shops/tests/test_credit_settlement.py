@@ -259,6 +259,108 @@ class CreditPaymentConversionTests(TestCase):
         self.assertEqual(third.kind, ShopReceiptKind.CREDIT)
         self.assertEqual(third.amount_paid, Decimal("20.00"))
 
+    def _walkin_receipt(self, **kwargs):
+        kwargs.setdefault("client", None)
+        kwargs.setdefault("client_name", "Walk-in")
+        kwargs.setdefault("client_phone", "")
+        return self._receipt(**kwargs)
+
+    def test_walkin_single_receipt_payment_converts(self):
+        receipt = self._walkin_receipt(total=Decimal("80.00"))
+        result = apply_credit_receipt_payment(
+            profile=self.cashier,
+            receipt_id=receipt.pk,
+            amount="80",
+        )
+        receipt.refresh_from_db()
+        self.assertTrue(result["converted"])
+        self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
+        self.assertTrue(receipt.settled_from_credit)
+
+    def test_walkin_account_payment_clears_clientless_credits_fifo(self):
+        first = self._walkin_receipt(total=Decimal("50.00"))
+        second = self._walkin_receipt(total=Decimal("70.00"))
+        named = self._receipt(total=Decimal("30.00"))
+        result = apply_account_payment(
+            profile=self.cashier,
+            kind="credit",
+            account_id=0,
+            amount="90",
+            walkin=True,
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        named.refresh_from_db()
+        self.assertEqual(result["cleared"], 2)
+        self.assertEqual(result["converted"], 1)
+        self.assertEqual(first.kind, ShopReceiptKind.SALE)
+        self.assertTrue(first.settled_from_credit)
+        self.assertEqual(second.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(second.amount_paid, Decimal("40.00"))
+        self.assertEqual(named.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(named.amount_paid, Decimal("0.00"))
+
+    def test_walkin_selected_receipts_only(self):
+        first = self._walkin_receipt(total=Decimal("50.00"))
+        second = self._walkin_receipt(total=Decimal("70.00"))
+        result = apply_account_payment(
+            profile=self.cashier,
+            kind="credit",
+            account_id=0,
+            amount="70",
+            receipt_ids=[second.pk],
+            walkin=True,
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(result["converted"], 1)
+        self.assertEqual(first.amount_paid, Decimal("0.00"))
+        self.assertEqual(second.kind, ShopReceiptKind.SALE)
+
+    def test_clientless_account_payment_without_walkin_errors(self):
+        from django.core.exceptions import ValidationError
+
+        self._walkin_receipt(total=Decimal("50.00"))
+        with self.assertRaises(ValidationError):
+            apply_account_payment(
+                profile=self.cashier,
+                kind="credit",
+                account_id=0,
+                amount="50",
+            )
+
+    def test_walkin_browse_rows_carry_pay_cells(self):
+        from django.utils import timezone
+
+        from employees.analytics_services import (
+            _collect_analytics_receipts_browse,
+        )
+
+        walk = self._walkin_receipt(total=Decimal("60.00"))
+        self._receipt(total=Decimal("30.00"))
+        now = timezone.now()
+        browse = _collect_analytics_receipts_browse(
+            filters={
+                "active_shop_ids": [self.shop.pk],
+                "filter_shops": [self.shop],
+                "start": now - timezone.timedelta(days=1),
+                "end": now + timezone.timedelta(days=1),
+                "receipt_kind": "credits",
+                "receipt_status": "all",
+                "client_scope": "walkin",
+            },
+            include_walkin_pay=True,
+        )
+        self.assertTrue(browse["walkin_credit_pay"])
+        self.assertEqual(browse["walkin_credit_due"], Decimal("60.00"))
+        self.assertEqual(browse["receipt_total"], 1)
+        pay_cell = browse["receipt_rows"][0]["cells"][-1]
+        self.assertEqual(pay_cell["kind"], "pay")
+        self.assertEqual(pay_cell["pay_kind"], "credit")
+        self.assertEqual(pay_cell["account_id"], "walkin")
+        self.assertEqual(pay_cell["pay_id"], walk.pk)
+        self.assertTrue(pay_cell["can_pay"])
+
 
 class SalesAnalyticsPaidCreditsTests(TestCase):
     def setUp(self):
@@ -623,3 +725,147 @@ class SettledSaleRevenueDayTests(TestCase):
         self.assertEqual(rows[1]["number"], "CS2")
         self.assertTrue(rows[1]["converted"])
         self.assertEqual(rows[1]["amount"], Decimal("80.00"))
+
+
+class WalkinCreditPayViewTests(TestCase):
+    """Walk-in credits clear from the analytics receipts browse page."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="850013",
+            password="walkin-pay",
+            email="walkin-pay@test.local",
+            is_active=True,
+        )
+        self.cashier = EmployeeProfile.objects.create(
+            user=self.user,
+            employee_id="850013",
+            phone_country_code="+254",
+            phone_number="700000953",
+            status=EmployeeStatus.ACTIVE,
+            role=EmployeeRole.SHOP_CASHIER,
+        )
+        self.shop = Shop.objects.create(
+            name="WALKIN SHOP",
+            location="NAIROBI",
+            email="walkin-shop@test.local",
+            phone_number="0700000953",
+            login_code="850113",
+            password_hash="x",
+            created_by=self.cashier,
+        )
+        self.cashier.assigned_shops.add(self.shop)
+        self.client.force_login(self.user)
+        self._n = 0
+
+    def _walkin(self, total):
+        self._n += 1
+        return ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number=f"WALK-{self._n}",
+            kind=ShopReceiptKind.CREDIT,
+            total=total,
+            amount_paid=Decimal("0.00"),
+            created_by=self.cashier,
+            client=None,
+            client_name="Walk-in",
+            client_phone="",
+            status=ShopReceiptStatus.ACTIVE,
+            payment_method=ShopPaymentMethod.NONE,
+        )
+
+    def _pay(self, **data):
+        payload = {
+            "kind": "credit",
+            "account_id": "walkin",
+            "amount": "0",
+            "payment_method": "cash",
+            "shop_id": [str(self.shop.pk)],
+        }
+        payload.update(data)
+        return self.client.post("/shop-cashier/analytics/account-pay/", payload)
+
+    def test_browse_page_shows_walkin_pay_controls(self):
+        receipt = self._walkin(Decimal("60.00"))
+        response = self.client.get(
+            "/shop-cashier/analytics/receipts/?client=walkin&receipt_kind=credits"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data-ax-pay-open")
+        self.assertContains(response, "data-ax-pay-modal")
+        self.assertContains(response, 'data-account-id="walkin"')
+        self.assertContains(response, f'data-receipt-id="{receipt.pk}"')
+        self.assertContains(response, "analytics-receipt-ledger.js")
+
+    def test_pay_amount_clears_clientless_credits_fifo(self):
+        first = self._walkin(Decimal("50.00"))
+        second = self._walkin(Decimal("70.00"))
+        response = self._pay(amount="90")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["converted"], 1)
+        self.assertEqual(data["account_id"], "walkin")
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.kind, ShopReceiptKind.SALE)
+        self.assertTrue(first.settled_from_credit)
+        self.assertEqual(second.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(second.amount_paid, Decimal("40.00"))
+
+    def test_pay_selected_clears_only_selected(self):
+        first = self._walkin(Decimal("50.00"))
+        second = self._walkin(Decimal("70.00"))
+        third = self._walkin(Decimal("30.00"))
+        response = self._pay(
+            amount="100",
+            receipt_ids=[str(first.pk), str(second.pk)],
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        for receipt in (first, second, third):
+            receipt.refresh_from_db()
+        self.assertEqual(first.kind, ShopReceiptKind.SALE)
+        self.assertEqual(second.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(second.amount_paid, Decimal("50.00"))
+        self.assertEqual(third.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(third.amount_paid, Decimal("0.00"))
+
+    def test_single_walkin_receipt_pay_button(self):
+        receipt = self._walkin(Decimal("60.00"))
+        response = self._pay(amount="60", receipt_id=str(receipt.pk))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.kind, ShopReceiptKind.SALE)
+        self.assertTrue(receipt.settled_from_credit)
+
+    def test_walkin_pay_never_touches_named_client_credits(self):
+        named_client = Client.objects.create(
+            full_name="REG CLIENT",
+            phone_number="0700003003",
+            phone_normalized="254700003003",
+            created_by=self.cashier,
+        )
+        self._n += 1
+        named = ShopReceipt.objects.create(
+            shop=self.shop,
+            receipt_number=f"WALK-{self._n}",
+            kind=ShopReceiptKind.CREDIT,
+            total=Decimal("40.00"),
+            amount_paid=Decimal("0.00"),
+            created_by=self.cashier,
+            client=named_client,
+            client_name=named_client.full_name,
+            client_phone=named_client.phone_number,
+            status=ShopReceiptStatus.ACTIVE,
+            payment_method=ShopPaymentMethod.NONE,
+        )
+        self._walkin(Decimal("50.00"))
+        response = self._pay(amount="50")
+        self.assertEqual(response.status_code, 200)
+        named.refresh_from_db()
+        self.assertEqual(named.kind, ShopReceiptKind.CREDIT)
+        self.assertEqual(named.amount_paid, Decimal("0.00"))

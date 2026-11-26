@@ -254,6 +254,15 @@ def _render_analytics(
     from .analytics_services import hydrate_table_zrows
 
     hydrate_table_zrows(context.get("page"))
+    if (context.get("page") or {}).get("walkin_credit_pay"):
+        from .analytics_services import _pay_method_context
+
+        context.update(_pay_method_context())
+        context["stk_ready"] = daraja_stk_ready()
+        context["stk_off_label"] = (
+            get_daraja_settings().stk_not_ready_reason() or "STK off"
+        )
+        context.update(_stk_urls_for(profile))
     return render(
         request,
         (
@@ -2567,8 +2576,10 @@ def analytics_account_pay(request, role_segment):
     receipt_kind = (
         (request.POST.get("receipt_kind") or "").strip().lower() or kind
     )
+    account_raw = (request.POST.get("account_id") or "").strip()
+    walkin = account_raw.lower() in ("walkin", "walk-in", "walk_in")
     try:
-        account_id = int(request.POST.get("account_id") or 0)
+        account_id = int(account_raw or 0)
     except (TypeError, ValueError):
         account_id = 0
     try:
@@ -2628,6 +2639,7 @@ def analytics_account_pay(request, role_segment):
                 start=date_filter.get("start"),
                 end=date_filter.get("end"),
                 receipt_ids=receipt_ids,
+                walkin=walkin,
             )
         elif receipt_ids and kind in ("expense", "stock", "shelf"):
             return JsonResponse(
@@ -2652,6 +2664,7 @@ def analytics_account_pay(request, role_segment):
                 end=date_filter.get("end"),
                 supplier_name=request.POST.get("supplier_name") or "",
                 supplier_phone=request.POST.get("supplier_phone") or "",
+                walkin=walkin,
             )
     except ValidationError as exc:
         message = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
@@ -2702,48 +2715,64 @@ def analytics_account_pay_stk(request, role_segment):
             {"ok": False, "error": "M-Pesa STK is only available for client credit accounts."},
             status=400,
         )
+    account_raw = (request.POST.get("account_id") or "").strip()
+    walkin = account_raw.lower() in ("walkin", "walk-in", "walk_in")
     try:
-        account_id = int(request.POST.get("account_id") or 0)
+        account_id = int(account_raw or 0)
     except (TypeError, ValueError):
         account_id = 0
     try:
         receipt_id = int(request.POST.get("receipt_id") or 0)
     except (TypeError, ValueError):
         receipt_id = 0
-    client = Client.objects.filter(pk=account_id).first()
-    if client is None:
-        return JsonResponse({"ok": False, "error": "Client not found."}, status=404)
-    phone = (request.POST.get("phone") or client.phone_number or "").strip()
-    if not phone:
-        return JsonResponse(
-            {"ok": False, "error": "Client phone is required for M-Pesa STK Push."},
-            status=400,
-        )
+    client = None
+    if not walkin:
+        client = Client.objects.filter(pk=account_id).first()
+        if client is None:
+            return JsonResponse(
+                {"ok": False, "error": "Client not found."}, status=404
+            )
 
     receipt = None
     if receipt_id:
         from shops.models import ShopReceipt, ShopReceiptKind, ShopReceiptStatus
 
-        receipt = (
-            ShopReceipt.objects.filter(
-                pk=receipt_id,
-                client_id=client.pk,
-                kind=ShopReceiptKind.CREDIT,
-            )
-            .exclude(status=ShopReceiptStatus.CANCELLED)
-            .first()
+        receipt_qs = ShopReceipt.objects.filter(
+            pk=receipt_id,
+            kind=ShopReceiptKind.CREDIT,
         )
+        receipt_qs = (
+            receipt_qs.filter(client__isnull=True)
+            if walkin
+            else receipt_qs.filter(client_id=client.pk)
+        )
+        receipt = receipt_qs.exclude(
+            status=ShopReceiptStatus.CANCELLED
+        ).first()
         if receipt is None:
             return JsonResponse(
                 {"ok": False, "error": "Credit receipt not found for this client."},
                 status=404,
             )
 
-    account_reference = f"CR{client.pk}"
-    description = f"Credit {client.full_name}"[:40]
+    phone = (
+        request.POST.get("phone")
+        or (receipt.client_phone if receipt is not None else "")
+        or (client.phone_number if client else "")
+        or ""
+    ).strip()
+    if not phone:
+        return JsonResponse(
+            {"ok": False, "error": "Client phone is required for M-Pesa STK Push."},
+            status=400,
+        )
+
+    client_name = client.full_name if client else "Walk-in"
+    account_reference = f"CR{client.pk}" if client else "CR-WALKIN"
+    description = f"Credit {client_name}"[:40]
     if receipt is not None:
         account_reference = f"R{receipt.pk}"[:12]
-        description = f"{receipt.receipt_number} {client.full_name}"[:40]
+        description = f"{receipt.receipt_number} {client_name}"[:40]
 
     try:
         payment = initiate_stk_push(
@@ -2754,7 +2783,7 @@ def analytics_account_pay_stk(request, role_segment):
             description=description,
             profile=profile,
             account_kind="credit",
-            account_id=client.pk,
+            account_id=client.pk if client else None,
             receipt=receipt,
             request=request,
         )

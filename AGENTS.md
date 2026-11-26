@@ -1563,6 +1563,21 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   `chat/stock.py`). Surfaces: confirm-receipts, kind-change → sale,
   client account pay (`apply_account_payment` / `apply_credit_receipt_payment`
   FIFO), credit-note STK self-pay, full-return, chat.
+- **Walk-in credits can be cleared too**: the Clients board's "Walk-in" row
+  opens the receipts browse (`analytics/receipts/?client=walkin&receipt_kind=credits`),
+  which — when the viewer has `analytics/account_pay` — adds a **Pay** column
+  per open credit row plus a **Pay amount** button (shared
+  `analytics_account_pay_modal.html` + `analytics-receipt-ledger.js`, same
+  `_table` `kind:"pay"` cell pattern as supplier pay). The pay cells post
+  `account_id="walkin"`; `analytics_account_pay` maps that sentinel to
+  `apply_account_payment(..., walkin=True)`, which scopes the FIFO /
+  `receipt_ids` selection / balance-after to `client__isnull=True` receipts
+  (a posted-but-numeric account id still means a named `Client`).
+  `analytics_account_pay_stk` accepts the same sentinel — STK for walk-ins
+  uses the typed phone (or the receipt's `client_phone`), stores
+  `account_id=None`, and a client-bound STK can't settle a walk-in receipt.
+  Client-less payments skip `log_credit_payment` (the audit model requires a
+  `Client` FK); tests in `shops/tests/test_credit_settlement.py`.
 - **Paid day = revenue day**: every collection/conversion stamps
   `confirmed_payment_at` (`paid_at` kwarg, default `timezone.now()`) — on a
   settled sale that is the day the credit cleared. Analytics attributes

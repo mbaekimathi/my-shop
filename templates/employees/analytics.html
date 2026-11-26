@@ -95,6 +95,23 @@
         </button>
       </div>
       {% endif %}
+      {% if page.walkin_credit_pay %}
+      <div class="ax-top-actions">
+        <button
+          type="button"
+          class="ax-apply"
+          data-ax-pay-open
+          data-pay-all="1"
+          data-pay-kind="credit"
+          data-account-id="walkin"
+          data-receipt-due="{{ page.walkin_credit_balance }}"
+          data-receipt-due-raw="{{ page.walkin_credit_balance_raw }}"
+        >
+          <i data-lucide="wallet" aria-hidden="true"></i>
+          Pay amount
+        </button>
+      </div>
+      {% endif %}
       {% if page.receipts_print_modal %}
       <div class="ax-top-actions">
         <button
@@ -614,6 +631,8 @@
 {% include "employees/partials/analytics_account_pay_modal.html" with pay_url=page.expense_pay_url account_kind="expense" account_id="" balance=page.expense_balance balance_raw=page.expense_balance_raw %}
 {% elif page.supplier_pay %}
 {% include "employees/partials/analytics_account_pay_modal.html" with pay_url=page.pay_url account_kind="stock" account_id="" balance=page.pay_balance balance_raw=page.pay_balance_raw %}
+{% elif page.walkin_credit_pay %}
+{% include "employees/partials/analytics_account_pay_modal.html" with pay_url=page.walkin_credit_pay_url account_kind="credit" account_id="walkin" balance=page.walkin_credit_balance balance_raw=page.walkin_credit_balance_raw %}
 {% endif %}
 {% endblock %}
 
@@ -640,7 +659,7 @@
 {% if register_expense_modal %}
 <script defer src="{% static 'js/my-shop-expense.js' %}?v=20261116-supplier-autofill"></script>
 {% endif %}
-{% if page.expense_pay or page.supplier_pay %}
+{% if page.expense_pay or page.supplier_pay or page.walkin_credit_pay %}
 <script defer src="{% static 'js/analytics-receipt-ledger.js' %}?v=22"></script>
 {% endif %}
 <script>
