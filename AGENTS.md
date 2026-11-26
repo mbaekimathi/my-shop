@@ -1014,7 +1014,12 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   "Buy stock" action (`buy_stock_action`, gated by `my-shop/buy_stock` +
   `enable_sidebar_buy_stock`) opens `shops/partials/buy_stock_modal.html` on
   `role_home.html` (stock-catalog.js + stock-bulk.js loaded when
-  `buy_stock_modal`), plus a "Suppliers" link (`analytics/suppliers`).
+  `buy_stock_modal`), plus a "Suppliers" link (`analytics/suppliers`) and a
+  "Credits" link (`analytics/credits` — gated by `employee_may_any
+  (analytics)` + `analytics/credits` + the `enable_credit` POS toggle via
+  `company_pos_analytics_section_visible`, per-employee `credits` sidebar
+  pref) that opens the credits workspace (`sidebar_for_credits`: Credit
+  clients / Credit follow-up / Credit reports / Activity analytics).
 - Cashier dashboard + `role_shop_day` picker (`?mode=drawings` when reached via
   the Drawings link; `?mode=report|history` for the Day report / Day history
   pickers) render per-shop **day cards**: status badge (Open /

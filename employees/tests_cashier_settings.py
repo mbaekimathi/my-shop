@@ -118,6 +118,7 @@ class CashierSettingsTests(TestCase):
                 "sidebar_day_history",
                 "sidebar_expenses",
                 "sidebar_receipts",
+                "sidebar_credits",
                 "sidebar_analytics",
                 "sidebar_buy_stock",
                 "sidebar_suppliers",
@@ -355,6 +356,39 @@ class CashierSettingsTests(TestCase):
         )
         self.assertNotIn("Day report", self._sidebar_labels())
         self.assertIn("Day history", self._sidebar_labels())
+
+    def test_credits_link_opens_credits_workspace(self):
+        response = self.client.get(reverse("employees:role_shop_cashier"))
+        self.assertEqual(response.status_code, 200)
+        links = {
+            item["label"]: item
+            for item in response.context["page_sidebar"]["primary"]
+            if item.get("type") == "link"
+        }
+        self.assertIn("Credits", links)
+        self.assertEqual(
+            links["Credits"]["href"], "/shop-cashier/analytics/credits/"
+        )
+        for url in (
+            "/shop-cashier/analytics/credits/",
+            "/shop-cashier/analytics/credits/clients/",
+            "/shop-cashier/analytics/credits/follow-ups/",
+            "/shop-cashier/analytics/credits/report/",
+        ):
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+
+    def test_credits_pref_toggle_hides_link(self):
+        self.assertIn("Credits", self._sidebar_labels())
+        self.client.post(
+            "/shop-cashier/settings/",
+            {
+                "action": "toggle_pos_setting",
+                "field": "sidebar_credits",
+                "enabled": "0",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertNotIn("Credits", self._sidebar_labels())
 
     def test_settings_page_lists_day_report_status_toggles(self):
         response = self.client.get("/shop-cashier/settings/")
@@ -725,6 +759,7 @@ class BalancesCashierSettingsTests(TestCase):
                 "sidebar_day_history",
                 "sidebar_expenses",
                 "sidebar_receipts",
+                "sidebar_credits",
                 "sidebar_analytics",
                 "sidebar_buy_stock",
                 "sidebar_suppliers",

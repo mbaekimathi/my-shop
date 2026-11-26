@@ -1650,6 +1650,7 @@ CASHIER_SIDEBAR_LINKS = (
     ("day_history", 'Show "Day history"'),
     ("expenses", 'Show "Expenses"'),
     ("receipts", 'Show "Receipts"'),
+    ("credits", 'Show "Credits"'),
     ("analytics", 'Show "Analytics"'),
     ("buy_stock", 'Show "Buy stock"'),
     ("suppliers", 'Show "Suppliers"'),
@@ -2266,6 +2267,20 @@ def _cashier_dashboard_links(role, *, active_slug=None, profile=None):
                 "receipt",
                 href=analytics_receipts_url(role),
                 active=active_slug == "receipts",
+            )
+        )
+    if profile is None or (
+        cashier_sidebar_pref_enabled(profile, "credits")
+        and employee_may_any(profile, "analytics")
+        and employee_may(profile, "analytics", "credits")
+        and company_pos_analytics_section_visible("credits")
+    ):
+        links.append(
+            _link(
+                "Credits",
+                "credit-card",
+                href=analytics_section_url(role, "credits"),
+                active=active_slug == "credits",
             )
         )
     if profile is None or (
