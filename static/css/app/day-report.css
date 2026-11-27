@@ -346,6 +346,45 @@
   background: var(--info);
 }
 
+/* ---------- In-card tabs ---------- */
+
+.dr-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.6rem 1.1rem 0;
+}
+
+.dr-tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.26rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.dr-tab:hover {
+  background: color-mix(in srgb, var(--mist) 6%, var(--surface));
+}
+
+.dr-tab.is-active {
+  border-color: color-mix(in srgb, var(--teal) 55%, var(--line));
+  background: color-mix(in srgb, var(--teal) 12%, var(--surface));
+  color: var(--teal);
+}
+
+.dr-tab:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
 /* ---------- Tables ---------- */
 
 .dr-table-scroll {

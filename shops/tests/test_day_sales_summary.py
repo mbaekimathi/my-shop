@@ -1012,13 +1012,28 @@ class ClearedPendingCollectionTests(TestCase):
 
         request = RequestFactory().get("/x/")
         request.user = self.user
+
+        def _flow_body(page):
+            flow = page["tables"][1]
+            return next(
+                (
+                    b
+                    for b in flow.get("bodies") or []
+                    if b["key"] == "actual"
+                ),
+                flow,
+            )
+
+        def _flow_rows(page):
+            return [
+                r["cells"][0] if isinstance(r, dict) else r[0]
+                for r in _flow_body(page)["rows"]
+            ]
+
         first_page = build_day_session_report_page(
             profile=self.profile, request=request, session=first
         )["page"]
-        first_flow = [
-            r["cells"][0] if isinstance(r, dict) else r[0]
-            for r in first_page["tables"][1]["rows"]
-        ]
+        first_flow = _flow_rows(first_page)
         self.assertTrue(
             any(
                 "Pending cleared in later sessions" in row
@@ -1038,10 +1053,7 @@ class ClearedPendingCollectionTests(TestCase):
         second_page = build_day_session_report_page(
             profile=self.profile, request=request, session=second
         )["page"]
-        second_flow = [
-            r["cells"][0] if isinstance(r, dict) else r[0]
-            for r in second_page["tables"][1]["rows"]
-        ]
+        second_flow = _flow_rows(second_page)
         self.assertTrue(
             any("Pending cleared here" in row for row in second_flow),
             second_flow,
@@ -1059,7 +1071,7 @@ class ClearedPendingCollectionTests(TestCase):
         # Balanced till (counted = expected) renders the blue state.
         first_variance = next(
             r
-            for r in first_page["tables"][1]["rows"]
+            for r in _flow_body(first_page)["rows"]
             if isinstance(r, dict) and r["cells"][0] == "Variance"
         )
         self.assertIn("is-balanced", first_variance["row_class"])
@@ -1070,10 +1082,7 @@ class ClearedPendingCollectionTests(TestCase):
         first_off = build_day_session_report_page(
             profile=self.profile, request=request, session=first
         )["page"]
-        first_flow_off = [
-            r["cells"][0] if isinstance(r, dict) else r[0]
-            for r in first_off["tables"][1]["rows"]
-        ]
+        first_flow_off = _flow_rows(first_off)
         self.assertFalse(
             any("Pending cleared" in row for row in first_flow_off),
             first_flow_off,
@@ -1081,10 +1090,7 @@ class ClearedPendingCollectionTests(TestCase):
         second_off = build_day_session_report_page(
             profile=self.profile, request=request, session=second
         )["page"]
-        second_flow_off = [
-            r["cells"][0] if isinstance(r, dict) else r[0]
-            for r in second_off["tables"][1]["rows"]
-        ]
+        second_flow_off = _flow_rows(second_off)
         self.assertFalse(
             any("Pending cleared" in row for row in second_flow_off),
             second_flow_off,

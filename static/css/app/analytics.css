@@ -66,6 +66,14 @@
   color: var(--teal);
 }
 
+.ax-tabs--card {
+  margin: -0.2rem 0 0.7rem;
+}
+
+.ax-tab[role="tab"] {
+  cursor: pointer;
+}
+
 .ax-pay-modal-dialog {
   width: min(28rem, calc(100vw - 1.5rem));
 }

@@ -401,6 +401,82 @@ class CashierDayReportScopeTests(TestCase):
         ]
         self.assertIn("M-Pesa", labels)
 
+    def test_money_flow_expected_and_actual_bodies(self):
+        """Expected tab adds pending tender + unpaid bills; actual stays
+        the realized flow."""
+        from shops.models import (
+            ShopReceipt,
+            ShopReceiptKind,
+            ShopReceiptStatus,
+        )
+
+        session = self._open_day(self.next)
+        self._sale("SALE-CONF-T1", status=ShopReceiptStatus.CONFIRMED,
+                   cash="1000", total="1000")
+        # Still-pending tender is owed to the till — Expected only.
+        self._sale("SALE-PEND-T1", status=ShopReceiptStatus.ACTIVE,
+                   cash="200", total="200")
+        Expense.objects.create(
+            shop=self.shop,
+            category=ExpenseCategory.MISC,
+            name="Supplies on account",
+            amount=Decimal("70"),
+            amount_paid=Decimal("0"),
+            payment_status=ExpensePaymentStatus.UNPAID,
+            created_by=self.next,
+        )
+
+        client = self._login(self.next)
+        response = client.get(self._report_url(session=session))
+        self.assertEqual(response.status_code, 200)
+        money = next(
+            t for t in response.context["page"]["tables"]
+            if t["title"] == "Money flow"
+        )
+        self.assertEqual(
+            [(b["key"], b["label"]) for b in money["bodies"]],
+            [("actual", "Actual"), ("expected", "Expected")],
+        )
+        bodies = {b["key"]: b for b in money["bodies"]}
+        expected, actual = bodies["expected"], bodies["actual"]
+        self.assertTrue(actual["active"])
+        self.assertFalse(expected["active"])
+
+        # The tab strip + both panels render in the page.
+        self.assertContains(response, 'data-ax-card-tab="expected"')
+        self.assertContains(response, 'data-ax-card-tab="actual"')
+        self.assertContains(response, 'data-ax-card-panel="actual"')
+
+        # Expected-only rows: pending tender in, unpaid bill out.
+        pending_row = self._sp_row(
+            expected, "Pending sales awaiting payment (1)"
+        )
+        self.assertIsNotNone(pending_row)
+        self.assertIn("200", pending_row[-1]["label"])
+        unpaid_row = self._sp_row(expected, "Unpaid expenses")
+        self.assertIsNotNone(unpaid_row)
+        self.assertIn("70", unpaid_row[-1]["label"])
+        self.assertIsNone(
+            self._sp_row(actual, "Pending sales awaiting payment (1)")
+        )
+        self.assertIsNone(self._sp_row(actual, "Unpaid expenses"))
+
+        # Till totals: actual = 1000 open + 1000 confirmed (cash) →
+        # 2000 cash / 2500 total; expected adds 200 − 70.
+        exp_till = self._sp_row(expected, "Expected in till")
+        act_till = self._sp_row(actual, "Expected in till")
+        self.assertIn("2,130", exp_till[1]["label"])
+        self.assertIn("2,630", exp_till[-1]["label"])
+        self.assertIn("2,000", act_till[1]["label"])
+        self.assertIn("2,500", act_till[-1]["label"])
+
+        # The print sheet expands the tabs into labelled sections.
+        sheet_titles = [
+            t["title"] for t in response.context["page"]["sheet_tables"]
+        ]
+        self.assertIn("Money flow — Expected", sheet_titles)
+        self.assertIn("Money flow — Actual", sheet_titles)
+
     def test_foreign_open_session_still_blocks(self):
         self._open_day(self.previous)
         client = self._login(self.next)
@@ -584,6 +660,11 @@ class CashierDayReportScopeTests(TestCase):
         self.assertIn("7,000", sales[1]["label"])
         self.assertIn("1,000", sales[2]["label"])
         self.assertIn("6,000", sales[3]["label"])  # still to collect
+        # credit 5000 issued · 1200 paid back · 3800 still owed
+        credit = self._sp_row(sp, "Credit sales collected")
+        self.assertIn("5,000", credit[1]["label"])
+        self.assertIn("1,200", credit[2]["label"])
+        self.assertIn("3,800", credit[3]["label"])  # still owed
         # expenses 40 paid + 70 unpaid = 110; expected profit = 7000-110
         expenses = self._sp_row(sp, "Expenses")
         self.assertIn("110", expenses[1]["label"])

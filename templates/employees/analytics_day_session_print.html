@@ -609,7 +609,7 @@
     </div>
     {% endif %}
 
-    {% for table in page.tables %}
+    {% for table in page.sheet_tables|default:page.tables %}
     <section class="sheet-section">
       <h2>{{ table.title }}</h2>
       {% if table.rows %}

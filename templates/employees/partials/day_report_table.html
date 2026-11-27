@@ -16,74 +16,30 @@ kind=money / status / empty (+ generic fallbacks for the rest).
     {% endif %}
   </header>
 
-  {% if table.rows %}
-  <div class="dr-table-scroll">
-    <table class="dr-table">
-      <thead>
-        <tr>
-          {% for col in table.columns %}
-          <th
-            scope="col"
-            class="{% if forloop.first %}dr-th--lead{% endif %}{% if col.money or col.total %} is-num{% endif %}{% if col.total %} is-total{% endif %}"
-            {% if col.title %}title="{{ col.title }}"{% endif %}
-          >{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}</th>
-          {% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for entry in table.zrows %}
-        {% if entry.group_header %}
-        <tr class="dr-row--group">
-          <td colspan="{{ table.columns|length }}">{{ entry.label }}</td>
-        </tr>
-        {% else %}
-        {% with row=entry.row %}
-        <tr class="{% if row.total_row %}dr-row--total{% endif %}{% if row.row_class %} {{ row.row_class }}{% endif %}">
-          {% for pair in entry.zipped %}
-          {% with cell=pair.0 col=pair.1 %}
-          <td
-            class="{% if forloop.first %}dr-cell--lead{% endif %}{% if col.money or col.total or cell.kind == "money" or cell.kind == "pct" %} is-num{% endif %}{% if col.total %} is-total{% endif %}"
-            data-label="{% if col.label %}{{ col.label }}{% else %}{{ col }}{% endif %}"
-          >
-            {% if cell.href %}
-            <a class="dr-link" href="{{ cell.href }}">
-              {% if cell.sub %}
-              <span class="dr-cell-name">{{ cell.label }}</span>
-              <span class="dr-cell-sub">{{ cell.sub }}</span>
-              {% else %}
-              {{ cell.label }}
-              {% endif %}
-            </a>
-            {% elif cell.kind == "money" or cell.kind == "pct" %}
-            <span class="dr-money{% if cell.tone and cell.tone != "neutral" %} is-{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
-            {% elif cell.kind == "status" %}
-            <span class="dr-status is-{{ cell.tone|default:"neutral" }}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
-            {% elif cell.kind == "empty" %}
-            <span class="dr-cell-none"{% if cell.title %} title="{{ cell.title }}"{% endif %}>&mdash;</span>
-            {% elif cell.kind == "qty_amount" %}
-            <span class="dr-money"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.qty }} &middot; {{ cell.amount }}</span>
-            {% elif cell.label and cell.sub %}
-            <span class="dr-cell-stack">
-              <span class="dr-cell-name"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
-              <span class="dr-cell-sub">{{ cell.sub }}</span>
-            </span>
-            {% elif cell.label %}
-            <span class="{% if cell.tone and cell.tone != "neutral" %}dr-tone--{{ cell.tone }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.label }}</span>
-            {% else %}
-            {{ cell }}
-            {% endif %}
-          </td>
-          {% endwith %}
-          {% endfor %}
-        </tr>
-        {% endwith %}
-        {% endif %}
-        {% endfor %}
-      </tbody>
-    </table>
+  {% if table.bodies %}
+  <nav class="dr-tabs" role="tablist" aria-label="{{ table.title }}" data-ax-card-tabs>
+    {% for body in table.bodies %}
+    <button
+      type="button"
+      role="tab"
+      class="dr-tab{% if body.active %} is-active{% endif %}"
+      data-ax-card-tab="{{ body.key }}"
+      aria-selected="{% if body.active %}true{% else %}false{% endif %}"
+    >{{ body.label }}</button>
+    {% endfor %}
+  </nav>
+  {% for body in table.bodies %}
+  <div class="dr-tabpanel" role="tabpanel" data-ax-card-panel="{{ body.key }}"{% if not body.active %} hidden{% endif %}>
+    {% with table=body %}
+    {% include "employees/partials/day_report_table_body.html" %}
+    {% endwith %}
+    {% if body.footnote %}
+    <p class="dr-footnote">{{ body.footnote }}</p>
+    {% endif %}
   </div>
-  {% elif table.empty %}
-  <p class="dr-empty">{{ table.empty }}</p>
+  {% endfor %}
+  {% else %}
+  {% include "employees/partials/day_report_table_body.html" %}
   {% endif %}
 
   {% if table.footnote %}

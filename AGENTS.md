@@ -550,7 +550,37 @@ Session-related suites: `test_single_session`, `test_portal_session_exclusivity`
   credit-slips trail opened/counted/diff in the footnote,
   `day_report_sec_not_till`) and "Gifts — not in the till" (Docs/Value,
   `day_report_sec_gift`) — each followed by its own "Credit receipts" /
-  "Gift receipts" line list when receipts exist
+  "Gift receipts" line list when receipts exist. The **Expected vs
+  actual** matrix also itemizes a "Credit sales collected" row (inserted right
+  after Sales, gated on `enable_credit or credit_count`): expected =
+  slips issued this session, actual = `credit_paid` (running payback on
+  those slips), difference = `credit_due` — `day_session_sales_profit`
+  returns all three (the PDF's Sales & profit "Credit sales" line
+  carries the same paid/due in its sub). The **Money flow** card is
+  tabbed — `table["bodies"]` (`actual` active by default, `expected`)
+  renders an in-card `.dr-tabs` button strip + `data-ax-card-panel`
+  bodies toggled by the inline `[data-ax-card-tabs]` handler in
+  `analytics.html` (`nav.closest("section")` — works on `.dr-card` and
+  `.ax-card` alike). The day-report page renders tables via
+  `employees/partials/day_report_table.html` →
+  `day_report_table_body.html` (not `analytics_table_card.html` —
+  that one also got `bodies` support via
+  `analytics_table_wrap.html`); `hydrate_table_zrows` hydrates the
+  outer table AND every body so renderers unaware of tabs still show
+  the active body through `table["rows"]`. `_apply_pos_visibility`
+  applies column drops/row filters to all bodies. The **Expected** body
+  adds unrealized movements on top of the realized flow — "Pending
+  sales awaiting payment" (per-channel tender from
+  `details["pending_sales"]["cash"/"mpesa"/"card"]`, gated by
+  `day_report_sec_flagged`) and "Unpaid expenses"/"Unpaid stock bought"
+  (`sales_profit["expenses_unpaid"]`/`["stock_unpaid"]`, gated by
+  `day_report_sec_expenses`/stock toggles) — its "Expected in till"
+  always carries every expected component, so it's what the day
+  settles to if everything pays. The **Actual** body is the realized
+  money-at-hand flow ending at Counted closing + Variance (closed
+  days only). `page["sheet_tables"]` flattens tabbed tables into
+  labelled sections ("Money flow — Expected/Actual") for the `?paper=`
+  sheet; the PDF keeps the realized flow only
   (`day_report_not_till_lines` lines carry `key` = credit/gift so callers
   can split them). The "Credit payments collected" table + money-flow
   row hide under `day_report_sec_credit_payments` (all three keys are in

@@ -517,36 +517,48 @@ def _apply_pos_visibility(page: dict, flags: dict) -> dict:
             for i, col in enumerate(columns)
             if _label_pos_hidden(_pos_col_label(col), flags)
         }
+        # Tabbed bodies share the table's columns — the same cell drops
+        # and row filters apply to every body so all tabs stay aligned.
+        targets = [table, *(table.get("bodies") or [])]
         if drop_idx:
             table["columns"] = [
                 col for i, col in enumerate(columns) if i not in drop_idx
             ]
-            new_rows = []
-            for row in table.get("rows") or []:
-                cells = row.get("cells") if isinstance(row, dict) else row
-                if cells is None:
-                    new_rows.append(row)
-                    continue
-                kept = [
-                    cell for i, cell in enumerate(cells) if i not in drop_idx
-                ]
-                new_rows.append({**row, "cells": kept} if isinstance(row, dict) else kept)
-            table["rows"] = new_rows
+            for target in targets:
+                new_rows = []
+                for row in target.get("rows") or []:
+                    cells = row.get("cells") if isinstance(row, dict) else row
+                    if cells is None:
+                        new_rows.append(row)
+                        continue
+                    kept = [
+                        cell for i, cell in enumerate(cells) if i not in drop_idx
+                    ]
+                    new_rows.append({**row, "cells": kept} if isinstance(row, dict) else kept)
+                target["rows"] = new_rows
+            for body in table.get("bodies") or []:
+                if body.get("columns"):
+                    body["columns"] = [
+                        col
+                        for i, col in enumerate(body["columns"])
+                        if i not in drop_idx
+                    ]
         first_col = _pos_col_label(columns[0]) if columns else ""
         if first_col in ("Type", "Metric"):
-            filtered = []
-            for row in table.get("rows") or []:
-                if isinstance(row, dict) and row.get("group_header"):
+            for target in targets:
+                filtered = []
+                for row in target.get("rows") or []:
+                    if isinstance(row, dict) and row.get("group_header"):
+                        filtered.append(row)
+                        continue
+                    cells = row.get("cells") if isinstance(row, dict) else row
+                    cells = cells or []
+                    first = cells[0] if cells else ""
+                    label = _pos_col_label(first)
+                    if _label_pos_hidden(label, flags):
+                        continue
                     filtered.append(row)
-                    continue
-                cells = row.get("cells") if isinstance(row, dict) else row
-                cells = cells or []
-                first = cells[0] if cells else ""
-                label = _pos_col_label(first)
-                if _label_pos_hidden(label, flags):
-                    continue
-                filtered.append(row)
-            table["rows"] = filtered
+                target["rows"] = filtered
     if page.get("metrics"):
         page["metrics"] = [
             m
@@ -3160,32 +3172,37 @@ def hydrate_table_zrows(page: dict | None) -> dict | None:
     renders on the big matrix tables (clients, suppliers, stock).
     """
     for table in (page or {}).get("tables") or []:
-        columns = table.get("columns") or []
-        zrows = []
-        for row in table.get("rows") or []:
-            if isinstance(row, dict) and row.get("group_header"):
+        # A table may carry tabbed bodies — each body gets hydrated with
+        # the shared columns so its zrows render inside its own panel.
+        # The outer table is hydrated too so renderers unaware of bodies
+        # still show the active body through table["rows"].
+        for body in [table, *(table.get("bodies") or [])]:
+            columns = body.get("columns") or table.get("columns") or []
+            zrows = []
+            for row in body.get("rows") or []:
+                if isinstance(row, dict) and row.get("group_header"):
+                    zrows.append(
+                        {
+                            "group_header": True,
+                            "label": row.get("label"),
+                            "tone": row.get("tone"),
+                            "flag": bool(row.get("flag")),
+                            "title": row.get("title"),
+                        }
+                    )
+                    continue
+                if isinstance(row, dict):
+                    cells = row.get("cells") or row
+                else:
+                    cells = row
                 zrows.append(
                     {
-                        "group_header": True,
-                        "label": row.get("label"),
-                        "tone": row.get("tone"),
-                        "flag": bool(row.get("flag")),
-                        "title": row.get("title"),
+                        "row": row,
+                        "cells": cells,
+                        "zipped": list(zip(cells, columns)),
                     }
                 )
-                continue
-            if isinstance(row, dict):
-                cells = row.get("cells") or row
-            else:
-                cells = row
-            zrows.append(
-                {
-                    "row": row,
-                    "cells": cells,
-                    "zipped": list(zip(cells, columns)),
-                }
-            )
-        table["zrows"] = zrows
+            body["zrows"] = zrows
     return page
 
 
@@ -8237,6 +8254,7 @@ def build_receipts_print_document(*, filters) -> dict:
             "phone": row.get("phone") or "—",
             "items": row.get("items") or "—",
             "total": row.get("total") or "—",
+            "balance": row.get("balance") or row.get("total") or "—",
             "when": row.get("when") or "—",
             "reference": "",
         }
@@ -8250,6 +8268,7 @@ def build_receipts_print_document(*, filters) -> dict:
         "kind_label": browse["kind_label"],
         "period_label": browse["period_label"],
         "receipt_kind": browse["receipt_kind"] or "all",
+        "show_balance": browse["receipt_kind"] == "credits",
         "receipt_total": receipt_total,
         "grand_amount": _money_ksh(browse["grand_amount"]),
         "shop_count": len(browse["shops"]),
@@ -12312,25 +12331,58 @@ def build_day_session_report_page(
         profile, "day_report_sec_drawings"
     )
     sec_stock = item_stock_sec or shelf_stock_sec
-    flow_rows = [
-        _flow_row(
-            "Opening float",
-            _channel_values("opening"),
-            summary.get("opening_total"),
-            row_class="ax-flow-row--opening",
-        ),
-        _flow_row(
-            f"Sales collected ({sales_count} receipts)",
-            {
-                "cash": summary.get("cash_sales"),
-                "mpesa": summary.get("mpesa_sales"),
-                "card": summary.get("card_sales"),
-            },
-            summary.get("sales_total"),
-            row_class="ax-flow-row--in",
-        ),
-        *(
-            [
+    sec_flagged = day_report_section_enabled(
+        profile, "day_report_sec_flagged"
+    )
+    pending = details.get("pending_sales") or {}
+    pending_count = int(pending.get("count") or 0)
+    expenses_unpaid = sales_profit["expenses_unpaid"]
+    stock_unpaid = sales_profit["stock_unpaid"]
+
+    def _flow_rows(*, expected: bool):
+        # Expected adds what is still owed to the till (pending sales'
+        # tender) and what is still owed out of it (unpaid expenses and
+        # stock) — the "if everything settles" projection. Actual is the
+        # realized flow: money at hand only, ending at the counted
+        # closing and variance once the day is closed.
+        rows = [
+            _flow_row(
+                "Opening float",
+                _channel_values("opening"),
+                summary.get("opening_total"),
+                row_class="ax-flow-row--opening",
+            ),
+            _flow_row(
+                f"Sales collected ({sales_count} receipts)",
+                {
+                    "cash": summary.get("cash_sales"),
+                    "mpesa": summary.get("mpesa_sales"),
+                    "card": summary.get("card_sales"),
+                },
+                summary.get("sales_total"),
+                row_class="ax-flow-row--in",
+            ),
+        ]
+        if expected and sec_flagged and pending_count:
+            pending_tender_total = (
+                Decimal(pending.get("cash") or 0)
+                + Decimal(pending.get("mpesa") or 0)
+                + Decimal(pending.get("card") or 0)
+            )
+            rows.append(
+                _flow_row(
+                    f"Pending sales awaiting payment ({pending_count})",
+                    {
+                        "cash": pending.get("cash"),
+                        "mpesa": pending.get("mpesa"),
+                        "card": pending.get("card"),
+                    },
+                    pending_tender_total,
+                    row_class="ax-flow-row--in",
+                )
+            )
+        if sec_credit:
+            rows.append(
                 _flow_row(
                     f"Credit payments collected "
                     f"({summary.get('credit_collected_count') or 0})",
@@ -12342,12 +12394,9 @@ def build_day_session_report_page(
                     summary.get("credit_collected_total"),
                     row_class="ax-flow-row--in",
                 )
-            ]
-            if sec_credit
-            else []
-        ),
-        *(
-            [
+            )
+        if sec_cleared:
+            rows.append(
                 _flow_row(
                     f"Trade payments collected "
                     f"({summary.get('trade_collected_count') or 0})",
@@ -12359,12 +12408,9 @@ def build_day_session_report_page(
                     summary.get("trade_collected_total"),
                     row_class="ax-flow-row--in",
                 )
-            ]
-            if sec_cleared
-            else []
-        ),
-        *(
-            [
+            )
+        if sec_prepay:
+            rows.append(
                 _flow_row(
                     f"Customer prepayments "
                     f"({summary.get('prepayments_count') or 0})",
@@ -12372,12 +12418,9 @@ def build_day_session_report_page(
                     summary.get("prepayments_total"),
                     row_class="ax-flow-row--in",
                 )
-            ]
-            if sec_prepay
-            else []
-        ),
-        *(
-            [
+            )
+        if sec_cleared and summary.get("cleared_pending_count"):
+            rows.append(
                 _flow_row(
                     f"Pending cleared here "
                     f"({summary.get('cleared_pending_count') or 0})"
@@ -12394,46 +12437,57 @@ def build_day_session_report_page(
                     summary.get("cleared_pending_total"),
                     row_class="ax-flow-row--in",
                 )
-            ]
-            if sec_cleared and summary.get("cleared_pending_count")
-            else []
-        ),
-        _flow_row(
-            "Returns paid",
-            {
-                "cash": summary.get("cash_refunds"),
-                "mpesa": summary.get("mpesa_refunds"),
-                "card": summary.get("card_refunds"),
-            },
-            refunds_total,
-            minus=True,
-        ),
-        *(
-            [
+            )
+        rows.append(
+            _flow_row(
+                "Returns paid",
+                {
+                    "cash": summary.get("cash_refunds"),
+                    "mpesa": summary.get("mpesa_refunds"),
+                    "card": summary.get("card_refunds"),
+                },
+                refunds_total,
+                minus=True,
+            )
+        )
+        if sec_expenses:
+            rows.append(
                 _flow_row(
                     "Expenses paid",
                     {"cash": summary.get("expenses_paid")},
                     summary.get("expenses_paid"),
                     minus=True,
                 )
-            ]
-            if sec_expenses
-            else []
-        ),
-        *(
-            [
+            )
+            if expected and expenses_unpaid > _zero():
+                rows.append(
+                    _flow_row(
+                        "Unpaid expenses",
+                        {"cash": expenses_unpaid},
+                        expenses_unpaid,
+                        minus=True,
+                    )
+                )
+        if sec_stock:
+            rows.append(
                 _flow_row(
                     "Stock bought",
                     {"cash": summary.get("suppliers_paid")},
                     summary.get("suppliers_paid"),
                     minus=True,
                 )
-            ]
-            if sec_stock
-            else []
-        ),
-        *(
-            [
+            )
+            if expected and stock_unpaid > _zero():
+                rows.append(
+                    _flow_row(
+                        "Unpaid stock bought",
+                        {"cash": stock_unpaid},
+                        stock_unpaid,
+                        minus=True,
+                    )
+                )
+        if sec_drawings:
+            rows.append(
                 _flow_row(
                     "Owner drawings",
                     {
@@ -12444,12 +12498,9 @@ def build_day_session_report_page(
                     summary.get("drawings_paid"),
                     minus=True,
                 )
-            ]
-            if sec_drawings
-            else []
-        ),
-        *(
-            [
+            )
+        if sec_cleared:
+            rows.append(
                 _flow_row(
                     f"Trade-in payouts "
                     f"({summary.get('trade_paid_count') or 0})",
@@ -12461,70 +12512,97 @@ def build_day_session_report_page(
                     summary.get("trade_paid_total"),
                     minus=True,
                 )
-            ]
-            if sec_cleared
-            else []
-        ),
-        _flow_row(
-            "Expected in till",
-            _channel_values("expected"),
-            summary.get("expected_total"),
-            row_class="ax-flow-row--expected",
-        ),
-    ]
-    # Pending receipts this session printed but a later session collected:
-    # the money moved to that till, so it is deducted from this Expected —
-    # the deficit is cleared and the row names the collector.
-    if sec_cleared and summary.get("cleared_elsewhere_count"):
-        elsewhere_label = (
-            f"Pending cleared in later sessions "
-            f"({summary.get('cleared_elsewhere_count') or 0})"
-        )
-        if elsewhere_names:
-            elsewhere_label += f" — collected by {elsewhere_names}"
-        flow_rows.insert(
-            -1,
+            )
+        # The Expected tab's total always carries every expected
+        # component — a hidden section row still counts, same rule as
+        # the paid rows in the actual flow.
+        expected_values = _channel_values("expected")
+        expected_total = summary.get("expected_total")
+        if expected:
+            delta = {"cash": _zero(), "mpesa": _zero(), "card": _zero()}
+            if pending_count:
+                delta["cash"] += Decimal(pending.get("cash") or 0)
+                delta["mpesa"] += Decimal(pending.get("mpesa") or 0)
+                delta["card"] += Decimal(pending.get("card") or 0)
+            delta["cash"] -= expenses_unpaid + stock_unpaid
+            expected_values = {
+                key: (
+                    Decimal(expected_values.get(key) or 0) + delta[key]
+                )
+                for key in expected_values
+            }
+            expected_total = Decimal(expected_total or 0) + sum(
+                delta.values()
+            )
+        rows.append(
             _flow_row(
-                elsewhere_label,
-                {
-                    "cash": summary.get("cleared_elsewhere_cash"),
-                    "mpesa": summary.get("cleared_elsewhere_mpesa"),
-                    "card": summary.get("cleared_elsewhere_card"),
-                },
-                summary.get("cleared_elsewhere_total"),
-                minus=True,
-            ),
-        )
-    if not is_open:
-        flow_rows.append(
-            _flow_row(
-                "Counted closing",
-                _channel_values("closing"),
-                summary.get("closing_total"),
-                row_class="ax-flow-row--closing",
+                "Expected in till",
+                expected_values,
+                expected_total,
+                row_class="ax-flow-row--expected",
             )
         )
-        variance_cells = ["Variance"]
-        for key, _label in channel_cols:
-            channel_variance = summary.get(f"{key}_variance")
-            variance_cells.append(
-                _money_cell(
-                    channel_variance,
-                    tone=_variance_tone(channel_variance),
+        # Pending receipts this session printed but a later session
+        # collected: the money moved to that till, so it is deducted
+        # from this Expected — the deficit is cleared and the row names
+        # the collector.
+        if sec_cleared and summary.get("cleared_elsewhere_count"):
+            elsewhere_label = (
+                f"Pending cleared in later sessions "
+                f"({summary.get('cleared_elsewhere_count') or 0})"
+            )
+            if elsewhere_names:
+                elsewhere_label += f" — collected by {elsewhere_names}"
+            rows.insert(
+                -1,
+                _flow_row(
+                    elsewhere_label,
+                    {
+                        "cash": summary.get("cleared_elsewhere_cash"),
+                        "mpesa": summary.get("cleared_elsewhere_mpesa"),
+                        "card": summary.get("cleared_elsewhere_card"),
+                    },
+                    summary.get("cleared_elsewhere_total"),
+                    minus=True,
+                ),
+            )
+        if not expected and not is_open:
+            rows.append(
+                _flow_row(
+                    "Counted closing",
+                    _channel_values("closing"),
+                    summary.get("closing_total"),
+                    row_class="ax-flow-row--closing",
                 )
             )
-        variance_cells.append(
-            _money_cell(total_variance, tone=_variance_tone(total_variance))
-        )
-        variance_class = f"is-{_variance_tone(total_variance)}"
-        flow_rows.append(
-            {
-                "cells": variance_cells,
-                "row_class": (
-                    f"ax-flow-row ax-flow-row--variance {variance_class}"
-                ),
-            }
-        )
+            variance_cells = ["Variance"]
+            for key, _label in channel_cols:
+                channel_variance = summary.get(f"{key}_variance")
+                variance_cells.append(
+                    _money_cell(
+                        channel_variance,
+                        tone=_variance_tone(channel_variance),
+                    )
+                )
+            variance_cells.append(
+                _money_cell(
+                    total_variance, tone=_variance_tone(total_variance)
+                )
+            )
+            variance_class = f"is-{_variance_tone(total_variance)}"
+            rows.append(
+                {
+                    "cells": variance_cells,
+                    "row_class": (
+                        f"ax-flow-row ax-flow-row--variance "
+                        f"{variance_class}"
+                    ),
+                }
+            )
+        return rows
+
+    flow_rows_expected = _flow_rows(expected=True)
+    flow_rows_actual = _flow_rows(expected=False)
     credit_payments = details.get("credit_payments") or {}
     credit_pay_rows = credit_payments.get("rows") or []
     credit_payments_sec = getattr(
@@ -12572,6 +12650,44 @@ def build_day_session_report_page(
         "that printed it — the money counts in the session that collects "
         "it. Variance = counted − expected."
     )
+    money_footnote_expected = (
+        "Expected shows what the day should settle to: the same till "
+        "flows plus pending sales still awaiting payment (money on its "
+        "way in) and unpaid expenses and stock (money still to go out). "
+        "Credit and gift value never enters the till."
+    )
+    flow_table = _table(
+        "Money flow",
+        flow_columns,
+        flow_rows_actual,
+        empty="No money movement recorded this day.",
+        footnote="",
+        section="day_report_sec_money_flow",
+        table_class="ax-table--moneyflow",
+        wide=True,
+    )
+    flow_table["bodies"] = [
+        {
+            "key": "actual",
+            "label": "Actual",
+            "rows": flow_rows_actual,
+            "columns": flow_columns,
+            "table_class": flow_table["table_class"],
+            "empty": flow_table["empty"],
+            "footnote": money_footnote,
+            "active": True,
+        },
+        {
+            "key": "expected",
+            "label": "Expected",
+            "rows": flow_rows_expected,
+            "columns": flow_columns,
+            "table_class": flow_table["table_class"],
+            "empty": flow_table["empty"],
+            "footnote": money_footnote_expected,
+            "active": False,
+        },
+    ]
 
     # Sales & profit as an Expected-vs-Actual matrix: each metric on a row,
     # the expectation and the reality side by side, the difference column
@@ -12702,6 +12818,30 @@ def build_day_session_report_page(
                 ),
             ],
         )
+    if getattr(pos, "enable_credit", False) or sales_profit["credit_count"]:
+        expected_actual_rows.insert(
+            1,
+            [
+                {
+                    "label": "Credit sales collected",
+                    "sub": (
+                        f"{sales_profit['credit_count']} docs · "
+                        "difference is still owed"
+                    ),
+                },
+                _money_cell(sales_profit["credit_total"]),
+                _money_cell(sales_profit["credit_paid"]),
+                _money_cell(
+                    sales_profit["credit_due"],
+                    tone=(
+                        "warn"
+                        if sales_profit["credit_due"] > _zero()
+                        else "good"
+                    ),
+                    title="Still owed on credit",
+                ),
+            ],
+        )
 
     tables = [
         _table(
@@ -12731,7 +12871,9 @@ def build_day_session_report_page(
                 "Expected sales = all sales (confirmed + pending) + "
                 "credit sales + gift issues; actual sales = confirmed "
                 "sales only — money that reached the till (the "
-                "difference is still to collect). Expected profit = "
+                "difference is still to collect). Credit sales collect "
+                "later — actual is payback received on this day's "
+                "slips; the rest stays owed. Expected profit = "
                 "expected sales − all expenses and stock bought + "
                 "prepayments; actual profit charges paid costs only — "
                 "cost differences are the unpaid amounts. Credit and "
@@ -12741,16 +12883,7 @@ def build_day_session_report_page(
             card_class="ax-card--expected",
             wide=True,
         ),
-        _table(
-            "Money flow",
-            flow_columns,
-            flow_rows,
-            empty="No money movement recorded this day.",
-            footnote=money_footnote,
-            section="day_report_sec_money_flow",
-            table_class="ax-table--moneyflow",
-            wide=True,
-        ),
+        flow_table,
     ]
 
     def _printed_label(at):
@@ -13622,6 +13755,23 @@ def build_day_session_report_page(
     detail_tables = [
         t for t in tables if t.get("title") not in primary_titles
     ]
+    # The print sheet expands tabbed tables — every body prints as its
+    # own labelled section so nothing hides behind a client-side tab.
+    sheet_tables = []
+    for t in tables:
+        bodies = t.get("bodies") or []
+        if not bodies:
+            sheet_tables.append(t)
+            continue
+        for body in bodies:
+            sheet_tables.append(
+                {
+                    **t,
+                    **body,
+                    "title": f"{t.get('title')} — {body.get('label')}",
+                    "bodies": None,
+                }
+            )
 
     alerts = []
     if is_open:
@@ -13656,6 +13806,7 @@ def build_day_session_report_page(
         "metrics": metrics,
         "insights": [],
         "tables": tables,
+        "sheet_tables": sheet_tables,
         "primary_tables": primary_tables,
         "detail_tables": detail_tables,
     }
@@ -21074,6 +21225,8 @@ def _collect_analytics_receipts_browse(
         status_slug="",
         status_label="",
         total_raw=None,
+        balance=None,
+        balance_raw=None,
         receipt_id=None,
         shop_id=None,
         items_detail=None,
@@ -21103,10 +21256,13 @@ def _collect_analytics_receipts_browse(
         ) or _SUPPLIER_STATUS_CELL_TONE.get(status_text.lower(), "neutral")
         if (status_slug or "").strip().lower() == ShopReceiptStatus.CANCELLED:
             money_tone = "bad"
+        elif balance_raw is not None:
+            money_tone = "warn" if Decimal(balance_raw or 0) > 0 else "good"
         elif total_raw is not None and Decimal(total_raw or 0) <= 0:
             money_tone = "neutral"
         else:
             money_tone = "good"
+        money_label = balance if balance is not None else total
         cells = [
             {"label": number, "sub": shop_label},
             {"kind": "status", "label": kind_label, "tone": kind_tone},
@@ -21114,9 +21270,9 @@ def _collect_analytics_receipts_browse(
             items_cell,
             {
                 "kind": "money",
-                "label": total,
+                "label": money_label,
                 "tone": money_tone,
-                "title": total,
+                "title": f"Total {total}" if balance is not None else total,
             },
             {"kind": "status", "label": status_text, "tone": status_tone},
             when,
@@ -21128,6 +21284,7 @@ def _collect_analytics_receipts_browse(
             "phone": phone,
             "items": items_label,
             "total": total,
+            "balance": balance,
             "when": when,
             "reference": "",
             "when_dt": when_dt,
@@ -21205,13 +21362,13 @@ def _collect_analytics_receipts_browse(
             client_name = (row.client_name or "").strip() or "Walk-in"
             phone = (row.client_phone or "").strip() or "—"
             items_detail = _receipt_line_items_detail(row.lines.all())
+            due = _due_amount(row.total, row.amount_paid)
             pay_cell = None
             if include_walkin_pay:
                 if (
                     row.kind == ShopReceiptKind.CREDIT
                     and row.client_id is None
                 ):
-                    due = _due_amount(row.total, row.amount_paid)
                     pay_cell = {
                         "kind": "pay",
                         "label": "Pay",
@@ -21257,6 +21414,12 @@ def _collect_analytics_receipts_browse(
                     status_slug=row.status,
                     status_label=row.get_status_display(),
                     total_raw=row.total,
+                    balance=(
+                        _money_ksh(due) if receipt_kind == "credits" else None
+                    ),
+                    balance_raw=(
+                        due if receipt_kind == "credits" else None
+                    ),
                     receipt_id=row.pk,
                     shop_id=row.shop_id,
                     pay_cell=pay_cell,
@@ -21406,7 +21569,7 @@ def _build_receipts(filters):
         "Type",
         "Client",
         "Items",
-        "Total",
+        "Balance" if receipt_kind == "credits" else "Total",
         "Status",
         "Date & time",
     ]
@@ -21949,7 +22112,7 @@ def _build_return_receipts(filters):
                     "Type",
                     "Client",
                     "Items",
-                    "Total",
+                    "Balance" if receipt_kind == "credits" else "Total",
                     "Status",
                     "Date & time",
                 ],

@@ -698,6 +698,27 @@
       }
     });
 
+    root.querySelectorAll("[data-ax-card-tabs]").forEach((nav) => {
+      const card = nav.closest("section");
+      if (!card) return;
+      nav.addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-ax-card-tab]");
+        if (!btn || !nav.contains(btn)) return;
+        const key = btn.getAttribute("data-ax-card-tab");
+        nav.querySelectorAll("[data-ax-card-tab]").forEach((tab) => {
+          const on = tab === btn;
+          tab.classList.toggle("is-active", on);
+          tab.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        card
+          .querySelectorAll("[data-ax-card-panel]")
+          .forEach((panel) => {
+            panel.hidden =
+              panel.getAttribute("data-ax-card-panel") !== key;
+          });
+      });
+    });
+
     const searches = [...root.querySelectorAll("[data-ax-table-search]")];
     searches.forEach((search, index) => {
       const scope = search.closest(".ax-card") || root;

@@ -9259,6 +9259,9 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
     pending_sales_count = 0
     pending_sales_counted = 0
     pending_sales_total = Decimal("0.00")
+    pending_sales_cash = Decimal("0.00")
+    pending_sales_mpesa = Decimal("0.00")
+    pending_sales_card = Decimal("0.00")
     receipts = (
         ShopReceipt.objects.filter(kind=ShopReceiptKind.SALE, **window)
         .select_related("created_by__user")
@@ -9279,6 +9282,15 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
             # the status pick also lists inside sales_count/items sold.
             pending_sales_count += 1
             pending_sales_total += Decimal(receipt.total or 0)
+            pend_cash, pend_mpesa, pend_card = _receipt_original_tender(
+                receipt.cash_amount,
+                receipt.mpesa_amount,
+                receipt.return_payment_events,
+                card_amount=receipt.card_amount,
+            )
+            pending_sales_cash += pend_cash
+            pending_sales_mpesa += pend_mpesa
+            pending_sales_card += pend_card
             if receipt.status in counted:
                 pending_sales_counted += 1
         if receipt.status in counted:
@@ -9754,6 +9766,9 @@ def day_session_report_details(session, counted_statuses=None) -> dict:
             "count": pending_sales_count,
             "counted": pending_sales_counted,
             "total": pending_sales_total,
+            "cash": pending_sales_cash,
+            "mpesa": pending_sales_mpesa,
+            "card": pending_sales_card,
         },
         "items_sold": items_sold,
         "sellers": sellers,
@@ -9909,6 +9924,7 @@ def day_session_sales_profit(
         "pending_total": _money(pending.get("total")),
         "credit_count": int(credit.get("count") or 0),
         "credit_total": _money(credit.get("total")),
+        "credit_paid": _money(credit.get("paid")),
         "credit_due": _money(credit.get("due")),
         "gift_count": int(gifts.get("count") or 0),
         "gift_total": _money(gifts.get("total")),
@@ -10397,7 +10413,11 @@ def build_shop_day_report_pdf(
                 "Credit sales",
                 str(sp["credit_count"]),
                 sp["credit_total"],
-                sub="collected later — outside the till",
+                sub=(
+                    "collected later — outside the till · "
+                    f"paid {_fmt(sp['credit_paid'])} · "
+                    f"due {_fmt(sp['credit_due'])}"
+                ),
             )
         if getattr(pos, "enable_gift", True) or sp["gift_count"]:
             _sp_row(
